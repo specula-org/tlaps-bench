@@ -306,10 +306,13 @@ def validate_single_benchmark(args_tuple):
     candidates = []
     for source_basename, src_file in source_files:
         src_basename_noext = os.path.splitext(os.path.basename(src_file))[0]
+        same_module = os.path.basename(os.path.dirname(src_file)) == module_dir
 
-        if name_no_ext.startswith(src_basename_noext + '_'):
-            candidates.insert(0, (source_basename, src_file))  # primary match first
-        elif os.path.basename(os.path.dirname(src_file)) == module_dir:
+        if name_no_ext.startswith(src_basename_noext + '_') and same_module:
+            candidates.insert(0, (source_basename, src_file))  # best match: name + dir
+        elif name_no_ext.startswith(src_basename_noext + '_'):
+            candidates.append((source_basename, src_file))  # name match, different dir
+        elif same_module:
             candidates.append((source_basename, src_file))  # same module dir
 
     for source_basename, src_file in candidates:

@@ -23,6 +23,12 @@ THEOREM LenDomain == \A S :
                          \A n \in Nat : DOMAIN s = 1..n => n = Len(s)
   PROOF OMITTED
 
+AXIOM HeadDef == \A s : Head(s) = s[1]
+AXIOM TailDef == \A s : Tail(s) = [i \in 1..(Len(s)-1) |-> s[i+1]]
+
+AXIOM SubSeqDef ==
+        \A s, m, n : SubSeq(s, m, n) = [i \in 1..(1+n-m) |-> s[i+m-1]]
+
 THEOREM InitialSubSeq ==
    ASSUME NEW S,
           NEW s \in Seq(S),

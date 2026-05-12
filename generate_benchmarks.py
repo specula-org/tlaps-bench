@@ -236,8 +236,8 @@ def find_proof_end(lines, start_idx):
                 # At column 0, not indented
                 if re.match(r'^\w+(\(.*?\))?\s*==(\s|$)', line) and not re.match(r'^<\d+>', line):
                     return i - 1
-                # Top-level CONSTANT/VARIABLE declarations (at column 0, not indented)
-                if re.match(r'^(CONSTANT|CONSTANTS|VARIABLE|VARIABLES)\s', line):
+                # Top-level CONSTANT/VARIABLE/AXIOM/ASSUME declarations (at column 0, not indented)
+                if re.match(r'^(CONSTANT|CONSTANTS|VARIABLE|VARIABLES|AXIOM|ASSUME|ASSUMPTION)\s', line):
                     return i - 1
 
         i += 1
