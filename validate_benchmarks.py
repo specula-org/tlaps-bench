@@ -321,6 +321,9 @@ def validate_single_benchmark(args_tuple):
         for sthm in src_theorems:
             if sthm.name == target_thm_name and sthm.has_proof:
                 proof_lines = src_lines[sthm.proof_start:sthm.proof_end + 1]
+                # Trim trailing empty lines and comment-only lines
+                while proof_lines and (not proof_lines[-1].strip() or proof_lines[-1].strip().startswith('(*')):
+                    proof_lines.pop()
                 found_proof = (src_file, proof_lines)
                 result.source_file = os.path.relpath(src_file, SOURCE_ROOT)
                 break
