@@ -548,9 +548,38 @@ def main():
         for bf in benchmark_files
     ]
 
-    # Run validation
+    # Run validation with incremental output
     results = []
     start_time = time.time()
+    report_path = os.path.join(SOURCE_ROOT, args.output)
+    partial_report_path = report_path + '.partial.md'
+
+    def write_partial_result(r, done, total):
+        """Append a single result to the partial report file."""
+        status_icon = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "ERROR": "💥", "NO_PROOF": "🔍"}.get(r.status, "❓")
+        notes = ""
+        if r.cheating_issues:
+            notes = "; ".join(f"{c.kind}" for c in r.cheating_issues)
+        elif r.error:
+            notes = r.error[:60]
+        elif r.status == "FAIL":
+            fail_match = re.search(r'(\d+)/(\d+) obligation', r.tlapm_output)
+            if fail_match:
+                notes = f"{fail_match.group(1)}/{fail_match.group(2)} obligations"
+            elif "TIMEOUT" in r.tlapm_output:
+                notes = "Timeout"
+        line = f"| `{r.theorem_name}` | {r.module} | {status_icon} | {r.tlapm_time_secs:.1f}s | {notes} |"
+
+        with open(partial_report_path, 'a') as f:
+            if done == 1:
+                f.write("# TLAPS Benchmark Validation (in progress)\n\n")
+                f.write("| Theorem | Module | Status | Time | Notes |\n")
+                f.write("|---------|--------|--------|------|-------|\n")
+            f.write(line + '\n')
+            passed = sum(1 for x in results if x.status == "PASS")
+            failed = sum(1 for x in results if x.status == "FAIL")
+            cheating = sum(1 for x in results if x.status == "CHEATING")
+            f.write(f"\n_Progress: {done}/{total} — ✅ {passed} ❌ {failed} ⚠️ {cheating}_\n\n")
 
     if args.jobs == 1:
         for i, item in enumerate(work_items):
@@ -558,6 +587,7 @@ def main():
             results.append(r)
             status_icon = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "ERROR": "💥", "NO_PROOF": "🔍"}.get(r.status, "❓")
             print(f"  [{i+1}/{len(work_items)}] {status_icon} {r.benchmark_file} ({r.tlapm_time_secs:.1f}s)")
+            write_partial_result(r, i+1, len(work_items))
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
             futures = {executor.submit(validate_single_benchmark, item): item for item in work_items}
@@ -568,15 +598,18 @@ def main():
                 results.append(r)
                 status_icon = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "ERROR": "💥", "NO_PROOF": "🔍"}.get(r.status, "❓")
                 print(f"  [{done_count}/{len(work_items)}] {status_icon} {r.benchmark_file} ({r.tlapm_time_secs:.1f}s)")
+                write_partial_result(r, done_count, len(work_items))
 
     total_time = time.time() - start_time
 
-    # Sort results by module and name for report
+    # Sort results by module and name for final report
     results.sort(key=lambda r: (r.module, r.theorem_name))
 
-    # Generate report
-    report_path = os.path.join(SOURCE_ROOT, args.output)
+    # Generate final report (replaces partial)
     report = generate_report(results, report_path)
+    # Clean up partial report
+    if os.path.exists(partial_report_path):
+        os.remove(partial_report_path)
 
     print(f"\n{'='*60}")
     print(f"Validation complete in {total_time:.1f}s")
