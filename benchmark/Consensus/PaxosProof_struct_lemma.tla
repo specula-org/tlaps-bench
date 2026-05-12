@@ -1,0 +1,421 @@
+---- MODULE PaxosProof_struct_lemma ----
+EXTENDS FiniteSets, Integers, NaturalsInduction, TLAPS
+(* ---- Content from module Sets ---- *)
+  \** NB: Module NaturalsInduction comes from the TLAPS library, usually
+  \** installed in /usr/local/lib/tlaps. Make sure this is in your Toolbox
+  \** search path, see Preferences/TLA+ Preferences.
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+(****************************************************************************)
+(* Finite sets and cardinality are defined in the TLA+ standard module      *)
+(* FiniteSets, but this is not yet natively supported by TLAPS. For the     *)
+(* time being, we use the following axiom for defining set cardinality.     *)
+(****************************************************************************)
+\* Cardinality(S) == CHOOSE n : (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+           /\ IsFiniteSet({})
+           /\ Cardinality({}) = 0
+           /\ \A S : IsFiniteSet(S) /\ (Cardinality(S)=0) => (S = {})
+  PROOF OMITTED
+
+THEOREM CardinalityPlusOne ==
+    ASSUME NEW S, IsFiniteSet(S),
+           NEW x, x \notin S
+    PROVE  /\ IsFiniteSet(S \cup {x})
+           /\ Cardinality(S \cup {x}) = Cardinality(S) + 1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOne == \A m : /\ IsFiniteSet({m})
+                                 /\ Cardinality({m}) = 1
+  PROOF OMITTED
+
+THEOREM CardinalityTwo == \A m, p : m # p => 
+                              /\ IsFiniteSet({m,p})
+                              /\ Cardinality({m,p}) = 2
+  PROOF OMITTED
+
+THEOREM IntervalCardinality ==  
+  ASSUME NEW a \in Nat, NEW b \in Nat 
+  PROVE  /\ IsFiniteSet(a..b)
+         /\ Cardinality(a..b) = IF a > b THEN 0 ELSE b-a+1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOneConverse ==
+   ASSUME NEW S, IsFiniteSet(S), Cardinality(S) = 1
+   PROVE  \E m : S = {m}
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM IsBijectionInverse ==
+  ASSUME NEW f, NEW S, NEW T, 
+         IsBijection(f, S, T) 
+  PROVE  \E g : IsBijection(g, T, S)
+  PROOF OMITTED
+
+THEOREM IsBijectionTransitive ==
+  ASSUME NEW f1, NEW f2, NEW S, NEW T, NEW U, 
+           IsBijection(f1, S, U),
+           IsBijection(f2, U, T) 
+  PROVE  \E g : IsBijection(g, S, T)
+  PROOF OMITTED
+
+THEOREM IsBijectionCardinality ==
+  \A f, S, T : /\ IsFiniteSet(S)
+               /\ IsFiniteSet(T)
+               => (IsBijection(f, S, T) <=> Cardinality(S) = Cardinality(T))
+
+LEMMA CardinalitySetMinus ==
+      ASSUME NEW S, IsFiniteSet(S),
+             NEW x \in S
+      PROVE /\ IsFiniteSet(S \ {x})
+            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+  PROOF OMITTED
+
+THEOREM FiniteSubset ==
+  ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM CardinalityUnion ==
+          \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) =>
+                      /\ IsFiniteSet(S \cup T)
+                      /\ IsFiniteSet(S \cap T)
+                      /\ Cardinality(S \cup T) =
+                              Cardinality(S) + Cardinality(T)
+                              - Cardinality(S \cap T)  
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+                       /\ f \in [S -> T]
+                       /\ \A y \in T : \E x \in S : y = f[x]
+                       => /\ IsFiniteSet(T)
+                          /\ Cardinality(T) \leq Cardinality(S)
+PROOF OMITTED
+
+THEOREM ProductFinite ==
+     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+PROOF OMITTED
+
+THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+PROOF OMITTED
+
+(* ---- Content from module Consensus ---- *)
+-----------------------------------------------------------------------------
+CONSTANT Value  \* the set of values that can be chosen
+VARIABLE chosen \* the set of values that have been chosen
+-----------------------------------------------------------------------------
+Init == chosen = {}
+
+Next == 
+    /\ chosen = {}
+    /\ \E v \in Value : chosen' = {v}
+
+Spec == Init /\ [][Next]_chosen
+-----------------------------------------------------------------------------
+Inv == 
+    /\ chosen \subseteq Value
+    /\ IsFiniteSet(chosen)
+    /\ Cardinality(chosen) \leq 1
+-----------------------------------------------------------------------------
+THEOREM Invariance == Spec => []Inv
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QuorumAssumption == 
+    /\ \A Q \in Quorum : Q \subseteq Acceptor
+    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+  PROOF OMITTED
+
+Ballot == Nat
+-----------------------------------------------------------------------------
+VARIABLES votes, maxBal
+
+TypeOK == /\ votes \in [Acceptor -> SUBSET (Ballot \X Value)]
+          /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+-----------------------------------------------------------------------------
+VotedFor(a, b, v) == <<b, v>> \in votes[a]
+
+DidNotVoteAt(a, b) == \A v \in Value : ~ VotedFor(a, b, v)
+
+ShowsSafeAt(Q, b, v) ==
+  /\ \A a \in Q : maxBal[a] \geq b \* have promised
+  /\ \E c \in -1..(b-1) :
+      /\ (c # -1) => \E a \in Q : VotedFor(a, c, v)
+      /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteAt(a, d)
+-----------------------------------------------------------------------------
+Init == 
+    /\ votes = [a \in Acceptor |-> {}]
+    /\ maxBal = [a \in Acceptor |-> -1]
+
+IncreaseMaxBal(a, b) ==
+  /\ b > maxBal[a]
+  /\ maxBal' = [maxBal EXCEPT ![a] = b] \* make promise
+  /\ UNCHANGED votes
+
+VoteFor(a, b, v) ==
+    /\ maxBal[a] <= b \* keep promise
+    /\ \A vt \in votes[a] : vt[1] # b
+    /\ \A c \in Acceptor \ {a} :
+         \A vt \in votes[c] : (vt[1] = b) => (vt[2] = v)
+    /\ \E Q \in Quorum : ShowsSafeAt(Q, b, v) \* safe to vote
+    /\ votes' = [votes EXCEPT ![a] = votes[a] \cup {<<b, v>>}] \* vote
+    /\ maxBal' = [maxBal EXCEPT ![a] = b] \* make promise
+-----------------------------------------------------------------------------
+Next == 
+    \E a \in Acceptor, b \in Ballot : 
+        \/ IncreaseMaxBal(a, b)
+        \/ \E v \in Value : VoteFor(a, b, v)
+
+Spec == Init /\ [][Next]_<<votes, maxBal>>
+-----------------------------------------------------------------------------
+ChosenAt(b, v) == 
+    \E Q \in Quorum : \A a \in Q : VotedFor(a, b, v)
+
+chosen == {v \in Value : \E b \in Ballot : ChosenAt(b, v)}
+
+Consistency == chosen = {} \/ \E v \in Value : chosen = {v} \* Cardinality(chosen) <= 1
+---------------------------------------------------------------------------
+CannotVoteAt(a, b) == 
+    /\ maxBal[a] > b
+    /\ DidNotVoteAt(a, b)
+
+NoneOtherChoosableAt(b, v) == 
+    \E Q \in Quorum : 
+        \A a \in Q : VotedFor(a, b, v) \/ CannotVoteAt(a, b)
+
+SafeAt(b, v) == 
+    \A c \in 0..(b-1) : NoneOtherChoosableAt(c, v)
+
+VotesSafe == 
+    \A a \in Acceptor, b \in Ballot, v \in Value : 
+        VotedFor(a, b, v) => SafeAt(b, v)
+
+OneVote == 
+    \A a \in Acceptor, b \in Ballot, v, w \in Value : 
+        VotedFor(a, b, v) /\ VotedFor(a, b, w) => (v = w)
+
+OneValuePerBallot ==
+    \A a1, a2 \in Acceptor, b \in Ballot, v1, v2 \in Value : 
+        VotedFor(a1, b, v1) /\ VotedFor(a2, b, v2) => (v1 = v2)
+
+Inv == TypeOK /\ VotesSafe /\ OneValuePerBallot
+-----------------------------------------------------------------------------
+THEOREM AllSafeAtZero == \A v \in Value : SafeAt(0, v)
+  PROOF OMITTED
+
+THEOREM ChoosableThm ==
+          \A b \in Ballot, v \in Value :
+             ChosenAt(b, v) => NoneOtherChoosableAt(b, v)
+  PROOF OMITTED
+
+THEOREM OneVoteThm == OneValuePerBallot => OneVote
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+THEOREM VotesSafeImpliesConsistency ==
+   ASSUME VotesSafe, OneVote, chosen # {}
+   PROVE  \E v \in Value : chosen = {v}
+  PROOF OMITTED
+
+THEOREM ShowsSafety ==
+          TypeOK /\ VotesSafe /\ OneValuePerBallot =>
+             \A Q \in Quorum, b \in Ballot, v \in Value :
+               ShowsSafeAt(Q, b, v) => SafeAt(b, v)
+  PROOF OMITTED
+
+THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+                            \A b \in Ballot, v \in Value :
+                                SafeAt(b, v) => SafeAt(b, v)'
+  OMITTED                                
+-----------------------------------------------------------------------------
+THEOREM Invariant == Spec => []Inv
+  PROOF OMITTED
+
+----------------------------------------------------------------------------
+THEOREM Consistent == Spec => []Consistency
+  PROOF OMITTED
+
+----------------------------------------------------------------------------
+
+THEOREM Refinement == Spec => C!Spec
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QuorumAssumption == /\ \A Q \in Quorum : Q \subseteq Acceptor
+                           /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+Ballot ==  Nat
+None == CHOOSE v : v \notin Ballot
+-----------------------------------------------------------------------------
+Message ==
+       {"1a"} \X Ballot
+  \cup {"1b"} \X Acceptor \X Ballot \X (Ballot \cup {-1}) \X (Value \cup {None})
+  \cup {"2a"} \X Ballot \X Value
+  \cup {"2b"} \X Acceptor \X Ballot \X Value
+-----------------------------------------------------------------------------
+VARIABLE maxBal,
+         maxVBal, \* <<maxVBal[a], maxVal[a]>>: the vote with the largest ballot number cast by a;
+         maxVal,  \* it is <<-1, None>> if a has not cast any vote.
+         msgs
+
+Send(m) == msgs' = msgs \cup {m}
+
+vars == <<maxBal, maxVBal, maxVal, msgs>>
+
+TypeOK == /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+          /\ maxVBal \in [Acceptor -> Ballot \cup {-1}]
+          /\ maxVal \in [Acceptor -> Value \cup {None}]
+          /\ msgs \subseteq Message
+-----------------------------------------------------------------------------
+Init == /\ maxBal = [a \in Acceptor |-> -1]
+        /\ maxVBal = [a \in Acceptor |-> -1]
+        /\ maxVal = [a \in Acceptor |-> None]
+        /\ msgs = {}
+
+Phase1a(b) == /\ Send(<<"1a", b>>)
+              /\ UNCHANGED <<maxBal, maxVBal, maxVal>>
+
+Phase1b(a) == /\ \E m \in msgs :
+                  /\ m[1] = "1a"
+                  /\ m[2] > maxBal[a]
+                  /\ maxBal' = [maxBal EXCEPT ![a] = m[2]]
+                  /\ Send(<<"1b", a, m[2], maxVBal[a], maxVal[a]>>)
+              /\ UNCHANGED <<maxVBal, maxVal>>
+
+Phase2a(b, v) ==
+  /\ ~ \E m \in msgs : m[1] = "2a" /\ m[3] = b
+  /\ \E Q \in Quorum :
+        LET Q1b == {m \in msgs : /\ m[1] = "1b"
+                                 /\ m[2] \in Q
+                                 /\ m[3] = b}
+            Q1bv == {m \in Q1b : m[4] \geq 0}
+        IN  /\ \A a \in Q : \E m \in Q1b : m[2] = a
+            /\ \/ Q1bv = {}
+               \/ \E m \in Q1bv :
+                    /\ m[5] = v
+                    /\ \A mm \in Q1bv : m[4] \geq mm[4]
+  /\ Send(<<"2a", b, v>>)
+  /\ UNCHANGED <<maxBal, maxVBal, maxVal>>
+
+Phase2b(a) == \E m \in msgs : /\ m[1] = "2a"
+                              /\ m[2] \geq maxBal[a]
+                              /\ maxBal' = [maxBal EXCEPT ![a] = m[2]]
+                              /\ maxVBal' = [maxVBal EXCEPT ![a] = m[2]]
+                              /\ maxVal' = [maxVal EXCEPT ![a] = m[3]]
+                              /\ Send(<<"2b", a, m[2], m[3]>>)
+----------------------------------------------------------------------------
+Next == \/ \E b \in Ballot : \/ Phase1a(b)
+                             \/ \E v \in Value : Phase2a(b, v)
+        \/ \E a \in Acceptor : Phase1b(a) \/ Phase2b(a)
+
+Spec == Init /\ [][Next]_vars
+----------------------------------------------------------------------------
+votes == [a \in Acceptor |->
+           {<<m[3], m[4]>> : m \in {mm \in msgs: /\ mm[1] = "2b"
+                                                 /\ mm[2] = a }}]
+
+THEOREM Spec => V!Spec
+
+
+WellFormedMessages == \A m \in msgs :
+    /\ m[1] = "1a" => m[2] \in Ballot
+    /\ m[1] = "1b" => /\ m[2] \in Acceptor
+                      /\ m[3] \in Ballot
+                      /\ m[4] \in Ballot \union {-1}
+                      /\ m[5] \in Value \union {None}
+    /\ m[1] = "2a" => m[2] \in Ballot /\ m[3] \in Value
+    /\ m[1] = "2b" => m[2] \in Acceptor /\ m[3] \in Ballot /\ m[4] \in Value
+-----------------------------------------------------------------------------
+THEOREM WFmsgs == TypeOK => WellFormedMessages
+  PROOF OMITTED
+
+THEOREM typing == Spec => []TypeOK
+  PROOF OMITTED
+
+-----------------------------------------------------------
+StructOK1 == \A a \in Acceptor : IF maxVBal[a] = -1
+                                 THEN maxVal[a] = None
+                                 ELSE <<maxVBal[a], maxVal[a]>> \in votes[a]
+
+THEOREM Spec => []StructOK1
+<1>. USE DEFS Ballot, TypeOK, StructOK1
+<1>1. Init => StructOK1
+  BY Z3 DEFS Init
+<1>2. TypeOK /\ StructOK1 /\ [Next]_vars => StructOK1'
+  BY WFmsgs, Z3 DEFS Next, Phase1a, Phase2a, Phase1b, Phase2b, Send, votes, 
+    WellFormedMessages, vars, Message
+<1>q. QED
+  BY ONLY <1>1, <1>2, typing, PTL DEF Spec
+-----------------------------------------------------------
+StructOK2 == \A m \in msgs :
+   (m[1] = "1b") => /\ maxBal[m[2]] >= m[3]
+                    /\ (m[4] >= 0) => <<m[4],m[5]>> \in votes[m[2]]
+
+StructOK3 == \A m \in msgs : m[1] = "2a" => /\ \E Q \in Quorum : V!ShowsSafeAt(Q,m[2],m[3])
+                                            /\ \A mm \in msgs : /\ mm[1] = "2a"
+                                                                /\ mm[2] = m[2]
+                                                                => mm[3] = m[3]
+
+StructOK4 == \A m \in msgs : m[1] = "2b" => /\ \E mo \in msgs : /\ mo[1] = "2a"
+                                                                /\ mo[2] = m[3]
+                                                                /\ mo[3] = m[4]
+                                            /\ maxBal[m[2]] >= m[3]
+                                            /\ maxVBal[m[2]] >= m[3]
+
+StructOK5 == \A m \in msgs : m[1] = "1b" => \A d \in Ballot : m[4] < d /\ d < m[3] =>
+                                            \A v \in Value : ~ <<d,v>> \in votes[m[2]]
+
+StructOK == /\ TypeOK 
+            /\ StructOK1 
+            /\ StructOK2 
+\*            /\ StructOK3 
+            /\ StructOK4 
+            /\ StructOK5 
+
+THEOREM struct_lemma == Spec => []StructOK
+PROOF OBVIOUS
+
+========================================
