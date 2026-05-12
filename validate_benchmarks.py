@@ -496,7 +496,7 @@ def main():
     tlapm_path = args.tlapm
     if not tlapm_path:
         # Try common locations
-        for candidate in ['/tmp/tlapm/bin/tlapm', shutil.which('tlapm')]:
+        for candidate in ['/tmp/tlapm15/bin/tlapm', '/tmp/tlapm/bin/tlapm', shutil.which('tlapm')]:
             if candidate and os.path.isfile(candidate):
                 tlapm_path = candidate
                 break
@@ -507,7 +507,9 @@ def main():
     tlapm_lib = args.tlapm_lib
     if not tlapm_lib:
         # Derive from tlapm_path
-        tlapm_lib = os.path.join(os.path.dirname(os.path.dirname(tlapm_path)), 'lib')
+        tlapm_lib = os.path.join(os.path.dirname(os.path.dirname(tlapm_path)), 'lib', 'tlaps')
+        if not os.path.isdir(tlapm_lib):
+            tlapm_lib = os.path.join(os.path.dirname(os.path.dirname(tlapm_path)), 'lib')
     if not os.path.isdir(tlapm_lib):
         print(f"ERROR: tlapm lib not found at {tlapm_lib}. Use --tlapm-lib to specify.")
         sys.exit(1)
