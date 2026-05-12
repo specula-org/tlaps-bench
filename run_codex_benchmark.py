@@ -269,7 +269,6 @@ def run_single_benchmark(args_tuple):
         ]
 
         # Build a shell command that sources ~/.zshrc to pick up env vars
-        # (e.g. AZURE_OPENAI_API_KEY) without hardcoding secrets in code
         shell_cmd = 'source ~/.zshrc 2>/dev/null; exec ' + ' '.join(
             shlex.quote(c) for c in cmd
         )
