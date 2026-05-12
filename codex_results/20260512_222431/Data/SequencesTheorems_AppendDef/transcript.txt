@@ -1,0 +1,2322 @@
+Benchmark: Data/SequencesTheorems_AppendDef.tla
+Time: 586s
+Tokens: 3,967,159 input / 18,231 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iteratively patch and run TLAPS plus the provided checker.
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' SequencesTheorems_AppendDef.tla && echo '---' && sed -n '240,520p' SequencesTheorems_AppendDef.tla && echo '--- files ---' && rg --files"
+-------------------------- MODULE SequencesTheorems_AppendDef -------------------------
+(***************************************************************************)
+(* The proofs in this module were essentially written before TLAPS's SMT   *)
+(* backend prover was implemented. That backend usually allows for much    *)
+(* shorter proofs.                                                         *)
+(***************************************************************************)
+EXTENDS Integers, Sequences, TLAPS
+
+AXIOM SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+AXIOM LenDef == \A S : \A seq \in Seq(S) :
+                     /\ Len(seq) \in Nat 
+                     /\ DOMAIN seq = 1..Len(seq)
+
+THEOREM LenAxiom == 
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+  PROOF OMITTED
+
+THEOREM LenDomain == \A S :
+                       \A s \in Seq(S) :
+                         \A n \in Nat : DOMAIN s = 1..n => n = Len(s)
+  PROOF OMITTED
+
+AXIOM HeadDef == \A s : Head(s) = s[1]
+AXIOM TailDef == \A s : Tail(s) = [i \in 1..(Len(s)-1) |-> s[i+1]]
+
+AXIOM SubSeqDef ==
+        \A s, m, n : SubSeq(s, m, n) = [i \in 1..(1+n-m) |-> s[i+m-1]]
+
+THEOREM InitialSubSeq ==
+   ASSUME NEW S,
+          NEW s \in Seq(S),
+          NEW j \in 0..Len(s)
+   PROVE  /\ SubSeq(s, 1, j) = [i \in 1..j |-> s[i]]
+          /\ SubSeq(s, 1, j) \in Seq(S)
+          /\ Len(SubSeq(s, 1, j)) = j
+  PROOF OMITTED
+
+-------------------------------------------
+... (truncated) ...
+ailOfSeq ==
+   ASSUME NEW S,
+          NEW seq \in Seq(S), seq # << >>
+   PROVE  /\ Head(seq) \in S
+          /\ Tail(seq) \in Seq(S)
+  (*************************************************************************)
+  (* Note: the way Tail is defined, Tail(<< >>) \in Seq(S) is actually     *)
+  (* valid (because Tail(<< >>) = << >>).                                  *)
+  (*************************************************************************)
+  PROOF OMITTED
+
+------------------------------------------------------------------
+Remove(i, seq) == [j \in 1..(Len(seq)-1) |->
+                                   IF j < i THEN seq[j] ELSE seq[j+1]]
+THEOREM RemoveSeq ==
+   ASSUME NEW S, NEW seq \in Seq(S),
+          NEW i \in 1..Len(seq)
+   PROVE   Remove(i, seq) \in Seq(S)
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(*                                    Append                               *)
+(***************************************************************************)
+THEOREM AppendDef ==
+   ASSUME NEW S, NEW seq \in Seq(S), NEW elt
+   PROVE  Append(seq, elt) =
+                [i \in 1..(Len(seq)+1) |-> IF i \leq Len(seq) THEN seq[i]
+                                                              ELSE elt]
+PROOF OBVIOUS
+
+=============================================================================---
+--- files ---
+check_proof.py
+SequencesTheorems_AppendDef.tla
+[EXIT 0]
+
+[AGENT] I found the target theorem is just `AppendDef`; now I’ll check the standard `Sequences` facts and TLAPS syntax patterns.
+
+[CMD] /bin/zsh -lc "rg -n \"Append|Seq\\(|Len\\(|THEOREM|LEMMA\" ~/.tlapm15/lib/tlaps -g '*.tla' | head -200"
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:46:LEMMA EmptyIsWellFounded == \A S : IsWellFoundedOn({}, S)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:50:LEMMA IsWellFoundedOnSubset ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:57:LEMMA IsWellFoundedOnSubrelation ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:80:THEOREM WFMin ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:118:THEOREM MinWF ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:137:LEMMA WellFoundedIsIrreflexive ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:147:LEMMA WellFoundedIsAsymmetric ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:160:LEMMA WFSetLessThanIrreflexive ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:167:LEMMA SetLessTransitive ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:179:THEOREM WFInduction ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:218:THEOREM WFDefOnUnique ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:239:LEMMA WFInductiveDefLemma ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:317:LEMMA TransitiveClosureThm ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:328:LEMMA TransitiveClosureMinimal ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:342:LEMMA TCTCTC ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_pro
+... (truncated) ...
+\E u \in Seq(S) : u # << >> /\ t = s \o u
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:325:         /\ IsStrictPrefix(s,t) <=> Len(s) < Len(t) /\ s = SubSeq(t, 1, Len(s))
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:326:         /\ IsStrictPrefix(s,t) <=> Len(s) < Len(t) /\ s = Restrict(t, DOMAIN s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:327:         /\ IsStrictPrefix(s,t) <=> IsPrefix(s,t) /\ Len(s) < Len(t)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:328:<1>1. IsStrictPrefix(s,t) => Len(s) < Len(t)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:330:<1>2. IsStrictPrefix(s,t) <=> \E u \in Seq(S) : u # << >> /\ t = s \o u
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:332:        PROVE  \E u \in Seq(S) : u # << >> /\ t = s \o u
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:337:    <3>2. PICK u \in Seq(S):  t = s \o u
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:341:  <2>2. ASSUME NEW u \in Seq(S), u # << >>, t = s \o u
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:349:<1>3. /\ IsStrictPrefix(s,t) <=> Len(s) < Len(t) /\ s = SubSeq(t, 1, Len(s))
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:350:      /\ IsStrictPrefix(s,t) <=> Len(s) < Len(t) /\ s = Restrict(t, DOMAIN s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:351:      /\ IsStrictPrefix(s,t) <=> IsPrefix(s,t) /\ Len(s) < Len(t)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,140p' ~/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla && echo '--- Sequences module ---' && rg -n \"Append|Seq|Len|\\o\" ~/.tlapm15/lib/tlaps/Sequences.tla ~/.tlapm15/lib/tlaps/Sequences_proofs.tla 2>/dev/null | head -120"
+-------------------- MODULE SequencesExtTheorems_proofs --------------------
+(**************************************************************************)
+(* This module contains theorems about the operators on sequences defined *)
+(* in module SequencesExt.                                                *)
+(**************************************************************************)
+EXTENDS Sequences, SequencesExt, Functions, Integers
+LOCAL INSTANCE SequenceTheorems
+LOCAL INSTANCE NaturalsInduction
+LOCAL INSTANCE WellFoundedInduction
+LOCAL INSTANCE TLAPS
+
+(***************************************************************************)
+(* Theorems about Cons.                                                    *)
+(* Cons(elt, seq) == <<elt>> \o seq                                        *)
+(***************************************************************************)
+
+THEOREM ConsProperties ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+  PROVE /\ Cons(elt, seq) \in Seq(S)
+        /\ Cons(elt, seq) # <<>> 
+        /\ Len(Cons(elt, seq)) = Len(seq)+1
+        /\ Head(Cons(elt, seq)) = elt
+        /\ Tail(Cons(elt, seq)) = seq
+        /\ Cons(elt, seq)[1] = elt
+        /\ \A i \in 1 .. Len(seq) : Cons(elt, seq)[i+1] = seq[i]
+        /\ \A i \in 2 .. Len(seq)+1 : Cons(elt, seq)[i] = seq[i-1]
+BY DEF Cons
+
+THEOREM ConsEmpty ==
+  \A x : Cons(x, << >>) = << x >>
+BY DEF Cons
+
+THEOREM ConsHeadTail ==
+  ASSUME NEW S, NEW seq \in Seq(S), seq # << >>
+  PROVE  Cons(Head(seq), Tail(seq)) = s
+... (truncated) ...
+ i \in 1..Len(seq)
+   PROVE  /\ RemoveAt(seq,i) \in Seq(S)
+          /\ Len(RemoveAt(seq,i)) = Len(seq) - 1
+          /\ \A j \in 1 .. Len(seq)-1 : RemoveAt(seq,i)[j] = IF j<i THEN seq[j] ELSE seq[j+1]
+<1>. DEFINE left == SubSeq(seq, 1, i-1)
+            right == SubSeq(seq, i+1, Len(seq))
+<1>1. /\ left \in Seq(S) /\ Len(left) = i-1
+      /\ right \in Seq(S) /\ Len(right) = Len(seq) - i
+      /\ RemoveAt(seq,i) \in Seq(S)
+      /\ Len(RemoveAt(seq,i)) = Len(left) + Len(right)
+  BY DEF RemoveAt
+<1>2. Len(RemoveAt(seq,i)) = Len(seq) - 1
+  <2>. HIDE DEF left, right
+  <2>. QED  BY <1>1
+<1>3. ASSUME NEW j \in 1 .. Len(seq)-1
+      PROVE  RemoveAt(seq,i)[j] = IF j<i THEN seq[j] ELSE seq[j+1]
+  <2>. j \in 1 .. Len(left) + Len(right)  BY <1>1, <1>2, Zenon
+  <2>. QED  BY ConcatProperties, SubSeqProperties DEF RemoveAt
+<1>. QED  BY <1>1, <1>2, <1>3, Zenon
+
+(***************************************************************************)
+(* Theorems about Front and Last.                                          *)
+(* Front(seq) == SubSeq(seq, 1, Len(seq)-1)                                *)
+(* Last(seq) == seq[Len(seq)]                                              *)
+(***************************************************************************)
+
+THEOREM FrontProperties ==
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Front(seq) \in Seq(S)
+         /\ Len(Front(seq)) = IF seq = << >> THEN 0 ELSE Len(seq)-1
+         /\ \A i \in 1 .. Len(seq)-1 : Front(seq)[i] = seq[i]
+--- Sequences module ---
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "ls ~/.tlapm15/lib/tlaps | grep -E 'Sequence|Sequences' && sed -n '1,220p' ~/.tlapm15/lib/tlaps/Sequences.tla && echo '--- SequenceTheorems ---' && sed -n '1,180p' ~/.tlapm15/lib/tlaps/SequenceTheorems.tla"
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+sed: can't read /home/ruize/.tlapm15/lib/tlaps/Sequences.tla: No such file or directory
+[EXIT 2]
+
+[CMD] /bin/zsh -lc "sed -n '1,220p' ~/.tlapm15/lib/tlaps/SequenceTheorems.tla && echo '--- proofs around append ---' && rg -n \"Append|Concat|\\o|Len\\(\" ~/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla | head -200 && sed -n '1,180p' ~/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla"
+-------------------------- MODULE SequenceTheorems --------------------------
+(***************************************************************************)
+(* This module contains theorems about operations on sequences.            *)
+(***************************************************************************)
+EXTENDS Sequences, Functions
+LOCAL INSTANCE NaturalsInduction
+LOCAL INSTANCE TLAPS
+
+
+(***************************************************************************)
+(* Elementary properties about Seq(S)                                      *)
+(***************************************************************************)
+
+LEMMA SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+THEOREM SeqMonotonic ==
+  ASSUME NEW S, NEW T, NEW seq \in Seq(S),
+         S \subseteq T
+  PROVE  seq \in Seq(T)
+
+THEOREM ElementOfSeq ==
+   ASSUME NEW S, NEW seq \in Seq(S),
+          NEW n \in 1..Len(seq)
+   PROVE  seq[n] \in S
+ 
+THEOREM EmptySeq ==
+   ASSUME NEW S
+   PROVE /\ << >> \in Seq(S)
+         /\ Len(<< >>) = 0
+         /\ \A seq \in Seq(S) : (seq # << >>) => (Len(seq) \in Nat \ {0})
+
+THEOREM LenProperties == 
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+         /\ DOMAIN seq = 1 .. Len(seq) 
+
+THEOREM IsASeq ==
+  ASSUME NEW n \in Nat, NEW e(_), NEW S,
+         \A i \in 1..n : e(i) \in S
+  PROVE  [i \in 1..n |-> e(i)] \in Seq(S)
+
+THEOREM ExceptSeq ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW i \in 1 .. Len(seq), NEW e \in S
+ 
+... (truncated) ...
+s) \in S
+          /\ Head(s) \in Range(s)
+          /\ Tail(s) \in Seq(S)
+          /\ Len(Tail(s)) = Len(s)-1
+          /\ \A i \in 1 .. Len(Tail(s)) : Tail(s)[i] = s[i+1]
+          /\ Range(Tail(s)) \subseteq Range(s)
+BY DEF Range
+
+THEOREM TailIsSubSeq ==
+  ASSUME NEW S,
+         NEW s \in Seq(S), s # << >>
+  PROVE  Tail(s) = SubSeq(s, 2, Len(s))
+OBVIOUS
+
+THEOREM SubSeqRestrict ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW n \in 0 .. Len(seq)
+  PROVE  SubSeq(seq, 1, n) = Restrict(seq, 1 .. n)
+BY DEF Restrict
+
+THEOREM HeadTailOfSubSeq ==
+  ASSUME NEW S, NEW seq \in Seq(S),
+         NEW m \in 1 .. Len(seq), NEW n \in m .. Len(seq)
+  PROVE  /\ Head(SubSeq(seq,m,n)) = seq[m]
+         /\ Tail(SubSeq(seq,m,n)) = SubSeq(seq, m+1, n)
+OBVIOUS
+
+THEOREM SubSeqRecursive ==
+  ASSUME NEW S, NEW seq \in Seq(S),
+         NEW m \in 1 .. Len(seq), NEW n \in m .. Len(seq)
+  PROVE  /\ SubSeq(seq, m, n) = << seq[m] >> \o SubSeq(seq, m+1, n)
+         /\ SubSeq(seq, m, n) = SubSeq(seq, m, n-1) \o << seq[n] >>
+OBVIOUS
+
+(***************************************************************************)
+(* Subsequences of subsequences.                                           *)
+(***************************************************************************)
+THEOREM SubSeqOfSubSeq ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S),
+         NEW i \in 1 .. Len(s), NEW j \in 1 .. Len(s),
+         NEW m \in 1 .. j-i+1, NEW n \in 1 .. j-i+1
+  PROVE  SubSeq(SubSeq(s,i,j),m,n) = SubSeq(s, i+m-1, i+n-1)
+OBVIOUS
+[EXIT 0]
+
+[AGENT] The library confirms `Append` is available via sequence concatenation; I’ll prove equality through function domains and pointwise values.
+
+[CMD] /bin/zsh -lc 'rg -n "Append" ~/.tlapm15/lib/tlaps/SequenceTheorems.tla ~/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla ~/.tlapm15/lib/tlaps/SequencesExt.tla ~/.tlapm15/lib/tlaps/SequencesExtTheorems.tla'
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:35:THEOREM ConsAppend ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:37:  PROVE  Cons(x, Append(seq, y)) = Append(Cons(x,seq), y)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:89:         /\ Append(Front(seq), Last(seq)) = seq 
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:97:THEOREM FrontLastAppend ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:99:  PROVE  /\ Front(Append(seq, e)) = seq
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:100:         /\ Last(Append(seq, e)) = e
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:138:THEOREM ReverseAppend ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:140:  PROVE  Reverse(Append(seq,e)) = Cons(e, Reverse(seq))
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:144:  PROVE  Reverse(Cons(e,seq)) = Append(Reverse(seq), e)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:206:THEOREM IsStrictPrefixAppend ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:208:  PROVE  IsStrictPrefix(s, Append(s,e))
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:314:THEOREM AppendIsSuffixCancel ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:316:  PROVE  IsSuffix(Append(s,e), Append(t,e)) <=> IsSuffix(s,t)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:318:THEOREM AppendIsSuffix ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:320:         IsSuffix(Append(s,e), u)
+/home/rui
+... (truncated) ...
+t)[Len(seq)+1] = elt
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:184:         /\ Range(Append(seq, elt)) = Range(seq) \cup {elt}
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:186:THEOREM AppendIsConcat ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:188:  PROVE  Append(seq, elt) = seq \o <<elt>>
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:190:THEOREM HeadTailAppend ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:192:  PROVE  /\ Head(Append(seq, elt)) = IF seq = <<>> THEN elt ELSE Head(seq)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:193:         /\ Tail(Append(seq, elt)) = IF seq = <<>> THEN <<>> ELSE Append(Tail(seq), elt)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:195:THEOREM AppendInjective ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:197:  PROVE  Append(s,e) = Append(t,f) <=> s = t /\ e = f
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:199:THEOREM SequenceEmptyOrAppend == 
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:201:  PROVE \E s \in Seq(S), elt \in S : seq = Append(s, elt)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:207:THEOREM SequencesInductionAppend ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:210:         \A s \in Seq(S), e \in S : P(s) => P(Append(s,e))
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:254:LEMMA AppendInjectiveSeq ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:256:  PROVE  IsInjective(Append(seq,e)) <=> IsInjective(seq) /\ e \notin Range(seq)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '200,245p' ~/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla"
+
+THEOREM SubSeqOfConcat2 ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S),
+         NEW m \in Len(s)+1 .. Len(s)+Len(t), NEW n \in Len(s)+1 .. Len(s)+Len(t)
+  PROVE  SubSeq(s \o t, m, n) = SubSeq(t, m - Len(s), n - Len(s))
+OBVIOUS
+
+(***************************************************************************)
+(* Theorems about Append                                                   *)
+(***************************************************************************)
+
+THEOREM AppendProperties ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+  PROVE  /\ Append(seq, elt) \in Seq(S)
+         /\ Append(seq, elt) # << >>
+         /\ Len(Append(seq, elt)) = Len(seq)+1
+         /\ \A i \in 1.. Len(seq) : Append(seq, elt)[i] = seq[i]
+         /\ Append(seq, elt)[Len(seq)+1] = elt
+         /\ Range(Append(seq, elt)) = Range(seq) \cup {elt}
+BY DEF Range
+
+THEOREM AppendIsConcat ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+  PROVE  Append(seq, elt) = seq \o <<elt>>
+OBVIOUS
+
+THEOREM HeadTailAppend ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt
+  PROVE  /\ Head(Append(seq, elt)) = IF seq = <<>> THEN elt ELSE Head(seq)
+         /\ Tail(Append(seq, elt)) = IF seq = <<>> THEN <<>> ELSE Append(Tail(seq), elt)
+OBVIOUS
+
+THEOREM AppendInjective ==
+  ASSUME NEW S, NEW e \in S, NEW s \in Seq(S), NEW f \in S, NEW t \in Seq(S)
+  PROVE  Append(s,e) = Append(t,f) <=> s = t /\ e = f
+OBVIOUS
+
+THEOREM SequenceEmptyOrAppend == 
+  ASSUME NEW S, NEW seq \in Seq(S), seq # << >>
+  PROVE \E s \in Seq(S), elt \in S : seq = Append(s, elt)
+<1>. DEFINE front == [i \in 1 .. Len(seq)-1 |-> seq[i]]
+            last == seq[Len(seq)]
+<1>. /\ front \in Seq(S)
+     /\ last \in S
+     /\ seq = Append(front, last)
+  OBVIOUS
+[EXIT 0]
+
+[AGENT] `Append` didn’t expand directly in this context, so I’ll switch to library lemmas rather than relying on its definition.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SequencesTheorems_AppendDef.tla
+@@
+ THEOREM AppendDef ==
+    ASSUME NEW S, NEW seq \\in Seq(S), NEW elt
+    PROVE  Append(seq, elt) =
+                 [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i]
+                                                               ELSE elt]
+-PROOF OBVIOUS
++PROOF BY DEF Append
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_AppendDef.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./SequencesTheorems_AppendDef.tla", line 85, characters 14-19 :
+Ignored unexpandable identifier "Append" in BY DEF.
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SequencesTheorems_AppendDef.tlaps/SequencesTheorems_AppendDef.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+File "./SequencesTheorems_AppendDef.tla", line 85, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt
+           PROVE  Append(seq, elt)
+                  = [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt]
+File "./SequencesTheorems_AppendDef.tla", line 1, character 1 to line 87, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"SequencesTheorems_AppendDef"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll test small proof shapes against TLAPS to find the accepted way to use sequence facts without altering declarations.
+
+[CMD] /bin/zsh -lc "cp SequencesTheorems_AppendDef.tla /tmp/AppendTest.tla
+python3 - <<'PY'
+from pathlib import Path
+p=Path('/tmp/AppendTest.tla')
+s=p.read_text()
+s=s.replace('PROOF BY DEF Append','PROOF\\n<1>. USE INSTANCE SequenceTheorems\\n<1>. QED BY AppendIsConcat, ConcatProperties, EmptySeq')
+p.write_text(s)
+PY
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/AppendTest.tla"
+File "/tmp/AppendTest.tla", line 86, character 9
+required expressions(s) missing before 'keyword INSTANCE'
+File "<unknown>":
+Error: Could not parse "/tmp/AppendTest.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "rg -n \"INSTANCE SequenceTheorems|USE INSTANCE|<.*INSTANCE|BY .*AppendProperties|AppendIsConcat\" ~/.tlapm15/lib/tlaps -g '*.tla'"
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:7:LOCAL INSTANCE SequenceTheorems
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:649:BY <<e>> \in Seq(S), ConcatIsSuffixCancel, AppendIsConcat, Isa
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:659:  BY ConcatIsSuffix, AppendIsConcat, Zenon
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:661:  BY <1>1, IsSuffixProperties, AppendIsConcat, Isa
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:871:    BY AppendProperties, FrontLastAppend
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:186:THEOREM AppendIsConcat ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:221:THEOREM AppendIsConcat ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla:7:LOCAL INSTANCE SequenceTheorems
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:201:BY AppendProperties DEF Broadcast
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,30p' ~/.tlapm15/lib/tlaps/SequencesExtTheorems.tla && sed -n '640,665p' ~/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla && sed -n '190,210p' ~/.tlapm15/lib/tlaps/examples/LamportMutex.tla"
+----------------------- MODULE SequencesExtTheorems ------------------------
+(**************************************************************************)
+(* This module contains theorems about the operators on sequences defined *)
+(* in module SequencesExt.                                                *)
+(**************************************************************************)
+EXTENDS Sequences, SequencesExt, Functions, Integers
+LOCAL INSTANCE SequenceTheorems
+LOCAL INSTANCE NaturalsInduction
+LOCAL INSTANCE WellFoundedInduction
+LOCAL INSTANCE TLAPS
+
+(***************************************************************************)
+(* Theorems about Cons.                                                    *)
+(* Cons(elt, seq) == <<elt>> \o seq                                        *)
+(***************************************************************************)
+
+THEOREM ConsProperties ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+  PROVE /\ Cons(elt, seq) \in Seq(S)
+        /\ Cons(elt, seq) # <<>> 
+        /\ Len(Cons(elt, seq)) = Len(seq)+1
+        /\ Head(Cons(elt, seq)) = elt
+        /\ Tail(Cons(elt, seq)) = seq
+        /\ Cons(elt, seq)[1] = elt
+        /\ \A i \in 1 .. Len(seq) : Cons(elt, seq)[i+1] = seq[i]
+        /\ \A i \in 2 .. Len(seq)+1 : Cons(elt, seq)[i] = seq[i-1]
+
+THEOREM ConsEmpty ==
+  \A x : Cons(x, << >>) = << x >>
+
+    BY <2>1
+  <2>3. u = v \o s
+    BY <2>2, ConcatSimplifications(*!cancelRight*), v \o s \in Seq(S), Zenon
+  <2>. QED  BY <2>3, IsSuff
+... (truncated) ...
+), NEW t \in Seq(S)
+  PROVE  IsSuffix(Append(s,e), Append(t,e)) <=> IsSuffix(s,t)
+BY <<e>> \in Seq(S), ConcatIsSuffixCancel, AppendIsConcat, Isa
+
+THEOREM AppendIsSuffix ==
+  ASSUME NEW S, NEW e \in S, NEW s \in Seq(S), NEW u \in Seq(S),
+         IsSuffix(Append(s,e), u)
+  PROVE  /\ e = Last(u)
+         /\ IsSuffix(s, Front(u))
+<1>. <<e>> \in Seq(S)
+  OBVIOUS
+<1>1. IsSuffix(<<e>>, u)
+  BY ConcatIsSuffix, AppendIsConcat, Zenon
+<1>2. PICK v \in Seq(S) : u = Append(v,e)
+  BY <1>1, IsSuffixProperties, AppendIsConcat, Isa
+<1>3. /\ e = Last(u)
+      /\ v = Front(u)
+      /\ IsSuffix(Append(s,e), Append(Front(u),e))
+  BY <1>2, FrontLastAppend
+(***************************************************************************)
+Mutex == \A p,q \in crit : p = q
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* Proof of type correctness.                                              *)
+(***************************************************************************)
+LEMMA BroadcastType ==
+  ASSUME network \in [Proc -> [Proc -> Seq(Message)]],
+         NEW s \in Proc, NEW m \in Message
+  PROVE  Broadcast(s,m) \in [Proc -> Seq(Message)]
+BY AppendProperties DEF Broadcast
+
+LEMMA TypeCorrect == Spec => []TypeOK
+<1>1. Init => TypeOK
+  BY DEF Init, TypeOK
+<1>2. TypeOK /\ [Next]_vars => TypeOK'
+  <2> SUFFICES ASSUME TypeOK,
+                      [Next]_vars
+               PROVE  TypeOK'
+    OBVIOUS
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+for proof in [
+'''PROOF BY SequenceTheorems"'!AppendIsConcat'"''',
+'''PROOF BY SequenceTheorems"'!AppendProperties'"''',
+'''PROOF BY SequenceTheorems"'!AppendProperties, SequenceTheorems!SeqEqual'"''',
+'''PROOF\\n<1>. QED BY SequenceTheorems"'!AppendProperties, SequenceTheorems!SeqEqual'"''',
+]:
+    s=base.replace('PROOF OBVIOUS', proof)
+    Path('/tmp/AppendTest.tla').write_text(s)
+    print('---', proof.split('\\n')[0])
+    import subprocess, sys
+    r=subprocess.run(['~/.tlapm15/bin/tlapm','-I','~/.tlapm15/lib/tlaps','/tmp/AppendTest.tla'], shell=False, capture_output=True, text=True, executable=None)
+PY"
+[EXIT 1]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proofs=[
+'''PROOF BY SequenceTheorems"'!AppendIsConcat'"''',
+'''PROOF BY SequenceTheorems"'!AppendProperties'"''',
+'''PROOF BY SequenceTheorems"'!AppendProperties, SequenceTheorems!SeqEqual'"''',
+'''PROOF\\n<1>. QED BY SequenceTheorems"'!AppendProperties, SequenceTheorems!SeqEqual'"''',
+]
+for proof in proofs:
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+    print('---', proof.replace('\\n',' / '))
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-2000:])
+PY"
+--- PROOF BY SequenceTheorems!AppendIsConcat
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 87, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+ tlapm ending abnormally with Failure("Expr.Anon: 1EMPTY")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.
+... (truncated) ...
+ine 1, character 1 to line 88, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+ tlapm ending abnormally with Failure("Expr.Anon: 1EMPTY")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#proof in file "p_anon.ml", line 68, characters 22-56
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc 'rg -n "INSTANCE .* WITH|<[''^>]+>.*INSTANCE|HAVE .*INSTANCE|TAKE .*INSTANCE|USE .*Theorems|BY .*!" ~/.tlapm15/lib/tlaps -g '"'*.tla' | head -200"
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:642:    BY <2>2, ConcatSimplifications(*!cancelRight*), v \o s \in Seq(S), Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor9.tla:13:  BY <1>1!1!1
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:492:C == INSTANCE Consensus WITH chosen <- chosenBar
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:500:  BY QuorumNonEmpty, Zenon DEF Init, C!Init, chosenBar, Chosen, ChosenIn, VotedForIn
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:513:    BY <2>1, <2>2, <2>3 DEF C!Next, chosenBar
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:516:  BY <1>1, <1>2, Invariant, Consistent, PTL DEF Spec, C!Spec, Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:932:    BY DEF C!Init
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:945:    BY <2>1 DEF vars, C!vars, chosen, ChosenIn, VotedFor
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:953:    BY <2>3 DEF IncreaseMaxBal, C!vars, chosen, ChosenIn, VotedFor
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:987:      BY <3>3, <3>1, <3>2 DEF C!Next, C!vars
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:991:  BY <1>1, <1>2, VT2, PTL DEF Spec, C!Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:1194:  BY ValueNonempty, C!LiveSpecEquals
+/home/ruize/.tlapm15/lib/tlaps/examples/two-phase/TwoPhase.tla:67:A == INSTANCE Alternate WITH v <- vBar
+/home/ruize/.tl
+... (truncated) ...
+4 DEF Phase2av, P!vars
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1719:          BY <3>3, <4>1 DEF P!sentMsgs
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1723:          BY MsgsTypeLemma DEF P!sentMsgs
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1757:        BY <2>4, <3>1, <4>1, <4>2 DEF P!TLANext, P!Phase2a, Phase2av, Ballot, P!Ballot
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1798:        BY <4>2 DEF P!sentMsgs, msgs
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1893:          BY <5>2, <5>3, <5>4 DEF P!ShowsSafeAt
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1966:          BY <5>4, <5>7, Isa DEF P!ShowsSafeAt, Quorum
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:1980:      BY <3>1, <3>2 DEF P!Phase1a, P!TLANext, Ballot, P!Ballot
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:2028:          BY <5>2, <5>3, Zenon DEF P!ShowsSafeAt, Quorum
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:2064:            BY <5>3, <5>9, <5>10 DEF P!ShowsSafeAt
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:2078:      BY <2>9, <3>1, <3>2 DEF P!vars, FakingAcceptor
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:2083:  BY <1>1, <1>2, Invariance, PTL DEF Spec, P!Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/BPConProof.tla:2117:BY Isa DEF chosen, P!chosen, Quorum, Ballot, P!Ballot
+[EXIT 0]
+
+[AGENT] I’m checking the guard script so the final patch stays within the allowed edit envelope.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' check_proof.py"
+#!/usr/bin/env python3
+"""
+Check a single TLAPS benchmark proof for correctness and cheating.
+
+Designed for AI agents to get quick feedback during proof writing.
+
+Usage:
+    python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+
+Output:
+    - Raw tlapm output (preserved verbatim)
+    - Cheating check (compares against main branch)
+    - Summary verdict: PASS / FAIL / CHEATING
+
+Exit codes:
+    0 = PASS
+    1 = FAIL (proof doesn't verify)
+    2 = CHEATING (tampering detected)
+    3 = ERROR (could not run check)
+"""
+
+import os
+import sys
+import re
+import shutil
+import subprocess
+import tempfile
+import argparse
+import glob
+
+
+def find_tlapm():
+    """Find tlapm binary."""
+    for candidate in ['/tmp/tlapm15/bin/tlapm', '/tmp/tlapm/bin/tlapm', shutil.which('tlapm')]:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def find_tlapm_lib(tlapm_path):
+    """Derive lib path from tlapm binary path."""
+    base = os.path.dirname(os.path.dirname(tlapm_path))
+    for sub in ['lib/tlaps', 'lib/tlapm', 'lib']:
+        path = os.path.join(base, sub)
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def get_main_version(filepath):
+    """Get the file content from the main/master branch."""
+    repo_root = subprocess.run(
+        ['git', 'rev-parse', '--show-toplevel'],
+        capture_output=True, text=True, cwd=os.path.dirname(filepath) or '.'
+    ).stdout.strip()
+
+    if
+... (truncated) ...
+  if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+        bench_dir = os.path.dirname(filepath)
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            dep_basename = os.path.basename(dep_file)
+            if dep_basename != basename:
+                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+
+        cmd = [tlapm_path, '-I', tlapm_lib, tmp_file]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=args.timeout,
+                cwd=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '260,520p' check_proof.py"
+            tlapm_exit = -2
+
+        for line in tlapm_output.split('\n'):
+            emit(line)
+        tlapm_passed = (tlapm_exit == 0)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- Step 2: Cheating check ---
+    emit()
+    emit("=" * 60)
+    emit("CHEATING CHECK")
+    emit("=" * 60)
+
+    cheating_issues = check_cheating(filepath)
+    real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
+    warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
+
+    for line_num, desc in warnings:
+        emit(f"  WARNING: {desc}")
+
+    if real_issues:
+        for line_num, desc in real_issues:
+            emit(f"  Line {line_num}: {desc}")
+    else:
+        emit("  No cheating detected.")
+
+    # --- Step 3: Verdict ---
+    emit()
+    emit("=" * 60)
+    emit("VERDICT")
+    emit("=" * 60)
+
+    if real_issues:
+        verdict = "CHEATING"
+        exit_code = 2
+        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+    elif tlapm_passed:
+        verdict = "PASS"
+        exit_code = 0
+        emit(f"  ✅ PASS — all obligations proved")
+    else:
+        verdict = "FAIL"
+        exit_code = 1
+        # Extract obligation summary
+        m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
+        if m:
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
+        elif "TIMEOUT" in tlapm_output:
+            emit(f"  ❌ FAIL — timeout after {args.timeout}s")
+        else:
+            emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+
+    # Write result file
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(output_lines) + '\n')
+    emit(f"\nResult written to: {output_path}")
+
+    sys.exit(exit_code)
+
+
+if __name__ == '__main__':
+    main()
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proofs=[
+'''PROOF BY AppendProperties''',
+'''PROOF BY AppendProperties, LenAxiom''',
+'''PROOF\\n<1>1. Len(Append(seq, elt)) = Len(seq)+1 BY AppendProperties\\n<1>. QED BY <1>1, AppendProperties''',
+'''PROOF\\n<1>. QED BY AppendProperties DEF Range''',
+]
+for idx, proof in enumerate(proofs):
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+    print('---', idx, proof.replace('\\n',' / '))
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-2500:])
+PY"
+--- 0 PROOF BY AppendProperties
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 87, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/AppendTest.tla", line 85, characters 10-25:
+Error: Operator "AppendProperties" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdli
+... (truncated) ...
+/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/AppendTest.tla", line 86, characters 34-38:
+Error: Operator "Range" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from P_visit.map#usable.usdef in file "p_visit.ml", line 178, characters 21-62
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 188, characters 26-50
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#proof in file "p_anon.ml", line 68, characters 22-56
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proofs=[
+'''PROOF\\n<1>. INSTANCE SequenceTheorems\\n<1>. QED BY AppendProperties''',
+'''PROOF\\n<1>1. INSTANCE SequenceTheorems\\n<1>. QED BY AppendProperties''',
+'''PROOF\\n<1>. USE SequenceTheorems\\n<1>. QED BY AppendProperties''',
+'''PROOF\\n<1>. USE SequenceTheorems"'!AppendProperties'"\\n<1>. QED OBVIOUS''',
+]
+for idx, proof in enumerate(proofs):
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+    print('---', idx, proof.replace('\\n',' / '))
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-2000:])
+PY"
+--- 0 PROOF / <1>. INSTANCE SequenceTheorems / <1>. QED BY AppendProperties
+code 3
+File "/tmp/AppendTest.tla", line 86, character 5
+required expressions(s) missing before 'keyword INSTANCE'
+File "<unknown>":
+Error: Could not parse "/tmp/AppendTest.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+
+--- 1 PROOF / <1>1. INSTANCE SequenceTheorems / <1>. QED BY AppendProperties
+code 3
+File "/tmp/AppendTest.tla", line 86, character 6
+required expressions(s) missing before 'keyword INSTANCE'
+File "<unknown>":
+Error: Could not parse "/tmp/AppendTest.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, chara
+... (truncated) ...
+Theorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+ tlapm ending abnormally with Failure("Expr.Anon: 1EMPTY")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#step in file "p_visit.ml", line 58, characters 19-37
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[AGENT] The standard library’s theorem names are not directly imported here, so I’ll prove from the built-in `Append` expansion and the admitted local length facts.
+
+[CMD] /bin/zsh -lc "find ~/.tlapm15 -name 'Sequences*' -type f -maxdepth 5 -print && find /tmp -name 'Sequences.tla' -o -name 'Naturals.tla' 2>/dev/null | head -20 && rg -n \"---- MODULE Sequences|Append\\(\" ~/.tlapm15 /tmp 2>/dev/null | head -100"
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proofs=[
+'''PROOF\\n<1>1. Len(Append(seq, elt)) = Len(seq)+1 OBVIOUS\\n<1>. QED OBVIOUS''',
+'''PROOF\\n<1>1. \\A i \\in 1..Len(seq) : Append(seq, elt)[i] = seq[i] OBVIOUS\\n<1>. QED OBVIOUS''',
+'''PROOF\\n<1>1. Append(seq, elt)[Len(seq)+1] = elt OBVIOUS\\n<1>. QED OBVIOUS''',
+'''PROOF\\n<1>1. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) OBVIOUS\\n<1>. QED OBVIOUS''',
+]
+for idx, proof in enumerate(proofs):
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+    print('---', idx)
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-2500:])
+PY"
+--- 0
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 89, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/AppendTest.tla", line 87, characters 10-16:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT el
+... (truncated) ...
+                 LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt
+           PROVE  Append(seq, elt)
+                  = [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt]
+File "/tmp/AppendTest.tla", line 1, character 1 to line 89, character 77:
+[ERROR]: 1/2 obligations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[AGENT] Individual `Append` length/index facts prove automatically; I’ll now combine them using extensional equality and sequence domains.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proofs=[
+r'''PROOF
+<1>1. seq \\in Seq(S \\cup {elt}) OBVIOUS
+<1>2. Append(seq, elt) \\in Seq(S \\cup {elt}) OBVIOUS
+<1>3. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>2, LenDef
+<1>. QED OBVIOUS''',
+r'''PROOF
+<1>1. [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i] ELSE elt] \\in Seq(S \\cup {elt}) OBVIOUS
+<1>2. Len([i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i] ELSE elt]) = Len(seq)+1 BY <1>1, LenDomain
+<1>. QED OBVIOUS''',
+r'''PROOF
+<1>. DEFINE rhs == [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\in Seq(S \\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. \\A i \\in 1..(Len(seq)+1) : Append(seq, elt)[i] = rhs[i] OBVIOUS
+<1>. QED BY <1>2, <1>3, <1>4''',
+r'''PROOF
+<1>. DEFINE rhs == [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\in Seq(S \\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. ASSUME NEW i \\in 1..(Len(seq)+1) PROVE Append(seq, elt)[i] = rhs[i]
+  <2>. QED OBVIOUS
+<1>. QED BY <1>2, <1>3, <1>4''',
+]
+for idx, proof in enumerate(proofs):
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof.replace('\\\\','\\')))
+    print('---', idx)
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-3500:])
+PY"
+  File "<stdin>", line 31
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof.replace('\\','\')))
+                                                                                            ^
+SyntaxError: unterminated string literal (detected at line 31)
+[EXIT 1]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proofs=[
+'''PROOF
+<1>1. seq \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>3. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>2, LenDef
+<1>. QED OBVIOUS''',
+'''PROOF
+<1>1. [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt] \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. Len([i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]) = Len(seq)+1 BY <1>1, LenDomain
+<1>. QED OBVIOUS''',
+'''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. \\\\A i \\\\in 1..(Len(seq)+1) : Append(seq, elt)[i] = rhs[i] OBVIOUS
+<1>. QED BY <1>2, <1>3, <1>4''',
+'''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. ASSUME NEW i \\\\in 1..(Len(seq)+1) PROVE Append(seq, elt)[i] = rhs[i]
+  <2>. QED OBVIOUS
+<1>. QED BY <1>2, <1>3, <1>4''',
+]
+for idx, proof in enumerate(proofs):
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+    print('---', idx)
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-3500:])
+PY"
+--- 0
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 91, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/AppendTest.tla", line 89, characters 10-16:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  S
+... (truncated) ...
+list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+
+--- 2
+code 255
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+File "/tmp/AppendTest.tla", line 1, character 1 to line 93, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+
+--- 3
+code 255
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+File "/tmp/AppendTest.tla", line 1, character 1 to line 94, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+[EXIT 0]
+
+[AGENT] The component facts are accepted; I’m isolating the remaining extensionality step to satisfy TLAPS explicitly.
+
+[CMD] /bin/zsh -lc "cat >/tmp/AppendTest.tla <<'EOF'
+-------------------------- MODULE SequencesTheorems_AppendDef -------------------------
+EXTENDS Integers, Sequences, TLAPS
+AXIOM SeqDef == \\A S : Seq(S) = UNION {[1..n -> S] : n \\in Nat}
+AXIOM LenDef == \\A S : \\A seq \\in Seq(S) : /\\ Len(seq) \\in Nat /\\ DOMAIN seq = 1..Len(seq)
+THEOREM LenAxiom == ASSUME NEW S, NEW seq \\in Seq(S) PROVE /\\ Len(seq) \\in Nat /\\ seq \\in [1..Len(seq) -> S] PROOF OMITTED
+THEOREM LenDomain == \\A S : \\A s \\in Seq(S) : \\A n \\in Nat : DOMAIN s = 1..n => n = Len(s) PROOF OMITTED
+AXIOM HeadDef == \\A s : Head(s) = s[1]
+AXIOM TailDef == \\A s : Tail(s) = [i \\in 1..(Len(s)-1) |-> s[i+1]]
+AXIOM SubSeqDef == \\A s, m, n : SubSeq(s, m, n) = [i \\in 1..(1+n-m) |-> s[i+m-1]]
+THEOREM InitialSubSeq == ASSUME NEW S, NEW s \\in Seq(S), NEW j \\in 0..Len(s) PROVE /\\ SubSeq(s, 1, j) = [i \\in 1..j |-> s[i]] /\\ SubSeq(s, 1, j) \\in Seq(S) /\\ Len(SubSeq(s, 1, j)) = j PROOF OMITTED
+THEOREM ElementOfSeq == ASSUME NEW S, NEW seq \\in Seq(S), NEW n \\in 1..Len(seq) PROVE seq[n] \\in S PROOF OMITTED
+THEOREM EmptySeq == ASSUME NEW S PROVE /\\ << >> \\in Seq(S) /\\ \\A seq \\in Seq(S) : (seq = << >>) <=> (Len(seq) = 0) PROOF OMITTED
+THEOREM HeadAndTailOfSeq == ASSUME NEW S, NEW seq \\in Seq(S), seq # << >> PROVE /\\ Head(seq) \\in S /\\ Tail(seq) \\in Seq(S) PROOF OMITTED
+Remove(i, seq) == [j \\in 1..(Len(seq)-1) |-> IF j < i THEN seq[j] ELSE seq[j+1]]
+THEOREM RemoveSeq == ASSUME NEW S, NEW seq \\in Seq(S), NEW i \\in 1..Len(seq) PROVE Remove(i, seq) \\in Seq(S) PROOF OMITTED
+THEOREM AppendDef ==
+   ASSUME NEW S, NEW seq \\in Seq(S), NEW elt
+   PROVE  Append(seq, elt) =
+                [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i]
+                                                              ELSE elt]
+PROOF
+<1>. DEFINE rhs == [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\in Seq(S \\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. \\A i \\in 1..(Len(seq)+1) : Append(seq, elt)[i] = rhs[i] OBVIOUS
+<1>. QED BY <1>2, <1>3, <1>4
+=============================================================================
+EOF
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/AppendTest.tla"
+File "/tmp/AppendTest.tla", line 1, character 1 to line 28, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 27, characters 10-11:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>2 ,
+                  <1>3 ,
+                  <1>4 
+           PROVE  Append(seq, elt)
+                  = [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt]
+File "/tmp/AppendTest.tla", line 1, character 1 to line 28, character 77:
+[ERROR]: 1/10 obligations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+qeds=[
+'BY <1>2, <1>3, <1>4, Extensionality',
+'BY <1>2, <1>3, <1>4, FcnExtensionality',
+'BY <1>2, <1>3, <1>4, FunctionExtensionality',
+'BY <1>2, <1>3, <1>4, FunExtensionality',
+'BY <1>2, <1>3, <1>4 DEF rhs',
+'BY <1>2, <1>3, <1>4, Isa',
+'BY <1>2, <1>3, <1>4, Zenon',
+'BY <1>2, <1>3, <1>4, TLAPS',
+]
+prefix='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. \\\\A i \\\\in 1..(Len(seq)+1) : Append(seq, elt)[i] = rhs[i] OBVIOUS
+<1>. QED '''
+for idx,q in enumerate(qeds):
+    proof=prefix+q
+    Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+    print('---', idx, q)
+    r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=30)
+    print('code',r.returncode)
+    print((r.stdout+r.stderr)[-2000:])
+PY"
+--- 0 BY <1>2, <1>3, <1>4, Extensionality
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 93, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/AppendTest.tla", line 91, characters 31-44:
+Error: Operator "Extensionality" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#proof in file "p_anon.ml", line 68, characters 22-56
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Call
+... (truncated) ...
+gations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+
+--- 5 BY <1>2, <1>3, <1>4, Isa
+Traceback (most recent call last):
+  File "<stdin>", line 25, in <module>
+  File "/usr/lib/python3.12/subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 2116, in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+  File "/usr/lib/python3.12/subprocess.py", line 1253, in _check_timeout
+    raise TimeoutExpired(
+subprocess.TimeoutExpired: Command '['/home/ruize/.tlapm15/bin/tlapm', '-I', '/home/ruize/.tlapm15/lib/tlaps', '/tmp/AppendTest.tla']' timed out after 30 seconds
+[EXIT 1]
+
+[CMD] /bin/zsh -lc "rg -n \"CASE|PICK|DOMAIN .* = .* /\\\\|= .* BY .*DOMAIN|\\A .*DOMAIN|\\[.*\\|->\" ~/.tlapm15/lib/tlaps -g '*.tla' | head -200"
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:30:  IF n>0 THEN [i \in DOMAIN B |-> n*B[i] ] ELSE EmptyBag 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:37:SeqToBag(seq) == [ x \in Range(seq) |-> Cardinality({i \in DOMAIN seq: seq[i]=x}) ]
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:71:         /\ B=EmptyBag <=> DOMAIN B ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:72:         /\ DOMAIN EmptyBag ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:88:        /\ n>0 => DOMAIN(Scaling(n, B)) = DOMAIN B
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:98:  <2>1. CASE m>0 /\ n>0
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:100:  <2>2. CASE m=0
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:102:  <2>3. CASE n=0
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:139:         /\ DOMAIN(B1 (+) B2) = DOMAIN B1 \cup DOMAIN B2
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:150:         /\ DOMAIN (B1 (-) B2) =
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:151:               {e \in DOMAIN B1 : e \notin DOMAIN B2 \/ B1[e] > B2[e]}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:27:  IF n>0 THEN [i \in DOMAIN B |-> n*B[i] ] ELSE EmptyBag 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:34:SeqToBag(seq) == [ x \in Range(seq) |-> Cardinality({i \in DOMAIN seq: seq[i]=x}) ]
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:65:         /\ B=EmptyBag <=> DOMAIN B ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsThe
+... (truncated) ...
+heorems_proofs.tla:454:<1>2. PICK Y : Y = S \ T  BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:470:      f        == CHOOSE f : f = [i \in Nat |-> IF i = 0 THEN f0 ELSE Def(f[i-1],i)]
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:509:    <3>1. PICK s \in Ci[i] : F[s] = t  BY <1>5
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:518:<1>7. PICK C : C = UNION {Ci[i] : i \in Nat}  OBVIOUS
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:524:<1>9. PICK FC : FC = {F[c] : c \in C}  BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:532:    <3>1. PICK i \in Nat : c \in Ci[i]  BY <1>7
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:533:    <3>2. CASE i = 0  BY <3>1, <3>2, <1>3, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:534:    <3>3. CASE i # 0
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:536:      <4>1. PICK s \in Ci[i-1] : F[s] = c  BY <3>1, <3>3, <1>5, SMT
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:538:      <4>0. PICK j \in Nat : i = j+1
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:540:      <4>1. PICK s \in Ci[j] : F[s] = c
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:546:    <3>1. CASE c \in Y  BY <3>1, <1>3, <1>7, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:547:    <3>2. CASE c \in FC
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:548:      <4>1. PICK s \in C : F[s] = c  BY <3>2, <1>9
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg -n \"THEOREM|LEMMA|Function|DOMAIN|Ext|Equal|Fcn\" ~/.tlapm15/lib/tlaps/FunctionTheorems.tla ~/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla | head -140 && sed -n '1,120p' ~/.tlapm15/lib/tlaps/FunctionTheorems.tla"
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:1:--------------------- MODULE FunctionTheorems_proofs ------------------------
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:9:EXTENDS Functions, Integers, NaturalsInduction, WellFoundedInduction, TLAPS
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:14:(* Function restriction.                                                   *)
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:18:THEOREM Fun_RestrictProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:31:THEOREM Fun_RangeProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:46:THEOREM Fun_InverseProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:60:THEOREM Fun_IsInj ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:67:THEOREM Fun_IsSurj ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:74:THEOREM Fun_IsBij ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:94:THEOREM Fun_InjectionProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:101:THEOREM Fun_SurjectionProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:109:THEOREM Fun_BijectionProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:128:THEOREM Fun_SmallestSurjectionIsBijection ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:164:THEOREM Fun_InjTransitive ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.t
+... (truncated) ...
+ PROVE  /\ F \in [S -> T]
+         /\ \A a,b \in S : F[a] = F[b] => a = b
+
+THEOREM Fun_SurjectionProperties ==
+  ASSUME NEW S, NEW T, NEW F \in Surjection(S,T)
+  PROVE  /\ F \in [S -> T]
+         /\ \A t \in T : \E s \in S : F[s] = t
+         /\ Range(F) = T
+
+THEOREM Fun_BijectionProperties ==
+  ASSUME NEW S, NEW T, NEW F \in Bijection(S,T)
+  PROVE  /\ F \in [S -> T]
+         /\ F \in Injection(S,T)
+         /\ F \in Surjection(S,T)
+         /\ \A a,b \in S : F[a] = F[b] => a = b
+         /\ \A t \in T : \E s \in S : F[s] = t
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A surjection in [S -> T] such that there is no surjection from any      *)
+(* subset of S to T is a bijection.                                        *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_SmallestSurjectionIsBijection ==
+  ASSUME NEW S, NEW T, NEW f \in Surjection(S,T),
+         \A U \in SUBSET S : U # S => Surjection(U,T) = {}
+  PROVE  f \in Bijection(S,T)
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proof='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. \\\\A i \\\\in DOMAIN Append(seq, elt) : Append(seq, elt)[i] = rhs[i] BY <1>2
+<1>5. Append(seq, elt) = rhs BY <1>3, <1>4
+<1>. QED BY <1>5 DEF rhs'''
+Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=60)
+print('code',r.returncode)
+print(r.stdout+r.stderr)
+PY"
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 94, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/AppendTest.tla", line 91, characters 30-31:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>3 ,
+                  <1>4 
+           PROVE  Append(seq, elt) = rhs
+File "/tmp/AppendTest.tla", line 1, character 1 to line 94, character 77:
+[ERROR]: 1/12 obligations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg -n \"DOMAIN .* = DOMAIN|DOMAIN .* /\\\\ \\\\A.*\\[|= .* BY .*\\\\A.*DOMAIN|\\\\A .* \\\\in DOMAIN .*: .*\\[.*\\] = .*\\[\" ~/.tlapm15/lib/tlaps -g '*.tla' | head -200"
+rg: regex parse error:
+    (?:DOMAIN .* = DOMAIN|DOMAIN .* /\ \A.*\[|= .* BY .*\A.*DOMAIN|\A .* \in DOMAIN .*: .*\[.*\] = .*\[)
+                                                                         ^^
+error: unrecognized escape sequence
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg -n \"DOMAIN .* = DOMAIN|\\\\A .*DOMAIN|FunExt|Extensional|Function.*equal|equal.*function|f = g|= g BY\" ~/.tlapm15/lib/tlaps -g '*.tla' | head -200"
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:30:  IF n>0 THEN [i \in DOMAIN B |-> n*B[i] ] ELSE EmptyBag 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:71:         /\ B=EmptyBag <=> DOMAIN B ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:72:         /\ DOMAIN EmptyBag ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:88:        /\ n>0 => DOMAIN(Scaling(n, B)) = DOMAIN B
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:139:         /\ DOMAIN(B1 (+) B2) = DOMAIN B1 \cup DOMAIN B2
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:150:         /\ DOMAIN (B1 (-) B2) =
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:151:               {e \in DOMAIN B1 : e \notin DOMAIN B2 \/ B1[e] > B2[e]}
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:278:  PROVE /\ DOMAIN Reverse(seq) = DOMAIN seq
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:281:      /\ DOMAIN Reverse(seq) = 1 .. Len(seq)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:306:         /\ IsPrefix(s,t) <=> Len(s) <= Len(t) /\ s = Restrict(t, DOMAIN s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:326:         /\ IsStrictPrefix(s,t) <=> Len(s) < Len(t) /\ s = Restrict(t, DOMAIN s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:350:      /\ IsStrictPrefix(s,t) <=> Len(s) < Len(t) /\ s = Restrict(t, DOMAIN s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExt.tla:28:  { s[i] : i \in DOMAIN s }
+/home/ruize
+... (truncated) ...
+\in (DOMAIN f) \ {x} |-> f[y]]
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:97:          {[y \in (DOMAIN f) \cup {x} |-> IF y = x THEN i ELSE f[y]] :
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:99:      Biggest == LET Range1 == {B[x] : x \in DOMAIN B}
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:103:      RSB[BB \in UNION {[S -> 1..Biggest] : S \in SUBSET DOMAIN B}] ==
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:105:                      ELSE LET x == CHOOSE x \in DOMAIN BB : TRUE
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:116:  IN  {SB \in AllBagsOfSubset : \A e \in DOMAIN SB : SB[e] \leq B[e]}
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:116:  PROVE  f = g
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:122:  PROVE  f = g
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:149:  PROVE  f = g
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:27:  IF n>0 THEN [i \in DOMAIN B |-> n*B[i] ] ELSE EmptyBag 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:65:         /\ B=EmptyBag <=> DOMAIN B ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:66:         /\ DOMAIN EmptyBag ={}
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:81:        /\ n>0 => DOMAIN(Scaling(n, B)) = DOMAIN B
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:110:         /\ DOMAIN(B1 (+) B2) = DOMAIN B1 \cup DOMAIN B2
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:120:         /\ DOMAIN (B1 (-) B2) =
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla:121:               {e \in DOMAIN B1 : e \notin DOMAIN B2 \/ B1[e] > B2[e]}
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '320,365p' ~/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla && sed -n '100,135p' ~/.tlapm15/lib/tlaps/NaturalsInduction.tla && sed -n '125,145p' ~/.tlapm15/lib/tlaps/TLAPS.tla"
+   OBVIOUS
+  <2>. QED  BY <2>1, <1>2
+<1>. QED  BY <1>1, <1>2, NatInduction, Isa
+
+(***************************************************************************)
+(* The following theorems show uniqueness of functions recursively defined *)
+(* over Nat.                                                               *)
+(***************************************************************************)
+THEOREM RecursiveFcnOfNatUnique ==
+  ASSUME NEW Def(_,_), NEW f, NEW g,
+         f = [n \in Nat |-> Def(f,n)],
+         g = [n \in Nat |-> Def(g,n)],
+         ASSUME NEW n \in Nat, NEW ff, NEW gg,
+                \A i \in 0..(n-1) : ff[i] = gg[i] 
+         PROVE  Def(ff, n) = Def(gg, n)
+  PROVE  f = g
+<1>1. SUFFICES \A n \in Nat : f[n] = g[n]
+  OBVIOUS
+<1>2. ASSUME NEW n \in Nat, \A i \in 0 .. n-1 : f[i] = g[i]
+      PROVE  f[n] = g[n]
+  <2>1. Def(f,n) = Def(g,n)  BY <1>2
+  <2>. QED  BY <2>1, Zenon
+<1>. QED
+  BY <1>2, GeneralNatInduction, Isa
+
+THEOREM NatInductiveUnique == 
+  ASSUME NEW Def(_,_), NEW f, NEW g, NEW f0,
+         NatInductiveDefConclusion(f, f0, Def),
+         NatInductiveDefConclusion(g, f0, Def)
+  PROVE  f = g
+<1>. USE DEF NatInductiveDefConclusion
+<1>1. SUFFICES \A n \in Nat : f[n] = g[n]
+  OBVIOUS
+<1>2. f[0] = g[0]  OBVIOUS
+<1>3. ASSUME NEW n \in Nat, f[n] = g[n]
+      PROVE  f[n+1] = g[n+1]
+  BY <1>3
+<1>. QED
+  BY <1>2, <1>3, NatInduction, Isa
+
+(***************************************************************************)
+(* The following theorems are analogous to the prec
+... (truncated) ...
+                                   
+THEOREM FiniteNatInductiveDef ==
+  ASSUME NEW Def(_,_), NEW f, NEW c, NEW m \in Nat, NEW n \in Nat,
+(***************************************************************************)
+(* The following theorem expresses the (useful implication of the) law of  *)
+(* set extensionality, which can be written as                             *)
+(*                                                                         *)
+(*    THEOREM  \A S, T : (S = T) <=> (\A x : (x \in S) <=> (x \in T))      *)
+(*                                                                         *)
+(* Theorem SetExtensionality is sometimes required by the SMT backend for  *)
+(* reasoning about sets. It is usually counterproductive to include        *)
+(* theorem SetExtensionality in a BY clause for the Zenon or Isabelle      *)
+(* backends. Instead, use the pragma IsaWithSetExtensionality to instruct  *)
+(* the Isabelle backend to use the rule of set extensionality.             *)
+(***************************************************************************)
+IsaWithSetExtensionality == TRUE
+           (*{ by (prover:"isabelle"; tactic:"(auto intro: setEqualI)")}*)
+
+THEOREM SetExtensionality == \A S,T : (\A x : x \in S <=> x \in T) => S = T
+OBVIOUS
+
+(***************************************************************************)
+(* The following theorem is needed to deduce NotInSetS \notin SetS from    *)
+(* the definition                                                          *)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proof='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) = rhs
+  <2>1. SUFFICES \\\\A i \\\\in 1..(Len(seq)+1) : Append(seq, elt)[i] = rhs[i]
+    OBVIOUS
+  <2>. QED OBVIOUS
+<1>. QED BY <1>1 DEF rhs'''
+Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=60)
+print('code',r.returncode)
+print(r.stdout+r.stderr)
+PY"
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 93, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+File "/tmp/AppendTest.tla", line 89, characters 5-11:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <2>1 
+           PROVE  Append(seq, elt) = rhs
+File "/tmp/AppendTest.tla", line 1, character 1 to line 93, character 77:
+[ERROR]: 1/4 obligations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proof='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1) BY <1>1, LenDef
+<1>3. DOMAIN rhs = 1..(Len(seq)+1) OBVIOUS
+<1>4. \\\\A i \\\\in DOMAIN Append(seq, elt) : Append(seq, elt)[i] = rhs[i] BY <1>2
+<1>5. Append(seq, elt) = rhs BY <1>2, <1>3, <1>4, Isa
+<1>. QED BY <1>5 DEF rhs'''
+Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=120)
+print('code',r.returncode)
+print(r.stdout+r.stderr)
+PY"
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 94, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/AppendTest.tla", line 91, characters 30-31:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>2 ,
+                  <1>3 ,
+                  <1>4 ,
+                  Isa 
+           PROVE  Append(seq, elt) = rhs
+File "/tmp/AppendTest.tla", line 1, character 1 to line 94, character 77:
+[ERROR]: 1/14 obligations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+proof='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>2. Len(Append(seq, elt)) = Len(seq)+1 OBVIOUS
+<1>3. rhs \\\\in Seq(S \\\\cup {elt}) OBVIOUS
+<1>4. Len(rhs) = Len(seq)+1 BY <1>3, LenDomain
+<1>5. \\\\A i \\\\in 1..Len(Append(seq, elt)) : Append(seq, elt)[i] = rhs[i] BY <1>2
+<1>6. Append(seq, elt) = rhs BY <1>1, <1>3, <1>2, <1>4, <1>5, SequenceTheorems"'!SeqEqual
+<1>. QED BY <1>6 DEF rhs'"'''
+Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=60)
+print('code',r.returncode)
+print(r.stdout+r.stderr)
+PY"
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 95, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+ tlapm ending abnormally with Failure("Expr.Anon: 1EMPTY")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text().replace('PROOF BY DEF Append','PROOF OBVIOUS')
+for q in ['BY <1>1, <1>3, <1>2, <1>4, <1>5, SeqEqual','BY <1>1, <1>3, <1>2, <1>4, <1>5']:
+ proof=f'''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |-> IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {{elt}}) OBVIOUS
+<1>2. Len(Append(seq, elt)) = Len(seq)+1 OBVIOUS
+<1>3. rhs \\\\in Seq(S \\\\cup {{elt}}) OBVIOUS
+<1>4. Len(rhs) = Len(seq)+1 BY <1>3, LenDomain
+<1>5. \\\\A i \\\\in 1..Len(Append(seq, elt)) : Append(seq, elt)[i] = rhs[i] BY <1>2
+<1>6. Append(seq, elt) = rhs {q}
+<1>. QED BY <1>6 DEF rhs'''
+ Path('/tmp/AppendTest.tla').write_text(base.replace('PROOF OBVIOUS', proof))
+ print('---',q)
+ r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=60)
+ print('code',r.returncode)
+ print((r.stdout+r.stderr)[-2500:])
+PY"
+--- BY <1>1, <1>3, <1>2, <1>4, <1>5, SeqEqual
+code 3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 95, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/AppendTest.tla", line 92, characters 63-70:
+Error: Operator "SeqEqual" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map
+... (truncated) ...
+           /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>1 ,
+                  <1>3 ,
+                  <1>2 ,
+                  <1>4 ,
+                  <1>5 
+           PROVE  Append(seq, elt) = rhs
+File "/tmp/AppendTest.tla", line 1, character 1 to line 95, character 77:
+[ERROR]: 1/16 obligations failed.
+There were backend errors processing module `"AppendTest"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[AGENT] I found the local module lacks `SeqEqual`, but it can be rederived with a `SUFFICES` extensionality step; I’ll patch that form into the real file.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SequencesTheorems_AppendDef.tla
+@@
+ THEOREM AppendDef ==
+    ASSUME NEW S, NEW seq \\in Seq(S), NEW elt
+    PROVE  Append(seq, elt) =
+                 [i \\in 1..(Len(seq)+1) |-> IF i \\leq Len(seq) THEN seq[i]
+                                                               ELSE elt]
+-PROOF BY DEF Append
++PROOF
++<1>. DEFINE rhs == [i \\in 1..(Len(seq)+1) |->
++                      IF i \\leq Len(seq) THEN seq[i] ELSE elt]
++<1>1. Append(seq, elt) \\in Seq(S \\cup {elt})
++  OBVIOUS
++<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1)
++  BY <1>1, LenDef
++<1>3. DOMAIN rhs = 1..(Len(seq)+1)
++  OBVIOUS
++<1>4. \\A i \\in DOMAIN Append(seq, elt) : Append(seq, elt)[i] = rhs[i]
++  BY <1>2
++<1>5. SUFFICES ASSUME DOMAIN Append(seq, elt) = DOMAIN rhs,
++                       \\A i \\in DOMAIN Append(seq, elt) :
++                         Append(seq, elt)[i] = rhs[i]
++                PROVE  Append(seq, elt) = rhs
++  OBVIOUS
++<1>6. Append(seq, elt) = rhs
++  BY <1>2, <1>3, <1>4, <1>5
++<1>. QED
++  BY <1>6 DEF rhs
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_AppendDef.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SequencesTheorems_AppendDef.tlaps/SequencesTheorems_AppendDef.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+File "./SequencesTheorems_AppendDef.tla", line 102, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>2 ,
+                  <1>3 ,
+                  <1>4 ,
+                  <1>5 
+           PROVE  Append(seq, elt) = rhs
+File "./SequencesTheorems_AppendDef.tla", line 1, character 1 to line 106, character 77:
+[ERROR]: 1/15 obligations failed.
+There were backend errors processing module `"SequencesTheorems_AppendDef"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The only failing step is function extensionality; I’ll try TLAPS’s SMT backend for that specific small obligation.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+s=Path('SequencesTheorems_AppendDef.tla').read_text()
+s=s.replace('BY <1>2, <1>3, <1>4, <1>5','BY <1>2, <1>3, <1>4, <1>5, SMT')
+Path('SequencesTheorems_AppendDef.tla').write_text(s)
+PY
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_AppendDef.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/SequencesTheorems_AppendDef.tlaps/SequencesTheorems_AppendDef.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+File "./SequencesTheorems_AppendDef.tla", line 102, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>2 ,
+                  <1>3 ,
+                  <1>4 ,
+                  <1>5 ,
+                  SMT 
+           PROVE  Append(seq, elt) = rhs
+File "./SequencesTheorems_AppendDef.tla", line 1, character 1 to line 106, character 77:
+[ERROR]: 1/16 obligations failed.
+There were backend errors processing module `"SequencesTheorems_AppendDef"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll instantiate the extensionality suffices condition as a separate domain-equality fact, which should avoid the weak automatic instantiation.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SequencesTheorems_AppendDef.tla
+@@
+ <1>4. \\A i \\in DOMAIN Append(seq, elt) : Append(seq, elt)[i] = rhs[i]
+   BY <1>2
+-<1>5. SUFFICES ASSUME DOMAIN Append(seq, elt) = DOMAIN rhs,
++<1>5. DOMAIN Append(seq, elt) = DOMAIN rhs
++  BY <1>2, <1>3
++<1>6. SUFFICES ASSUME DOMAIN Append(seq, elt) = DOMAIN rhs,
+                        \\A i \\in DOMAIN Append(seq, elt) :
+                          Append(seq, elt)[i] = rhs[i]
+                 PROVE  Append(seq, elt) = rhs
+   OBVIOUS
+-<1>6. Append(seq, elt) = rhs
+-  BY <1>2, <1>3, <1>4, <1>5, SMT
++<1>7. Append(seq, elt) = rhs
++  BY <1>4, <1>5, <1>6
+ <1>. QED
+-  BY <1>6 DEF rhs
++  BY <1>7 DEF rhs
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_AppendDef.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SequencesTheorems_AppendDef.tlaps/SequencesTheorems_AppendDef.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+File "./SequencesTheorems_AppendDef.tla", line 104, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat},
+                  LenDef ==
+                    \A S :
+                       \A seq \in Seq(S) :
+                          /\ Len(seq) \in Nat
+                          /\ DOMAIN seq = 1..Len(seq),
+                  HeadDef == \A s : Head(s) = s[1],
+                  TailDef ==
+                    \A s : Tail(s) = [i \in 1..Len(s) - 1 |-> s[i + 1]],
+                  SubSeqDef ==
+                    \A s, m, n :
+                       SubSeq(s, m, n)
+                       = [i \in 1..1 + n - m |-> s[i + m - 1]],
+                  NEW CONSTANT S,
+                  NEW CONSTANT seq \in 
+                  Seq(S),
+                  NEW CONSTANT elt,
+                  rhs ==
+                    [i \in 1..Len(seq) + 1 |->
+                       IF i =< Len(seq) THEN seq[i] ELSE elt],
+                  <1>4 ,
+                  <1>5 ,
+                  <1>6 
+           PROVE  Append(seq, elt) = rhs
+File "./SequencesTheorems_AppendDef.tla", line 1, character 1 to line 108, character 77:
+[ERROR]: 1/17 obligations failed.
+There were backend errors processing module `"SequencesTheorems_AppendDef"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Function extensionality itself is not automatic here, so I’ll rewrite both sides into identical function constructors instead.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+import subprocess, os
+base=Path('SequencesTheorems_AppendDef.tla').read_text()
+start=base.index('PROOF\\n<1>. DEFINE rhs')
+end=base.index('\\n\\n=============================================================================')
+prefix=base[:start]
+suffix=base[end:]
+proof='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |->
+                      IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt})
+  OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1)
+  BY <1>1, LenDef
+<1>3. Append(seq, elt)
+        = [i \\\\in DOMAIN Append(seq, elt) |-> Append(seq, elt)[i]]
+  OBVIOUS
+<1>4. [i \\\\in DOMAIN Append(seq, elt) |-> Append(seq, elt)[i]] = rhs
+  BY <1>2 DEF rhs
+<1>5. Append(seq, elt) = rhs
+  BY <1>3, <1>4
+<1>. QED
+  BY <1>5 DEF rhs'''
+Path('/tmp/AppendTest.tla').write_text(prefix+proof+suffix)
+r=subprocess.run([os.path.expanduser('~/.tlapm15/bin/tlapm'),'-I',os.path.expanduser('~/.tlapm15/lib/tlaps'),'/tmp/AppendTest.tla'], capture_output=True, text=True, timeout=60)
+print('code',r.returncode)
+print(r.stdout+r.stderr)
+PY"
+code 0
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/AppendTest.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/AppendTest.tlaps/AppendTest.thy" *)
+(* fingerprints written in ".tlacache/AppendTest.tlaps/fingerprints" *)
+File "/tmp/AppendTest.tla", line 1, character 1 to line 102, character 77 :
+Warning: module name "SequencesTheorems_AppendDef" does not match file name "AppendTest.tla".
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/AppendTest.tla", line 1, character 1 to line 102, character 77:
+[INFO]: All 12 obligations proved.
+[EXIT 0]
+
+[AGENT] That proof verifies in isolation; I’ll install it in the target file and run the required commands.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('SequencesTheorems_AppendDef.tla')
+s=p.read_text()
+start=s.index('PROOF\\n<1>. DEFINE rhs')
+end=s.index('\\n\\n=============================================================================')
+proof='''PROOF
+<1>. DEFINE rhs == [i \\\\in 1..(Len(seq)+1) |->
+                      IF i \\\\leq Len(seq) THEN seq[i] ELSE elt]
+<1>1. Append(seq, elt) \\\\in Seq(S \\\\cup {elt})
+  OBVIOUS
+<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1)
+  BY <1>1, LenDef
+<1>3. Append(seq, elt)
+        = [i \\\\in DOMAIN Append(seq, elt) |-> Append(seq, elt)[i]]
+  OBVIOUS
+<1>4. [i \\\\in DOMAIN Append(seq, elt) |-> Append(seq, elt)[i]] = rhs
+  BY <1>2 DEF rhs
+<1>5. Append(seq, elt) = rhs
+  BY <1>3, <1>4
+<1>. QED
+  BY <1>5 DEF rhs'''
+p.write_text(s[:start]+proof+s[end:])
+PY
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_AppendDef.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SequencesTheorems_AppendDef.tlaps/SequencesTheorems_AppendDef.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+File "./SequencesTheorems_AppendDef.tla", line 1, character 1 to line 102, character 77:
+[INFO]: All 12 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS is clean now; I’ll run the required checker and inspect the final diff.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py SequencesTheorems_AppendDef.tla --tlapm ~/.tlapm15/bin/tlapm --tlapm-lib ~/.tlapm15/lib/tlaps && git diff -- SequencesTheorems_AppendDef.tla'
+Checking: SequencesTheorems_AppendDef.tla
+tlapm: /home/ruize/.tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SequencesTheorems_AppendDef.tlaps/SequencesTheorems_AppendDef.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_AppendDef.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_ne8i92l8/SequencesTheorems_AppendDef.tla", line 1, character 1 to line 102, character 77:
+[INFO]: All 12 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SequencesTheorems_AppendDef_u8pr22dr/SequencesTheorems_AppendDef.result
+diff --git a/SequencesTheorems_AppendDef.tla b/SequencesTheorems_AppendDef.tla
+index 336ac96..d1deb2f 100644
+--- a/SequencesTheorems_AppendDef.tla
++++ b/SequencesTheorems_AppendDef.tla
+@@ -82,6 +82,21 @@ THEOREM AppendDef ==
+    PROVE  Append(seq, elt) =
+                 [i \in 1..(Len(seq)+1) |-> IF i \leq Len(seq) THEN seq[i]
+                                                               ELSE elt]
+-PROOF OBVIOUS
++PROOF
++<1>. DEFINE rhs == [i \in 1..(Len(seq)+1) |->
++                      IF i \leq Len(seq) THEN seq[i] ELSE elt]
++<1>1. Append(seq, elt) \in Seq(S \cup {elt})
++  OBVIOUS
++<1>2. DOMAIN Append(seq, elt) = 1..(Len(seq)+1)
++  BY <1>1, LenDef
++<1>3. Append(seq, elt)
++        = [i \in DOMAIN Append(seq, elt) |-> Append(seq, elt)[i]]
++  OBVIOUS
++<1>4. [i \in DOMAIN Append(seq, elt) |-> Append(seq, elt)[i]] = rhs
++  BY <1>2 DEF rhs
++<1>5. Append(seq, elt) = rhs
++  BY <1>3, <1>4
++<1>. QED
++  BY <1>5 DEF rhs
+ 
+-=============================================================================
+\ No newline at end of file
++=============================================================================
+[EXIT 0]
+
+[AGENT] The checker passed. I’ll mark the plan complete and summarize the verified proof.
+
+[AGENT] Implemented and verified the TLAPS proof for the final `AppendDef` theorem.
+
+- Replaced only the final `PROOF OBVIOUS` in `SequencesTheorems_AppendDef.tla:85`.
+- Proof strategy: define the RHS, use `LenDef` to get `DOMAIN Append(seq, elt) = 1..(Len(seq)+1)`, rewrite `Append(seq, elt)` as its function constructor over its domain, then show it equals the RHS.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_AppendDef.tla`.
+- Ran `python3 check_proof.py SequencesTheorems_AppendDef.tla --tlapm ~/.tlapm15/bin/tlapm --tlapm-lib ~/.tlapm15/lib/tlaps`; result: `PASS — all obligations proved`, no cheating detected.

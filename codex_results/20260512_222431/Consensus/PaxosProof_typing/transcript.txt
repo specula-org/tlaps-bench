@@ -1,0 +1,572 @@
+Benchmark: Consensus/PaxosProof_typing.tla
+Time: 60s
+Tokens: 348,756 input / 2,232 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing proof style, then iteratively run TLAPS and the checker.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' PaxosProof_typing.tla && printf '\\n--- tail ---\\n' && tail -n 120 PaxosProof_typing.tla"
+---- MODULE PaxosProof_typing ----
+EXTENDS Integers, NaturalsInduction, TLAPS
+(* ---- Content from module Sets ---- *)
+  \** NB: Module NaturalsInduction comes from the TLAPS library, usually
+  \** installed in /usr/local/lib/tlaps. Make sure this is in your Toolbox
+  \** search path, see Preferences/TLA+ Preferences.
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+(****************************************************************************)
+(* Finite sets and cardinality are defined in the TLA+ standard module      *)
+(* FiniteSets, but this is not yet natively supported by TLAPS. For the     *)
+(* time being, we use the following axiom for defining set cardinality.     *)
+(****************************************************************************)
+\* Cardinality(S) == CHOOSE n : (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+      
+... (truncated) ...
+             /\ m[2] \geq maxBal[a]
+                              /\ maxBal' = [maxBal EXCEPT ![a] = m[2]]
+                              /\ maxVBal' = [maxVBal EXCEPT ![a] = m[2]]
+                              /\ maxVal' = [maxVal EXCEPT ![a] = m[3]]
+                              /\ Send(<<"2b", a, m[2], m[3]>>)
+----------------------------------------------------------------------------
+Next == \/ \E b \in Ballot : \/ Phase1a(b)
+                             \/ \E v \in Value : Phase2a(b, v)
+        \/ \E a \in Acceptor : Phase1b(a) \/ Phase2b(a)
+
+Spec == Init /\ [][Next]_vars
+----------------------------------------------------------------------------
+votes == [a \in Acceptor |->
+           {<<m[3], m[4]>> : m \in {mm \in msgs: /\ mm[1] = "2b"
+                                                 /\ mm[2] = a }}]
+V == INSTANCE Voting
+
+THEOREM Spec => V!Spec
+
+
+WellFormedMessages == \A m \in msgs :
+    /\ m[1] = "1a" => m[2] \in Ballot
+    /\ m[1] = "1b" => /\ m[2] \in Acceptor
+                      /\ m[3] \in Ballot
+                      /\ m[4] \in Ballot \union {-1}
+                      /\ m[5] \in Value \union {None}
+    /\ m[1] = "2a" => m[2] \in Ballot /\ m[3] \in Value
+    /\ m[1] = "2b" => m[2] \in Acceptor /\ m[3] \in Ballot /\ m[4] \in Value
+-----------------------------------------------------------------------------
+THEOREM WFmsgs == TypeOK => WellFormedMessages
+  PROOF OMITTED
+
+THEOREM typing == Spec => []TypeOK
+PROOF OBVIOUS
+
+========================================
+[EXIT 0]
+
+[AGENT] I’ve found the target theorem; next I’ll inspect definitions around actions and any imported proof helpers.
+
+[CMD] /bin/zsh -lc "nl -ba PaxosProof_typing.tla | sed -n '120,360p'"
+   120	                      => \A f \in [S -> T] :
+   121	                           \E x, y \in S : x # y /\ f[x] = f[y]
+   122	  PROOF OMITTED
+   123	
+   124	-------------------------------------------------------
+   125	
+   126	THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+   127	                       /\ f \in [S -> T]
+   128	                       /\ \A y \in T : \E x \in S : y = f[x]
+   129	                       => /\ IsFiniteSet(T)
+   130	                          /\ Cardinality(T) \leq Cardinality(S)
+   131	PROOF OMITTED
+   132	
+   133	THEOREM ProductFinite ==
+   134	     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+   135	PROOF OMITTED
+   136	
+   137	THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+   138	PROOF OMITTED
+   139	
+   140	(* ---- Content from module PaxosTuple ---- *)
+   141	-----------------------------------------------------------------------------
+   142	CONSTANT Value, Acceptor, Quorum
+   143	
+   144	ASSUME QuorumAssumption == /\ \A Q \in Quorum : Q \subseteq Acceptor
+   145	                           /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+   146	Ballot ==  Nat
+   147	None == CHOOSE v : v \notin Ballot
+   148	-----------------------------------------------------------------------------
+   149	Message ==
+   150	       {"1a"} \X Ballot
+   151	  \cup {"1b"} \X Acceptor \X Ballot \X (Ballot \cup {-1}) \X (Value \cup {None})
+   152	  \cup {"2a"} \X Ballot \X Value
+   153	  \cup {"2b"} \X Acceptor \X Ballot \X Va
+... (truncated) ...
+axVal EXCEPT ![a] = m[3]]
+   204	                              /\ Send(<<"2b", a, m[2], m[3]>>)
+   205	----------------------------------------------------------------------------
+   206	Next == \/ \E b \in Ballot : \/ Phase1a(b)
+   207	                             \/ \E v \in Value : Phase2a(b, v)
+   208	        \/ \E a \in Acceptor : Phase1b(a) \/ Phase2b(a)
+   209	
+   210	Spec == Init /\ [][Next]_vars
+   211	----------------------------------------------------------------------------
+   212	votes == [a \in Acceptor |->
+   213	           {<<m[3], m[4]>> : m \in {mm \in msgs: /\ mm[1] = "2b"
+   214	                                                 /\ mm[2] = a }}]
+   215	V == INSTANCE Voting
+   216	
+   217	THEOREM Spec => V!Spec
+   218	
+   219	
+   220	WellFormedMessages == \A m \in msgs :
+   221	    /\ m[1] = "1a" => m[2] \in Ballot
+   222	    /\ m[1] = "1b" => /\ m[2] \in Acceptor
+   223	                      /\ m[3] \in Ballot
+   224	                      /\ m[4] \in Ballot \union {-1}
+   225	                      /\ m[5] \in Value \union {None}
+   226	    /\ m[1] = "2a" => m[2] \in Ballot /\ m[3] \in Value
+   227	    /\ m[1] = "2b" => m[2] \in Acceptor /\ m[3] \in Ballot /\ m[4] \in Value
+   228	-----------------------------------------------------------------------------
+   229	THEOREM WFmsgs == TypeOK => WellFormedMessages
+   230	  PROOF OMITTED
+   231	
+   232	THEOREM typing == Spec => []TypeOK
+   233	PROOF OBVIOUS
+   234	
+   235	========================================
+[EXIT 0]
+
+[AGENT] The theorem is a standard invariant proof, so I’ll check TLAPS temporal rules and then patch only the placeholder.
+
+[CMD] /bin/zsh -lc "rg \"THEOREM.*Inv|INV|STL|PTL|\\[\\]\" ~/.tlapm15/lib/tlaps -n | head -80"
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:113:THEOREM Bags_Inverse == 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:118:THEOREM Bags_Inverse1 == 
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Induct/Tree_Forest.thy:131:  "list_of_TF (Fnil) = []"
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Induct/Tree_Forest.thy:135:  "of_list([]) = Fnil"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/examples/AtomicBakeryG.thy:174:  "Spec \<equiv> Init \<and> []([Next]_{vars})" 
+/home/ruize/.tlapm15/lib/tlaps/TLA+/PredicateLogic.thy:2002:    val c_type = Type("c", []);
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:55:  "_case2"      :: "[case_arm, case_arms] \<Rightarrow> case_arms"  ("_/ [] _")
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:71:    fun make_tuple [] = Ast.Constant "emptySeq"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:78:            ([], [], SOME t)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:107:lemma "CASE a \<rightarrow> b [] c \<rightarrow> d [] e \<rightarrow> f [] OTHER \<rightarrow> g"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:121:    fun list_from_tuple (Ast.Constant @{const_syntax "emptySeq"}) = []
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:133:    fun make_case_arms [] [] (SOME oth) =
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy:181:lemma "CASE a \<rightarrow> b [] c \<rightarrow> d [] e \<rightarrow> f [] OTHER \<rightarrow> g"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseEx
+... (truncated) ...
+abelle/src/ZF/Tools/inductive_package.ML:522:      |> Global_Theory.add_thms [((Binding.name (co_prefix ^ "induct"), raw_induct), [])]
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Tools/inductive_package.ML:531:      [((Binding.name "bnd_mono", bnd_mono), []),
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Tools/inductive_package.ML:532:       ((Binding.name "dom_subset", dom_subset), []),
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Tools/inductive_package.ML:589:  Scan.optional (Parse.$$$ "monos" |-- Parse.!!! Parse_Spec.xthms1) [] --
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Tools/inductive_package.ML:590:  Scan.optional (Parse.$$$ "con_defs" |-- Parse.!!! Parse_Spec.xthms1) [] --
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Tools/inductive_package.ML:591:  Scan.optional (Parse.$$$ "type_intros" |-- Parse.!!! Parse_Spec.xthms1) [] --
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/src/ZF/Tools/inductive_package.ML:592:  Scan.optional (Parse.$$$ "type_elims" |-- Parse.!!! Parse_Spec.xthms1) []
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy:2705:                  [] OTHER -> oth)"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy:2810:  assumes h: "P (CASE c1x -> e1x [] c2x -> e2x)"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy:2887:  assumes h: "P (CASE c1x -> e1x [] c2x -> e2x
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy:2888:                  [] OTHER -> oth)"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy:2997:  assumes h: "P (CASE c1x -> e1x [] c2x -> e2x [] c3x -> e3x)"
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg \"INV1|PTL|STL|Temporal|Inv\" ~/.tlapm15/lib/tlaps -g '*.tla' -n | head -120 && ls ~/.tlapm15/lib/tlaps"
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:113:THEOREM Bags_Inverse == 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:118:THEOREM Bags_Inverse1 == 
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:40:(* Inverse of a function.                                                  *)
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:44:THEOREM Fun_InverseProperties ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:46:  PROVE  /\ (S = {} => T = {}) => Inverse(f,S,T) \in [T -> S]
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:47:         /\ \A y \in Range(f) : f[Inverse(f,S,T)[y]] = y
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:152:THEOREM Fun_SurjInverse ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:154:  PROVE  Inverse(f,S,T) \in Injection(T,S)
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:156:THEOREM Fun_InjInverse ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:158:  PROVE  Inverse(f,S,T) \in Surjection(T,S)
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:168:THEOREM Fun_BijInverse ==
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:170:  PROVE  /\ Inverse(f,S,T) \in Bijection(T,S)
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:171:         /\ \A s \in S : Inverse(f,S,T)[f[s]] = s
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:172:         /\ Inverse(Inverse(f,S,T), T,S) = f
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems.tla:181:(* Then, Inverse(f,S,T) can very well be (3 :> 1) @@ (4 :> 2), which i
+... (truncated) ...
+, vars
+/home/ruize/.tlapm15/lib/tlaps/examples/SumAndMax.tla:117:<1>. QED  BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, Next
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:32:        BY <2>1, <2>2, PTL DEF System
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:38:        BY PTL DEF P, System, Init
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:65:                BY <4>1, PTL
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:70:            BY <1>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8, PTL DEF System
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla:16:    BY <1>1, PTL
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla:26:        BY <2>1, <2>2, PTL
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla:34:    BY <1>2, <1>3, <1>4, PTL DEF System, Init
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:42:TypeInv == cnt \in S   
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+Isabelle
+Isabelle2011-1
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLA+
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+bin
+emacs
+examples
+heaps
+lib
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '55,125p' ~/.tlapm15/lib/tlaps/examples/SumAndMax.tla && sed -n '35,75p' ~/.tlapm15/lib/tlaps/examples/Euclid.tla"
+         /\ IF i < N
+               THEN /\ IF max < a[i]
+                          THEN /\ max' = a[i]
+                          ELSE /\ TRUE
+                               /\ max' = max
+                    /\ sum' = sum + a[i]
+                    /\ i' = i+1
+                    /\ pc' = "Lbl_1"
+               ELSE /\ pc' = "Done"
+                    /\ UNCHANGED << sum, max, i >>
+
+Next == Lbl_1
+           \/ (* Disjunct to prevent deadlock on termination *)
+              (pc = "Done" /\ UNCHANGED vars)
+
+Spec == /\ Init /\ [][Next]_vars
+        /\ WF_vars(Next)
+
+Termination == <>(pc = "Done")
+
+\* END TRANSLATION
+
+Correctness == pc = "Done" => sum =< N*max
+
+TypeOK == /\ sum \in Nat
+          /\ max \in Nat
+          /\ i \in 0..N
+          /\ pc \in {"Lbl_1", "Done"}
+Inv == /\ TypeOK
+       /\ sum =< i * max
+       /\ (pc = "Done") => (i = N)
+
+USE NType, aType
+
+THEOREM Spec => []Correctness
+<1>1. Init => Inv
+  BY DEF Init, Inv, TypeOK
+<1>2. Inv => Correctness
+  BY DEF Correctness, Inv, TypeOK
+<1>3. Inv /\ Lbl_1 => Inv'
+  <2>. SUFFICES ASSUME Inv, Lbl_1 PROVE Inv'
+    OBVIOUS
+  <2>1. /\ TypeOK'
+        /\ pc' = "Done" => i' = N
+    BY DEF Inv, TypeOK, Lbl_1
+  <2>2. sum' <= i' * max'
+    \* FIXME: This case distinction used to be unnecessary.
+    <3>1. CASE i < N /\ max < a[i]
+      <4>. USE <3>1 DEF Inv, TypeOK
+      <4>1. sum' = sum + a[i]       BY DEF Lbl_1
+      <4>3. @ <= i * a[i] + a[i]    OBVIOUS
+      <4>4. @ = (i+1) * 
+... (truncated) ...
+Inv /\ UNCHANGED vars => Inv'
+  BY DEF Inv, TypeOK, vars
+<1>. QED  BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, Next
+
+
+=============================================================================
+THEOREM InitProperty == Init => InductiveInvariant
+  BY NumberAssumption DEF Init, InductiveInvariant
+
+AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
+AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+
+THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+<1> SUFFICES ASSUME InductiveInvariant, Next
+             PROVE  InductiveInvariant'
+  OBVIOUS
+<1> USE DEF InductiveInvariant, Next
+<1>1. (x < y) \/ (y < x)
+  OBVIOUS
+<1>a. CASE x < y
+  <2>1. (y - x \in Number) /\ ~(y < x)
+    BY <1>a DEF Number
+  <2>2. QED
+    BY <1>a, <2>1, GCDProperty3
+<1>b. CASE y < x
+  <2>1. (x - y \in Number) /\ ~(x < y)
+    BY <1>b DEF Number
+  <2>2. GCD(y', x') = GCD(y, x)
+    BY <1>b, <2>1, GCDProperty3
+  <2>4. QED
+    BY <1>b, <2>1, <2>2, GCDProperty2
+<1> QED
+  BY <1>1, <1>a, <1>b
+
+THEOREM Correctness == Spec => []ResultCorrect
+<1>1 InductiveInvariant /\ UNCHANGED <<x,y>> => InductiveInvariant'
+  BY DEF InductiveInvariant
+<1>2 Spec => []InductiveInvariant
+  BY PTL, InitProperty, NextProperty, <1>1 DEF Spec
+<1>3 InductiveInvariant => ResultCorrect
+  BY GCDProperty1 DEF InductiveInvariant, ResultCorrect
+<1> QED
+  BY PTL, <1>2, <1>3
+
+=======================================================
+[EXIT 0]
+
+[AGENT] I’ll make a first focused invariant proof using `PTL`, with action cases for each transition.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: PaxosProof_typing.tla
+@@
+ THEOREM typing == Spec => []TypeOK
+-PROOF OBVIOUS
++<1>1. Init => TypeOK
++  BY DEF Init, TypeOK, Ballot
++<1>2. TypeOK /\\ Phase1a(b) => TypeOK'
++  BY DEF TypeOK, Phase1a, Send, Message, Ballot, vars
++<1>3. TypeOK /\\ Phase1b(a) => TypeOK'
++  BY WFmsgs DEF TypeOK, Phase1b, Send, WellFormedMessages, Message, Ballot, vars
++<1>4. TypeOK /\\ Phase2a(b, v) => TypeOK'
++  BY DEF TypeOK, Phase2a, Send, Message, Ballot, vars
++<1>5. TypeOK /\\ Phase2b(a) => TypeOK'
++  BY WFmsgs DEF TypeOK, Phase2b, Send, WellFormedMessages, Message, Ballot, vars
++<1>6. TypeOK /\\ Next => TypeOK'
++  BY <1>2, <1>3, <1>4, <1>5 DEF Next
++<1>7. TypeOK /\\ UNCHANGED vars => TypeOK'
++  BY DEF TypeOK, vars
++<1>. QED
++  BY <1>1, <1>6, <1>7, PTL DEF Spec
+ 
+ ========================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps PaxosProof_typing.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Sets.tlaps/Sets.thy" *)
+(* fingerprints written in ".tlacache/Sets.tlaps/fingerprints" *)
+File "./Sets.tla", line 1, character 1 to line 138, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+File "./Consensus.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Voting.tlaps/Voting.thy" *)
+(* fingerprints written in ".tlacache/Voting.tlaps/fingerprints" *)
+File "./Voting.tla", line 1, character 1 to line 128, character 77:
+[INFO]: All 0 obligation proved.
+File "./PaxosProo
+... (truncated) ...
+racters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from E_visit.map#expr in file "e_visit.ml", line 65, characters 33-60
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from E_visit.map#expr in file "e_visit.ml", line 65, characters 33-60
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_visit.map#sequent in file "e_visit.ml", line 147, characters 38-61
+Called from P_anon.anon#step in file "p_anon.ml", line 86, characters 24-43
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS needs action parameters introduced explicitly; I’ll add local assumptions matching `Next`’s quantifiers.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: PaxosProof_typing.tla
+@@
+-<1>2. TypeOK /\\ Phase1a(b) => TypeOK'
++<1>2. ASSUME NEW b \\in Ballot
++       PROVE  TypeOK /\\ Phase1a(b) => TypeOK'
+   BY DEF TypeOK, Phase1a, Send, Message, Ballot, vars
+-<1>3. TypeOK /\\ Phase1b(a) => TypeOK'
++<1>3. ASSUME NEW a \\in Acceptor
++       PROVE  TypeOK /\\ Phase1b(a) => TypeOK'
+   BY WFmsgs DEF TypeOK, Phase1b, Send, WellFormedMessages, Message, Ballot, vars
+-<1>4. TypeOK /\\ Phase2a(b, v) => TypeOK'
++<1>4. ASSUME NEW b \\in Ballot, NEW v \\in Value
++       PROVE  TypeOK /\\ Phase2a(b, v) => TypeOK'
+   BY DEF TypeOK, Phase2a, Send, Message, Ballot, vars
+-<1>5. TypeOK /\\ Phase2b(a) => TypeOK'
++<1>5. ASSUME NEW a \\in Acceptor
++       PROVE  TypeOK /\\ Phase2b(a) => TypeOK'
+   BY WFmsgs DEF TypeOK, Phase2b, Send, WellFormedMessages, Message, Ballot, vars
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps PaxosProof_typing.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Sets.tlaps/Sets.thy" *)
+(* fingerprints written in ".tlacache/Sets.tlaps/fingerprints" *)
+File "./Sets.tla", line 1, character 1 to line 138, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+File "./Consensus.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Voting.tlaps/Voting.thy" *)
+(* fingerprints written in ".tlacache/Voting.tlaps/fingerprints" *)
+File "./Voting.tla", line 1, character 1 to line 128, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Message_, CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: ACTION_Phase2a_, STATE_TypeOK_, CONSTANT_Ballot_, ACTION_Phase1b_, ACTION_Phase1a_, ACTION_Phase2b_
+
+** Unexpanded symbols: CONSTANT_Message_, CONSTANT_None_, CONSTANT_Ballot_
+
+(* created new ".tlacache/PaxosProof_typing.tlaps/PaxosProof_typing.thy" *)
+(* fingerprints written in ".tlacache/PaxosProof_typing.tlaps/fingerprints" *)
+File "./PaxosProof_typing.tla", line 1, character 1 to line 254, character 40:
+[INFO]: All 18 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS is still running; I’ll poll for the proof obligations now.
+
+[AGENT] TLAPS proves the file now; I’ll run the required illegal-change checker.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py PaxosProof_typing.tla'
+Checking: PaxosProof_typing.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Sets.tlaps/Sets.thy" *)
+(* fingerprints written in ".tlacache/Sets.tlaps/fingerprints" *)
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/Voting.tlaps/Voting.thy" *)
+(* fingerprints written in ".tlacache/Voting.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosProof_typing.tlaps/PaxosProof_typing.thy" *)
+(* fingerprints written in ".tlacache/PaxosProof_typing.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./Sets.tla", line 1, character 1 to line 138, character 77:
+[INFO]: All 0 obligation proved.
+File "./Consensus.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "./Voting.tla", line 1, character 1 to line 128, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Message_, CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: CONSTANT_None_
+
+** Unexpanded symbols: ACTION_Phase2a_, STATE_TypeOK_, CONSTANT_Ballot_, ACTION_Phase1b_, ACTION_Phase1a_, ACTION_Phase2b_
+
+** Unexpanded symbols: CONSTANT_Message_, CONSTANT_None_, CONSTANT_Ballot_
+
+File "/tmp/tlaps_check_umb07j9z/PaxosProof_typing.tla", line 1, character 1 to line 254, character 40:
+[INFO]: All 18 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_PaxosProof_typing_iulbpjwg/PaxosProof_typing.result
+[EXIT 0]
+
+[AGENT] Done.
+
+- Replaced the final `PROOF OBVIOUS` with a complete TLAPS proof in `PaxosProof_typing.tla:233`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps PaxosProof_typing.tla`.
+- Ran `python3 check_proof.py PaxosProof_typing.tla`.
+- Checker result: `✅ PASS — all obligations proved`, no cheating detected.

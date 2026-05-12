@@ -132,14 +132,19 @@ def check_cheating(filepath):
         if stripped == 'PROOF OBVIOUS':
             continue  # Not cheating, just unchanged
 
-        if re.match(r'^PROOF\s+OMITTED\b', stripped):
+        # Strip TLA+ line comments (\*...) for analysis
+        line_no_comment = re.sub(r'\\\*.*$', '', stripped).strip()
+
+        if re.match(r'^PROOF\s+OMITTED\b', line_no_comment):
             issues.append((line_num, "PROOF OMITTED used — skips proof obligation"))
 
-        if stripped == 'OMITTED':
-            # Check it's not inside a comment
+        # Check for bare OMITTED (possibly followed by comment)
+        if line_no_comment == 'OMITTED':
+            # Also verify it's not inside a block comment (* ... *)
             prefix = '\n'.join(current_lines[po_line:po_line + j + 1])
             clean_prefix = re.sub(r'\(\*.*?\*\)', '', prefix, flags=re.DOTALL)
-            if 'OMITTED' in clean_prefix.split('\n')[-1]:
+            clean_last = re.sub(r'\\\*.*$', '', clean_prefix.split('\n')[-1]).strip()
+            if clean_last == 'OMITTED':
                 issues.append((line_num, "Bare OMITTED used as proof step"))
 
     # Check for new AXIOM/ASSUME declarations in proof section

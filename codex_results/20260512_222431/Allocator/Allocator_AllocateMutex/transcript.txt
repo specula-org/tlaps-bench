@@ -1,0 +1,533 @@
+Benchmark: Allocator/Allocator_AllocateMutex.tla
+Time: 91s
+Tokens: 259,758 input / 4,081 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then patch only the final proof and verify with TLAPS plus the provided checker.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,240p' Allocator_AllocateMutex.tla"
+Allocator_AllocateMutex.tla
+check_proof.py
+-------------------------- MODULE Allocator_AllocateMutex -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+----------------
+... (truncated) ...
+alloc[c]))
+  /\ \A c \in Client: SF_vars(\E S \in SUBSET Resource: Allocate(c,S))
+
+*)
+
+-------------------------------------------------------------------------
+
+THEOREM InitTypeInvariant == Init => TypeInvariant
+  PROOF OMITTED
+
+THEOREM RequestTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM AllocateTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM ReturnTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Return(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+  PROOF OMITTED
+
+-------------------------------------------------------------------------
+
+THEOREM InitMutex == Init => Mutex
+  PROOF OMITTED
+
+THEOREM RequestMutexBis ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  Mutex /\ Request(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM ReturnMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM AllocateMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Allocate(clt, S) => Mutex'
+PROOF OBVIOUS
+
+=========================================================================
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; now I’ll run TLAPS once to see the exact obligation shape/failure.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateMutex.tla'
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_, STATE_Mutex_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_AllocateMutex.tlaps/Allocator_AllocateMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_AllocateMutex.tlaps/fingerprints" *)
+File "./Allocator_AllocateMutex.tla", line 172, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource
+           PROVE  TypeInvariant /\ Mutex /\ Allocate(clt, S) => Mutex'
+File "./Allocator_AllocateMutex.tla", line 1, character 1 to line 174, character 73:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Allocator_AllocateMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The direct proof fails as expected. I’ll first try a fully-expanded SMT proof; if TLAPS needs structure, I’ll refine it.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_AllocateMutex.tla
+@@
+ THEOREM AllocateMutex ==
+   ASSUME NEW clt \\in Client,
+          NEW S \\in SUBSET Resource
+   PROVE  TypeInvariant /\\ Mutex /\\ Allocate(clt, S) => Mutex'
+-PROOF OBVIOUS
++PROOF BY SMT DEF TypeInvariant, Mutex, Allocate, available
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateMutex.tla"
+File "./Allocator_AllocateMutex.tla", line 172, characters 10-12:
+Error: Operator "SMT" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] This TLAPS install doesn’t accept `BY SMT`, so I’m switching to a classic hierarchical proof.
+
+[CMD] /bin/zsh -lc 'rg "PROOF" -n ~/.tlapm15/lib/tlaps | head -40 && find ~/.tlapm15/lib/tlaps -maxdepth 2 -type f | head -30'
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Peano.thy:271:(*** EXAMPLE INDUCTION PROOFS ***
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/etc/settings:167:PROOFGENERAL_HOME="$(choosefrom \
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/etc/settings:175:PROOFGENERAL_OPTIONS=""
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/etc/settings:176:#PROOFGENERAL_OPTIONS="-m no_brackets -m no_type_brackets"
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/etc/settings:198:#HOL4_PROOFS="$ISABELLE_HOME_USER/proofs:$ISABELLE_HOME/proofs"
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:22:PROOF OMITTED
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:70:PROOF
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:52:(*   PROOF The theorem is obviously true if G has two nodes with degree 0. *)
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:56:(*   PROOF By <1>1 and the assumption that G has                           *)
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:61:(*     PROOF by definition of H.                                           *)
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:63:(*     PROOF Any edge containing n has a node in H as its other vertex.    *)
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:22:PROOF
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:70:PROOF
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor8.tla:9:PROOF
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor1.tla:10:PROOF
+/home/ruize/.tlapm15/lib/tlaps/example
+... (truncated) ...
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/zenon_focal.v
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/zenon_induct.v
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/un-inst
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/RealTime.tla
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/TLA+/README.html
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Tuples.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Functions.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/FixedPoints.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Peano.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/ROOT.ML
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Strings.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatDivision.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/simplifier_setup.ML
+/home/ruize/.tlapm15/lib/tlaps/TLA+/SetTheory.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/SMT.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Constant.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/PredicateLogic.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Makefile
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatArith.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Integers.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy
+/home/ruize/.tlapm15/lib/tlaps/SequencesExt.tla
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '160,230p' ~/.tlapm15/lib/tlaps/examples/Dekker/Dekker.tla && sed -n '70,130p' ~/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla"
+    /\ (pc1 = 8) => (c1 = 0)
+    /\ (pc1 = 9) => (c1 = 1)
+
+    /\ (pc2 = 2) => (c2 = 0)
+    /\ (pc2 = 3) => (c2 = 0)
+    /\ (pc2 = 4) => (c2 = 0)
+    /\ (pc2 = 5) => (c2 = 1)
+    /\ (pc2 = 6) => (c2 = 0 /\ pc1 # 6)
+    /\ (pc2 = 7) => (c2 = 0)
+    /\ (pc2 = 8) => (c2 = 0)
+    /\ (pc2 = 9) => (c2 = 1)
+
+
+THEOREM MutualExclusion ==
+    Sys => []Inv
+PROOF
+<1>1. Sys => []IndInv
+    <2>1. ASSUME Init
+          PROVE IndInv
+        BY <2>1 DEF Init, IndInv
+    <2>2. ASSUME IndInv /\ [Next]_vars
+          PROVE IndInv'
+        BY <2>2 DEF IndInv, Next, Next1, Next2, vars
+    <2> QED
+        BY <2>1, <2>2, PTL DEF Sys
+<1>2. IndInv => Inv
+    BY DEF IndInv, Inv
+<1> QED
+    BY <1>1, <1>2, PTL
+
+--------------------------------------------------------------------------------
+(* Always at least one process can take a step that changes the state. *)
+
+Enabledness == ENABLED <<Next>>_vars
+
+
+THEOREM NotStuck ==
+    Sys => []Enabledness
+PROOF
+<1>1. Sys => []IndInv
+    <2>1. ASSUME Init
+          PROVE IndInv
+        BY <2>1 DEF Init, IndInv
+    <2>2. ASSUME IndInv /\ [Next]_vars
+          PROVE IndInv'
+        BY <2>2 DEF IndInv, Next, Next1, Next2, vars
+    <2> QED
+        BY <2>1, <2>2, PTL DEF Sys
+<1>2. ASSUME IndInv
+      PROVE Enabledness
+    BY <1>2, ExpandENABLED DEF IndInv, Enabledness,
+        Next, Next1, Next2, vars
+<1> QED
+    BY <1>1, <1>2, PTL
+
+--------------------------------------------------------------------------------
+(* Liveness properties. *)
+
+
+LIndInv ==
+    /\ IndInv
+   
+... (truncated) ...
+*************************************************)
+  (* The SZ function satisfies the CS property.                            *)
+  (*************************************************************************)
+  <1>1. IsCS(SZ)
+    (***********************************************************************)
+    (* Use induction on the size of T to show that the values match at     *)
+    (* each T \in SUBSET S.                                                *)
+    (***********************************************************************)
+    <2> DEFINE
+      Prop(i) == \A T \in SUBSET S : ExistsBijection(1..i,T) => SZ[T] = fn(SZ,T)
+
+    <2>1. \A i \in Nat : Prop(i)
+      <3>1. Prop(0)
+        (*******************************************************************)
+        (* Base step.                                                      *)
+        (*******************************************************************)
+        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+                       PROVE  SZ[T] = fn(SZ,T)
+              OBVIOUS
+        <4>2. Size(T) = 0  BY <4>1, Fun_NatBijSame
+        <4>3. T = {}  BY <4>1, Fun_NatBijEmpty
+        <4>4. SZ[T] = 0  BY <4>2  DEF SZ
+        <4>5. fn(SZ,T) = 0  BY <4>3  DEF fn
+        <4> QED BY <4>4, <4>5
+        
+      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+        (*******************************************************************)
+        (* Inductive step.                                                 *)
+[EXIT 0]
+
+[AGENT] I’m going to encode the invariant argument by reducing `alloc'` membership to old ownership or newly allocated `S`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_AllocateMutex.tla
+@@
+ THEOREM AllocateMutex ==
+   ASSUME NEW clt \\in Client,
+          NEW S \\in SUBSET Resource
+   PROVE  TypeInvariant /\\ Mutex /\\ Allocate(clt, S) => Mutex'
+-PROOF BY SMT DEF TypeInvariant, Mutex, Allocate, available
++PROOF
++<1>1. ASSUME TypeInvariant /\\ Mutex /\\ Allocate(clt, S)
++      PROVE  Mutex'
++  <2>1. ASSUME NEW c1 \\in Client,
++                NEW c2 \\in Client,
++                NEW r \\in Resource,
++                r \\in alloc'[c1] \\cap alloc'[c2]
++        PROVE  c1 = c2
++    <3>1. S \\subseteq available
++      BY <1>1 DEF Allocate
++    <3>2. \\A c \\in Client : r \\in S => r \\notin alloc[c]
++      BY <3>1 DEF available
++    <3>3. \\A c \\in Client :
++             r \\in alloc'[c] => r \\in alloc[c] \\/ (c = clt /\\ r \\in S)
++      BY <1>1 DEF Allocate
++    <3>4. r \\in alloc[c1] \\/ (c1 = clt /\\ r \\in S)
++      BY <2>1, <3>3
++    <3>5. r \\in alloc[c2] \\/ (c2 = clt /\\ r \\in S)
++      BY <2>1, <3>3
++    <3>6. CASE r \\in alloc[c1]
++      <4>1. r \\in alloc[c2]
++        BY <3>5, <3>2
++      <4>2. c1 = c2
++        BY <1>1, <2>1, <3>6, <4>1 DEF Mutex
++      <4> QED BY <4>2
++    <3>7. CASE r \\notin alloc[c1]
++      <4>1. c1 = clt /\\ r \\in S
++        BY <3>4, <3>7
++      <4>2. r \\notin alloc[c2]
++        BY <2>1, <3>2, <4>1
++      <4>3. c2 = clt /\\ r \\in S
++        BY <3>5, <4>2
++      <4>4. c1 = c2
++        BY <4>1, <4>3
++      <4> QED BY <4>4
++    <3> QED BY <3>6, <3>7
++  <2> QED BY <2>1 DEF Mutex
++<1> QED BY <1>1
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_AllocateMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_available_, STATE_TypeInvariant_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_available_, STATE_TypeInvariant_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_AllocateMutex.tlaps/Allocator_AllocateMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_AllocateMutex.tlaps/fingerprints" *)
+File "./Allocator_AllocateMutex.tla", line 193, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  NEW CONSTANT c1 \in Client,
+                  NEW CONSTANT c2 \in Client,
+                  NEW CONSTANT r \in Resource,
+                  <3>5 ,
+                  <3>2 
+           PROVE  r \in alloc[c2]
+File "./Allocator_AllocateMutex.tla", line 1, character 1 to line 211, character 73:
+[ERROR]: 1/44 obligations failed.
+There were backend errors processing module `"Allocator_AllocateMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Only one subcase was too implicit. I’ll add the missing “old owner implies not newly available” step and rerun.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_AllocateMutex.tla
+@@
+     <3>6. CASE r \\in alloc[c1]
+-      <4>1. r \\in alloc[c2]
+-        BY <3>5, <3>2
++      <4>1. r \\notin S
++        BY <2>1, <3>2, <3>6
++      <4>2. r \\in alloc[c2]
++        BY <3>5, <4>1
+-      <4>2. c1 = c2
+-        BY <1>1, <2>1, <3>6, <4>1 DEF Mutex
+-      <4> QED BY <4>2
++      <4>3. c1 = c2
++        BY <1>1, <2>1, <3>6, <4>2 DEF Mutex
++      <4> QED BY <4>3
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_AllocateMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Allocator_AllocateMutex.tlaps/Allocator_AllocateMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_AllocateMutex.tlaps/fingerprints" *)
+File "./Allocator_AllocateMutex.tla", line 1, character 1 to line 213, character 73:
+[INFO]: All 48 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves the module. I’ll run the required legality checker next.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Allocator_AllocateMutex.tla'
+Checking: Allocator_AllocateMutex.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_AllocateMutex.tlaps/Allocator_AllocateMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_AllocateMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_available_, STATE_TypeInvariant_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_available_, STATE_TypeInvariant_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_t1jyevyi/Allocator_AllocateMutex.tla", line 1, character 1 to line 213, character 73:
+[INFO]: All 48 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_AllocateMutex_bprw3_0k/Allocator_AllocateMutex.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final `AllocateMutex` theorem in `Allocator_AllocateMutex.tla:168`.
+
+Validation passed:
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateMutex.tla` proves all 48 obligations.
+- `python3 check_proof.py Allocator_AllocateMutex.tla` reports no cheating and `PASS`.
+
+No theorem statements, definitions, declarations, or preceding omitted proofs were changed.

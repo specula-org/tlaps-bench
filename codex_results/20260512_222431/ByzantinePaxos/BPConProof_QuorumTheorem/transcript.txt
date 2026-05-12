@@ -1,0 +1,279 @@
+Benchmark: ByzantinePaxos/BPConProof_QuorumTheorem.tla
+Time: 43s
+Tokens: 154,965 input / 1,273 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iterate with TLAPS until the final theorem verifies.
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' BPConProof_QuorumTheorem.tla && printf '\\n--- tail ---\\n' && tail -80 BPConProof_QuorumTheorem.tla"
+
+---------------------------- MODULE BPConProof_QuorumTheorem ------------------------------
+(***************************************************************************)
+(* This module specifies a Byzantine Paxos algorithm--a version of Paxos   *)
+(* in which failed acceptors and leaders can be malicious.  It is an       *)
+(* abstraction and generalization of the Castro-Liskov algorithm in        *)
+(*                                                                         *)
+(*    author = "Miguel Castro and Barbara Liskov",                         *)
+(*    title = "Practical byzantine fault tolerance and proactive           *)
+(*             recovery",                                                  *)
+(*    journal = ACM Transactions on Computer Systems,                      *)
+(*    volume = 20,                                                         *)
+(*    number = 4,                                                          *)
+(*    year = 2002,                                                         *)
+(*    pages = "398--461"                                                   *)
+(***************************************************************************)
+
+EXTENDS Integers, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* We need the following trivial axioms and theorem about finite sets.     *)
+(*******************************************
+... (truncated) ...
+           *)
+(***************************************************************************)
+LEMMA NextDef == 
+ Next = \/ \E self \in Acceptor :
+             \E b \in Ballot : \/ Phase1b(self, b) 
+                               \/ Phase2av(self, b) 
+                               \/ Phase2b(self,b)
+                               \/ LearnsSent(self, b) 
+        \/ \E self \in Ballot : \/ Phase1a(self)
+                                \/ Phase1c(self)
+        \/ \E self \in FakeAcceptor : FakingAcceptor(self)
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(*                        THE REFINEMENT MAPPING                           *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* We define a quorum to be the set of acceptors in a Byzantine quorum.    *)
+(* The quorum assumption QA of module PConProof, which we here call        *)
+(* QuorumTheorem, follows easily from the definition and assumption BQA.   *)
+(***************************************************************************)
+Quorum == {S \cap Acceptor : S \in ByzQuorum}
+
+THEOREM QuorumTheorem == 
+         /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {} 
+         /\ \A Q \in Quorum : Q \subseteq Acceptor
+PROOF OBVIOUS
+
+==============================================================================
+[EXIT 0]
+
+[AGENT] The final theorem is just about `Quorum`, so I’m narrowing to quorum assumptions and set definitions.
+
+[CMD] /bin/zsh -lc 'rg -n "ByzQuorum|Acceptor|BQA|Quorum|ASSUME|ASSUM" BPConProof_QuorumTheorem.tla'
+2:---------------------------- MODULE BPConProof_QuorumTheorem ------------------------------
+90:CONSTANTS Acceptor,       \* The set of good (non-faulty) acceptors.
+91:          FakeAcceptor,   \* The set of possibly malicious (faulty) acceptors.
+92:          ByzQuorum,     
+99:          WeakQuorum     
+107:(* We define ByzAcceptor to be the set of all real or fake acceptors.      *)
+109:ByzAcceptor == Acceptor \cup FakeAcceptor
+116:ASSUME BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {}
+122:ASSUME BQA == 
+123:          /\ Acceptor \cap FakeAcceptor = {}
+124:          /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+125:          /\ \A Q1, Q2 \in ByzQuorum : Q1 \cap Q2 \cap Acceptor # {}
+126:          /\ \A Q \in WeakQuorum : /\ Q \subseteq ByzAcceptor
+127:                                   /\ Q \cap Acceptor # {}
+133:ASSUME BQLA == 
+134:          /\ \E Q \in ByzQuorum : Q \subseteq Acceptor 
+135:          /\ \E Q \in WeakQuorum : Q \subseteq Acceptor 
+158:   acc : ByzAcceptor]
+174:   [type : {"2av"}, bal : Ballot, val : Value, acc : ByzAcceptor]
+176:2bMessage == [type : {"2b"}, acc : ByzAcceptor, bal : Ballot, val : Value]
+200:We now give the algorithm.  The basic idea is that the set Acceptor of
+202:with Acceptor as its set of acceptors.  Of course, they must do that
+203:without knowing which of the other processes in ByzAcceptor are real
+278:  variables maxBal  = [a \in Acceptor |-> -1],
+279:            maxVBal = [a \in Acceptor |-> -1] ,
+280:            maxVVal = 
+... (truncated) ...
+           /\ \E BQ \in ByzQuorum : 
+307:               /\ \E WQ \in WeakQuorum :
+336:  (* if it knows that the messages in knowsSent[a] for a Quorum of (good)  *)
+382:  (* Acceptor `self' can send a phase 2b message with value v if it has    *)
+392:                   \E Q \in ByzQuorum :
+419:  macro FakingAcceptor() {
+431:  process (acceptor \in Acceptor) {
+444:  process (facceptor \in FakeAcceptor) {
+445:     facc : while (TRUE) { FakingAcceptor() }
+460:  IN  \/ \E BQ \in ByzQuorum :
+464:           /\ \E BQ \in ByzQuorum :
+468:           /\ \E WQ \in WeakQuorum :
+476:ProcSet == (Acceptor) \cup (Ballot) \cup (FakeAcceptor)
+479:        /\ maxBal = [a \in Acceptor |-> -1]
+480:        /\ maxVBal = [a \in Acceptor |-> -1]
+481:        /\ maxVVal = [a \in Acceptor |-> None]
+482:        /\ 2avSent = [a \in Acceptor |-> {}]
+483:        /\ knowsSent = [a \in Acceptor |-> {}]
+504:                                      \E Q \in ByzQuorum :
+529:Next == (\E self \in Acceptor: acceptor(self))
+531:           \/ (\E self \in FakeAcceptor: facceptor(self))
+564:                 \E Q \in ByzQuorum :
+589:FakingAcceptor(self) ==
+599: Next = \/ \E self \in Acceptor :
+606:        \/ \E self \in FakeAcceptor : FakingAcceptor(self)
+617:(* QuorumTheorem, follows easily from the definition and assumption BQA.   *)
+619:Quorum == {S \cap Acceptor : S \in ByzQuorum}
+621:THEOREM QuorumTheorem == 
+622:         /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {} 
+623:         /\ \A Q \in Quorum : Q \subseteq Acceptor
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '80,140p' BPConProof_QuorumTheorem.tla && ls ~/.tlapm15/lib/tlaps && rg -n \"Subset|Intersect|\\\\cap|Set\" ~/.tlapm15/lib/tlaps/*.tla | head -80"
+(* The basic idea is that the good acceptors try to execute the Paxos      *)
+(* consensus algorithm, while the bad acceptors may try to prevent them.   *)
+(*                                                                         *)
+(* We do not distinguish between faulty and non-faulty leaders.  Safety    *)
+(* must be preserved even if all leaders are malicious, so we allow any    *)
+(* leader to send any syntactically correct message at any time.  (In an   *)
+(* implementation, syntactically incorrect messages are simply ignored by  *)
+(* non-faulty acceptors and have no effect.) Assumptions about leader      *)
+(* behavior are required only for liveness.                                *)
+(***************************************************************************)
+CONSTANTS Acceptor,       \* The set of good (non-faulty) acceptors.
+          FakeAcceptor,   \* The set of possibly malicious (faulty) acceptors.
+          ByzQuorum,     
+            (***************************************************************)
+            (* A Byzantine quorum is set of acceptors that includes a      *)
+            (* quorum of good ones.  In the case that there are 2f+1 good  *)
+            (* acceptors and f bad ones, a Byzantine quorum is any set of  *)
+            (* 2f+1 acceptors.                                             *)
+            (***************************************************************)
+          WeakQuorum     
+            (***************************************
+... (truncated) ...
+p Acceptor # {}
+
+(***************************************************************************)
+(* The following assumption is not needed for safety, but it will be       *)
+(* needed to ensure liveness.                                              *)
+(***************************************************************************)
+ASSUME BQLA == 
+          /\ \E Q \in ByzQuorum : Q \subseteq Acceptor 
+          /\ \E Q \in WeakQuorum : Q \subseteq Acceptor 
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* We now define the set BMessage of all possible messages.                *)
+(***************************************************************************)
+1aMessage == [type : {"1a"},  bal : Ballot]
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+Isabelle
+Isabelle2011-1
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLA+
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+bin
+emacs
+examples
+heaps
+lib
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+rg: regex parse error:
+    (?:Subset|Intersect|\cap|Set)
+                        ^^
+error: unrecognized escape sequence
+[EXIT 0]
+
+[AGENT] I’ll first try the minimal proof expansion; TLAPS may discharge this with set reasoning.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_QuorumTheorem.tla
+@@
+ THEOREM QuorumTheorem == 
+          /\\ \\A Q1, Q2 \\in Quorum : Q1 \\cap Q2 # {} 
+          /\\ \\A Q \\in Quorum : Q \\subseteq Acceptor
+-PROOF OBVIOUS
++PROOF
++  BY BQA DEF Quorum
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_QuorumTheorem.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_ByzAcceptor_
+
+(* created new ".tlacache/BPConProof_QuorumTheorem.tlaps/BPConProof_QuorumTheorem.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_QuorumTheorem.tlaps/fingerprints" *)
+File "./BPConProof_QuorumTheorem.tla", line 2, character 1 to line 627, character 78:
+[INFO]: All 2 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS accepted the proof. I’ll run the required checker and confirm no illegal edits.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py BPConProof_QuorumTheorem.tla'
+Checking: BPConProof_QuorumTheorem.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_QuorumTheorem.tlaps/BPConProof_QuorumTheorem.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_QuorumTheorem.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_ByzAcceptor_
+
+File "/tmp/tlaps_check_a4jc02gs/BPConProof_QuorumTheorem.tla", line 2, character 1 to line 627, character 78:
+[INFO]: All 2 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_BPConProof_QuorumTheorem_8uth7cqk/BPConProof_QuorumTheorem.result
+[EXIT 0]
+
+[AGENT] Done.
+
+- Replaced the final `PROOF OBVIOUS` with a valid TLAPS proof at `BPConProof_QuorumTheorem.tla:624`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_QuorumTheorem.tla`: all obligations proved.
+- Ran `python3 check_proof.py BPConProof_QuorumTheorem.tla`: PASS, no cheating detected.

@@ -1,0 +1,368 @@
+Benchmark: Data/SequencesTheorems_LenDomain.tla
+Time: 56s
+Tokens: 208,317 input / 2,501 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch and verify the final proof.
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' SequencesTheorems_LenDomain.tla && printf '\\n--- files ---\\n' && ls -la"
+-------------------------- MODULE SequencesTheorems_LenDomain -------------------------
+(***************************************************************************)
+(* The proofs in this module were essentially written before TLAPS's SMT   *)
+(* backend prover was implemented. That backend usually allows for much    *)
+(* shorter proofs.                                                         *)
+(***************************************************************************)
+EXTENDS Integers, Sequences, TLAPS
+
+AXIOM SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+AXIOM LenDef == \A S : \A seq \in Seq(S) :
+                     /\ Len(seq) \in Nat 
+                     /\ DOMAIN seq = 1..Len(seq)
+
+THEOREM LenAxiom == 
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+  PROOF OMITTED
+
+THEOREM LenDomain == \A S :
+                       \A s \in Seq(S) :
+                         \A n \in Nat : DOMAIN s = 1..n => n = Len(s)
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+total 200
+drwx------    3 ruize ruize   4096 May 12 22:32 .
+drwxrwxrwt 1345 root  root  176128 May 12 22:32 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:32 .git
+-rw-rw-r--    1 ruize ruize   1086 May 12 20:11 SequencesTheorems_LenDomain.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I found the target theorem; now I’ll look for interval/domain lemmas in the bundled TLAPS libraries.
+
+[CMD] /bin/zsh -lc "rg \"1\\.\\.\" ~/.tlapm15/lib/tlaps -n | head -80 && printf '\\n--- interval names ---\\n' && rg \"Interval|Range|DOMAIN|Len\" ~/.tlapm15/lib/tlaps -n | head -160"
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:98:                f \in BagSet, i \in 1..B[x]}
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:103:      RSB[BB \in UNION {[S -> 1..Biggest] : S \in SUBSET DOMAIN B}] ==
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:14:LEMMA SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:23:          NEW n \in 1..Len(seq)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:35:         /\ seq \in [1..Len(seq) -> S]
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:40:         \A i \in 1..n : e(i) \in S
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:41:  PROVE  [i \in 1..n |-> e(i)] \in Seq(S)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla:182:         /\ \A i \in 1.. Len(seq) : Append(seq, elt)[i] = seq[i]
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:641:   { ff \in [1..n -> S] \X [1..n -> S] :
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:642:       \E j \in 1..n : 
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:643:          /\ \A i \in 1..(j-1) : ff[1][i] = ff[2][i]
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:649:  PROVE  IsWellFoundedOn(LexProductOrdering(R, S, n), [1..n -> S])
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:651:<1> DEFINE P(m) == IsWellFoundedOn(LPO(m), [1..m -> S])
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:653:  BY EmptyIsWellFounded, 1..0 = {}, Zenon DEF
+... (truncated) ...
+/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:505:subsection {* Intervals of natural numbers *}
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:507:definition natInterval :: "[c,c] \<Rightarrow> c"    ("(_ .. _)" [90,90] 70)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:510:lemma inNatIntervalI [intro!,simp]:
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:513:using assms by (simp add: natInterval_def)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:515:lemma inNatIntervalE [elim]:
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:518:using 1 by (intro 2, auto simp add: natInterval_def)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:520:lemma inNatInterval_iff: "(k \<in> m .. n) = (k \<in> Nat \<and> m \<le> k \<and> k \<le> n)"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:527:lemma lowerInNatInterval [iff]:
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:530:using assms by (simp add: natInterval_def)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:532:lemma upperInNatInterval [iff]:
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:535:using assms by (simp add: natInterval_def)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:537:lemma gtNotinNatInterval:
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:547:lemma natIntervalIsEmpty:
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:550:using assms by (blast dest: gtNotinNatInterval)
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy:552:lemma natIntervalEmpty_iff:
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,120p' ~/.tlapm15/lib/tlaps/SequenceTheorems.tla && printf '\\n--- integer theorems files ---\\n' && rg \"THEOREM|LEMMA\" ~/.tlapm15/lib/tlaps/*Integer* ~/.tlapm15/lib/tlaps/*Naturals* ~/.tlapm15/lib/tlaps/*Finite* 2>/dev/null | head -160"
+-------------------------- MODULE SequenceTheorems --------------------------
+(***************************************************************************)
+(* This module contains theorems about operations on sequences.            *)
+(***************************************************************************)
+EXTENDS Sequences, Functions
+LOCAL INSTANCE NaturalsInduction
+LOCAL INSTANCE TLAPS
+
+
+(***************************************************************************)
+(* Elementary properties about Seq(S)                                      *)
+(***************************************************************************)
+
+LEMMA SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+THEOREM SeqMonotonic ==
+  ASSUME NEW S, NEW T, NEW seq \in Seq(S),
+         S \subseteq T
+  PROVE  seq \in Seq(T)
+
+THEOREM ElementOfSeq ==
+   ASSUME NEW S, NEW seq \in Seq(S),
+          NEW n \in 1..Len(seq)
+   PROVE  seq[n] \in S
+ 
+THEOREM EmptySeq ==
+   ASSUME NEW S
+   PROVE /\ << >> \in Seq(S)
+         /\ Len(<< >>) = 0
+         /\ \A seq \in Seq(S) : (seq # << >>) => (Len(seq) \in Nat \ {0})
+
+THEOREM LenProperties == 
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+         /\ DOMAIN seq = 1 .. Len(seq) 
+
+THEOREM IsASeq ==
+  ASSUME NEW n \in Nat, NEW e(_), NEW S,
+         \A i \in 1..n : e(i) \in S
+  PROVE  [i \in 1..n |-> e(i)] \in Seq(S)
+
+THEOREM ExceptSeq ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW i \in 1 .. Len(seq), NEW e \in S
+ 
+... (truncated) ...
+ \A S : \A s,t \in Seq(S) : s \o t = t => s = <<>>
+  /\ concIsEmpty:: \A S : \A s,t \in Seq(S) : s \o t = <<>> => s = <<>> /\ t = <<>>
+  /\ cancelLeft:: \A S : \A s,t,v \in Seq(S) : s \o t = s \o v => t = v
+  /\ cancelRight:: \A S : \A s,t,v \in Seq(S) : s \o v = t \o v => s = t
+
+(***************************************************************************)
+(*                     SubSeq, Head and Tail                               *)
+(***************************************************************************)
+
+THEOREM SubSeqProperties ==
+  ASSUME NEW S, NEW s, NEW m \in Int, NEW n \in Int,
+         \A i \in m .. n : s[i] \in S
+   PROVE /\ SubSeq(s,m,n) \in Seq(S)
+         /\ Len(SubSeq(s,m,n)) = IF m<=n THEN n-m+1 ELSE 0
+         /\ \A i \in 1 .. n-m+1 : SubSeq(s,m,n)[i] = s[m+i-1]
+
+THEOREM SubSeqEmpty ==
+  ASSUME NEW s, NEW m \in Int, NEW n \in Int, n < m
+  PROVE  SubSeq(s,m,n) = << >>
+
+THEOREM SubSeqRange ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW m \in 1 .. Len(s), NEW n \in 1 .. Len(s)
+  PROVE  Range(SubSeq(s,m,n)) \subseteq Range(s)
+
+THEOREM HeadTailProperties ==
+   ASSUME NEW S,
+          NEW s \in Seq(S), s # << >>
+   PROVE  /\ Head(s) \in S
+          /\ Head(s) \in Range(s)
+          /\ Tail(s) \in Seq(S)
+          /\ Len(Tail(s)) = Len(s)-1
+          /\ \A i \in 1 .. Len(Tail(s)) : Tail(s)[i] = s[i+1]
+          /\ Range(Tail(s)) \subseteq Range(s)
+
+THEOREM TailIsSubSeq ==
+
+--- integer theorems files ---
+zsh:1: no matches found: /home/ruize/.tlapm15/lib/tlaps/*Integer*
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg \"1\\.\\.[A-Za-z0-9_()]+ = 1\\.\\.\" ~/.tlapm15/lib/tlaps -n || true
+rg \"= 1\\.\\.\" ~/.tlapm15/lib/tlaps/*Theorems*.tla -n | head -100"
+/home/ruize/.tlapm15/lib/tlaps/TLA+/SMT.thy:288:lemma OneToNegative (*[simp]*): "n \<in> Int \<and> n \<le> 0 \<Longrightarrow> 1..n = 1..0" sorry
+[EXIT 0]
+
+[AGENT] The core is uniqueness of the natural interval endpoint; I’ll add a structured contradiction proof using `LenDef`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SequencesTheorems_LenDomain.tla
+@@
+ THEOREM LenDomain == \\A S :
+                        \\A s \\in Seq(S) :
+                          \\A n \\in Nat : DOMAIN s = 1..n => n = Len(s)
+-PROOF OBVIOUS
++PROOF
++<1> SUFFICES ASSUME NEW S,
++                    NEW s \\in Seq(S),
++                    NEW n \\in Nat,
++                    DOMAIN s = 1..n
++             PROVE  n = Len(s)
++  OBVIOUS
++<1>1. /\\\\ Len(s) \\in Nat
++      /\\\\ DOMAIN s = 1..Len(s)
++  BY LenDef
++<1>2. CASE n < Len(s)
++  <2>1. Len(s) \\in DOMAIN s BY <1>1, <1>2
++  <2>2. Len(s) \\in 1..n BY <2>1
++  <2>3. FALSE BY <1>2, <2>2
++  <2> QED BY <2>3
++<1>3. CASE Len(s) < n
++  <2>1. n \\in DOMAIN s BY <1>3
++  <2>2. n \\in 1..Len(s) BY <1>1, <2>1
++  <2>3. FALSE BY <1>3, <2>2
++  <2> QED BY <2>3
++<1>4. CASE n = Len(s)
++  OBVIOUS
++<1> QED BY <1>1, <1>2, <1>3, <1>4
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_LenDomain.tla"
+File "./SequencesTheorems_LenDomain.tla", line 31, character 6
+required expressions(s) missing before 'operator /\'
+File "<unknown>":
+Error: Could not parse "./SequencesTheorems_LenDomain.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] That first patch had a TLA syntax typo from escaped conjunctions; I’m correcting it and rerunning TLAPS.
+
+[CMD] /bin/zsh -lc "nl -ba SequencesTheorems_LenDomain.tla | sed -n '20,70p'
+apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SequencesTheorems_LenDomain.tla
+@@
+-<1>1. /\\\\ Len(s) \\in Nat
+-      /\\\\ DOMAIN s = 1..Len(s)
++<1>1. /\\ Len(s) \\in Nat
++      /\\ DOMAIN s = 1..Len(s)
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_LenDomain.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/SequencesTheorems_LenDomain.tlaps/SequencesTheorems_LenDomain.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_LenDomain.tlaps/fingerprints" *)
+File "./SequencesTheorems_LenDomain.tla", line 1, character 1 to line 48, character 77:
+[INFO]: All 29 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS proves the module now. I’ll run the requested checker and inspect the final diff for compliance.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py SequencesTheorems_LenDomain.tla && git diff -- SequencesTheorems_LenDomain.tla'
+Checking: SequencesTheorems_LenDomain.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/SequencesTheorems_LenDomain.tlaps/SequencesTheorems_LenDomain.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_LenDomain.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_yyu8m71g/SequencesTheorems_LenDomain.tla", line 1, character 1 to line 48, character 77:
+[INFO]: All 29 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SequencesTheorems_LenDomain_8fca2jxb/SequencesTheorems_LenDomain.result
+diff --git a/SequencesTheorems_LenDomain.tla b/SequencesTheorems_LenDomain.tla
+index 5c4b5ee..0059174 100644
+--- a/SequencesTheorems_LenDomain.tla
++++ b/SequencesTheorems_LenDomain.tla
+@@ -21,6 +21,28 @@ THEOREM LenAxiom ==
+ THEOREM LenDomain == \A S :
+                        \A s \in Seq(S) :
+                          \A n \in Nat : DOMAIN s = 1..n => n = Len(s)
+-PROOF OBVIOUS
++PROOF
++<1> SUFFICES ASSUME NEW S,
++                    NEW s \in Seq(S),
++                    NEW n \in Nat,
++                    DOMAIN s = 1..n
++             PROVE  n = Len(s)
++  OBVIOUS
++<1>1. /\ Len(s) \in Nat
++      /\ DOMAIN s = 1..Len(s)
++  BY LenDef
++<1>2. CASE n < Len(s)
++  <2>1. Len(s) \in DOMAIN s BY <1>1, <1>2
++  <2>2. Len(s) \in 1..n BY <2>1
++  <2>3. FALSE BY <1>2, <2>2
++  <2> QED BY <2>3
++<1>3. CASE Len(s) < n
++  <2>1. n \in DOMAIN s BY <1>3
++  <2>2. n \in 1..Len(s) BY <1>1, <2>1
++  <2>3. FALSE BY <1>3, <2>2
++  <2> QED BY <2>3
++<1>4. CASE n = Len(s)
++  OBVIOUS
++<1> QED BY <1>1, <1>2, <1>3, <1>4
+ 
+-=============================================================================
+\ No newline at end of file
++=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `LenDomain` in `SequencesTheorems_LenDomain.tla:24`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder.
+- Used `LenDef` to establish `DOMAIN s = 1..Len(s)`.
+- Proved endpoint equality by contradiction over the cases `n < Len(s)`, `Len(s) < n`, and `n = Len(s)`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SequencesTheorems_LenDomain.tla`.
+- Ran `python3 check_proof.py SequencesTheorems_LenDomain.tla`: PASS, no cheating detected.

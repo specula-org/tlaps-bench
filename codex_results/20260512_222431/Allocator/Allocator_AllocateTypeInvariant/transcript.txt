@@ -1,0 +1,152 @@
+Benchmark: Allocator/Allocator_AllocateTypeInvariant.tla
+Time: 28s
+Tokens: 103,257 input / 898 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch the final proof and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Allocator_AllocateTypeInvariant.tla && printf '\\n--- files ---\\n' && ls"
+-------------------------- MODULE Allocator_AllocateTypeInvariant -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+---------------------------------------------------
+... (truncated) ...
+
+InfOftenSatisfied ==
+  \A c \in Client : []<>(unsat[c] = {})
+
+-------------------------------------------------------------------------
+
+(* Used for symmetry reduction with TLC *)
+\* Symmetry == Permutations(Client) \cup Permutations(Resource)
+
+-------------------------------------------------------------------------
+
+(**********************************************************************)
+(* The following version states a weaker fairness requirement for the *)
+(* clients: resources need be returned only if the entire request has *)
+(* been satisfied.                                                    *)
+(**********************************************************************)
+
+(*
+
+SimpleAllocator2 ==
+  /\ Init /\ [][Next]_vars
+  /\ \A c \in Client: WF_vars(unsat[c] = {} /\ Return(c, alloc[c]))
+  /\ \A c \in Client: SF_vars(\E S \in SUBSET Resource: Allocate(c,S))
+
+*)
+
+-------------------------------------------------------------------------
+
+THEOREM InitTypeInvariant == Init => TypeInvariant
+  PROOF OMITTED
+
+THEOREM RequestTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM AllocateTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+PROOF OBVIOUS
+
+=========================================================================
+--- files ---
+Allocator_AllocateTypeInvariant.tla
+check_proof.py
+[EXIT 0]
+
+[AGENT] The goal is a type preservation step for `Allocate`; I’ll first try a minimal definition-expansion proof and see what TLAPS needs.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_AllocateTypeInvariant.tla
+@@
+ THEOREM AllocateTypeInvariant ==
+   ASSUME NEW c \\in Client,
+          NEW S \\in SUBSET Resource
+   PROVE  TypeInvariant /\\ Allocate(c,S) => TypeInvariant'
+-PROOF OBVIOUS
++PROOF BY DEF TypeInvariant, Allocate, available
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateTypeInvariant.tla"
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Allocator_AllocateTypeInvariant.tlaps/Allocator_AllocateTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_AllocateTypeInvariant.tlaps/fingerprints" *)
+File "./Allocator_AllocateTypeInvariant.tla", line 1, character 1 to line 142, character 73:
+[INFO]: All 1 obligation proved.
+[EXIT 0]
+
+[AGENT] TLAPS accepts the proof. I’ll run the repository legality checker now.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Allocator_AllocateTypeInvariant.tla'
+Checking: Allocator_AllocateTypeInvariant.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_AllocateTypeInvariant.tlaps/Allocator_AllocateTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_AllocateTypeInvariant.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_pd57qlm9/Allocator_AllocateTypeInvariant.tla", line 1, character 1 to line 142, character 73:
+[INFO]: All 1 obligation proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_AllocateTypeInvariant_y76q9b06/Allocator_AllocateTypeInvariant.result
+[EXIT 0]
+
+[AGENT] Implemented and verified the final TLAPS proof.
+
+- Replaced `PROOF OBVIOUS` with `PROOF BY DEF TypeInvariant, Allocate, available` in `Allocator_AllocateTypeInvariant.tla:139`.
+- Ran `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_AllocateTypeInvariant.tla`: all obligations proved.
+- Ran `python3 check_proof.py Allocator_AllocateTypeInvariant.tla`: PASS, no cheating detected.

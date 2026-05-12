@@ -1,0 +1,1671 @@
+Benchmark: ByzantinePaxos/BPConProof_MaxBallotLemma2.tla
+Time: 316s
+Tokens: 1,710,798 input / 15,828 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and nearby admitted lemmas, then iterate with `tlapm` until the final proof verifies.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,240p' BPConProof_MaxBallotLemma2.tla"
+BPConProof_MaxBallotLemma2.tla
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+check_proof.py
+
+---------------------------- MODULE BPConProof_MaxBallotLemma2 ------------------------------
+(***************************************************************************)
+(* This module specifies a Byzantine Paxos algorithm--a version of Paxos   *)
+(* in which failed acceptors and leaders can be malicious.  It is an       *)
+(* abstraction and generalization of the Castro-Liskov algorithm in        *)
+(*                                                                         *)
+(*    author = "Miguel Castro and Barbara Liskov",                         *)
+(*    title = "Practical byzantine fault tolerance and proactive           *)
+(*             recovery",                                                  *)
+(*    journal = ACM Transactions on Computer Systems,                      *)
+(*    volume = 20,                                                         *)
+(*    number = 4,                                                          *)
+(*    year = 2002,                                                         *)
+(*    pages = "398--461"                                                   *)
+(***************************************************************************)
+
+EXTENDS Integers, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* We need the following trivial
+... (truncated) ...
+.  It is enabled iff the appropriate 1c message and 2a
+message are legal.  The 1c message is legal iff the leader has received
+the necessary 1b messages.  The acceptor therefore maintains a set of
+1b messages that it knows have been sent, and checks that those 1b
+messages enable the sending of the 1c message.
+
+A 2a message is legal in the PaxosConsensus algorithm iff (i) the
+corresponding 1c message is legal and (ii) it is the only 2a message
+that the leader sends.  In the BPCon algorithm, there are no 
+explicit 2a messages.  They are implicitly sent by the acceptors
+when they send enough 2av messages.
+
+We leave unspecified how an acceptor discovers what 1b messages have
+been sent.  In the Castro-Liskov algorithm, this is done by having
+acceptors relay messages sent by other acceptors.  An acceptor knows
+that a 1b message has been sent if it receives it directly or else
+receives a copy from a weak Byzantine quorum of acceptors.  A
+(non-malicious) leader must determine what 1b messages acceptors know
+about so it chooses a value so that a quorum of acceptors will act on
+its Phase1c message and cause that value to be chosen.  However, this
+is necessary only for liveness, so we ignore this for now.
+
+In other implementations of our algorithm, the leader sends along with
+the 1c message a proof that the necessary 1b messages have been sent.
+The easiest way to do this is to have acceptors digitally sign their 1b
+messages, so a copy of the message proves that it has been sent (by the
+[EXIT 0]
+
+[AGENT] The file is large, so I’m jumping to the final theorem and its dependencies.
+
+[CMD] /bin/zsh -lc 'rg -n "PROOF OBVIOUS|THEOREM|LEMMA|MaxBallot" BPConProof_MaxBallotLemma2.tla | tail -80'
+2:---------------------------- MODULE BPConProof_MaxBallotLemma2 ------------------------------
+36:THEOREM OnePlusFinite == \A S, e : IsFiniteSet(S) => IsFiniteSet(S \cup {e})
+187:LEMMA BMessageLemma ==
+598:LEMMA NextDef == 
+621:THEOREM QuorumTheorem == 
+659:(* To define PmaxBal, we need to define an operator MaxBallot so that      *)
+660:(* MaxBallot(S) is the largest element of S if S is non-empty a finite set *)
+663:MaxBallot(S) ==  
+677:(* Our proofs use this property of MaxBallot.                              *)
+679:THEOREM MaxBallotProp  ==
+682:              IF S = {} THEN MaxBallot(S) = -1
+683:                        ELSE /\ MaxBallot(S) \in S
+684:                             /\ \A x \in S : MaxBallot(S) >= x
+687:LEMMA MaxBallotLemma1 ==
+691:               (\A x \in S : y >= x) => (y = MaxBallot(S))
+694:LEMMA MaxBallotLemma2 ==
+697:              MaxBallot(S \cup T) = IF MaxBallot(S) >= MaxBallot(T)
+698:                                      THEN MaxBallot(S)
+699:                                      ELSE MaxBallot(T)
+700:PROOF OBVIOUS
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '560,725p' BPConProof_MaxBallotLemma2.tla"
+
+Phase2b(self, b) ==
+  /\ maxBal[self] =< b
+  /\ \E v \in {vv \in Value :
+                 \E Q \in ByzQuorum :
+                    \A a \in Q :
+                       \E m \in sentMsgs("2av", b) : /\ m.val = vv
+                                                     /\ m.acc = a }:
+       /\ bmsgs' = (bmsgs \cup
+                     {[type |-> "2b", acc |-> self, bal |-> b, val |-> v]})
+       /\ maxVVal' = [maxVVal EXCEPT ![self] = v]
+  /\ maxBal' = [maxBal EXCEPT ![self] = b]
+  /\ maxVBal' = [maxVBal EXCEPT ![self] = b]
+  /\ UNCHANGED <<2avSent, knowsSent>>
+
+LearnsSent(self, b) == 
+ /\ \E S \in SUBSET sentMsgs("1b", b):
+       knowsSent' = [knowsSent EXCEPT ![self] = knowsSent[self] \cup S]
+ /\ UNCHANGED <<maxBal, maxVBal, maxVVal, 2avSent, bmsgs>> 
+
+Phase1a(self) == 
+  /\ bmsgs' = (bmsgs \cup {[type |-> "1a", bal |-> self]})
+  /\ UNCHANGED << maxBal, maxVBal, maxVVal, 2avSent, knowsSent >>
+
+Phase1c(self) ==
+  /\ \E S \in SUBSET [type : {"1c"}, bal : {self}, val : Value]:
+                        bmsgs' = (bmsgs \cup S)
+  /\ UNCHANGED << maxBal, maxVBal, maxVVal, 2avSent, knowsSent >>
+
+FakingAcceptor(self) ==
+  /\ \E m \in { mm \in 1bMessage \cup 2avMessage \cup 2bMessage : mm.acc = self} :
+         bmsgs' = (bmsgs \cup {m})
+  /\ UNCHANGED << maxBal, maxVBal, maxVVal, 2avSent, knowsSent >>
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma describes h
+... (truncated) ...
+ose a      *)
+(* maximum of S when S is nonempty, we need the following trivial fact.    *)
+(* It has been checked by TLC with -5..5 substituted for Int.              *)
+(***************************************************************************)
+AXIOM FiniteSetHasMax == 
+        \A S \in SUBSET Int :
+          IsFiniteSet(S) /\ (S # {}) => \E max \in S : \A x \in S : max >= x
+
+(***************************************************************************)
+(* Our proofs use this property of MaxBallot.                              *)
+(***************************************************************************)
+THEOREM MaxBallotProp  ==
+         \A S \in SUBSET (Ballot \cup {-1}) : 
+            IsFiniteSet(S) => 
+              IF S = {} THEN MaxBallot(S) = -1
+                        ELSE /\ MaxBallot(S) \in S
+                             /\ \A x \in S : MaxBallot(S) >= x
+  PROOF OMITTED
+
+LEMMA MaxBallotLemma1 ==
+          \A S \in SUBSET (Ballot \cup {-1}) : 
+            IsFiniteSet(S) => 
+              \A y \in S :
+               (\A x \in S : y >= x) => (y = MaxBallot(S))
+  PROOF OMITTED
+
+LEMMA MaxBallotLemma2 ==
+         \A S, T \in SUBSET (Ballot \cup {-1}) :
+            IsFiniteSet(S) /\ IsFiniteSet(T) =>
+              MaxBallot(S \cup T) = IF MaxBallot(S) >= MaxBallot(T)
+                                      THEN MaxBallot(S)
+                                      ELSE MaxBallot(T)
+PROOF OBVIOUS
+
+==============================================================================
+[EXIT 0]
+
+[AGENT] I found the target: it can use the admitted `MaxBallotProp` and `MaxBallotLemma1`; I’ll patch a case proof now.
+
+[AGENT] `tlapm` is still running; I’m waiting for the first verification results before refining.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_MaxBallotLemma2.tla
+@@
+ LEMMA MaxBallotLemma2 ==
+          \\A S, T \\in SUBSET (Ballot \\cup {-1}) :
+             IsFiniteSet(S) /\\ IsFiniteSet(T) =>
+               MaxBallot(S \\cup T) = IF MaxBallot(S) >= MaxBallot(T)
+                                       THEN MaxBallot(S)
+                                       ELSE MaxBallot(T)
+-PROOF OBVIOUS
++PROOF
++  <1>1. SUFFICES ASSUME NEW S \\in SUBSET (Ballot \\cup {-1}),
++                        NEW T \\in SUBSET (Ballot \\cup {-1}),
++                        IsFiniteSet(S),
++                        IsFiniteSet(T)
++                 PROVE  MaxBallot(S \\cup T) =
++                          IF MaxBallot(S) >= MaxBallot(T)
++                            THEN MaxBallot(S)
++                            ELSE MaxBallot(T)
++    OBVIOUS
++  <1>2. S \\cup T \\in SUBSET (Ballot \\cup {-1})
++    OBVIOUS
++  <1>3. IsFiniteSet(S \\cup T)
++    BY <1>1, UnionOfFiniteSetsFinite
++  <1>4. CASE S = {}
++    <2>1. MaxBallot(S) = -1
++      BY <1>1, MaxBallotProp
++    <2>2. CASE T = {}
++      <3>1. MaxBallot(T) = -1
++        BY <1>1, MaxBallotProp
++      <3>2. MaxBallot(S \\cup T) = -1
++        BY <1>1, <1>2, <1>3, <1>4, <2>2, MaxBallotProp
++      <3>3. QED
++        BY <2>1, <3>1, <3>2
++    <2>3. CASE T # {}
++      <3>1. MaxBallot(T) \\in T
++        BY <1>1, <2>3, MaxBallotProp
++      <3>2. MaxBallot(T) >= -1
++        BY <1>1, <3>1 DEF Ballot
++      <3>3. MaxBallot(S \\cup T) = MaxBallot(T)
++        BY <1>4
++      <3>4. QED
++        BY <2>1, <3>2, <3>3
++    <2>4. QED
++      BY <2>2, <2>3
++  <1>5. CASE T = {}
++    <2>1. MaxBallot(T) = -1
++      BY <1>1, MaxBallotProp
++    <2>2. CASE S = {}
++      BY <1>4
++    <2>3. CASE S # {}
++      <3>1. MaxBallot(S) \\in S
++        BY <1>1, <2>3, MaxBallotProp
++      <3>2. MaxBallot(S) >= -1
++        BY <1>1, <3>1 DEF Ballot
++      <3>3. MaxBallot(S \\cup T) = MaxBallot(S)
++        BY <1>5
++      <3>4. QED
++        BY <2>1, <3>2, <3>3
++    <2>4. QED
++      BY <2>2, <2>3
++  <1>6. CASE S # {} /\\ T # {}
++    <2>1. MaxBallot(S) \\in S
++      BY <1>1, <1>6, MaxBallotProp
++    <2>2. \\A x \\in S : MaxBallot(S) >= x
++      BY <1>1, <1>6, MaxBallotProp
++    <2>3. MaxBallot(T) \\in T
++      BY <1>1, <1>6, MaxBallotProp
++    <2>4. \\A x \\in T : MaxBallot(T) >= x
++      BY <1>1, <1>6, MaxBallotProp
++    <2>5. CASE MaxBallot(S) >= MaxBallot(T)
++      <3>1. MaxBallot(S) \\in S \\cup T
++        BY <2>1
++      <3>2. \\A x \\in S \\cup T : MaxBallot(S) >= x
++        BY <2>2, <2>4, <2>5
++      <3>3. MaxBallot(S \\cup T) = MaxBallot(S)
++        BY <1>2, <1>3, <3>1, <3>2, MaxBallotLemma1
++      <3>4. QED
++        BY <2>5, <3>3
++    <2>6. CASE ~(MaxBallot(S) >= MaxBallot(T))
++      <3>1. MaxBallot(T) \\in S \\cup T
++        BY <2>3
++      <3>2. MaxBallot(T) >= MaxBallot(S)
++        BY <2>6
++      <3>3. \\A x \\in S \\cup T : MaxBallot(T) >= x
++        BY <2>2, <2>4, <3>2
++      <3>4. MaxBallot(S \\cup T) = MaxBallot(T)
++        BY <1>2, <1>3, <3>1, <3>3, MaxBallotLemma1
++      <3>5. QED
++        BY <2>6, <3>4
++    <2>7. QED
++      BY <2>5, <2>6
++  <1>7. QED
++    BY <1>4, <1>5, <1>6
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded sy
+... (truncated) ...
+cceptor
+                    /\ \E Q \in WeakQuorum : Q \subseteq Acceptor,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  NEW CONSTANT S \in 
+                  SUBSET (Ballot \cup {-1}),
+                  NEW CONSTANT T \in 
+                  SUBSET (Ballot \cup {-1}),
+                  <1>1 ,
+                  MaxBallotProp 
+           PROVE  MaxBallot(S) = -1
+File "./BPConProof_MaxBallotLemma2.tla", line 2, character 1 to line 785, character 78:
+[ERROR]: 8/114 obligations failed.
+There were backend errors processing module `"BPConProof_MaxBallotLemma2"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first attempt mostly parsed, but several tiny arithmetic/set obligations need to be made explicit for TLAPS.
+
+[CMD] /bin/zsh -lc "nl -ba BPConProof_MaxBallotLemma2.tla | sed -n '700,790p'"
+   700	PROOF
+   701	  <1>1. SUFFICES ASSUME NEW S \in SUBSET (Ballot \cup {-1}),
+   702	                        NEW T \in SUBSET (Ballot \cup {-1}),
+   703	                        IsFiniteSet(S),
+   704	                        IsFiniteSet(T)
+   705	                 PROVE  MaxBallot(S \cup T) =
+   706	                          IF MaxBallot(S) >= MaxBallot(T)
+   707	                            THEN MaxBallot(S)
+   708	                            ELSE MaxBallot(T)
+   709	    OBVIOUS
+   710	  <1>2. S \cup T \in SUBSET (Ballot \cup {-1})
+   711	    OBVIOUS
+   712	  <1>3. IsFiniteSet(S \cup T)
+   713	    BY <1>1, UnionOfFiniteSetsFinite
+   714	  <1>4. CASE S = {}
+   715	    <2>1. MaxBallot(S) = -1
+   716	      BY <1>1, MaxBallotProp
+   717	    <2>2. CASE T = {}
+   718	      <3>1. MaxBallot(T) = -1
+   719	        BY <1>1, MaxBallotProp
+   720	      <3>2. MaxBallot(S \cup T) = -1
+   721	        BY <1>1, <1>2, <1>3, <1>4, <2>2, MaxBallotProp
+   722	      <3>3. QED
+   723	        BY <2>1, <3>1, <3>2
+   724	    <2>3. CASE T # {}
+   725	      <3>1. MaxBallot(T) \in T
+   726	        BY <1>1, <2>3, MaxBallotProp
+   727	      <3>2. MaxBallot(T) >= -1
+   728	        BY <1>1, <3>1 DEF Ballot
+   729	      <3>3. MaxBallot(S \cup T) = MaxBallot(T)
+   730	        BY <1>4
+   731	      <3>4. QED
+   732	        BY <2>1, <3>2, <3>3
+   733	    <2>4. QED
+   734	      BY <2>2, <2>3
+   735	  <1>5. CASE T = {}
+   736	    <2>1. MaxBallot(T) = -1
+   737	      BY <1>1, MaxBallotProp
+   738	    <2>2. CASE S =
+... (truncated) ...
+<1>5
+   747	      <3>4. QED
+   748	        BY <2>1, <3>2, <3>3
+   749	    <2>4. QED
+   750	      BY <2>2, <2>3
+   751	  <1>6. CASE S # {} /\ T # {}
+   752	    <2>1. MaxBallot(S) \in S
+   753	      BY <1>1, <1>6, MaxBallotProp
+   754	    <2>2. \A x \in S : MaxBallot(S) >= x
+   755	      BY <1>1, <1>6, MaxBallotProp
+   756	    <2>3. MaxBallot(T) \in T
+   757	      BY <1>1, <1>6, MaxBallotProp
+   758	    <2>4. \A x \in T : MaxBallot(T) >= x
+   759	      BY <1>1, <1>6, MaxBallotProp
+   760	    <2>5. CASE MaxBallot(S) >= MaxBallot(T)
+   761	      <3>1. MaxBallot(S) \in S \cup T
+   762	        BY <2>1
+   763	      <3>2. \A x \in S \cup T : MaxBallot(S) >= x
+   764	        BY <2>2, <2>4, <2>5
+   765	      <3>3. MaxBallot(S \cup T) = MaxBallot(S)
+   766	        BY <1>2, <1>3, <3>1, <3>2, MaxBallotLemma1
+   767	      <3>4. QED
+   768	        BY <2>5, <3>3
+   769	    <2>6. CASE ~(MaxBallot(S) >= MaxBallot(T))
+   770	      <3>1. MaxBallot(T) \in S \cup T
+   771	        BY <2>3
+   772	      <3>2. MaxBallot(T) >= MaxBallot(S)
+   773	        BY <2>6
+   774	      <3>3. \A x \in S \cup T : MaxBallot(T) >= x
+   775	        BY <2>2, <2>4, <3>2
+   776	      <3>4. MaxBallot(S \cup T) = MaxBallot(T)
+   777	        BY <1>2, <1>3, <3>1, <3>3, MaxBallotLemma1
+   778	      <3>5. QED
+   779	        BY <2>6, <3>4
+   780	    <2>7. QED
+   781	      BY <2>5, <2>6
+   782	  <1>7. QED
+   783	    BY <1>4, <1>5, <1>6
+   784	
+   785	==============================================================================
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg -n \">= -1|MaxBallotLemma|CASE .*# \\{\\}|DEF Ballot|Nat\" . ~/.tlapm15/lib/tlaps -g '*.tla' | head -80"
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:16:LOCAL INSTANCE Naturals
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:82:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW m \in Nat
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:189:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW m \in Nat, m <= n
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:232:(* Given Bag B and Natural n, CopiesIn(e, Scaling(n, B))=n*CopiesIn(e, B)  *)
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:236:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW e
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:258:      PROVE  Cardinality(occs(x)) \in Nat \ {0}
+./Consensus.tla:7:EXTENDS Naturals, FiniteSets, TLAPS
+./PConProof.tla:98:Ballot ==  Nat
+./VoteProof.tla:45:Ballot == Nat
+./VoteProof.tla:262:(*   Silly[n \in Nat] == CHOOSE v : v # Silly[n]                           *)
+./VoteProof.tla:275:THEOREM RecursiveFcnOfNat ==
+./VoteProof.tla:277:                 \A n \in Nat : 
+./VoteProof.tla:279:          PROVE  LET f[n \in Nat] == Def(f, n)
+./VoteProof.tla:280:                 IN  f = [n \in Nat |-> Def(f, n)]
+./VoteProof.tla:332:(*    AXIOM ASSUME NEW f(_), f(0), \A n \in Nat : f(n) => f(n+1)           *)
+./VoteProof.tla:333:(*          PROVE  \A n \in Nat : f(n)                                     *)
+./VoteProof.tla:338:AXIOM SimpleNatInduction == \A f : /\ f[0]
+./VoteProof.tla:339:                                   /\ \A n \in Nat : f[n] => f[n+1]
+./VoteProof.tla:340:    
+... (truncated) ...
+lib/tlaps/WellFoundedInduction_proofs.tla:526:                      \A n \in Nat : ff[n+1] < ff[n] 
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:530:<1> DEFINE P(n) == \E f \in [Nat -> Nat] : 
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:531:                      /\ \A m \in Nat : <<f[m+1], f[m]>> \in R 
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:535:<1>3. ASSUME NEW n \in Nat, 
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:538:  <2> SUFFICES ASSUME NEW f \in [Nat -> Nat],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:539:                      \A m \in Nat : <<f[m+1], f[m]>> \in R ,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:543:  <2> DEFINE g[i \in Nat] == f[i+1]
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:544:  <2>1. g \in [Nat -> Nat]
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:545:    BY ONLY f \in [Nat -> Nat], Isa
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:546:  <2>2. \A i \in Nat : <<g[i+1], g[i]>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:550:    <3>2. /\ f[1] \in Nat
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:560:  <2> \A n \in Nat : ~ P(n)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:561:    BY ONLY <1>3, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:580:<1> SUFFICES ASSUME NEW g \in [Nat -> S],
+[EXIT 0]
+
+[AGENT] I’m tightening the proof obligations by adding explicit empty-set and union membership facts.
+
+[CMD] /bin/zsh -lc "~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla > /tmp/tlapm.out 2>&1 || true
+rg -n \"\\[ERROR\\]|PROVE\" /tmp/tlapm.out"
+13:[ERROR]: Could not prove or check:
+59:           PROVE  \A x \in S \cup T : MaxBallot(T) >= x
+61:[ERROR]: Could not prove or check:
+105:           PROVE  MaxBallot(T) >= MaxBallot(S)
+107:[ERROR]: Could not prove or check:
+153:           PROVE  \A x \in S \cup T : MaxBallot(S) >= x
+155:[ERROR]: Could not prove or check:
+199:           PROVE  MaxBallot(S \cup T)
+204:[ERROR]: Could not prove or check:
+249:           PROVE  MaxBallot(T) = -1
+251:[ERROR]: Could not prove or check:
+297:           PROVE  MaxBallot(S \cup T)
+302:[ERROR]: Could not prove or check:
+347:           PROVE  MaxBallot(T) = -1
+349:[ERROR]: Could not prove or check:
+394:           PROVE  MaxBallot(S) = -1
+396:[ERROR]: 8/114 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,130p' /tmp/tlapm.out && sed -n '180,320p' /tmp/tlapm.out"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_MaxBallotLemma2.tlaps/BPConProof_MaxBallotLemma2.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+File "./BPConProof_MaxBallotLemma2.tla", line 775, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+    
+... (truncated) ...
+            IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  NEW CONSTANT S \in 
+                  SUBSET (Ballot \cup {-1}),
+                  NEW CONSTANT T \in 
+                  SUBSET (Ballot \cup {-1}),
+                  <2>1 ,
+                  <3>2 ,
+                  <3>3 
+           PROVE  MaxBallot(S \cup T)
+                  = (IF MaxBallot(S) >= MaxBallot(T)
+                       THEN MaxBallot(S)
+                       ELSE MaxBallot(T))
+File "./BPConProof_MaxBallotLemma2.tla", line 719, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,220p' ~/.tlapm15/lib/tlaps/Integers.tla && rg -n \"THEOREM|LEMMA|Total|Linear|<=>|>=|Nat\" ~/.tlapm15/lib/tlaps/Integers*.tla ~/.tlapm15/lib/tlaps/Naturals*.tla | head -120"
+sed: can't read /home/ruize/.tlapm15/lib/tlaps/Integers.tla: No such file or directory
+[EXIT 2]
+
+[CMD] /bin/zsh -lc "find ~/.tlapm15/lib/tlaps -maxdepth 2 -type f | sed -n '1,120p'"
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/zenon_focal.v
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/zenon_induct.v
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/un-inst
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/RealTime.tla
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/TLA+/README.html
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Tuples.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Functions.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/FixedPoints.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Peano.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/ROOT.ML
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Strings.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatDivision.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/simplifier_setup.ML
+/home/ruize/.tlapm15/lib/tlaps/TLA+/SetTheory.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/CaseExpressions.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/SMT.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Constant.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/PredicateLogic.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Makefile
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatArith.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Integers.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatOrderings.thy
+/home/ruize/.tlapm15/lib/tlaps/SequencesExt.tla
+
+... (truncated) ...
+amples/Allocator.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleMutex.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/SumAndMax.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/BubbleSort.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/README
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Makefile
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/.svnignore
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/CONTRIBUTORS
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/ANNOUNCE
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/NEWS
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/build
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/README.TLAPS
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/COPYRIGHT
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/README
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/Isabelle
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla
+[EXIT 0]
+
+[CMD] /bin/zsh -lc 'rg -n "BY .*SMT|SMT|Isa|Zenon" ~/.tlapm15/lib/tlaps/*.tla ~/.tlapm15/lib/tlaps/examples/*.tla | head -120'
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:30:BY IsaM("(intro natInduct, auto)")
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:44:<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:45:<1>. QED  BY <1>3, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:59:<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:81:<1>. QED  BY ONLY <1>1, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:112:    BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:121:    <3>2. g = gg  BY <2>0, Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:122:    <3>. QED  BY <3>1, <3>2, Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:125:    <3>. SUFFICES \A k \in Nat : Q(k)  BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:129:      <4>. QED  BY <4>1, Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:132:      <4>1. PICK g : P(g,k)  BY <3>2, Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:135:        BY <4>1, <2>0, Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:140:          BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:149:      <4>. QED  BY <4>2, Zenon
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:151:    <3>. QED  BY <3>1, <3>2, NatInd
+... (truncated) ...
+/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:451: <2>. QED  BY <2>1, <2>2, Zenon DEF IInv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:461:      BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:462:   <3>. QED  BY <3>1, Zenon DEF After, GG
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:463: <2>. QED  BY <2>1, Zenon DEF IInv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:469:   BY <1>5a, Zenon DEF p5
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:476:     BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:478:     BY <3>1, AfterPrime, Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:480:     BY <3>2, Zenon DEF After, GG
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:481:   <3>. QED  BY <3>1, <3>2, Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:482: <2>. QED  BY <2>1, Zenon DEF IInv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:491:   BY <1>5b, Zenon DEF p5
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:498:     BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:500:     BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:502:     BY <3>1, <3>2, AfterPrime, Zenon
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:504:     BY <3>1, <3>3, Zenon DEF After, GG
+[EXIT 0]
+
+[AGENT] I’ll try a more direct SMT-backed proof first; if that works it will be much cleaner.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('BPConProof_MaxBallotLemma2.tla')
+s=p.read_text()
+start=s.index('PROOF\\n  <1>1. SUFFICES')
+end=s.index('\\n\\n==============================================================================', start)
+new='PROOF\\n  BY MaxBallotProp, MaxBallotLemma1, UnionOfFiniteSetsFinite, SMT DEF Ballot'
+p.write_text(s[:start]+new+s[end:])
+PY
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_
+
+(* created new ".tlacache/BPConProof_MaxBallotLemma2.tlaps/BPConProof_MaxBallotLemma2.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+File "./BPConProof_MaxBallotLemma2.tla", line 701, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       =>
+... (truncated) ...
+maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  MaxBallotProp ,
+                  MaxBallotLemma1 ,
+                  UnionOfFiniteSetsFinite ,
+                  SMT 
+           PROVE  \A S, T \in SUBSET (Ballot \cup {-1}) :
+                     IsFiniteSet(S) /\ IsFiniteSet(T)
+                     => MaxBallot(S \cup T)
+                        = (IF MaxBallot(S) >= MaxBallot(T)
+                             THEN MaxBallot(S)
+                             ELSE MaxBallot(T))
+File "./BPConProof_MaxBallotLemma2.tla", line 2, character 1 to line 703, character 78:
+[ERROR]: 1/5 obligations failed.
+There were backend errors processing module `"BPConProof_MaxBallotLemma2"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The direct SMT attempt was too coarse; I’m restoring a structured proof with stronger local assertions.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('BPConProof_MaxBallotLemma2.tla')
+s=p.read_text()
+start=s.index('PROOF\\n  BY MaxBallotProp')
+end=s.index('\\n\\n==============================================================================', start)
+new=r'''PROOF
+  <1>1. SUFFICES ASSUME NEW S \\\\in SUBSET (Ballot \\\\cup {-1}),
+                        NEW T \\\\in SUBSET (Ballot \\\\cup {-1}),
+                        IsFiniteSet(S),
+                        IsFiniteSet(T)
+                 PROVE  MaxBallot(S \\\\cup T) =
+                          IF MaxBallot(S) >= MaxBallot(T)
+                            THEN MaxBallot(S)
+                            ELSE MaxBallot(T)
+    OBVIOUS
+  <1>2. S \\\\cup T \\\\in SUBSET (Ballot \\\\cup {-1})
+    OBVIOUS
+  <1>3. IsFiniteSet(S \\\\cup T)
+    BY <1>1, UnionOfFiniteSetsFinite
+  <1>4. CASE S = {}
+    <2>1. MaxBallot(S) = -1
+      BY <1>4 DEF MaxBallot
+    <2>2. CASE T = {}
+      <3>1. MaxBallot(T) = -1
+        BY <2>2 DEF MaxBallot
+      <3>2. S \\\\cup T = {}
+        BY <1>4, <2>2
+      <3>3. MaxBallot(S \\\\cup T) = -1
+        BY <3>2 DEF MaxBallot
+      <3>4. QED
+        BY <2>1, <3>1, <3>3
+    <2>3. CASE T # {}
+      <3>1. MaxBallot(T) \\\\in T
+        BY <1>1, <2>3, MaxBallotProp
+      <3>2. \\\\A x \\\\in T : MaxBallot(T) >= x
+        BY <1>1, <2>3, MaxBallotProp
+      <3>3. MaxBallot(T) >= -1
+        BY <1>1, <3>1, SMT DEF Ballot
+      <3>4. MaxBallot(S \\\\cup T) = MaxBallot(T)
+        BY <1>4
+      <3>5. QED
+        BY <2>1, <3>3, <3>4
+    <2>4. QED
+      BY <2>2, <2>3
+  <1>5. CASE T = {}
+    <2>1. MaxBallot(T) = -1
+      BY <1>5 DEF MaxBallot
+    <2>2. CASE S = {}
+      BY <1>4
+    <2>3. CASE S # {}
+      <3>1. MaxBallot(S) \\\\in S
+        BY <1>1, <2>3, MaxBallotProp
+      <3>2. \\\\A x \\\\in S : MaxBallot(S) >= x
+        BY <1>1, <2>3, MaxBallotProp
+      <3>3. MaxBallot(S) >= -1
+        BY <1>1, <3>1, SMT DEF Ballot
+      <3>4. MaxBallot(S \\\\cup T) = MaxBallot(S)
+        BY <1>5
+      <3>5. QED
+        BY <2>1, <3>3, <3>4
+    <2>4. QED
+      BY <2>2, <2>3
+  <1>6. CASE S # {} /\\ T # {}
+    <2>1. MaxBallot(S) \\\\in S
+      BY <1>1, <1>6, MaxBallotProp
+    <2>2. \\\\A x \\\\in S : MaxBallot(S) >= x
+      BY <1>1, <1>6, MaxBallotProp
+    <2>3. MaxBallot(T) \\\\in T
+      BY <1>1, <1>6, MaxBallotProp
+    <2>4. \\\\A x \\\\in T : MaxBallot(T) >= x
+      BY <1>1, <1>6, MaxBallotProp
+    <2>5. CASE MaxBallot(S) >= MaxBallot(T)
+      <3>1. MaxBallot(S) \\\\in S \\\\cup T
+        BY <2>1
+      <3>2. \\\\A x \\\\in S \\\\cup T : MaxBallot(S) >= x
+        BY <2>2, <2>4, <2>5, SMT
+      <3>3. MaxBallot(S \\\\cup T) = MaxBallot(S)
+        BY <1>2, <1>3, <3>1, <3>2, MaxBallotLemma1
+      <3>4. QED
+        BY <2>5, <3>3
+    <2>6. CASE ~(MaxBallot(S) >= MaxBallot(T))
+      <3>1. MaxBallot(T) \\\\in S \\\\cup T
+        BY <2>3
+      <3>2. MaxBallot(T) >= MaxBallot(S)
+        BY <2>6, SMT
+      <3>3. \\\\A x \\\\in S \\\\cup T : MaxBallot(T) >= x
+        BY <2>2, <2>4, <3>2, SMT
+      <3>4. MaxBallot(S \\\\cup T) = MaxBallot(T)
+        BY <1>2, <1>3, <3>1, <3>3, MaxBallotLemma1
+      <3>5. QED
+        BY <2>6, <3>4
+    <2>7. QED
+      BY <2>5, <2>6
+  <1>7. QED
+    BY <1>4, <1>5, <1>6'''
+# raw has doubled slashes due r; fix four backslashes to one TLA backslash
+new=new.replace('\\\\\\\\','\\\\')
+p.write_text(s[:start]+new+s[end:])
+PY
+nl -ba BPConProof_MaxBallotLemma2.tla | sed -n '694,785p'
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+(* created new ".tlacache/BPConProof_MaxBallotLemma2.tlaps/BPConProof_MaxBallotLemma2.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+File "./BPConProof_M
+... (truncated) ...
+                  NEW VARIABLE maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  NEW CONSTANT S \in 
+                  SUBSET (Ballot \cup {-1}),
+                  NEW CONSTANT T \in 
+                  SUBSET (Ballot \cup {-1}),
+                  <2>1 ,
+                  <3>3 ,
+                  <3>4 
+           PROVE  MaxBallot(S \cup T)
+                  = (IF MaxBallot(S) >= MaxBallot(T)
+                       THEN MaxBallot(S)
+                       ELSE MaxBallot(T))
+File "./BPConProof_MaxBallotLemma2.tla", line 2, character 1 to line 791, character 78:
+[ERROR]: 7/122 obligations failed.
+There were backend errors processing module `"BPConProof_MaxBallotLemma2"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "rg -n \"-1|>= -1|\\\\in Nat.*>=|Nat.*=>.*>=|Int.*>=|GEQ\" ~/.tlapm15/lib/tlaps/examples/*.tla ~/.tlapm15/lib/tlaps/*.tla | head -160"
+rg: unrecognized flag -1
+[EXIT 0]
+
+[CMD] /bin/zsh -lc 'rg -n -- "-1|>= -1|GEQ|Nat.*>=|>=.*Nat" ~/.tlapm15/lib/tlaps/examples/*.tla ~/.tlapm15/lib/tlaps/*.tla | head -160'
+/home/ruize/.tlapm15/lib/tlaps/examples/Peterson.tla:9:(* (FM 2012). Springer LNCS 7436, pp. 147-154, Paris 2012.             *)
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:460:      IF i = 0 THEN Y ELSE {F[s] : s \in Ci[i-1]}
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:463:<1>3. \A i \in Nat : Ci[i] = IF i = 0 THEN Y ELSE {F[s] : s \in Ci[i-1]}
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:470:      f        == CHOOSE f : f = [i \in Nat |-> IF i = 0 THEN f0 ELSE Def(f[i-1],i)]
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:471:  <2> SUFFICES \A i \in Nat : f[i] = IF i = 0 THEN f0 ELSE Def(f[i-1],i)  BY DEF Ci
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:485:   BY <1>3, i+1 \in Nat \ {0}, (i+1)-1 = i, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:497:     BY <1>3, i+1 \in Nat \ {0}, (i+1)-1 = i, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:536:      <4>1. PICK s \in Ci[i-1] : F[s] = c  BY <3>1, <3>3, <1>5, SMT
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:710:<1>. DEFINE f == [i \in 1 .. b-a+1 |-> i+a-1]
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:754:      <4>. DEFINE g == [j \in 1..nn-1 |-> IF j<i THEN f[j] ELSE f[j+1]]
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:755:      <4>1. nn-1 \in Nat /\ nn-1 > mm  BY <3>1
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:756:      <4>2. g \in Injection(1..nn-1, 1..mm)  BY <3>
+... (truncated) ...
+] = Def(g[n-1],i)  OBVIOUS
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:133:      <4>1a. ASSUME NEW n \in 0 .. k, NEW i \in 0 .. n-1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:134:             PROVE  g[n][i] = Def(g[n-1], i)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:136:      <4>. DEFINE h == [n \in 0 .. k+1 |-> [i \in 0 .. n-1 |-> Def(g[n-1], i) ]]
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:137:      <4>2. h = [n \in 0 .. k+1 |-> [i \in 0 .. n-1 |-> Def(h[n-1], i)]]
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:138:        <5>. SUFFICES ASSUME NEW n \in 0 .. k+1, NEW i \in 0 .. n-1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:139:                      PROVE  h[n][i] = Def(h[n-1], i)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:141:        <5>1. h[n][i] = Def(g[n-1], i)  OBVIOUS
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:142:        <5>2. ASSUME NEW j \in 0 .. i-1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:143:              PROVE  g[n-1][j] = h[n-1][j]
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:146:        <5>3. Def(g[n-1],i) = Def(h[n-1],i)  BY <5>2
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:153:  <2>3. \A k \in Nat : \A l \in 0 .. k : \A i \in 0 .. l-1 : \A g,h : 
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:155:    <3>. DEFINE Q(k) == \A l \in 0 .. k : \A i \in 0 .. l-1 : \A g,h :
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '180,216p' ~/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla"
+                         \/ max[i] >= num[j]
+                   \/ /\ pc[i] = "p3"
+                      /\ max[i] >= num[j]
+                   \/ /\ pc[i] \in {"p4", "p5", "p6"}
+                      /\ GG(j,i)
+                      /\ (pc[i] \in {"p5", "p6"}) => (j \in unread[i])
+
+IInv(i) ==
+  /\ (num[i] = 0) <=> (pc[i] \in {"p1", "p2", "p3"})
+  /\ flag[i] <=> (pc[i] \in {"p2", "p3", "p4"})
+  /\ (pc[i] \in {"p5", "p6"}) =>
+        \A j \in (P \ unread[i]) \ {i} : After(j, i)
+  /\ /\ (pc[i] = "p6")
+     /\ \/ (pc[nxt[i]] = "p2") /\ (i \notin unread[nxt[i]])
+        \/ pc[nxt[i]] = "p3"
+     => max[nxt[i]] >= num[i]
+  /\ (pc[i] \in {"p7", "p8"}) => \A j \in P \ {i} : After(j, i)
+Inv == TypeOK /\ \A i \in P : IInv(i)
+-----------------------------------------------------------------------------
+
+THEOREM GTAxiom  == \A n, m \in Nat : ~ (n > m /\ m > n)
+  OBVIOUS (*{ by (isabelle "(auto dest: nat_less_trans)") }*)
+
+THEOREM GEQAxiom == \A n, m \in Nat : (n = m) \/ n > m \/ m > n
+  OBVIOUS (*{ by (isabelle "(auto elim: nat_less_cases)") }*)
+
+THEOREM GEQTransitive == \A n, m, q \in Nat : n >= m /\ m >= q => n >= q
+  OBVIOUS (*{ by (isabelle "(auto dest: nat_leq_trans)") }*)
+
+THEOREM Transitivity2 == \A n, m, q \in Nat : n > m /\ m >= q => n > q
+  OBVIOUS (*{ by (isabelle "(auto dest: nat_leq_less_trans)") }*)
+
+THEOREM GEQorLT == \A n, m \in Nat : n >= m <=> ~(m > n)
+  OBVIOUS (*{ by (isabelle "(auto simp: nat_not_less[simplified])") }*)
+
+THEOREM NatGEQZero == \A n \in Nat: (n > 0) <=> (n # 0)
+  OBVIOUS (*{ by (isabelle "(auto simp: nat_gt0_not0)") }*)
+[EXIT 0]
+
+[AGENT] The remaining failures are all about TLAPS not inferring order facts for `Nat ∪ {-1}`; I’m testing the smallest acceptable assertions.
+
+[CMD] /bin/zsh -lc "cat > /tmp/Test.tla <<'EOF'
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+Ballot == Nat
+THEOREM T == \\A x \\in Ballot \\cup {-1} : x >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW x \\in Ballot \\cup {-1} PROVE x >= -1 OBVIOUS
+<1>2. CASE x = -1 OBVIOUS
+<1>3. CASE x \\in Ballot
+  BY <1>3, SMT DEF Ballot
+<1>4. QED BY <1>1, <1>2, <1>3
+====
+EOF
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Test.tlaps/Test.thy" *)
+(* fingerprints written in ".tlacache/Test.tlaps/fingerprints" *)
+File "/tmp/Test.tla", line 7, characters 19-25:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1}
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 1, character 1 to line 11, character 4:
+[ERROR]: 1/9 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "cat > /tmp/Test.tla <<'EOF'
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+Ballot == Nat
+THEOREM T == \\A x \\in Ballot \\cup {-1} : x >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW x \\in Ballot \\cup {-1} PROVE x >= -1 OBVIOUS
+<1>2. x = -1 \\/ x \\in Ballot BY <1>1
+<1>3. CASE x = -1 OBVIOUS
+<1>4. CASE x \\in Ballot
+  BY <1>4, SMT DEF Ballot
+<1>5. QED BY <1>2, <1>3, <1>4
+====
+EOF
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Test.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+(* created new ".tlacache/Test.tlaps/Test.thy" *)
+(* fingerprints written in ".tlacache/Test.tlaps/fingerprints" *)
+File "/tmp/Test.tla", line 8, characters 19-25:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1}
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 1, character 1 to line 12, character 4:
+[ERROR]: 1/11 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "for backend in 'Isa' 'Zenon' 'SMT' 'IsaM(\"auto\")' 'IsaM(\"linarith\")'; do 
+cat > /tmp/Test.tla <<EOF
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+Ballot == Nat
+THEOREM T == \\\\A x \\\\in Ballot \\\\cup {-1} : x >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW x \\\\in Ballot \\\\cup {-1} PROVE x >= -1 OBVIOUS
+<1>2. x = -1 \\\\/ x \\\\in Ballot BY <1>1
+<1>3. CASE x = -1 OBVIOUS
+<1>4. CASE x \\\\in Ballot
+  BY <1>4, "'$backend DEF Ballot
+<1>5. QED BY <1>2, <1>3, <1>4
+====
+EOF
+echo === $backend ===
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla >/tmp/test.out 2>&1; echo $?; tail -20 /tmp/test.out
+done'
+zsh:16: == not found
+[EXIT 1]
+
+[CMD] /bin/zsh -lc "bash -lc 'for backend in \"Isa\" \"Zenon\" \"SMT\" \"IsaM(\\\"auto\\\")\" \"IsaM(\\\"linarith\\\")\"; do cat > /tmp/Test.tla <<EOF
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+Ballot == Nat
+THEOREM T == \\\\A x \\\\in Ballot \\\\cup {-1} : x >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW x \\\\in Ballot \\\\cup {-1} PROVE x >= -1 OBVIOUS
+<1>2. x = -1 \\\\/ x \\\\in Ballot BY <1>1
+<1>3. CASE x = -1 OBVIOUS
+<1>4. CASE x \\\\in Ballot
+  BY <1>4, "'$backend DEF Ballot
+<1>5. QED BY <1>2, <1>3, <1>4
+====
+EOF
+echo === $backend ===
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla >/tmp/test.out 2>&1; echo $?; tail -15 /tmp/test.out
+done'"'"
+3
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1}
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 1, character 1 to line 12, character 4:
+[ERROR]: 1/11 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+=== Zenon ===
+3
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1}
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 1, character 1 to line 12, character 4:
+[ERROR]: 2/11 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", lin
+... (truncated) ...
+ 1 to line 12, character 4:
+[ERROR]: 1/11 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+=== IsaM("linarith") ===
+3
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1}
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 1, character 1 to line 12, character 4:
+[ERROR]: 2/11 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "cat > /tmp/Test.tla <<'EOF'
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+THEOREM T == \\A n \\in Nat : n >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW n \\in Nat PROVE n >= -1 OBVIOUS
+<1>2. n >= 0 BY <1>1, SMT
+<1>3. 0 >= -1 BY SMT
+<1>4. QED BY <1>2, <1>3, SMT
+====
+EOF
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Test.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Test.tlaps/Test.thy" *)
+File "/tmp/Test.tla", line 1, character 1 to line 9, character 4:
+[INFO]: All 10 obligations proved.
+(* fingerprints written in ".tlacache/Test.tlaps/fingerprints" *)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "cat > /tmp/Test.tla <<'EOF'
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+Ballot == Nat
+THEOREM T == \\A x \\in Ballot \\cup {-1} : x >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW x \\in Ballot \\cup {-1} PROVE x >= -1 OBVIOUS
+<1>2. x = -1 \\/ x \\in Ballot BY <1>1
+<1>3. CASE x = -1 OBVIOUS
+<1>4. CASE x \\in Ballot
+  <2>1. x \\in Nat BY <1>4 DEF Ballot
+  <2>2. x >= 0 BY <2>1, SMT
+  <2>3. 0 >= -1 BY SMT
+  <2>4. QED BY <2>2, <2>3, SMT
+<1>5. QED BY <1>2, <1>3, <1>4
+====
+EOF
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Test.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+(* created new ".tlacache/Test.tlaps/Test.thy" *)
+(* fingerprints written in ".tlacache/Test.tlaps/fingerprints" *)
+File "/tmp/Test.tla", line 13, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1},
+                  <2>2 ,
+                  <2>3 ,
+                  SMT 
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 8, characters 19-25:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT x \in 
+                  Ballot \cup {-1}
+           PROVE  x >= -1
+File "/tmp/Test.tla", line 1, character 1 to line 15, character 4:
+[ERROR]: 2/19 obligations failed.
+There were backend errors processing module `"Test"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "cat > /tmp/Test.tla <<'EOF'
+---- MODULE Test ----
+EXTENDS Integers, TLAPS
+Ballot == Nat
+THEOREM T == \\A x \\in Ballot \\cup {-1} : x >= -1
+PROOF
+<1>1. SUFFICES ASSUME NEW x \\in Ballot \\cup {-1} PROVE x >= -1 OBVIOUS
+<1>2. x = -1 \\/ x \\in Ballot BY <1>1
+<1>3. CASE x = -1 BY <1>3, SMT
+<1>4. CASE x \\in Ballot
+  <2>1. x \\in Nat BY <1>4 DEF Ballot
+  <2>2. x >= 0 BY <2>1, SMT
+  <2>3. 0 >= -1 BY SMT
+  <2>4. x >= -1 BY <2>1, <2>2, <2>3, SMT
+  <2>5. QED BY <2>4
+<1>5. QED BY <1>2, <1>3, <1>4
+====
+EOF
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps /tmp/Test.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Test.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+(* created new ".tlacache/Test.tlaps/Test.thy" *)
+(* fingerprints written in ".tlacache/Test.tlaps/fingerprints" *)
+File "/tmp/Test.tla", line 1, character 1 to line 16, character 4:
+[INFO]: All 24 obligations proved.
+[EXIT 0]
+
+[AGENT] I found TLAPS needs explicit natural-number lower-bound proofs and quantified union cases, so I’ll add those helper steps inside the proof.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('BPConProof_MaxBallotLemma2.tla')
+s=p.read_text()
+start=s.index('PROOF\\n  <1>1. SUFFICES')
+end=s.index('\\n\\n==============================================================================', start)
+new=r'''PROOF
+  <1>1. SUFFICES ASSUME NEW S \\\\in SUBSET (Ballot \\\\cup {-1}),
+                        NEW T \\\\in SUBSET (Ballot \\\\cup {-1}),
+                        IsFiniteSet(S),
+                        IsFiniteSet(T)
+                 PROVE  MaxBallot(S \\\\cup T) =
+                          IF MaxBallot(S) >= MaxBallot(T)
+                            THEN MaxBallot(S)
+                            ELSE MaxBallot(T)
+    OBVIOUS
+  <1>2. S \\\\cup T \\\\in SUBSET (Ballot \\\\cup {-1})
+    OBVIOUS
+  <1>3. IsFiniteSet(S \\\\cup T)
+    BY <1>1, UnionOfFiniteSetsFinite
+  <1>4. \\\\A y \\\\in Ballot \\\\cup {-1} : y >= -1
+  PROOF
+    <2>1. SUFFICES ASSUME NEW y \\\\in Ballot \\\\cup {-1} PROVE y >= -1
+      OBVIOUS
+    <2>2. y = -1 \\\\/ y \\\\in Ballot
+      BY <2>1
+    <2>3. CASE y = -1
+      BY <2>3, SMT
+    <2>4. CASE y \\\\in Ballot
+      <3>1. y \\\\in Nat
+        BY <2>4 DEF Ballot
+      <3>2. y >= 0
+        BY <3>1, SMT
+      <3>3. 0 >= -1
+        BY SMT
+      <3>4. y >= -1
+        BY <3>1, <3>2, <3>3, SMT
+      <3>5. QED
+        BY <3>4
+    <2>5. QED
+      BY <2>2, <2>3, <2>4
+  <1>5. CASE S = {}
+    <2>1. MaxBallot(S) = -1
+      BY <1>5 DEF MaxBallot
+    <2>2. CASE T = {}
+      <3>1. MaxBallot(T) = -1
+        BY <2>2 DEF MaxBallot
+      <3>2. S \\\\cup T = {}
+        BY <1>5, <2>2
+      <3>3. MaxBallot(S \\\\cup T) = -1
+        BY <3>2 DEF MaxBallot
+      <3>4. QED
+        BY <2>1, <3>1, <3>3
+    <2>3. CASE T # {}
+      <3>1. MaxBallot(T) \\\\in T
+        BY <1>1, <2>3, MaxBallotProp
+      <3>2. MaxBallot(T) \\\\in Ballot \\\\cup {-1}
+        BY <1>1, <3>1
+      <3>3. MaxBallot(T) >= -1
+        BY <1>4, <3>2
+      <3>4. MaxBallot(S \\\\cup T) = MaxBallot(T)
+        BY <1>5
+      <3>5. CASE MaxBallot(S) >= MaxBallot(T)
+        <4>1. MaxBallot(S) = MaxBallot(T)
+          BY <2>1, <3>3, <3>5, SMT
+        <4>2. QED
+          BY <3>4, <3>5, <4>1
+      <3>6. CASE ~(MaxBallot(S) >= MaxBallot(T))
+        BY <3>4, <3>6
+      <3>7. QED
+        BY <3>5, <3>6
+    <2>4. QED
+      BY <2>2, <2>3
+  <1>6. CASE T = {}
+    <2>1. MaxBallot(T) = -1
+      BY <1>6 DEF MaxBallot
+    <2>2. CASE S = {}
+      BY <1>5
+    <2>3. CASE S # {}
+      <3>1. MaxBallot(S) \\\\in S
+        BY <1>1, <2>3, MaxBallotProp
+      <3>2. MaxBallot(S) \\\\in Ballot \\\\cup {-1}
+        BY <1>1, <3>1
+      <3>3. MaxBallot(S) >= -1
+        BY <1>4, <3>2
+      <3>4. MaxBallot(S \\\\cup T) = MaxBallot(S)
+        BY <1>6
+      <3>5. MaxBallot(S) >= MaxBallot(T)
+        BY <2>1, <3>3
+      <3>6. QED
+        BY <3>4, <3>5
+    <2>4. QED
+      BY <2>2, <2>3
+  <1>7. CASE S # {} /\\ T # {}
+    <2>1. MaxBallot(S) \\\\in S
+      BY <1>1, <1>7, MaxBallotProp
+    <2>2. \\\\A x \\\\in S : MaxBallot(S) >= x
+      BY <1>1, <1>7, MaxBallotProp
+    <2>3. MaxBallot(T) \\\\in T
+      BY <1>1, <1>7, MaxBallotProp
+    <2>4. \\\\A x \\\\in T : MaxBallot(T) >= x
+      BY <1>1, <1>7, MaxBallotProp
+    <2>5. MaxBallot(S) \\\\in Ballot \\\\cup {-1}
+      BY <1>1, <2>1
+    <2>6. MaxBallot(T) \\\\in Ballot \\\\cup {-1}
+      BY <1>1, <2>3
+    <2>7. CASE MaxBallot(S) >= MaxBallot(T)
+      <3>1. MaxBallot(S) \\\\in S \\\\cup T
+        BY <2>1
+      <3>2. \\\\A x \\\\in S \\\\cup T : MaxBallot(S) >= x
+      PROOF
+        <4>1. SUFFICES ASSUME NEW x \\\\in S \\\\cup T PROVE MaxBallot(S) >= x
+          OBVIOUS
+        <4>2. x \\\\in S \\\\/ x \\\\in T
+          BY <4>1
+        <4>3. CASE x \\\\in S
+          BY <2>2, <4>3
+        <4>4. CASE x \\\\in T
+          <5>1. MaxBallot(T) >= x
+            BY <2>4, <4>4
+          <5>2. MaxBallot(S) >= x
+            BY <2>5, <2>6, <2>7, <5>1, SMT DEF Ballot
+          <5>3. QED
+            BY <5>2
+        <4>5. QED
+          BY <4>2, <4>3, <4>4
+      <3>3. MaxBallot(S \\\\cup T) = MaxBallot(S)
+        BY <1>2, <1>3, <3>1, <3>2, MaxBallotLemma1
+      <3>4. QED
+        BY <2>7, <3>3
+    <2>8. CASE ~(MaxBallot(S) >= MaxBallot(T))
+      <3>1. MaxBallot(T) \\\\in S \\\\cup T
+        BY <2>3
+      <3>2. MaxBallot(T) >= MaxBallot(S)
+        BY <2>5, <2>6, <2>8, SMT DEF Ballot
+      <3>3. \\\\A x \\\\in S \\\\cup T : MaxBallot(T) >= x
+      PROOF
+        <4>1. SUFFICES ASSUME NEW x \\\\in S \\\\cup T PROVE MaxBallot(T) >= x
+          OBVIOUS
+        <4>2. x \\\\in S \\\\/ x \\\\in T
+          BY <4>1
+        <4>3. CASE x \\\\in T
+          BY <2>4, <4>3
+        <4>4. CASE x \\\\in S
+          <5>1. MaxBallot(S) >= x
+            BY <2>2, <4>4
+          <5>2. MaxBallot(T) >= x
+            BY <2>5, <2>6, <3>2, <5>1, SMT DEF Ballot
+          <5>3. QED
+            BY <5>2
+        <4>5. QED
+          BY <4>2, <4>3, <4>4
+      <3>4. MaxBallot(S \\\\cup T) = MaxBallot(T)
+        BY <1>2, <1>3, <3>1, <3>3, MaxBallotLemma1
+      <3>5. QED
+        BY <2>8, <3>4
+    <2>9. QED
+      BY <2>7, <2>8
+  <1>8. QED
+    BY <1>5, <1>6, <1>7'''
+new=new.replace('\\\\\\\\','\\\\')
+p.write_text(s[:start]+new+s[end:])
+PY
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla > /tmp/tlapm.out 2>&1 || true
+rg -n \"\\[ERROR\\]|PROVE\" /tmp/tlapm.out | head -80"
+83:[ERROR]: Could not prove or check:
+127:           PROVE  MaxBallot(S \cup T)
+132:[ERROR]: Could not prove or check:
+179:           PROVE  MaxBallot(S) = MaxBallot(T)
+181:[ERROR]: 2/195 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '60,190p' /tmp/tlapm.out && nl -ba BPConProof_MaxBallotLemma2.tla | sed -n '720,775p'"
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_
+
+(* created new ".tlacache/BPConProof_MaxBallotLemma2.tlaps/BPConProof_MaxBallotLemma2.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+File "./BPConProof_MaxBallotLemma2.tla", line 771, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW 
+... (truncated) ...
+ <3>4
+   733	    <2>5. QED
+   734	      BY <2>2, <2>3, <2>4
+   735	  <1>5. CASE S = {}
+   736	    <2>1. MaxBallot(S) = -1
+   737	      BY <1>5 DEF MaxBallot
+   738	    <2>2. CASE T = {}
+   739	      <3>1. MaxBallot(T) = -1
+   740	        BY <2>2 DEF MaxBallot
+   741	      <3>2. S \cup T = {}
+   742	        BY <1>5, <2>2
+   743	      <3>3. MaxBallot(S \cup T) = -1
+   744	        BY <3>2 DEF MaxBallot
+   745	      <3>4. QED
+   746	        BY <2>1, <3>1, <3>3
+   747	    <2>3. CASE T # {}
+   748	      <3>1. MaxBallot(T) \in T
+   749	        BY <1>1, <2>3, MaxBallotProp
+   750	      <3>2. MaxBallot(T) \in Ballot \cup {-1}
+   751	        BY <1>1, <3>1
+   752	      <3>3. MaxBallot(T) >= -1
+   753	        BY <1>4, <3>2
+   754	      <3>4. MaxBallot(S \cup T) = MaxBallot(T)
+   755	        BY <1>5
+   756	      <3>5. CASE MaxBallot(S) >= MaxBallot(T)
+   757	        <4>1. MaxBallot(S) = MaxBallot(T)
+   758	          BY <2>1, <3>3, <3>5, SMT
+   759	        <4>2. QED
+   760	          BY <3>4, <3>5, <4>1
+   761	      <3>6. CASE ~(MaxBallot(S) >= MaxBallot(T))
+   762	        BY <3>4, <3>6
+   763	      <3>7. QED
+   764	        BY <3>5, <3>6
+   765	    <2>4. QED
+   766	      BY <2>2, <2>3
+   767	  <1>6. CASE T = {}
+   768	    <2>1. MaxBallot(T) = -1
+   769	      BY <1>6 DEF MaxBallot
+   770	    <2>2. CASE S = {}
+   771	      BY <1>5
+   772	    <2>3. CASE S # {}
+   773	      <3>1. MaxBallot(S) \in S
+   774	        BY <1>1, <2>3, MaxBallotProp
+   775	      <3>2. MaxBallot(S) \in Ballot \cup {-1}
+[EXIT 0]
+
+[AGENT] Only two edge-case obligations remain: equality at `-1` and the both-empty branch.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_MaxBallotLemma2.tla
+@@
+       <3>5. CASE MaxBallot(S) >= MaxBallot(T)
+         <4>1. MaxBallot(S) = MaxBallot(T)
+-          BY <2>1, <3>3, <3>5, SMT
++          BY <2>1, <3>2, <3>3, <3>5, SMT DEF Ballot
+         <4>2. QED
+           BY <3>4, <3>5, <4>1
+@@
+     <2>1. MaxBallot(T) = -1
+       BY <1>6 DEF MaxBallot
+     <2>2. CASE S = {}
+-      BY <1>5
++      <3>1. MaxBallot(S) = -1
++        BY <2>2 DEF MaxBallot
++      <3>2. S \\cup T = {}
++        BY <1>6, <2>2
++      <3>3. MaxBallot(S \\cup T) = -1
++        BY <3>2 DEF MaxBallot
++      <3>4. QED
++        BY <2>1, <3>1, <3>3
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla > /tmp/tlapm.out 2>&1 || true
+rg -n \"\\[ERROR\\]|All .* obligations proved|PROVE\" /tmp/tlapm.out | tail -80"
+19:[INFO]: All 205 obligations proved.
+[EXIT 0]
+
+[AGENT] `tlapm` now proves all obligations. I’ll run the required illegal-change checker next.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py BPConProof_MaxBallotLemma2.tla'
+Checking: BPConProof_MaxBallotLemma2.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_MaxBallotLemma2.tlaps/BPConProof_MaxBallotLemma2.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_MaxBallotLemma2.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** U
+... (truncated) ...
+NSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_
+
+** Unexpanded symbols: CONSTANT_MaxBallot_, CONSTANT_IsFiniteSet_, CONSTANT_Ballot_
+
+File "/tmp/tlaps_check_d7dy26ed/BPConProof_MaxBallotLemma2.tla", line 2, character 1 to line 862, character 78:
+[INFO]: All 205 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_BPConProof_MaxBallotLemma2_a3gggov0/BPConProof_MaxBallotLemma2.result
+[EXIT 0]
+
+[AGENT] The checker passed too. I’ll mark the plan complete and summarize the proof update.
+
+[AGENT] Implemented a complete TLAPS proof for `MaxBallotLemma2` in `BPConProof_MaxBallotLemma2.tla:700`.
+
+- Replaced the failing `PROOF OBVIOUS` with a structured proof using admitted lemmas `MaxBallotProp` and `MaxBallotLemma1`.
+- Handled empty/non-empty cases for `S` and `T`.
+- Added local proof steps for the `Ballot \cup {-1}` lower-bound facts needed by TLAPS.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MaxBallotLemma2.tla`: all 205 obligations proved.
+- Ran `python3 check_proof.py BPConProof_MaxBallotLemma2.tla`: PASS, no cheating detected.

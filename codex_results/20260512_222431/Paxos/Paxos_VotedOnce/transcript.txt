@@ -1,0 +1,248 @@
+Benchmark: Paxos/Paxos_VotedOnce.tla
+Time: 42s
+Tokens: 105,232 input / 2,126 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iterate with `tlapm` until the proof checks.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,240p' Paxos_VotedOnce.tla"
+Consensus.tla
+Paxos_VotedOnce.tla
+check_proof.py
+------------------------------- MODULE Paxos_VotedOnce -------------------------------
+(* 
+Specification and Verification of Basic Paxos.
+
+See http://research.microsoft.com/en-us/um/people/lamport/pubs/pubs.html#paxos-simple
+*)
+EXTENDS Integers, TLAPS, TLC
+-----------------------------------------------------------------------------
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}                 
+
+LEMMA QuorumNonEmpty == \A Q \in Quorums : Q # {}
+  PROOF OMITTED
+
+Ballots == Nat
+
+None == CHOOSE v : v \notin Values
+
+LEMMA NoneNotAValue == None \notin Values
+  PROOF OMITTED
+
+Messages ==      [type : {"1a"}, bal : Ballots]
+            \cup [type : {"1b"}, bal : Ballots, maxVBal : Ballots \cup {-1},
+                    maxVal : Values \cup {None}, acc : Acceptors]
+            \cup [type : {"2a"}, bal : Ballots, val : Values]
+            \cup [type : {"2b"}, bal : Ballots, val : Values, acc : Acceptors]
+-----------------------------------------------------------------------------
+VARIABLES msgs,    \* the set of messages that have been sent.
+          maxBal,  \* maxBal[a]: the highest-number ballot acceptor a has participated in.
+          maxVBal, \* maxVBal[a]: the highest ballot in which a has voted;
+          maxVal   \* maxVal[a]: the value it voted for in that ballot.
+
+vars == <<msgs, maxBal, maxVBal, maxVal>>
+... (truncated) ...
+    /\ m.maxVBal \in Ballots
+                                \* conjunct strengthened 2014/04/02 sm
+                                /\ VotedForIn(m.acc, m.maxVal, m.maxVBal)
+                                \* /\ SafeAt(m.maxVal, m.maxVBal)
+                             \/ /\ m.maxVal = None
+                                /\ m.maxVBal = -1
+                          \* conjunct added 2014/03/29 sm
+                          /\ \A c \in (m.maxVBal+1) .. (m.bal-1) : 
+                                ~ \E v \in Values : VotedForIn(m.acc, v, c)
+    /\ (m.type = "2a") => 
+         /\ SafeAt(m.val, m.bal)
+         /\ \A ma \in msgs : (ma.type = "2a") /\ (ma.bal = m.bal) => (ma = m)
+    /\ (m.type = "2b") => 
+         /\ \E ma \in msgs : /\ ma.type = "2a"
+                             /\ ma.bal  = m.bal
+                             /\ ma.val  = m.val
+         /\ m.bal =< maxVBal[m.acc]
+-----------------------------------------------------------------------------
+LEMMA VotedInv ==
+        MsgInv /\ TypeOK => 
+            \A a \in Acceptors, v \in Values, b \in Ballots :
+                VotedForIn(a, v, b) => SafeAt(v, b) /\ b =< maxVBal[a]
+  PROOF OMITTED
+
+LEMMA VotedOnce == \* OneValuePerBallot in Voting (TODO: Where/How/Why is it used?)
+        MsgInv =>  \A a1, a2 \in Acceptors, b \in Ballots, v1, v2 \in Values :
+                       VotedForIn(a1, v1, b) /\ VotedForIn(a2, v2, b) => (v1 = v2)
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] The target theorem is about uniqueness of `2a` messages per ballot, so I’m checking proof syntax patterns before patching.
+
+[CMD] /bin/zsh -lc "rg \"PICK .* DEF|TAKE .*\\\\in|SUFFICES ASSUME\" -n ~/.tlapm15/lib/tlaps /tmp/codex_bench_Paxos_VotedOnce_eg5kdd0c | head -80"
+rg: regex parse error:
+    (?:PICK .* DEF|TAKE .*\in|SUFFICES ASSUME)
+                          ^^
+error: unrecognized escape sequence
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg \"SUFFICES ASSUME|PICK .* DEF|TAKE .*\\\\\\\\in\" -n ~/.tlapm15/lib/tlaps . | head -80"
+./Consensus.tla:33:  <2> SUFFICES ASSUME Init
+./Consensus.tla:41:  <2> SUFFICES ASSUME Inv,
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:119:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:132:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:150:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE SZ[T] = fn(SZ,T)  BY Zenon DEF SZ
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:174:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:186:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:202:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE CS1[T] = CS2[T]  BY <1>2, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:280:<1>1. SUFFICES ASSUME NEW a \in S, NEW b \in S, a # b, f[a] = f[b]
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:301:    <3>1. PICK s \in S : f[s] = t  BY DEF Surjection
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:302:    <3>2. PICK l \in 1..n : g[l] = s  BY DEF Bijection, Surjection
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:481:    <3>. SUFFICES ASSUME NEW t \in T, \A s \in S : f[s] # t
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proo
+... (truncated) ...
+a:201:    <3>. SUFFICES ASSUME NEW k \in Nat, NEW i \in 0 .. k-1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:234:    <3>. SUFFICES ASSUME NEW m \in 0 .. n, NEW i \in 0 .. m-1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:253:  <2>. SUFFICES ASSUME NEW n \in Nat
+/home/ruize/.tlapm15/lib/tlaps/examples/Allocator.tla:231:  <2>1. SUFFICES ASSUME c1 # c2
+/home/ruize/.tlapm15/lib/tlaps/examples/Allocator.tla:254:  <2>1. SUFFICES ASSUME c1 # c2
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:207:  <2> SUFFICES ASSUME TypeOK,
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:313:<1>. SUFFICES ASSUME NEW i \in 1 .. Len(Tail(s)), Tail(s)[i].type = mtype
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:396:  <2> SUFFICES ASSUME TypeOK, BasicInv, [Next]_vars
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:539:        <5>. SUFFICES ASSUME NEW q \in Proc
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:606:        <5>. SUFFICES ASSUME NEW q \in Proc, CommInv(p)!2!3!(q)
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:684:  <2> SUFFICES ASSUME TypeOK, BasicInv, ClockInv, [Next]_vars
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla:929:  <2>. SUFFICES ASSUME TypeOK, BasicInv, ClockInv, NEW p \in crit, NEW q \in crit, p # q
+/home/ruize/.tlapm15/lib/tlaps/examples/Peterson.tla:128:  <2> SUFFICES ASSUME Inv,
+/home/ruize/.tlapm15/lib/tlaps/examples/Peterson.tla:176:  <2>1. SUFFICES ASSUME Inv, Next PROVE Inv'
+[EXIT 0]
+
+[AGENT] I found the proof route: extract the two `2b` witnesses, then use `MsgInv`’s unique `2a` clause for the same ballot.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Paxos_VotedOnce.tla
+@@
+ LEMMA VotedOnce == \\* OneValuePerBallot in Voting (TODO: Where/How/Why is it used?)
+         MsgInv =>  \\A a1, a2 \\in Acceptors, b \\in Ballots, v1, v2 \\in Values :
+                        VotedForIn(a1, v1, b) /\\ VotedForIn(a2, v2, b) => (v1 = v2)
+-PROOF OBVIOUS
++PROOF
++  <1>1. SUFFICES ASSUME MsgInv,
++                        NEW a1 \\in Acceptors, NEW a2 \\in Acceptors,
++                        NEW b \\in Ballots,
++                        NEW v1 \\in Values, NEW v2 \\in Values,
++                        VotedForIn(a1, v1, b), VotedForIn(a2, v2, b)
++                 PROVE  v1 = v2
++    OBVIOUS
++  <1>2. PICK m1 \\in msgs : /\\ m1.type = \"2b\"
++                            /\\ m1.val  = v1
++                            /\\ m1.bal  = b
++                            /\\ m1.acc  = a1
++    BY <1>1 DEF VotedForIn
++  <1>3. PICK m2 \\in msgs : /\\ m2.type = \"2b\"
++                            /\\ m2.val  = v2
++                            /\\ m2.bal  = b
++                            /\\ m2.acc  = a2
++    BY <1>1 DEF VotedForIn
++  <1>4. PICK ma1 \\in msgs : /\\ ma1.type = \"2a\"
++                             /\\ ma1.bal  = m1.bal
++                             /\\ ma1.val  = m1.val
++    BY <1>1, <1>2 DEF MsgInv
++  <1>5. PICK ma2 \\in msgs : /\\ ma2.type = \"2a\"
++                             /\\ ma2.bal  = m2.bal
++                             /\\ ma2.val  = m2.val
++    BY <1>1, <1>3 DEF MsgInv
++  <1>6. \\A ma \\in msgs : (ma.type = \"2a\") /\\ (ma.bal = ma1.bal) => (ma = ma1)
++    BY <1>1, <1>4 DEF MsgInv
++  <1>7. ma2 = ma1
++    BY <1>2, <1>3, <1>4, <1>5, <1>6
++  <1>8. QED
++    BY <1>2, <1>3, <1>4, <1>5, <1>7
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedOnce.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+(* created new ".tlacache/Paxos_VotedOnce.tlaps/Paxos_VotedOnce.thy" *)
+(* fingerprints written in ".tlacache/Paxos_VotedOnce.tlaps/fingerprints" *)
+File "./Paxos_VotedOnce.tla", line 1, character 1 to line 176, character 77:
+[INFO]: All 26 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS proves the module now. I’ll run the repository’s legality checker next, as requested.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Paxos_VotedOnce.tla'
+Checking: Paxos_VotedOnce.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Paxos_VotedOnce.tlaps/Paxos_VotedOnce.thy" *)
+(* fingerprints written in ".tlacache/Paxos_VotedOnce.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+File "/tmp/tlaps_check_h9aymbgl/Paxos_VotedOnce.tla", line 1, character 1 to line 176, character 77:
+[INFO]: All 26 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Paxos_VotedOnce_eg5kdd0c/Paxos_VotedOnce.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final `VotedOnce` lemma in `Paxos_VotedOnce.tla:146`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder.
+- Used `MsgInv` to extract corresponding `2a` messages for both votes.
+- Applied the unique-`2a`-per-ballot invariant to show both values are equal.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedOnce.tla`.
+- Ran `python3 check_proof.py Paxos_VotedOnce.tla`; result is `PASS — all obligations proved` with no cheating detected.

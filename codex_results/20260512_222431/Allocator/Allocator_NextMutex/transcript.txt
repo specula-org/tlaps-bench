@@ -1,0 +1,814 @@
+Benchmark: Allocator/Allocator_NextMutex.tla
+Time: 105s
+Tokens: 360,220 input / 5,462 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch only the placeholder proof and run TLAPS/checks until clean.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Allocator_NextMutex.tla && printf '\\n--- files ---\\n' && ls -la"
+-------------------------- MODULE Allocator_NextMutex -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+---------------------------------------------------------------
+... (truncated) ...
+TED
+
+THEOREM AllocateTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM ReturnTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Return(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+  PROOF OMITTED
+
+-------------------------------------------------------------------------
+
+THEOREM InitMutex == Init => Mutex
+  PROOF OMITTED
+
+THEOREM RequestMutexBis ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  Mutex /\ Request(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM ReturnMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM AllocateMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Allocate(clt, S) => Mutex'
+  PROOF OMITTED
+
+THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+PROOF OBVIOUS
+
+=========================================================================
+--- files ---
+total 204
+drwx------    3 ruize ruize   4096 May 12 22:24 .
+drwxrwxrwt 1312 root  root  176128 May 12 22:24 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:24 .git
+-rw-rw-r--    1 ruize ruize   6273 May 12 20:53 Allocator_NextMutex.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I found the final theorem reduces directly by case analysis on `Next`, using the three admitted action-preservation lemmas.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextMutex.tla
+@@
+ THEOREM NextMutex == TypeInvariant /\\ Mutex /\\ Next => Mutex'
+-PROOF OBVIOUS
++PROOF
++  ASSUME TypeInvariant /\\ Mutex /\\ Next
++  PROVE  Mutex'
++  <1>1. Next
++    OBVIOUS
++  <1>2. TypeInvariant
++    OBVIOUS
++  <1>3. Mutex
++    OBVIOUS
++  <1>4. PICK clt \\in Client, S \\in SUBSET Resource :
++          Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
++    BY <1>1 DEF Next
++  <1>5. CASE Request(clt,S)
++    <2>1. Mutex'
++      BY <1>3, <1>5, RequestMutexBis
++    <2> QED
++      BY <2>1
++  <1>6. CASE Allocate(clt,S)
++    <2>1. Mutex'
++      BY <1>2, <1>3, <1>6, AllocateMutex
++    <2> QED
++      BY <2>1
++  <1>7. CASE Return(clt,S)
++    <2>1. Mutex'
++      BY <1>2, <1>3, <1>7, ReturnMutex
++    <2> QED
++      BY <2>1
++  <1> QED
++    BY <1>4, <1>5, <1>6, <1>7
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextMutex.tla"
+File "./Allocator_NextMutex.tla", line 176, character 40
+Unexpected keyword PROVE
+File "<unknown>":
+Error: Could not parse "./Allocator_NextMutex.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first draft hit a TLAPS proof-syntax issue, so I’m checking nearby proof patterns and will adjust the structure.
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_NextMutex.tla | sed -n '150,215p'
+rg \"PROOF\\n\\s+ASSUME|SUFFICES|PICK\" ~/.tlapm15/lib/tlaps -n --glob '*.tla' | head -80"
+   150	
+   151	-------------------------------------------------------------------------
+   152	
+   153	THEOREM InitMutex == Init => Mutex
+   154	  PROOF OMITTED
+   155	
+   156	THEOREM RequestMutexBis ==
+   157	  ASSUME NEW clt \in Client,
+   158	         NEW S \in SUBSET Resource
+   159	  PROVE  Mutex /\ Request(clt,S) => Mutex'
+   160	  PROOF OMITTED
+   161	
+   162	THEOREM ReturnMutex ==
+   163	  ASSUME NEW clt \in Client,
+   164	         NEW S \in SUBSET Resource
+   165	  PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+   166	  PROOF OMITTED
+   167	
+   168	THEOREM AllocateMutex ==
+   169	  ASSUME NEW clt \in Client,
+   170	         NEW S \in SUBSET Resource
+   171	  PROVE  TypeInvariant /\ Mutex /\ Allocate(clt, S) => Mutex'
+   172	  PROOF OMITTED
+   173	
+   174	THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+   175	PROOF
+   176	  ASSUME TypeInvariant /\ Mutex /\ Next
+   177	  PROVE  Mutex'
+   178	  <1>1. Next
+   179	    OBVIOUS
+   180	  <1>2. TypeInvariant
+   181	    OBVIOUS
+   182	  <1>3. Mutex
+   183	    OBVIOUS
+   184	  <1>4. PICK clt \in Client, S \in SUBSET Resource :
+   185	          Request(clt,S) \/ Allocate(clt,S) \/ Return(clt,S)
+   186	    BY <1>1 DEF Next
+   187	  <1>5. CASE Request(clt,S)
+   188	    <2>1. Mutex'
+   189	      BY <1>3, <1>5, RequestMutexBis
+   190	    <2> QED
+   191	      BY <2>1
+   192	  <1>6. CASE Allocate(clt,S)
+   193	    <2>1. Mutex'
+   194	      BY <1>2, <1>3, <1>6, AllocateMutex
+   195	    <2> QED
+   196	      BY <2>1
+   197	  <1>7. CASE Return(clt,S)
+   198	    <2>1. Mutex'
+   199	      BY <1>2, <1>3, <1>7, ReturnMutex
+   200	    <2> QED
+   201	      BY <2>1
+   202	  <1> QED
+   203	    BY <1>4, <1>5, <1>6, <1>7
+   204	
+   205	=========================================================================
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+[EXIT 0]
+
+[AGENT] I’ll wrap the implication proof as a top-level ASSUME/PROVE step, which is the TLAPS hierarchical form.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextMutex.tla
+@@
+ THEOREM NextMutex == TypeInvariant /\\ Mutex /\\ Next => Mutex'
+ PROOF
+-  ASSUME TypeInvariant /\\ Mutex /\\ Next
+-  PROVE  Mutex'
+-  <1>1. Next
+-    OBVIOUS
+-  <1>2. TypeInvariant
+-    OBVIOUS
+-  <1>3. Mutex
+-    OBVIOUS
+-  <1>4. PICK clt \\in Client, S \\in SUBSET Resource :
+-          Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
+-    BY <1>1 DEF Next
+-  <1>5. CASE Request(clt,S)
+-    <2>1. Mutex'
+-      BY <1>3, <1>5, RequestMutexBis
+-    <2> QED
+-      BY <2>1
+-  <1>6. CASE Allocate(clt,S)
+-    <2>1. Mutex'
+-      BY <1>2, <1>3, <1>6, AllocateMutex
+-    <2> QED
+-      BY <2>1
+-  <1>7. CASE Return(clt,S)
+-    <2>1. Mutex'
+-      BY <1>2, <1>3, <1>7, ReturnMutex
+-    <2> QED
+-      BY <2>1
+-  <1> QED
+-    BY <1>4, <1>5, <1>6, <1>7
++  <1>1. ASSUME TypeInvariant /\\ Mutex /\\ Next
++        PROVE  Mutex'
++    <2>1. Next
++      OBVIOUS
++    <2>2. TypeInvariant
++      OBVIOUS
++    <2>3. Mutex
++      OBVIOUS
++    <2>4. PICK clt \\in Client, S \\in SUBSET Resource :
++            Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
++      BY <2>1 DEF Next
++    <2>5. CASE Request(clt,S)
++      <3>1. Mutex'
++        BY <2>3, <2>5, RequestMutexBis
++      <3> QED
++        BY <3>1
++    <2>6. CASE Allocate(clt,S)
++      <3>1. Mutex'
++        BY <2>2, <2>3, <2>6, AllocateMutex
++      <3> QED
++        BY <3>1
++    <2>7. CASE Return(clt,S)
++      <3>1. Mutex'
++        BY <2>2, <2>3, <2>7, ReturnMutex
++      <3> QED
++        BY <3>1
++    <2> QED
++      BY <2>4, <2>5, <2>6, <2>7
++  <1> QED
++    BY <1>1
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextMutex.tla"
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: STATE_TypeInvariant_
+
+** Unexpanded symbols: STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Request_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_, STATE_Mutex_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 183, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc
+           PROVE  Mutex
+File "./Allocator_NextMutex.tla", line 181, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc
+           PROVE  TypeInvariant
+File "./Allocator_NextMutex.tla", line 179, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc
+           PROVE  Next
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 207, character 73:
+[ERROR]: 3/32 obligations failed.
+There were backend errors processing module `"Allocator_NextMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The assumptions weren’t entering the subproof context as intended; I’m switching to `SUFFICES` to expose the conjuncts directly.
+
+[AGENT] TLAPS is running now; I’m waiting for the proof obligations to finish.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextMutex.tla
+@@
+ THEOREM NextMutex == TypeInvariant /\\ Mutex /\\ Next => Mutex'
+ PROOF
+-  <1>1. ASSUME TypeInvariant /\\ Mutex /\\ Next
+-        PROVE  Mutex'
+-    <2>1. Next
+-      OBVIOUS
+-    <2>2. TypeInvariant
+-      OBVIOUS
+-    <2>3. Mutex
+-      OBVIOUS
+-    <2>4. PICK clt \\in Client, S \\in SUBSET Resource :
+-            Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
+-      BY <2>1 DEF Next
+-    <2>5. CASE Request(clt,S)
+-      <3>1. Mutex'
+-        BY <2>3, <2>5, RequestMutexBis
+-      <3> QED
+-        BY <3>1
+-    <2>6. CASE Allocate(clt,S)
+-      <3>1. Mutex'
+-        BY <2>2, <2>3, <2>6, AllocateMutex
+-      <3> QED
+-        BY <3>1
+-    <2>7. CASE Return(clt,S)
+-      <3>1. Mutex'
+-        BY <2>2, <2>3, <2>7, ReturnMutex
+-      <3> QED
+-        BY <3>1
+-    <2> QED
+-      BY <2>4, <2>5, <2>6, <2>7
++  <1>1. SUFFICES ASSUME TypeInvariant, Mutex, Next
++          PROVE  Mutex'
++    OBVIOUS
++  <1>2. PICK clt \\in Client, S \\in SUBSET Resource :
++          Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
++    BY DEF Next
++  <1>3. CASE Request(clt,S)
++    <2>1. Mutex'
++      BY <1>3, RequestMutexBis
++    <2> QED
++      BY <2>1
++  <1>4. CASE Allocate(clt,S)
++    <2>1. Mutex'
++      BY <1>4, AllocateMutex
++    <2> QED
++      BY <2>1
++  <1>5. CASE Return(clt,S)
++    <2>1. Mutex'
++      BY <1>5, ReturnMutex
++    <2> QED
++      BY <2>1
+   <1> QED
+-    BY <1>1
++    BY <1>2, <1>3, <1>4, <1>5
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: ACTION_Request_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_, STATE_Mutex_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 194, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  <1>5 ,
+                  ReturnMutex 
+           PROVE  Mutex'
+File "./Allocator_NextMutex.tla", line 189, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+
+... (truncated) ...
+            NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  <1>3 ,
+                  RequestMutexBis 
+           PROVE  Mutex'
+File "./Allocator_NextMutex.tla", line 181, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  Next ==
+                    \E c \in Client, S \in SUBSET Resource :
+                       Request(c, S) \/ Allocate(c, S) \/ Return(c, S)
+           PROVE  \E clt \in Client, S \in SUBSET Resource :
+                     Request(clt, S) \/ Allocate(clt, S) \/ Return(clt, S)
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 200, character 73:
+[ERROR]: 4/22 obligations failed.
+There were backend errors processing module `"Allocator_NextMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The proof body needs named assumptions available to `BY`; I’ll use explicit implication introduction via `TAKE`/`HAVE` alternatives or a nested suffices pattern from TLAPS examples.
+
+[CMD] /bin/zsh -lc "rg \"SUFFICES ASSUME\" ~/.tlapm15/lib/tlaps -n --glob '*.tla' | head -50
+rg \"ASSUME .*PROVE\" ~/.tlapm15/lib/tlaps -n --glob '*.tla' | head -50
+rg \"THEOREM .*=>\" . ~/.tlapm15/lib/tlaps -n --glob '*.tla' | head -50"
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:61:<1>1. SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:85:<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:122:<1> SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:186:<1>1. SUFFICES ASSUME T # {}
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:222:<1>1. SUFFICES ASSUME NEW g, NEW h,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:262:  <2>1. SUFFICES ASSUME NEW x \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:368:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:374:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in U
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:380:  <2>1. SUFFICES ASSUME NEW x \in S, NEW y \in S, NEW z \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:414:<1> SUFFICES ASSUME NEW T \in SUBSET S, T # {}
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:490:  <2>1. SUFFICES ASSUME NEW s \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:525:<1>1. SUFFICES ASSUME NEW ff \in [Nat -> Nat],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:538:  <2> SUFFICES ASSUME NEW f \in [Nat -> Nat],
+/home/ruize/.tlapm
+... (truncated) ...
+
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:667:THEOREM InductiveInvariance == VInv /\ [Next]_vars => VInv'
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:891:THEOREM InitImpliesInv == Init => VInv
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:897:THEOREM VT2 == Spec => []VInv
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:925:THEOREM VT3 == Spec => C!Spec 
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:1037:THEOREM VT4 == TypeOK /\ VInv2 /\ VInv3  =>
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:1185:THEOREM Liveness == LiveSpec => C!LiveSpec
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/PConProof.tla:430:THEOREM NextDef == (Next <=> TLANext) 
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/PConProof.tla:511:THEOREM PT1 == TypeOK /\ P1bInv /\ P1cInv =>
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/PConProof.tla:517:THEOREM Invariance == Spec => []PInv
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/PConProof.tla:519:THEOREM Implementation == Spec => V!Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/PConProof.tla:526:THEOREM Spec => [](chosen = V!chosen)
+/home/ruize/.tlapm15/lib/tlaps/examples/two-phase/TwoPhase.tla:112:THEOREM Implementation == Spec => A!Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla:307:THEOREM Spec => []MutualExclusion
+/home/ruize/.tlapm15/lib/tlaps/examples/Allocator.tla:167:THEOREM TypeOK == SimpleAllocator => []TypeInvariant
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '235,255p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla
+sed -n '135,150p' ~/.tlapm15/lib/tlaps/examples/EWD840.tla
+sed -n '95,110p' ~/.tlapm15/lib/tlaps/examples/SimpleMutex.tla"
+(*                                                                         *)
+(* This is a standard invariance proof, where <1>2 asserts that any step   *)
+(* of the algorithm (including a stuttering step) starting in a state in   *)
+(* which Inv is true leaves Inv true.  Step <1>4 follows easily from       *)
+(* <1>1-<1>3 by simple temporal reasoning.                                 *)
+(***************************************************************************)
+THEOREM Spec => []Inv
+<1> USE DEFS TypeOK, Inv, IInv, ProcSet
+<1>1. Init => Inv
+  BY DEFS Init, Inv
+<1>2. Inv /\ [Next]_vars => Inv'
+  <2> SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+    OBVIOUS
+  <2> USE DEFS After, LL
+  <2>1. ASSUME NEW self \in P, p1(self) PROVE Inv'
+    BY <2>1 DEF p1
+  <2>2. ASSUME NEW self \in P, p2(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>2, <3>1 DEF p2
+    <3>2. CASE unread[self] # {}
+      BY <2>2, <3>2 DEF p2
+(* TypeOK is an inductive invariant *)
+LEMMA TypeCorrect == Spec => []TypeOK
+<1>. USE DEF TypeOK, Nodes, Color
+<1>1. Init => TypeOK
+  BY DEF Init
+<1>2. TypeOK /\ [Next]_vars => TypeOK'
+(* FIXME: Although each of the steps below is proved instantly, 
+   the attempt to prove the assertion all at once fails??
+  BY DEF Next, vars, Controlled, Environment, InitiateProbe,
+         PassToken, SendMsg, Deactivate
+*)
+  <2> SUFFICES ASSUME TypeOK,
+                      [Next]_vars
+               PROVE  TypeOK'
+    OBVIOUS
+  <2>1. CASE InitiateProbe
+(* satisfies the formula Next, and TypeOK /\ Inv is true in the first      *)
+(* state, then TypeOK /\ Inv is true in the second state.                  *)
+(***************************************************************************)
+THEOREM Invariance == TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+<1>1. CASE UNCHANGED vars
+  BY <1>1 DEF TypeOK, Inv, Next, ProcSet, p, vars
+<1>2. ASSUME TypeOK, Inv,
+             NEW i \in {0,1},
+             a(i) \/ b(i) \/ cs(i)
+      PROVE  TypeOK'
+    BY <1>2, IsaM("auto") DEF TypeOK, Inv, a, b, cs
+<1>3. ASSUME TypeOK, TypeOK', Inv,
+             NEW i \in {0,1},
+             a(i) \/ b(i) \/ cs(i),
+             NEW j \in {0,1},
+             Inv!(i) /\ Inv!(j)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '150,190p' ~/.tlapm15/lib/tlaps/examples/EWD840.tla
+sed -n '110,155p' ~/.tlapm15/lib/tlaps/examples/SimpleMutex.tla"
+  <2>1. CASE InitiateProbe
+    BY <2>1 DEF InitiateProbe 
+  <2>2. ASSUME NEW i \in Nodes \ {0},
+               PassToken(i)
+        PROVE  TypeOK'
+    BY <2>2 DEF PassToken 
+  <2>3. ASSUME NEW i \in Nodes,
+               Deactivate(i)
+        PROVE  TypeOK'
+    BY <2>3 DEF Deactivate
+  <2>4. ASSUME NEW i \in Nodes,
+               SendMsg(i)
+        PROVE  TypeOK'
+    BY <2>4 DEF SendMsg
+  <2>5. CASE UNCHANGED vars
+    BY <2>5 DEF vars
+  <2>6. QED
+    BY <2>1, <2>2, <2>3, <2>4, <2>5 DEF Controlled, Environment, Next
+<1>3. QED
+  BY <1>1, <1>2, PTL DEF Spec
+
+
+
+THEOREM Spec => []TerminationDetection
+(* Dijkstra's invariant implies correctness *)
+<1>1 Inv => TerminationDetection
+  BY  DEF Inv, TerminationDetection, terminationDetected, Nodes
+(* Dijkstra's invariant is (trivially) established by the initial condition *)
+<1>2 Init => Inv
+  BY DEF Init, Inv
+(* Dijkstra's invariant is inductive relative to the type invariant *)
+<1>3 TypeOK /\ Inv /\ [Next]_vars => Inv'
+  BY DEF Inv, TypeOK, Next, vars, Controlled, Environment,
+         InitiateProbe, PassToken, SendMsg, Deactivate, Nodes, Color
+<1> QED  BY <1>1, <1>2, <1>3, TypeCorrect, PTL DEF Spec
+
+
+(* If the one-line proof of step <1>1 above is too obscure, 
+    here is a more detailed, hierarchical proof of the same property. *)
+LEMMA Inv_implies_Termination == Inv => TerminationDetection
+<1>1. ASSUME tpos = 0, 
+             Inv!(i) /\ Inv!(j)
+      PROVE  Inv!(j)'
+  <2>1. /\ 1-i \in {0, 1}
+        /\ 1-j \in {0, 1}
+        /\ i # j => /\ 1-i = j
+                    /\ 1-j = i
+    BY IsaM("auto")
+  <2>2. USE DEF TypeOK, Inv
+  <2>3. CASE a(i)
+     BY <2>1, <1>3, <2>3 DEF a
+  <2>4. CASE b(i)
+    <3>1. CASE i = j
+      BY <2>1, <1>3, <2>4, <3>1 DEF b
+    <3>2. CASE i # j
+       BY <2>1, <1>3, <2>4, <3>2 DEF b
+    <3>3. QED
+      BY <3>1, <3>2
+  <2>5. CASE cs(i)
+      BY <2>1, <2>5, <1>3 DEF cs
+  <2>6. QED
+     BY <2>3, <2>4, <2>5, <1>3
+<1>4. QED
+  BY <1>1, <1>2, <1>3 DEF Next, p, ProcSet, Inv
+
+(****************************************************************************)
+(* The same theorem proved with the help of the SMT backend.                *)
+(* The skeleton of the proof was generated with the help of the command     *)
+(* "Decompose Proof" (C-G C-D) available in the TLA+ Toolbox.               *)
+(****************************************************************************)
+THEOREM TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+\*  BY DEF TypeOK, Inv, Next, ProcSet, p, vars, a, b, cs
+  <1> SUFFICES ASSUME TypeOK,
+                      Inv,
+                      Next
+               PROVE  TypeOK' /\ Inv'
+    OBVIOUS
+  <1>. USE DEF Inv, TypeOK
+  <1>1. ASSUME NEW self \in {0,1},
+               a(self)
+        PROVE  TypeOK' /\ Inv'
+    BY <1>1 DEF a
+  <1>2. ASSUME NEW self \in {0,1},
+               b(self)
+        PROVE  TypeOK' /\ Inv'
+    BY <1>2 DEF b
+  <1>3. ASSUME NEW self \in {0,1},
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '155,190p' ~/.tlapm15/lib/tlaps/examples/SimpleMutex.tla"
+  <1>3. ASSUME NEW self \in {0,1},
+               cs(self)
+        PROVE  TypeOK' /\ Inv'
+    BY <1>3 DEF cs
+  <1>4. CASE UNCHANGED vars
+    BY <1>4 DEF vars
+  <1>5. QED
+    BY <1>1, <1>2, <1>3, <1>4 DEF Next, p
+
+----------------------------------------------------------------------
+(***************************************************************************)
+(* The following is a trivial consequence of the Invariance theorem, the   *)
+(* definition of [Next]_vars, and the fact that UNCHANGED vars implies     *)
+(* that none of the declared variables changes.                            *)
+(***************************************************************************)
+THEOREM TLAInvariance == TypeOK /\ Inv /\ [Next]_vars => TypeOK' /\ Inv'
+BY Invariance DEF TypeOK, Inv, Next, ProcSet, p, vars
+
+(***************************************************************************)
+(* The following theorem asserts that the mutual exclusion property is     *)
+(* always verified by the system.                                          *)
+(***************************************************************************)
+THEOREM Safety == Spec => []MutualExclusion
+  BY Initialization, TLAInvariance, Mutex, PTL DEF Spec
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] I found the standard TLAPS style for this pattern; now I’m matching it exactly with action-specific ASSUME cases.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextMutex.tla
+@@
+ THEOREM NextMutex == TypeInvariant /\\ Mutex /\\ Next => Mutex'
+ PROOF
+-  <1>1. SUFFICES ASSUME TypeInvariant, Mutex, Next
+-          PROVE  Mutex'
++  <1> SUFFICES ASSUME TypeInvariant, Mutex, Next
++          PROVE  Mutex'
+     OBVIOUS
+-  <1>2. PICK clt \\in Client, S \\in SUBSET Resource :
+-          Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
+-    BY DEF Next
+-  <1>3. CASE Request(clt,S)
+-    <2>1. Mutex'
+-      BY <1>3, RequestMutexBis
+-    <2> QED
+-      BY <2>1
+-  <1>4. CASE Allocate(clt,S)
+-    <2>1. Mutex'
+-      BY <1>4, AllocateMutex
+-    <2> QED
+-      BY <2>1
+-  <1>5. CASE Return(clt,S)
+-    <2>1. Mutex'
+-      BY <1>5, ReturnMutex
+-    <2> QED
+-      BY <2>1
+-  <1> QED
+-    BY <1>2, <1>3, <1>4, <1>5
++  <1>1. ASSUME NEW clt \\in Client,
++               NEW S \\in SUBSET Resource,
++               Request(clt,S)
++        PROVE  Mutex'
++    BY <1>1, RequestMutexBis
++  <1>2. ASSUME NEW clt \\in Client,
++               NEW S \\in SUBSET Resource,
++               Allocate(clt,S)
++        PROVE  Mutex'
++    BY <1>2, AllocateMutex
++  <1>3. ASSUME NEW clt \\in Client,
++               NEW S \\in SUBSET Resource,
++               Return(clt,S)
++        PROVE  Mutex'
++    BY <1>3, ReturnMutex
++  <1>4. QED
++    BY <1>1, <1>2, <1>3 DEF Next
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, STATE_Mutex_
+
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 197, character 73:
+[INFO]: All 14 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves all obligations. I’ll run the required legality checker to ensure no forbidden edits slipped in.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Allocator_NextMutex.tla'
+Checking: Allocator_NextMutex.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, STATE_Mutex_
+
+File "/tmp/tlaps_check_5syj1l9t/Allocator_NextMutex.tla", line 1, character 1 to line 197, character 73:
+[INFO]: All 14 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_NextMutex_5h7xda_j/Allocator_NextMutex.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `NextMutex` in `Allocator_NextMutex.tla:174`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder.
+- Used the admitted action lemmas `RequestMutexBis`, `AllocateMutex`, and `ReturnMutex`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextMutex.tla`.
+- Ran `python3 check_proof.py Allocator_NextMutex.tla`.
+
+Result: `PASS — all obligations proved`, with no cheating detected.

@@ -1,0 +1,2248 @@
+Benchmark: ByzantinePaxos/VoteProof_SafeLemma.tla
+Time: 403s
+Tokens: 2,812,751 input / 17,813 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch the final proof and run TLAPS/checks until clean.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' VoteProof_SafeLemma.tla && printf '\\n--- files ---\\n' && ls -la"
+----------------------------- MODULE VoteProof_SafeLemma ------------------------------ 
+(***************************************************************************)
+(* This is a high-level consensus algorithm in which a set of processes    *)
+(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+(* all voted for the same value in the same ballot.                        *)
+(*                                                                         *)
+(* Ballots are not executed in order.  Different acceptors may be          *)
+(* concurrently performing actions for different ballots.                  *)
+(***************************************************************************)
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+\* THEOREM SMT == TRUE (*{ by (smt) }*)
+-----------------------------------------------------------------------------
+CONSTANT Value,     \* As in module Consensus, the set of choosable values.
+         Acceptor,  \* The set of all acceptors.
+         Quorum     \* The set of all quorums.
+ 
+(***************************************************************************)
+(* The following assumption asserts that a quorum is a set of acceptors,   *)
+(* and the fundamental assumption we make about quorums: any t
+... (truncated) ...
+                              /\ \A p \in Acceptor \ {self} :
+                                     \A w \in Value : VotedFor(p, b, w) => (w = v)
+                               /\ SafeAt(b, v)
+                            /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+
+Next == (\E self \in Acceptor: acceptor(self))
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+
+--- files ---
+total 316
+drwx------    3 ruize ruize   4096 May 12 22:25 .
+drwxrwxrwt 1316 root  root  176128 May 12 22:25 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:25 .git
+-rw-rw-r--    1 ruize ruize  14179 May 12 20:11 Consensus.tla
+-rw-rw-r--    1 ruize ruize  30218 May 12 20:11 PConProof.tla
+-rw-rw-r--    1 ruize ruize  46078 May 12 20:11 VoteProof.tla
+-rw-rw-r--    1 ruize ruize  21443 May 12 20:11 VoteProof_SafeLemma.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I found the module; now I’m reading the proof area and available admitted lemmas.
+
+[CMD] /bin/zsh -lc "sed -n '240,520p' VoteProof_SafeLemma.tla"
+                            /\ /\ maxBal[self] \leq b
+                               /\ DidNotVoteIn(self, b)
+                               /\ \A p \in Acceptor \ {self} :
+                                     \A w \in Value : VotedFor(p, b, w) => (w = v)
+                               /\ SafeAt(b, v)
+                            /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+
+Next == (\E self \in Acceptor: acceptor(self))
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+(*                                                                         *)
+(*   Silly[n \in Nat] == CHOOSE v : v # Silly[n]                           *)
+(*                                                                         *)
+(* we cannot deduce that                                                   *)
+(*                                                                         *)
+... (truncated) ...
+                             => \A n \in Nat : f[n]
+
+(***************************************************************************)
+(* We use the SimpleNatInduction rule to prove the following rule, which   *)
+(* expresses the soundness of what I believe is sometimes called "General  *)
+(* Induction" or "Strong Induction".                                       *)
+(***************************************************************************)                                
+THEOREM GeneralNatInduction == 
+         \A f : /\ f[0]
+                /\ \A n \in Nat : (\A j \in 0..n : f[j]) => f[n+1]
+                => \A n \in Nat : f[n]
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma is used for reasoning about the operator SafeAt.    *)
+(* It is proved from SafeAtProp by GeneralNatInduction.                    *)
+(***************************************************************************)
+LEMMA SafeLemma == 
+       TypeOK => 
+         \A b \in Ballot :
+           \A v \in Value :
+              SafeAt(b, v) => 
+                \A c \in 0..(b-1) :
+                  \E Q \in Quorum :
+                    \A a \in Q : /\ maxBal[a] >= c
+                                 /\ \/ DidNotVoteIn(a, c)
+                                    \/ VotedFor(a, c, v)
+PROOF OBVIOUS
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] I’ll compare against the original proof file for any analogous completed proof.
+
+[CMD] /bin/zsh -lc 'rg -n "LEMMA SafeLemma|SafeLemma" -C 20 VoteProof.tla PConProof.tla Consensus.tla VoteProof_SafeLemma.tla'
+VoteProof_SafeLemma.tla:1:----------------------------- MODULE VoteProof_SafeLemma ------------------------------ 
+VoteProof_SafeLemma.tla-2-(***************************************************************************)
+VoteProof_SafeLemma.tla-3-(* This is a high-level consensus algorithm in which a set of processes    *)
+VoteProof_SafeLemma.tla-4-(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+VoteProof_SafeLemma.tla-5-(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+VoteProof_SafeLemma.tla-6-(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+VoteProof_SafeLemma.tla-7-(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+VoteProof_SafeLemma.tla-8-(* all voted for the same value in the same ballot.                        *)
+VoteProof_SafeLemma.tla-9-(*                                                                         *)
+VoteProof_SafeLemma.tla-10-(* Ballots are not executed in order.  Different acceptors may be          *)
+VoteProof_SafeLemma.tla-11-(* concurrently performing actions for different ballots.                  *)
+VoteProof_SafeLemma.tla-12-(***************************************************************************)
+VoteProof_SafeLemma.tla-13-EXTENDS Integers , FiniteSets, TLC, TLAPS
+VoteProof_SafeLemma.tla-14-
+VoteProof_SafeLemma.tla-15-\* THEOREM SMT == TRUE (*{ by (smt) }*)
+VoteProof_SafeLemma.tla-16------------------------------------------------
+... (truncated) ...
+***************************************)
+VoteProof.tla:358:LEMMA SafeLemma == 
+VoteProof.tla-359-       TypeOK => 
+VoteProof.tla-360-         \A b \in Ballot :
+VoteProof.tla-361-           \A v \in Value :
+VoteProof.tla-362-              SafeAt(b, v) => 
+VoteProof.tla-363-                \A c \in 0..(b-1) :
+VoteProof.tla-364-                  \E Q \in Quorum :
+VoteProof.tla-365-                    \A a \in Q : /\ maxBal[a] >= c
+VoteProof.tla-366-                                 /\ \/ DidNotVoteIn(a, c)
+VoteProof.tla-367-                                    \/ VotedFor(a, c, v)
+VoteProof.tla-368-  PROOF OMITTED
+VoteProof.tla-369-
+VoteProof.tla-370------------------------------------------------------------------------------
+VoteProof.tla-371-(***************************************************************************)
+VoteProof.tla-372-(* We now define the invariant that is used to prove the correctness of    *)
+VoteProof.tla-373-(* our algorithm--meaning that specification Spec implements specification *)
+VoteProof.tla-374-(* Spec of module Consensus under our refinement mapping.  Correctness of  *)
+VoteProof.tla-375-(* the voting algorithm follows from the the following three invariants:   *)
+VoteProof.tla-376-(*                                                                         *)
+VoteProof.tla-377-(*   VInv1: In any ballot, an acceptor can vote for at most one value.     *)
+VoteProof.tla-378-(*                                                                         *)
+[EXIT 0]
+
+[AGENT] No completed copy exists, so I’m going to build the induction proof directly and use TLAPS feedback.
+
+[AGENT] The initial induction proof is in place; now I’ll run TLAPS to see the exact obligations that need tightening.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla'
+File "./VoteProof_SafeLemma.tla", line 368, character 6
+Unexpected keyword DEFINE
+File "<unknown>":
+Error: Could not parse "./VoteProof_SafeLemma.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS wants `DEFINE` as a proof step here, so I’m fixing the syntax and rerunning.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+ PROOF
+-  DEFINE P(b) ==
+-    \\A v \\in Value :
+-      SafeAt(b, v) =>
+-        \\A c \\in 0..(b-1) :
+-          \\E Q \\in Quorum :
+-            \\A a \\in Q : /\\ maxBal[a] >= c
+-                         /\\ \\/ DidNotVoteIn(a, c)
+-                            \\/ VotedFor(a, c, v)
++  <1>0. DEFINE P(b) ==
++          \\A v \\in Value :
++            SafeAt(b, v) =>
++              \\A c \\in 0..(b-1) :
++                \\E Q \\in Quorum :
++                  \\A a \\in Q : /\\ maxBal[a] >= c
++                               /\\ \\/ DidNotVoteIn(a, c)
++                                  \\/ VotedFor(a, c, v)
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+File "./VoteProof_SafeLemma.tla", line 384, character 23
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "./VoteProof_SafeLemma.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The parser hit my named assumption syntax; I’ll simplify assumptions to standard facts.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '374,395p'"
+   374	                  \A a \in Q : /\ maxBal[a] >= c
+   375	                               /\ \/ DidNotVoteIn(a, c)
+   376	                                  \/ VotedFor(a, c, v)
+   377	  <1>1. ASSUME TypeOK
+   378	        PROVE  \A b \in Ballot : P(b)
+   379	    <2>1. P(0)
+   380	      BY DEF P, Ballot
+   381	    <2>2. \A n \in Nat : (\A j \in 0..n : P(j)) => P(n+1)
+   382	    PROOF
+   383	      <3>1. ASSUME NEW n \in Nat,
+   384	                    IH == \A j \in 0..n : P(j)
+   385	            PROVE  P(n+1)
+   386	      PROOF
+   387	        <4>1. ASSUME NEW v \in Value,
+   388	                      SafeAt(n+1, v)
+   389	              PROVE  \A c \in 0..n :
+   390	                       \E Q \in Quorum :
+   391	                         \A a \in Q : /\ maxBal[a] >= c
+   392	                                      /\ \/ DidNotVoteIn(a, c)
+   393	                                         \/ VotedFor(a, c, v)
+   394	        PROOF
+   395	          <5>1. SafeAt(n+1, v) =
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-      <3>1. ASSUME NEW n \\in Nat,
+-                    IH == \\A j \\in 0..n : P(j)
++      <3>1. ASSUME NEW n \\in Nat,
++                    \\A j \\in 0..n : P(j)
+@@
+-                  <9>3. P(r)
+-                    BY IH, <9>2
++                  <9>3. P(r)
++                    BY <3>1, <9>2
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+File "./VoteProof_SafeLemma.tla", line 415, character 34:
+Error: Unexpected end of (sub)proof at level 5 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 1
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The remaining issue is proof-language syntax around witness selection; I’m inspecting that block and adjusting it.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '405,465p'"
+   405	            BY SafeAtProp DEF Ballot
+   406	          <5>2. \E Q \in Quorum :
+   407	                  /\ \A a \in Q : maxBal[a] \geq n+1
+   408	                  /\ \E r \in -1..n :
+   409	                       /\ (r # -1) => /\ SafeAt(r, v)
+   410	                                      /\ \A a \in Q :
+   411	                                           \A w \in Value :
+   412	                                              VotedFor(a, r, w) => (w = v)
+   413	                       /\ \A d \in (r+1)..n, a \in Q : DidNotVoteIn(a, d)
+   414	            BY <4>1, <5>1, SMT DEF Ballot
+   415	          <5>3. TAKE Q \in Quorum
+   416	                 PICK r \in -1..n :
+   417	                       /\ (r # -1) => /\ SafeAt(r, v)
+   418	                                      /\ \A a \in Q :
+   419	                                           \A w \in Value :
+   420	                                              VotedFor(a, r, w) => (w = v)
+   421	                       /\ \A d \in (r+1)..n, a \in Q : DidNotVoteIn(a, d)
+   422	                 HAVE \A a \in Q : maxBal[a] \geq n+1
+   423	            BY <5>2
+   424	          <5>4. \A c \in 0..n :
+   425	                  \E R \in Quorum :
+   426	                    \A a \in R : /\ maxBal[a] >= c
+   427	                                 /\ \/ DidNotVoteIn(a, c)
+   428	                                    \/ VotedFor(a, c, v)
+   429	          PROOF
+   430	            <6>1. ASSUME NEW c \in 0..n
+   431	                  PROVE  \E R \in Quoru
+... (truncated) ...
+\ \/ DidNotVoteIn(a, c)
+   434	                                           \/ VotedFor(a, c, v)
+   435	            PROOF
+   436	              <7>1. CASE c = r
+   437	                <8>1. r # -1
+   438	                  BY <6>1, <7>1
+   439	                <8>2. TAKE Q
+   440	                  BY <5>3, <6>1, <7>1, <8>1
+   441	              <7>2. CASE c # r
+   442	                <8>1. CASE c \in (r+1)..n
+   443	                  <9>1. TAKE Q
+   444	                    BY <5>3, <6>1, <8>1
+   445	                <8>2. CASE c \notin (r+1)..n
+   446	                  <9>1. r \in Nat
+   447	                    BY <5>3, <6>1, <7>2, <8>2
+   448	                  <9>2. r \in 0..n
+   449	                    BY <5>3, <9>1
+   450	                  <9>3. P(r)
+   451	                    BY <3>1, <9>2
+   452	                  <9>4. SafeAt(r, v)
+   453	                    BY <5>3, <9>1
+   454	                  <9>5. \A c0 \in 0..(r-1) :
+   455	                          \E R \in Quorum :
+   456	                            \A a \in R : /\ maxBal[a] >= c0
+   457	                                         /\ \/ DidNotVoteIn(a, c0)
+   458	                                            \/ VotedFor(a, c0, v)
+   459	                    BY <9>3, <9>4 DEF P
+   460	                  <9>6. c \in 0..(r-1)
+   461	                    BY <5>3, <6>1, <7>2, <8>2, <9>1
+   462	                  <9>7. QED
+   463	                    BY <9>5, <9>6
+   464	                <8>3. QED
+   465	                  BY <8>1, <8>2
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-          <5>3. TAKE Q \\in Quorum
+-                 PICK r \\in -1..n :
++          <5>3. PICK Q \\in Quorum :
++                  /\\ \\A a \\in Q : maxBal[a] \\geq n+1
++                  /\\ \\E r \\in -1..n :
++                       /\\ (r # -1) => /\\ SafeAt(r, v)
++                                      /\\ \\A a \\in Q :
++                                           \\A w \\in Value :
++                                              VotedFor(a, r, w) => (w = v)
++                       /\\ \\A d \\in (r+1)..n, a \\in Q : DidNotVoteIn(a, d)
++            BY <5>2
++          <5>4. PICK r \\in -1..n :
+                        /\\ (r # -1) => /\\ SafeAt(r, v)
+                                       /\\ \\A a \\in Q :
+                                            \\A w \\in Value :
+                                               VotedFor(a, r, w) => (w = v)
+                        /\\ \\A d \\in (r+1)..n, a \\in Q : DidNotVoteIn(a, d)
+-                 HAVE \\A a \\in Q : maxBal[a] \\geq n+1
+-            BY <5>2
+-          <5>4. \\A c \\in 0..n :
++            BY <5>3
++          <5>5. \\A c \\in 0..n :
+@@
+-                    BY <5>3, <6>1, <7>1, <8>1
++                    BY <5>3, <5>4, <6>1, <7>1, <8>1
+@@
+-                    BY <5>3, <6>1, <8>1
++                    BY <5>3, <5>4, <6>1, <8>1
+@@
+-                    BY <5>3, <6>1, <7>2, <8>2
++                    BY <5>4, <6>1, <7>2, <8>2
+@@
+-                    BY <5>3, <9>1
++                    BY <5>4, <9>1
+@@
+-                    BY <5>3, <9>1
++                    BY <5>4, <9>1
+@@
+-                    BY <5>3, <6>1, <7>2, <8>2, <9>1
++                    BY <5>4, <6>1, <7>2, <8>2, <9>1
+@@
+-            BY <5>4
++            BY <5>5
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+File "./VoteProof_SafeLemma.tla", line 447, characters 21-22:
+Error: Expecting a proof step but found a BY leaf proof
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 193, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '432,455p'"
+   432	                  \E R \in Quorum :
+   433	                    \A a \in R : /\ maxBal[a] >= c
+   434	                                 /\ \/ DidNotVoteIn(a, c)
+   435	                                    \/ VotedFor(a, c, v)
+   436	          PROOF
+   437	            <6>1. ASSUME NEW c \in 0..n
+   438	                  PROVE  \E R \in Quorum :
+   439	                           \A a \in R : /\ maxBal[a] >= c
+   440	                                        /\ \/ DidNotVoteIn(a, c)
+   441	                                           \/ VotedFor(a, c, v)
+   442	            PROOF
+   443	              <7>1. CASE c = r
+   444	                <8>1. r # -1
+   445	                  BY <6>1, <7>1
+   446	                <8>2. TAKE Q
+   447	                    BY <5>3, <5>4, <6>1, <7>1, <8>1
+   448	              <7>2. CASE c # r
+   449	                <8>1. CASE c \in (r+1)..n
+   450	                  <9>1. TAKE Q
+   451	                    BY <5>3, <5>4, <6>1, <8>1
+   452	                <8>2. CASE c \notin (r+1)..n
+   453	                  <9>1. r \in Nat
+   454	                    BY <5>4, <6>1, <7>2, <8>2
+   455	                  <9>2. r \in 0..n
+[EXIT 0]
+
+[AGENT] I’ll avoid `TAKE` leaf syntax and let the prover instantiate the existential witness from an asserted formula.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-                <8>2. TAKE Q
+-                    BY <5>3, <5>4, <6>1, <7>1, <8>1
++                <8>2. \\E R \\in Quorum :
++                        \\A a \\in R : /\\ maxBal[a] >= c
++                                     /\\ \\/ DidNotVoteIn(a, c)
++                                        \\/ VotedFor(a, c, v)
++                  BY <5>3, <5>4, <6>1, <7>1, <8>1
+@@
+-                  <9>1. TAKE Q
+-                    BY <5>3, <5>4, <6>1, <8>1
++                  <9>1. \\E R \\in Quorum :
++                          \\A a \\in R : /\\ maxBal[a] >= c
++                                       /\\ \\/ DidNotVoteIn(a, c)
++                                          \\/ VotedFor(a, c, v)
++                    BY <5>3, <5>4, <6>1, <8>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+File "./VoteProof_SafeLemma.tla", line 443, characters 15-30:
+Error: PROOF keyword found in step that does not begin subproof
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 96, characters 8-31
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", l
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The `CASE` branches need explicit subproof wrappers in this TLAPS version, so I’ll normalize those branches.
+
+[CMD] /bin/zsh -lc "rg -n \"CASE .*\\n\\s*<\" *.tla | head -20"
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+[EXIT 0]
+
+[CMD] /bin/zsh -lc 'rg -n "CASE" *.tla | head -40'
+VoteProof_SafeLemma.tla:443:              <7>1. CASE c = r
+VoteProof_SafeLemma.tla:451:              <7>2. CASE c # r
+VoteProof_SafeLemma.tla:452:                <8>1. CASE c \in (r+1)..n
+VoteProof_SafeLemma.tla:458:                <8>2. CASE c \notin (r+1)..n
+VoteProof.tla:762:  <2>2. CASE T # {}
+VoteProof.tla:782:  <2>3. CASE T = {}
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '750,790p' VoteProof.tla"
+           LT  == ProperSubsetRel(S)
+<1>1. Hyp => \E T \in SUBSET S : Q(T)
+  <2>1. Hyp => Q(S)
+  <2>2. QED
+    BY <2>1
+<1>2. Hyp => \A T \in SUBSET S : 
+                Q(T) ~> (Q({}) \/ \E R \in SUBSET S : <<R, T>> \in LT /\ Q(R))
+  <2>1 SUFFICES ASSUME NEW T \in SUBSET S
+                PROVE  Hyp => 
+                         (Q(T) ~> (Q({}) \/ 
+                                     \E R \in SUBSET S : <<R, T>> \in LT /\ Q(R)))
+    OBVIOUS
+  <2>2. CASE T # {}
+    <3>1. PICK s \in T : TRUE
+      BY <2>2
+    <3>1a. s \in S
+      OBVIOUS
+    <3> DEFINE R == T \ {s}
+    <3>2. (<<R, T>> \in LT) /\ (S \ R = (S \ T) \cup {s})
+      BY DEF ProperSubsetRel
+    <3>3. Hyp => <>[]P(s)
+      BY s \in S
+    <3>4. Q(T) <=> []Q(T)
+      BY AlwaysForall (* PTL *)
+    <3>5. <>[]P(s) => [](Q(T) => <>(Q(T) /\ []P(s)))
+      BY <3>4 (* PTL *)
+    <3>6. Q(T) /\ []P(s) <=> Q(R)
+      BY <3>2
+    <3>7. Hyp => (Q(T) ~> Q(R))
+      BY <3>3, <3>5, <3>6 (* PTL *)
+    <3>8. QED
+      BY <3>7, <3>2 (* PTL *)
+  <2>3. CASE T = {}   
+    OBVIOUS (* PTL, which implies A ~> A *)
+  <2>4. QED
+    BY <2>2, <2>3
+<1>3. (\A s \in S : <>[]P(s)) => (\E T \in SUBSET S : Q(T)) ~> Q({})
+  BY <1>2, SubsetWellFounded, LatticeRule 
+<1>4. <> Q({})
+  BY <1>1, <1>3 (* PTL *)
+<1>5. QED
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '436,446p' | cat -vet"
+   436^I          PROOF$
+   437^I            <6>1. ASSUME NEW c \in 0..n$
+   438^I                  PROVE  \E R \in Quorum :$
+   439^I                           \A a \in R : /\ maxBal[a] >= c$
+   440^I                                        /\ \/ DidNotVoteIn(a, c)$
+   441^I                                           \/ VotedFor(a, c, v)$
+   442^I            PROOF$
+   443^I              <7>1. CASE c = r$
+   444^I                <8>1. r # -1$
+   445^I                  BY <6>1, <7>1$
+   446^I                <8>2. \E R \in Quorum :$
+[EXIT 0]
+
+[AGENT] I’m going to simplify the universal-introduction step to the syntax used in this repo.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-            <6>1. ASSUME NEW c \\in 0..n
++            <6>1. SUFFICES ASSUME NEW c \\in 0..n
+                   PROVE  \\E R \\in Quorum :
+                            \\A a \\in R : /\\ maxBal[a] >= c
+                                         /\\ \\/ DidNotVoteIn(a, c)
+                                            \\/ VotedFor(a, c, v)
+-            PROOF
++              OBVIOUS
++            <6>2. \\E R \\in Quorum :
++                    \\A a \\in R : /\\ maxBal[a] >= c
++                                 /\\ \\/ DidNotVoteIn(a, c)
++                                    \\/ VotedFor(a, c, v)
++            PROOF
+@@
+-            <6>2. QED
+-              BY <6>1
++            <6>3. QED
++              BY <6>1, <6>2
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+File "./VoteProof_SafeLemma.tla", line 448, characters 15-30:
+Error: PROOF keyword found in step that does not begin subproof
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 96, characters 8-31
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", l
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The parser still dislikes the local theorem/subproof shape, so I’ll replace that inner proof with separate asserted cases and QED leaves.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '440,490p'"
+   440	                                        /\ \/ DidNotVoteIn(a, c)
+   441	                                           \/ VotedFor(a, c, v)
+   442	              OBVIOUS
+   443	            <6>2. \E R \in Quorum :
+   444	                    \A a \in R : /\ maxBal[a] >= c
+   445	                                 /\ \/ DidNotVoteIn(a, c)
+   446	                                    \/ VotedFor(a, c, v)
+   447	            PROOF
+   448	              <7>1. CASE c = r
+   449	                <8>1. r # -1
+   450	                  BY <6>1, <7>1
+   451	                <8>2. \E R \in Quorum :
+   452	                        \A a \in R : /\ maxBal[a] >= c
+   453	                                     /\ \/ DidNotVoteIn(a, c)
+   454	                                        \/ VotedFor(a, c, v)
+   455	                  BY <5>3, <5>4, <6>1, <7>1, <8>1
+   456	              <7>2. CASE c # r
+   457	                <8>1. CASE c \in (r+1)..n
+   458	                  <9>1. \E R \in Quorum :
+   459	                          \A a \in R : /\ maxBal[a] >= c
+   460	                                       /\ \/ DidNotVoteIn(a, c)
+   461	                                          \/ VotedFor(a, c, v)
+   462	                    BY <5>3, <5>4, <6>1, <8>1
+   463	                <8>2. CASE c \notin (r+1)..n
+   464	                  <9>1. r \in Nat
+   465	                    BY <5>4, <6>1, <7>2, <8>2
+   466	                  <9>2. r \in 0..n
+   467	                    BY <5>4, <9>1
+   468	                  <9>3. P(r)
+   469	                    BY <3>1, <9>2
+   470	                  <9>4. SafeAt(r, v)
+   471	                    BY <5>4, <9>1
+   472	                  <9>5. \A c0 \in 0..(r-1) :
+   473	                          \E R \in Quorum :
+   474	                            \A a \in R : /\ maxBal[a] >= c0
+   475	                                         /\ \/ DidNotVoteIn(a, c0)
+   476	                                            \/ VotedFor(a, c0, v)
+   477	                    BY <9>3, <9>4 DEF P
+   478	                  <9>6. c \in 0..(r-1)
+   479	                    BY <5>4, <6>1, <7>2, <8>2, <9>1
+   480	                  <9>7. QED
+   481	                    BY <9>5, <9>6
+   482	                <8>3. QED
+   483	                  BY <8>1, <8>2
+   484	              <7>3. QED
+   485	                BY <7>1, <7>2
+   486	            <6>3. QED
+   487	              BY <6>1, <6>2
+   488	          <5>5. QED
+   489	            BY <5>5
+   490	        <4>2. QED
+[EXIT 0]
+
+[AGENT] TLAPS is past parsing and generating obligations; I’m waiting for the prover results now.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-            <6>2. \\E R \\in Quorum :
+-                    \\A a \\in R : /\\ maxBal[a] >= c
+-                                 /\\ \\/ DidNotVoteIn(a, c)
+-                                    \\/ VotedFor(a, c, v)
+-            PROOF
+-              <7>1. CASE c = r
+-                <8>1. r # -1
+-                  BY <6>1, <7>1
+-                <8>2. \\E R \\in Quorum :
+-                        \\A a \\in R : /\\ maxBal[a] >= c
+-                                     /\\ \\/ DidNotVoteIn(a, c)
+-                                        \\/ VotedFor(a, c, v)
+-                  BY <5>3, <5>4, <6>1, <7>1, <8>1
+-              <7>2. CASE c # r
+-                <8>1. CASE c \\in (r+1)..n
+-                  <9>1. \\E R \\in Quorum :
+-                          \\A a \\in R : /\\ maxBal[a] >= c
+-                                       /\\ \\/ DidNotVoteIn(a, c)
+-                                          \\/ VotedFor(a, c, v)
+-                    BY <5>3, <5>4, <6>1, <8>1
+-                <8>2. CASE c \\notin (r+1)..n
+-                  <9>1. r \\in Nat
+-                    BY <5>4, <6>1, <7>2, <8>2
+-                  <9>2. r \\in 0..n
+-                    BY <5>4, <9>1
+-                  <9>3. P(r)
+-                    BY <3>1, <9>2
+-                  <9>4. SafeAt(r, v)
+-                    BY <5>4, <9>1
+-                  <9>5. \\A c0 \\in 0..(r-1) :
+-                          \\E R \\in Quorum :
+-                            \\A a \\in R : /\\ maxBal[a] >= c0
+-                                         /\\ \\/ DidNotVoteIn(a, c0)
+-                                            \\/ VotedFor(a, c0, v)
+-                    BY <9>3, <9>4 DEF P
+-                  <9>6. c \\in 0..(r-1)
+-                    BY <5>4, <6>1, <7>2, <8>2, <9>1
+-                  <9>7. QED
+-                    BY <9>5, <9>6
+-                <8>3. QED
+-                  BY <8>1, <8>2
+-              <7>3. QED
+-                BY <7>1, <7>2
++            <6>2. CASE c = r
++              <7>1. r # -1
++                BY <6>1, <6>2
++              <7>2. QED
++                BY <5>3, <5>4, <6>1, <6>2, <7>1
++            <6>3. CASE c # r
++              <7>1. CASE c \\in (r+1)..n
++                BY <5>3, <5>4, <6>1, <7>1
++              <7>2. CASE c \\notin (r+1)..n
++                <8>1. r \\in Nat
++                  BY <5>4, <6>1, <6>3, <7>2
++                <8>2. r \\in 0..n
++                  BY <5>4, <8>1
++                <8>3. P(r)
++                  BY <3>1, <8>2
++                <8>4. SafeAt(r, v)
++                  BY <5>4, <8>1
++                <8>5. \\A c0 \\in 0..(r-1) :
++                        \\E R \\in Quorum :
++                          \\A a \\in R : /\\ maxBal[a] >= c0
++                                       /\\ \\/ DidNotVoteIn(a, c0)
++                                          \\/ VotedFor(a, c0, v)
++                  BY <8>3, <8>4 DEF P
++                <8>6. c \\in 0..(r-1)
++                  BY <5>4, <6>1, <6>3, <7>2, <8>1
++                <8>7. QED
++                  BY <8>5, <8>6
++              <7>3. QED
++                BY <7>1, <7>2
+             <6>3. QED
+-              BY <6>1, <6>2
++              BY <6>2, <6>3
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./VoteProof_SafeLemma.tla", line 473, characters 24-27 :
+Warning: <6>3 does not introduce any assumptions. It does not make sense to use it here.
+
+File "./VoteProof_SafeLemma.tla", line 475, characters 16-19 :
+Warning: <5>5 does not introduce any assumptions. It does not make sense to use it here.
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_
+... (truncated) ...
+             => (\A c \in 0..b - 1 :
+                              \E Q \in Quorum :
+                                 \A a \in Q :
+                                   /\ maxBal[a] >= c
+                                   /\ \/ DidNotVoteIn(a, c)
+                                   \/ VotedFor(a, c, v)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  NEW CONSTANT Q \in Quorum,
+                  NEW CONSTANT r \in 
+                  -1..n,
+                  TRUE 
+           PROVE  \A c \in 0..n :
+                     \E Q_1 \in Quorum :
+                        \A a \in Q_1 :
+                           /\ maxBal[a] >= c
+                           /\ \/ DidNotVoteIn(a, c)
+                              \/ VotedFor(a, c, v)
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 487, character 79:
+[ERROR]: 7/72 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Seven obligations remain; I’ll make the critical facts more explicit instead of relying on case QED inference.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '358,490p'"
+   358	LEMMA SafeLemma == 
+   359	       TypeOK => 
+   360	         \A b \in Ballot :
+   361	           \A v \in Value :
+   362	              SafeAt(b, v) => 
+   363	                \A c \in 0..(b-1) :
+   364	                  \E Q \in Quorum :
+   365	                    \A a \in Q : /\ maxBal[a] >= c
+   366	                                 /\ \/ DidNotVoteIn(a, c)
+   367	                                    \/ VotedFor(a, c, v)
+   368	PROOF
+   369	  <1>0. DEFINE P(b) ==
+   370	          \A v \in Value :
+   371	            SafeAt(b, v) =>
+   372	              \A c \in 0..(b-1) :
+   373	                \E Q \in Quorum :
+   374	                  \A a \in Q : /\ maxBal[a] >= c
+   375	                               /\ \/ DidNotVoteIn(a, c)
+   376	                                  \/ VotedFor(a, c, v)
+   377	  <1>1. ASSUME TypeOK
+   378	        PROVE  \A b \in Ballot : P(b)
+   379	    <2>1. P(0)
+   380	      BY DEF P, Ballot
+   381	    <2>2. \A n \in Nat : (\A j \in 0..n : P(j)) => P(n+1)
+   382	    PROOF
+   383	      <3>1. ASSUME NEW n \in Nat,
+   384	                    \A j \in 0..n : P(j)
+   385	            PROVE  P(n+1)
+   386	      PROOF
+   387	        <4>1. ASSUME NEW v \in Value,
+   388	                      SafeAt(n+1, v)
+   389	              PROVE  \A c \in 0..n :
+   390	                       \E Q \in Quorum :
+   391	                         \A a \in Q : /\ maxBal[a] >= c
+   392	                                      /\ \/ DidNotVoteIn(a, c)
+   393	                       
+... (truncated) ...
+           BY <5>3, <5>4, <6>1, <7>1
+   451	              <7>2. CASE c \notin (r+1)..n
+   452	                <8>1. r \in Nat
+   453	                  BY <5>4, <6>1, <6>3, <7>2
+   454	                <8>2. r \in 0..n
+   455	                  BY <5>4, <8>1
+   456	                <8>3. P(r)
+   457	                  BY <3>1, <8>2
+   458	                <8>4. SafeAt(r, v)
+   459	                  BY <5>4, <8>1
+   460	                <8>5. \A c0 \in 0..(r-1) :
+   461	                        \E R \in Quorum :
+   462	                          \A a \in R : /\ maxBal[a] >= c0
+   463	                                       /\ \/ DidNotVoteIn(a, c0)
+   464	                                          \/ VotedFor(a, c0, v)
+   465	                  BY <8>3, <8>4 DEF P
+   466	                <8>6. c \in 0..(r-1)
+   467	                  BY <5>4, <6>1, <6>3, <7>2, <8>1
+   468	                <8>7. QED
+   469	                  BY <8>5, <8>6
+   470	              <7>3. QED
+   471	                BY <7>1, <7>2
+   472	            <6>3. QED
+   473	              BY <6>2, <6>3
+   474	          <5>5. QED
+   475	            BY <5>5
+   476	        <4>2. QED
+   477	          BY <4>1 DEF P
+   478	      <3>2. QED
+   479	        BY <3>1
+   480	    <2>3. \A n \in Nat : P(n)
+   481	      BY <2>1, <2>2, GeneralNatInduction
+   482	    <2>4. QED
+   483	      BY <2>3 DEF Ballot
+   484	  <1>2. QED
+   485	    BY <1>1 DEF P
+   486	
+   487	===============================================================================
+[EXIT 0]
+
+[AGENT] I’ll add an explicit induction-function instantiation and strengthen the arithmetic hints around `SafeAtProp`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-            BY SafeAtProp DEF Ballot
++            BY <3>1, SafeAtProp, SMT DEF Ballot
+@@
+-            BY <4>1, <5>1, SMT DEF Ballot
++            BY <3>1, <4>1, <5>1, SMT DEF Ballot
+@@
+-              <7>1. CASE c \\in (r+1)..n
+-                BY <5>3, <5>4, <6>1, <7>1
++              <7>1. CASE c \\in (r+1)..n
++                <8>1. QED
++                  BY <5>3, <5>4, <6>1, <7>1
+@@
+-            <6>3. QED
+-              BY <6>2, <6>3
++            <6>4. QED
++              BY <6>2, <6>3
+@@
+-          <5>5. QED
+-            BY <5>5
++          <5>6. QED
++            BY <5>5
+@@
+-    <2>3. \\A n \\in Nat : P(n)
+-      BY <2>1, <2>2, GeneralNatInduction
+-    <2>4. QED
+-      BY <2>3 DEF Ballot
++    <2>3. DEFINE F == [m \\in Nat |-> P(m)]
++    <2>4. /\\ F[0]
++           /\\ \\A n \\in Nat : (\\A j \\in 0..n : F[j]) => F[n+1]
++      BY <2>1, <2>2 DEF F
++    <2>5. \\A n \\in Nat : F[n]
++      BY <2>4, GeneralNatInduction
++    <2>6. \\A n \\in Nat : P(n)
++      BY <2>5 DEF F
++    <2>7. QED
++      BY <2>6 DEF Ballot
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_DidNotVoteIn_, STATE_VotedFor_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 451, characters 19-20:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+  
+... (truncated) ...
+ONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  <3>1 ,
+                  SafeAtProp ,
+                  SMT 
+           PROVE  SafeAt(n + 1, v)
+                  = (\/ n + 1 = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= n + 1
+                           /\ \E c \in -1..n :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..n, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 494, character 79:
+[ERROR]: 4/79 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Four obligations remain: two arithmetic/instantiation facts and two witness facts. I’ll expose the needed definitions in those leaves.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '390,490p'"
+   390	                       \E Q \in Quorum :
+   391	                         \A a \in Q : /\ maxBal[a] >= c
+   392	                                      /\ \/ DidNotVoteIn(a, c)
+   393	                                         \/ VotedFor(a, c, v)
+   394	        PROOF
+   395	          <5>1. SafeAt(n+1, v) =
+   396	                  \/ n+1 = 0
+   397	                  \/ \E Q \in Quorum :
+   398	                       /\ \A a \in Q : maxBal[a] \geq n+1
+   399	                       /\ \E c \in -1..n :
+   400	                            /\ (c # -1) => /\ SafeAt(c, v)
+   401	                                           /\ \A a \in Q :
+   402	                                                \A w \in Value :
+   403	                                                   VotedFor(a, c, w) => (w = v)
+   404	                            /\ \A d \in (c+1)..n, a \in Q : DidNotVoteIn(a, d)
+   405	            BY <3>1, SafeAtProp, SMT DEF Ballot
+   406	          <5>2. \E Q \in Quorum :
+   407	                  /\ \A a \in Q : maxBal[a] \geq n+1
+   408	                  /\ \E r \in -1..n :
+   409	                       /\ (r # -1) => /\ SafeAt(r, v)
+   410	                                      /\ \A a \in Q :
+   411	                                           \A w \in Value :
+   412	                                              VotedFor(a, r, w) => (w = v)
+   413	                       /\ \A d \in (r+1)..n, a \in Q : DidNotVoteIn(a, d)
+   414	            BY <3>1, <4>1, <5>1, SMT DEF Ballot
+   415	
+... (truncated) ...
+              <8>1. r \in Nat
+   454	                  BY <5>4, <6>1, <6>3, <7>2
+   455	                <8>2. r \in 0..n
+   456	                  BY <5>4, <8>1
+   457	                <8>3. P(r)
+   458	                  BY <3>1, <8>2
+   459	                <8>4. SafeAt(r, v)
+   460	                  BY <5>4, <8>1
+   461	                <8>5. \A c0 \in 0..(r-1) :
+   462	                        \E R \in Quorum :
+   463	                          \A a \in R : /\ maxBal[a] >= c0
+   464	                                       /\ \/ DidNotVoteIn(a, c0)
+   465	                                          \/ VotedFor(a, c0, v)
+   466	                  BY <8>3, <8>4 DEF P
+   467	                <8>6. c \in 0..(r-1)
+   468	                  BY <5>4, <6>1, <6>3, <7>2, <8>1
+   469	                <8>7. QED
+   470	                  BY <8>5, <8>6
+   471	              <7>3. QED
+   472	                BY <7>1, <7>2
+   473	            <6>4. QED
+   474	              BY <6>2, <6>3
+   475	          <5>6. QED
+   476	            BY <5>5
+   477	        <4>2. QED
+   478	          BY <4>1 DEF P
+   479	      <3>2. QED
+   480	        BY <3>1
+   481	    <2>3. DEFINE F == [m \in Nat |-> P(m)]
+   482	    <2>4. /\ F[0]
+   483	           /\ \A n \in Nat : (\A j \in 0..n : F[j]) => F[n+1]
+   484	      BY <2>1, <2>2 DEF F
+   485	    <2>5. \A n \in Nat : F[n]
+   486	      BY <2>4, GeneralNatInduction
+   487	    <2>6. \A n \in Nat : P(n)
+   488	      BY <2>5 DEF F
+   489	    <2>7. QED
+   490	      BY <2>6 DEF Ballot
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-            BY <3>1, SafeAtProp, SMT DEF Ballot
++            BY SafeAtProp, SMT DEF Ballot
+@@
+-            BY <3>1, <4>1, <5>1, SMT DEF Ballot
++            BY <3>1, <4>1, <5>1, SMT DEF Ballot, SafeAt
+@@
+-              <7>2. QED
+-                BY <5>3, <5>4, <6>1, <6>2, <7>1
++              <7>2. \\A a \\in Q :
++                       /\\ maxBal[a] >= c
++                       /\\ \\/ DidNotVoteIn(a, c)
++                          \\/ VotedFor(a, c, v)
++                BY <5>3, <5>4, <6>1, <6>2, <7>1
++              <7>3. QED
++                BY <5>3, <7>2
+@@
+-                <8>1. QED
+-                  BY <5>3, <5>4, <6>1, <7>1
++                <8>1. \\A a \\in Q :
++                         /\\ maxBal[a] >= c
++                         /\\ \\/ DidNotVoteIn(a, c)
++                            \\/ VotedFor(a, c, v)
++                  BY <5>3, <5>4, <6>1, <7>1
++                <8>2. QED
++                  BY <5>3, <8>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 459, characters 19-20:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+      
+... (truncated) ...
+,
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  SafeAtProp ,
+                  SMT 
+           PROVE  SafeAt(n + 1, v)
+                  = (\/ n + 1 = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= n + 1
+                           /\ \E c \in -1..n :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..n, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 504, character 79:
+[ERROR]: 4/84 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The stubborn leaves are arithmetic simplifications. I’ll check TLAPS integer facts and then avoid unnecessary rewrites.
+
+[CMD] /bin/zsh -lc 'rg -n "THEOREM|AXIOM|LEMMA|INSTANCE" ~/.tlapm15/lib/tlaps/Integers.tla ~/.tlapm15/lib/tlaps/Naturals.tla ~/.tlapm15/lib/tlaps/TLAPS.tla | head -120'
+rg: /home/ruize/.tlapm15/lib/tlaps/Integers.tla: No such file or directory (os error 2)
+rg: /home/ruize/.tlapm15/lib/tlaps/Naturals.tla: No such file or directory (os error 2)
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:129:(*    THEOREM  \A S, T : (S = T) <=> (\A x : (x \in S) <=> (x \in T))      *)
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:140:THEOREM SetExtensionality == \A S,T : (\A x : x \in S <=> x \in T) => S = T
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:149:THEOREM NoSetContainsEverything == \A S : \E x : x \notin S
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:385:THEOREM RuleTLA1 == ASSUME STATE P, STATE f,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:389:THEOREM RuleTLA2 == ASSUME STATE P, STATE Q, STATE f, STATE g,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:394:THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:398:THEOREM RuleINV2 == ASSUME STATE I, STATE f, ACTION N
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:401:THEOREM RuleWF1 == ASSUME STATE P, STATE Q, STATE f, ACTION N, ACTION A,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:407:THEOREM RuleSF1 == ASSUME STATE P, STATE Q, STATE f,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:421:THEOREM RuleWF2 == ASSUME STATE P, STATE f, STATE g, STATE EM,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:430:THEOREM RuleSF2 == ASSUME STATE P, STATE f, STATE g, STATE EM,
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:446:THEOREM RuleInvImplication ==
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:456:THEOREM RuleStepSimulation ==
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "ls ~/.tlapm15/lib/tlaps && find ~/.tlapm15/lib/tlaps -maxdepth 2 -type f | sed -n '1,80p'"
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+Isabelle
+Isabelle2011-1
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLA+
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+bin
+emacs
+examples
+heaps
+lib
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/zenon_focal.v
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/zenon_induct.v
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/un-inst
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/RealTime.tla
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/TLA+/README.html
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Tuples.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Zenon.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Functions.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/FixedPoints.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Peano.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/ROOT.ML
+/home/ruize/.tlapm15/lib/tlaps/TLA+/Strings.thy
+/home/ruize/.tlapm15/lib/tlaps/TLA+/NatD
+... (truncated) ...
+aps/bin/ls4
+/home/ruize/.tlapm15/lib/tlaps/bin/ptl_to_trp
+/home/ruize/.tlapm15/lib/tlaps/examples/Peterson.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/LamportMutex.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Allocator.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleMutex.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/SumAndMax.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/BubbleSort.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/README
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/Makefile
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla
+/home/ruize/.tlapm15/lib/tlaps/examples/.svnignore
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla
+/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems.tla
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/CONTRIBUTORS
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/ANNOUNCE
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/NEWS
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/build
+/home/ruize/.tlapm15/lib/tlaps/Isabelle/README.TLAPS
+[EXIT 0]
+
+[AGENT] I’ll try targeted `SMT` leaves for arithmetic/choice facts and keep definitions unexpanded where possible.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-            BY SafeAtProp, SMT DEF Ballot
++            BY SafeAtProp, SMT
+@@
+-            BY <3>1, <4>1, <5>1, SMT DEF Ballot, SafeAt
++            BY <3>1, <4>1, <5>1, SMT
+@@
+-                BY <5>3, <5>4, <6>1, <6>2, <7>1
++                BY <5>3, <5>4, <6>1, <6>2, <7>1, SMT
+@@
+-                  BY <5>3, <5>4, <6>1, <7>1
++                  BY <5>3, <5>4, <6>1, <7>1, SMT
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 459, characters 19-20:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SimpleNatInduction ==
+                
+... (truncated) ...
+,
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  SafeAtProp ,
+                  SMT 
+           PROVE  SafeAt(n + 1, v)
+                  = (\/ n + 1 = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= n + 1
+                           /\ \E c \in -1..n :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..n, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 504, character 79:
+[ERROR]: 4/86 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’m going to reduce arithmetic rewrites by keeping `n+1-1` exactly as `SafeAtProp` states it.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-              PROVE  \\A c \\in 0..n :
++              PROVE  \\A c \\in 0..((n+1)-1) :
+@@
+-                       /\\ \\E c \\in -1..n :
++                       /\\ \\E c \\in -1..((n+1)-1) :
+@@
+-                            /\\ \\A d \\in (c+1)..n, a \\in Q : DidNotVoteIn(a, d)
++                            /\\ \\A d \\in (c+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
+@@
+-                  /\\ \\E r \\in -1..n :
++                  /\\ \\E r \\in -1..((n+1)-1) :
+@@
+-                       /\\ \\A d \\in (r+1)..n, a \\in Q : DidNotVoteIn(a, d)
++                       /\\ \\A d \\in (r+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
+@@
+-                  /\\ \\E r \\in -1..n :
++                  /\\ \\E r \\in -1..((n+1)-1) :
+@@
+-                       /\\ \\A d \\in (r+1)..n, a \\in Q : DidNotVoteIn(a, d)
++                       /\\ \\A d \\in (r+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
+@@
+-          <5>4. PICK r \\in -1..n :
++          <5>4. PICK r \\in -1..((n+1)-1) :
+@@
+-                       /\\ \\A d \\in (r+1)..n, a \\in Q : DidNotVoteIn(a, d)
++                       /\\ \\A d \\in (r+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
+@@
+-          <5>5. \\A c \\in 0..n :
++          <5>5. \\A c \\in 0..((n+1)-1) :
+@@
+-            <6>1. SUFFICES ASSUME NEW c \\in 0..n
++            <6>1. SUFFICES ASSUME NEW c \\in 0..((n+1)-1)
+@@
+-              <7>1. CASE c \\in (r+1)..n
++              <7>1. CASE c \\in (r+1)..((n+1)-1)
+@@
+-              <7>2. CASE c \\notin (r+1)..n
++              <7>2. CASE c \\notin (r+1)..((n+1)-1)
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Une
+... (truncated) ...
+NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  SafeAtProp ,
+                  SMT 
+           PROVE  SafeAt(n + 1, v)
+                  = (\/ n + 1 = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= n + 1
+                           /\ \E c \in -1..(n + 1) - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..(n + 1) - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 504, character 79:
+[ERROR]: 4/86 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I found the logical gap: the `c = r` case needs `TypeOK` to turn “all votes are for v” into “no vote or voted v.” I’ll cite that invariant and add explicit ballot/arithmetic facts.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+         PROOF
+-          <5>1. SafeAt(n+1, v) =
++          <5>0. n+1 \\in Ballot
++            BY <3>1 DEF Ballot
++          <5>1. SafeAt(n+1, v) =
+                   \\/ n+1 = 0
+                   \\/ \\E Q \\in Quorum :
+@@
+-            BY SafeAtProp, SMT
++            BY <4>1, <5>0, SafeAtProp
++          <5>1a. n+1 # 0
++            BY <3>1, SMT
+           <5>2. \\E Q \\in Quorum :
+@@
+-            BY <3>1, <4>1, <5>1, SMT
++            BY <4>1, <5>1, <5>1a, SMT
+@@
+-                BY <5>3, <5>4, <6>1, <6>2, <7>1, SMT
++                BY <1>1, <5>3, <5>4, <6>1, <6>2, <7>1, QA, SMT
++                   DEF TypeOK, VotedFor, DidNotVoteIn, Ballot
+@@
+-                  BY <5>3, <5>4, <6>1, <7>1, SMT
++                  BY <5>3, <5>4, <6>1, <7>1, SMT
++                     DEF DidNotVoteIn
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 464, characters 19-20:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q
+... (truncated) ...
+ \/ DidNotVoteIn(a, c)
+                                   \/ VotedFor(a, c, v)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  <4>1 ,
+                  <5>1 ,
+                  <5>1a ,
+                  SMT 
+           PROVE  \E Q \in Quorum :
+                     /\ \A a \in Q : maxBal[a] >= n + 1
+                     /\ \E r \in -1..(n + 1) - 1 :
+                           /\ r # -1
+                              => (/\ SafeAt(r, v)
+                                  /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, r, w) => w = v)
+                           /\ \A d \in r + 1..(n + 1) - 1, a \in Q :
+                                 DidNotVoteIn(a, d)
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 510, character 79:
+[ERROR]: 2/94 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Only two obligations are left. I’ll split them into smaller facts: one for extracting the existential, one for proving the no-vote disjunction.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '406,472p'"
+   406	                            /\ \A d \in (c+1)..((n+1)-1), a \in Q : DidNotVoteIn(a, d)
+   407	            BY <4>1, <5>0, SafeAtProp
+   408	          <5>1a. n+1 # 0
+   409	            BY <3>1, SMT
+   410	          <5>2. \E Q \in Quorum :
+   411	                  /\ \A a \in Q : maxBal[a] \geq n+1
+   412	                  /\ \E r \in -1..((n+1)-1) :
+   413	                       /\ (r # -1) => /\ SafeAt(r, v)
+   414	                                      /\ \A a \in Q :
+   415	                                           \A w \in Value :
+   416	                                              VotedFor(a, r, w) => (w = v)
+   417	                       /\ \A d \in (r+1)..((n+1)-1), a \in Q : DidNotVoteIn(a, d)
+   418	            BY <4>1, <5>1, <5>1a, SMT
+   419	          <5>3. PICK Q \in Quorum :
+   420	                  /\ \A a \in Q : maxBal[a] \geq n+1
+   421	                  /\ \E r \in -1..((n+1)-1) :
+   422	                       /\ (r # -1) => /\ SafeAt(r, v)
+   423	                                      /\ \A a \in Q :
+   424	                                           \A w \in Value :
+   425	                                              VotedFor(a, r, w) => (w = v)
+   426	                       /\ \A d \in (r+1)..((n+1)-1), a \in Q : DidNotVoteIn(a, d)
+   427	            BY <5>2
+   428	          <5>4. PICK r \in -1..((n+1)-1) :
+   429	                       /\ (r # -1) => /\ SafeAt(r, v)
+   430	                                      /\ \A a \in Q :
+   431	                
+... (truncated) ...
+1)-1)
+   442	                  PROVE  \E R \in Quorum :
+   443	                           \A a \in R : /\ maxBal[a] >= c
+   444	                                        /\ \/ DidNotVoteIn(a, c)
+   445	                                           \/ VotedFor(a, c, v)
+   446	              OBVIOUS
+   447	            <6>2. CASE c = r
+   448	              <7>1. r # -1
+   449	                BY <6>1, <6>2
+   450	              <7>2. \A a \in Q :
+   451	                       /\ maxBal[a] >= c
+   452	                       /\ \/ DidNotVoteIn(a, c)
+   453	                          \/ VotedFor(a, c, v)
+   454	                BY <1>1, <5>3, <5>4, <6>1, <6>2, <7>1, QA, SMT
+   455	                   DEF TypeOK, VotedFor, DidNotVoteIn, Ballot
+   456	              <7>3. QED
+   457	                BY <5>3, <7>2
+   458	            <6>3. CASE c # r
+   459	              <7>1. CASE c \in (r+1)..((n+1)-1)
+   460	                <8>1. \A a \in Q :
+   461	                         /\ maxBal[a] >= c
+   462	                         /\ \/ DidNotVoteIn(a, c)
+   463	                            \/ VotedFor(a, c, v)
+   464	                  BY <5>3, <5>4, <6>1, <7>1, SMT
+   465	                     DEF DidNotVoteIn
+   466	                <8>2. QED
+   467	                  BY <5>3, <8>1
+   468	              <7>2. CASE c \notin (r+1)..((n+1)-1)
+   469	                <8>1. r \in Nat
+   470	                  BY <5>4, <6>1, <6>3, <7>2
+   471	                <8>2. r \in 0..n
+   472	                  BY <5>4, <8>1
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+           <5>1a. n+1 # 0
+             BY <3>1, SMT
++          <5>1b. \\/ n+1 = 0
++                 \\/ \\E Q \\in Quorum :
++                       /\\ \\A a \\in Q : maxBal[a] \\geq n+1
++                       /\\ \\E c \\in -1..((n+1)-1) :
++                            /\\ (c # -1) => /\\ SafeAt(c, v)
++                                           /\\ \\A a \\in Q :
++                                                \\A w \\in Value :
++                                                   VotedFor(a, c, w) => (w = v)
++                            /\\ \\A d \\in (c+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
++            BY <4>1, <5>1
+           <5>2. \\E Q \\in Quorum :
+@@
+-            BY <4>1, <5>1, <5>1a, SMT
++            BY <5>1a, <5>1b
+@@
+               <7>1. CASE c \\in (r+1)..((n+1)-1)
+-                <8>1. \\A a \\in Q :
++                <8>1. \\A d \\in (r+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
++                  BY <5>4
++                <8>2. \\A a \\in Q : DidNotVoteIn(a, c)
++                  BY <7>1, <8>1
++                <8>3. \\A a \\in Q : maxBal[a] >= c
++                  BY <5>3, <6>1, SMT
++                <8>4. \\A a \\in Q :
+                          /\\ maxBal[a] >= c
+                          /\\ \\/ DidNotVoteIn(a, c)
+                             \\/ VotedFor(a, c, v)
+-                  BY <5>3, <5>4, <6>1, <7>1, SMT
++                  BY <8>2, <8>3
+                      DEF DidNotVoteIn
+-                <8>2. QED
+-                  BY <5>3, <8>1
++                <8>5. QED
++                  BY <5>3, <8>4
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 475, characters 19-20:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap 
+... (truncated) ...
+
+                    \A v \in Value :
+                       SafeAt(b, v)
+                       => (\A c \in 0..b - 1 :
+                              \E Q \in Quorum :
+                                 \A a \in Q :
+                                   /\ maxBal[a] >= c
+                                   /\ \/ DidNotVoteIn(a, c)
+                                   \/ VotedFor(a, c, v)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  NEW CONSTANT Q \in Quorum,
+                  NEW CONSTANT r \in 
+                  -1..(n + 1) - 1,
+                  NEW CONSTANT c \in 
+                  0..(n + 1) - 1,
+                  <5>3 ,
+                  <6>1 ,
+                  SMT 
+           PROVE  \A a \in Q : maxBal[a] >= c
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 526, character 79:
+[ERROR]: 1/101 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] One arithmetic monotonicity fact is left; I’ll derive `c <= n+1` explicitly before using `maxBal >= n+1`.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '466,482p'"
+   466	              <7>3. QED
+   467	                BY <5>3, <7>2
+   468	            <6>3. CASE c # r
+   469	              <7>1. CASE c \in (r+1)..((n+1)-1)
+   470	                <8>1. \A d \in (r+1)..((n+1)-1), a \in Q : DidNotVoteIn(a, d)
+   471	                  BY <5>4
+   472	                <8>2. \A a \in Q : DidNotVoteIn(a, c)
+   473	                  BY <7>1, <8>1
+   474	                <8>3. \A a \in Q : maxBal[a] >= c
+   475	                  BY <5>3, <6>1, SMT
+   476	                <8>4. \A a \in Q :
+   477	                         /\ maxBal[a] >= c
+   478	                         /\ \/ DidNotVoteIn(a, c)
+   479	                            \/ VotedFor(a, c, v)
+   480	                  BY <8>2, <8>3
+   481	                     DEF DidNotVoteIn
+   482	                <8>5. QED
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+                 <8>1. \\A d \\in (r+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
+                   BY <5>4
+                 <8>2. \\A a \\in Q : DidNotVoteIn(a, c)
+                   BY <7>1, <8>1
+-                <8>3. \\A a \\in Q : maxBal[a] >= c
+-                  BY <5>3, <6>1, SMT
+-                <8>4. \\A a \\in Q :
++                <8>3. c <= n+1
++                  BY <6>1, SMT
++                <8>4. \\A a \\in Q : maxBal[a] >= c
++                  BY <5>3, <8>3, SMT
++                <8>5. \\A a \\in Q :
+                          /\\ maxBal[a] >= c
+                          /\\ \\/ DidNotVoteIn(a, c)
+                             \\/ VotedFor(a, c, v)
+-                  BY <8>2, <8>3
++                  BY <8>2, <8>4
+                      DEF DidNotVoteIn
+-                <8>5. QED
+-                  BY <5>3, <8>4
++                <8>6. QED
++                  BY <5>3, <8>5
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 477, characters 19-20:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat
+... (truncated) ...
+
+                    \A v \in Value :
+                       SafeAt(b, v)
+                       => (\A c \in 0..b - 1 :
+                              \E Q \in Quorum :
+                                 \A a \in Q :
+                                   /\ maxBal[a] >= c
+                                   /\ \/ DidNotVoteIn(a, c)
+                                   \/ VotedFor(a, c, v)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  NEW CONSTANT Q \in Quorum,
+                  NEW CONSTANT r \in 
+                  -1..(n + 1) - 1,
+                  NEW CONSTANT c \in 
+                  0..(n + 1) - 1,
+                  <5>3 ,
+                  <8>3 ,
+                  SMT 
+           PROVE  \A a \in Q : maxBal[a] >= c
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 528, character 79:
+[ERROR]: 1/104 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The last leaf needs the picked quorum’s bound as a standalone fact; I’ll expose that and rerun.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+           <5>3. PICK Q \\in Quorum :
+                   /\\ \\A a \\in Q : maxBal[a] \\geq n+1
+@@
+                        /\\ \\A d \\in (r+1)..((n+1)-1), a \\in Q : DidNotVoteIn(a, d)
+             BY <5>2
++          <5>3a. \\A a \\in Q : maxBal[a] \\geq n+1
++            BY <5>3
+           <5>4. PICK r \\in -1..((n+1)-1) :
+@@
+                 <8>3. c <= n+1
+                   BY <6>1, SMT
+                 <8>4. \\A a \\in Q : maxBal[a] >= c
+-                  BY <5>3, <8>3, SMT
++                PROOF
++                  <9>1. SUFFICES ASSUME NEW a \\in Q
++                        PROVE  maxBal[a] >= c
++                    OBVIOUS
++                  <9>2. maxBal[a] >= n+1
++                    BY <5>3a, <9>1
++                  <9>3. QED
++                    BY <8>3, <9>2, SMT
++                QED
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+File "./VoteProof_SafeLemma.tla", line 486, character 23:
+Error: Unexpected end of (sub)proof at level 8 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 193, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 193, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The subproof closing syntax was wrong; I’ll use a numbered QED step instead of bare `QED`.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_SafeLemma.tla | sed -n '474,490p'"
+   474	                <8>2. \A a \in Q : DidNotVoteIn(a, c)
+   475	                  BY <7>1, <8>1
+   476	                <8>3. c <= n+1
+   477	                  BY <6>1, SMT
+   478	                <8>4. \A a \in Q : maxBal[a] >= c
+   479	                PROOF
+   480	                  <9>1. SUFFICES ASSUME NEW a \in Q
+   481	                        PROVE  maxBal[a] >= c
+   482	                    OBVIOUS
+   483	                  <9>2. maxBal[a] >= n+1
+   484	                    BY <5>3a, <9>1
+   485	                  <9>3. QED
+   486	                    BY <8>3, <9>2, SMT
+   487	                QED
+   488	                <8>5. \A a \in Q :
+   489	                         /\ maxBal[a] >= c
+   490	                         /\ \/ DidNotVoteIn(a, c)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+-                QED
+                 <8>5. \\A a \\in Q :
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 486, characters 21-22:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f
+... (truncated) ...
+in Value :
+                       SafeAt(b, v)
+                       => (\A c \in 0..b - 1 :
+                              \E Q \in Quorum :
+                                 \A a \in Q :
+                                   /\ maxBal[a] >= c
+                                   /\ \/ DidNotVoteIn(a, c)
+                                   \/ VotedFor(a, c, v)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT v \in Value,
+                  NEW CONSTANT Q \in Quorum,
+                  NEW CONSTANT r \in 
+                  -1..(n + 1) - 1,
+                  NEW CONSTANT c \in 
+                  0..(n + 1) - 1,
+                  NEW CONSTANT a \in Q,
+                  <8>3 ,
+                  <9>2 ,
+                  SMT 
+           PROVE  maxBal[a] >= c
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 537, character 79:
+[ERROR]: 1/110 obligations failed.
+There were backend errors processing module `"VoteProof_SafeLemma"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The arithmetic backend needs the left side typed as an integer; I’ll add that from `TypeOK`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeLemma.tla
+@@
+                   <9>2. maxBal[a] >= n+1
+                     BY <5>3a, <9>1
+-                  <9>3. QED
+-                    BY <8>3, <9>2, SMT
++                  <9>3. maxBal[a] \\in Int
++                    BY <1>1, <5>3, <9>1, QA DEF TypeOK, Ballot
++                  <9>4. QED
++                    BY <8>3, <9>2, <9>3, SMT
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_SafeLemma.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "./VoteProof_SafeLemma.tla", line 1, character 1 to line 539, character 79:
+[INFO]: All 116 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS verifies now. I’ll run the required illegal-change checker and inspect the final diff.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py VoteProof_SafeLemma.tla && git diff -- VoteProof_SafeLemma.tla'
+Checking: VoteProof_SafeLemma.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_SafeLemma.tlaps/VoteProof_SafeLemma.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeLemma.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteI
+... (truncated) ...
+            <8>1. r \in Nat
++                  BY <5>4, <6>1, <6>3, <7>2
++                <8>2. r \in 0..n
++                  BY <5>4, <8>1
++                <8>3. P(r)
++                  BY <3>1, <8>2
++                <8>4. SafeAt(r, v)
++                  BY <5>4, <8>1
++                <8>5. \A c0 \in 0..(r-1) :
++                        \E R \in Quorum :
++                          \A a \in R : /\ maxBal[a] >= c0
++                                       /\ \/ DidNotVoteIn(a, c0)
++                                          \/ VotedFor(a, c0, v)
++                  BY <8>3, <8>4 DEF P
++                <8>6. c \in 0..(r-1)
++                  BY <5>4, <6>1, <6>3, <7>2, <8>1
++                <8>7. QED
++                  BY <8>5, <8>6
++              <7>3. QED
++                BY <7>1, <7>2
++            <6>4. QED
++              BY <6>2, <6>3
++          <5>6. QED
++            BY <5>5
++        <4>2. QED
++          BY <4>1 DEF P
++      <3>2. QED
++        BY <3>1
++    <2>3. DEFINE F == [m \in Nat |-> P(m)]
++    <2>4. /\ F[0]
++           /\ \A n \in Nat : (\A j \in 0..n : F[j]) => F[n+1]
++      BY <2>1, <2>2 DEF F
++    <2>5. \A n \in Nat : F[n]
++      BY <2>4, GeneralNatInduction
++    <2>6. \A n \in Nat : P(n)
++      BY <2>5 DEF F
++    <2>7. QED
++      BY <2>6 DEF Ballot
++  <1>2. QED
++    BY <1>1 DEF P
+ 
+-===============================================================================
+\ No newline at end of file
++===============================================================================
+[EXIT 0]
+
+[AGENT] Both TLAPS and the checker pass. I’ll mark the plan complete.
+
+[AGENT] Implemented a complete TLAPS proof for `SafeLemma` in `VoteProof_SafeLemma.tla:368`.
+
+- Replaced the failing `PROOF OBVIOUS` with a structured proof using strong induction via `GeneralNatInduction`.
+- Used admitted lemmas `SafeAtProp` and `GeneralNatInduction` without modifying any preceding declarations/theorems/proofs.
+- Verified with TLAPS: `All 116 obligations proved`.
+- Ran required checker: `python3 check_proof.py VoteProof_SafeLemma.tla` → `✅ PASS — all obligations proved`, `No cheating detected`.
+
+No illegal changes were reported.

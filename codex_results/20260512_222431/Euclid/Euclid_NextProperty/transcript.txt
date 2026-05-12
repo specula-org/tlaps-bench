@@ -1,0 +1,490 @@
+Benchmark: Euclid/Euclid_NextProperty.tla
+Time: 63s
+Tokens: 242,184 input / 2,448 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and proof checker, then iteratively patch the final proof and run TLAPS/checks until clean.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Euclid_NextProperty.tla && printf '\\n--- check_proof.py ---\\n' && sed -n '1,220p' check_proof.py"
+-------------------- MODULE Euclid_NextProperty --------------------
+EXTENDS Integers, TLAPS
+-------------------------------------------------------
+p | q == \E d \in 1..q : q = p * d
+Divisors(q) == {d \in 1..q : d | q}
+Maximum(S) == CHOOSE x \in S : \A y \in S : x \geq y
+GCD(p,q) == Maximum(Divisors(p) \cap Divisors(q))
+Number == Nat \ {0}
+-------------------------------------------------------
+CONSTANTS M, N
+VARIABLES x, y
+
+ASSUME NumberAssumption == M \in Number /\ N \in Number
+-------------------------------------------------------
+Init == (x = M) /\ (y = N)
+
+Next == \/ /\ x < y
+           /\ y' = y - x
+           /\ x' = x
+        \/ /\ y < x
+           /\ x' = x-y
+           /\ y' = y
+
+Spec == Init /\ [][Next]_<<x,y>>
+-------------------------------------------------------
+ResultCorrect == (x = y) => x = GCD(M, N)
+
+InductiveInvariant ==
+  /\ x \in Number
+  /\ y \in Number
+  /\ GCD(x, y) = GCD(M, N)
+-------------------------------------------------------
+USE DEF Number
+
+THEOREM InitProperty == Init => InductiveInvariant
+  PROOF OMITTED
+
+-------------------------------------------------------
+AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
+AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+-------------------------------------------------------
+THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+PROOF OBVIOUS
+
+============================================
+... (truncated) ...
+n issues
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Check a single TLAPS benchmark proof')
+    parser.add_argument('file', help='Path to the benchmark .tla file')
+    parser.add_argument('--tlapm', default=None, help='Path to tlapm binary')
+    parser.add_argument('--tlapm-lib', default=None, help='Path to tlapm lib directory')
+    parser.add_argument('--timeout', type=int, default=120, help='Timeout in seconds')
+    parser.add_argument('--output', '-o', default=None, help='Write results to this file (default: <input>.result)')
+    args = parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '220,440p' check_proof.py && nl -ba Euclid_NextProperty.tla"
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+        bench_dir = os.path.dirname(filepath)
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            dep_basename = os.path.basename(dep_file)
+            if dep_basename != basename:
+                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+
+        cmd = [tlapm_path, '-I', tlapm_lib, tmp_file]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=args.timeout,
+                cwd=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+
+        for line in
+... (truncated) ...
+Maximum(Divisors(p) \cap Divisors(q))
+     8	Number == Nat \ {0}
+     9	-------------------------------------------------------
+    10	CONSTANTS M, N
+    11	VARIABLES x, y
+    12	
+    13	ASSUME NumberAssumption == M \in Number /\ N \in Number
+    14	-------------------------------------------------------
+    15	Init == (x = M) /\ (y = N)
+    16	
+    17	Next == \/ /\ x < y
+    18	           /\ y' = y - x
+    19	           /\ x' = x
+    20	        \/ /\ y < x
+    21	           /\ x' = x-y
+    22	           /\ y' = y
+    23	
+    24	Spec == Init /\ [][Next]_<<x,y>>
+    25	-------------------------------------------------------
+    26	ResultCorrect == (x = y) => x = GCD(M, N)
+    27	
+    28	InductiveInvariant ==
+    29	  /\ x \in Number
+    30	  /\ y \in Number
+    31	  /\ GCD(x, y) = GCD(M, N)
+    32	-------------------------------------------------------
+    33	USE DEF Number
+    34	
+    35	THEOREM InitProperty == Init => InductiveInvariant
+    36	  PROOF OMITTED
+    37	
+    38	-------------------------------------------------------
+    39	AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
+    40	AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+    41	AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+    42	-------------------------------------------------------
+    43	THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+    44	PROOF OBVIOUS
+    45	
+    46	=======================================================
+[EXIT 0]
+
+[AGENT] The invariant preservation splits into the two `Next` branches; I’ll encode those cases using the admitted GCD axioms and integer arithmetic.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Euclid_NextProperty.tla
+@@
+ THEOREM NextProperty == InductiveInvariant /\\ Next => InductiveInvariant'
+-PROOF OBVIOUS
++PROOF
++  <1>1. ASSUME InductiveInvariant, Next
++        PROVE  InductiveInvariant'
++    PROOF
++      <2>1. x \\in Number /\\ y \\in Number /\\ GCD(x, y) = GCD(M, N)
++        BY <1>1 DEF InductiveInvariant
++      <2>2. CASE /\\ x < y
++                  /\\ y' = y - x
++                  /\\ x' = x
++        PROOF
++          <3>1. x' \\in Number /\\ y' \\in Number
++            BY <2>1, <2>2 DEF Number
++          <3>2. GCD(x', y') = GCD(M, N)
++            BY <2>1, <2>2, GCDProperty3
++          <3>3. QED
++            BY <3>1, <3>2 DEF InductiveInvariant
++        QED
++      <2>3. CASE /\\ y < x
++                  /\\ x' = x-y
++                  /\\ y' = y
++        PROOF
++          <3>1. x' \\in Number /\\ y' \\in Number
++            BY <2>1, <2>3 DEF Number
++          <3>2. GCD(x, y) = GCD(y, x)
++            BY <2>1, GCDProperty2
++          <3>3. GCD(y, x) = GCD(y, x-y)
++            BY <2>1, <2>3, GCDProperty3
++          <3>4. GCD(y, x-y) = GCD(x-y, y)
++            BY <2>1, <2>3, <3>1, GCDProperty2
++          <3>5. GCD(x', y') = GCD(M, N)
++            BY <2>1, <2>3, <3>2, <3>3, <3>4
++          <3>6. QED
++            BY <3>1, <3>5 DEF InductiveInvariant
++        QED
++      <2>4. QED
++        BY <1>1, <2>2, <2>3 DEF Next
++    QED
++  <1>2. QED
++    BY <1>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Euclid_NextProperty.tla"
+File "./Euclid_NextProperty.tla", line 59, character 15:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245,
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS parsed the branch labels differently than intended, so I’m checking line numbers and simplifying the proof structure.
+
+[CMD] /bin/zsh -lc "nl -ba Euclid_NextProperty.tla | sed -n '40,100p'"
+    40	AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+    41	AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+    42	-------------------------------------------------------
+    43	THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+    44	PROOF
+    45	  <1>1. ASSUME InductiveInvariant, Next
+    46	        PROVE  InductiveInvariant'
+    47	    PROOF
+    48	      <2>1. x \in Number /\ y \in Number /\ GCD(x, y) = GCD(M, N)
+    49	        BY <1>1 DEF InductiveInvariant
+    50	      <2>2. CASE /\ x < y
+    51	                  /\ y' = y - x
+    52	                  /\ x' = x
+    53	        PROOF
+    54	          <3>1. x' \in Number /\ y' \in Number
+    55	            BY <2>1, <2>2 DEF Number
+    56	          <3>2. GCD(x', y') = GCD(M, N)
+    57	            BY <2>1, <2>2, GCDProperty3
+    58	          <3>3. QED
+    59	            BY <3>1, <3>2 DEF InductiveInvariant
+    60	        QED
+    61	      <2>3. CASE /\ y < x
+    62	                  /\ x' = x-y
+    63	                  /\ y' = y
+    64	        PROOF
+    65	          <3>1. x' \in Number /\ y' \in Number
+    66	            BY <2>1, <2>3 DEF Number
+    67	          <3>2. GCD(x, y) = GCD(y, x)
+    68	            BY <2>1, GCDProperty2
+    69	          <3>3. GCD(y, x) = GCD(y, x-y)
+    70	            BY <2>1, <2>3, GCDProperty3
+    71	          <3>4. GCD(y, x-y) = GCD(x-y, y)
+    72	            BY <2>1, <2>3, <3>1, GCDProperty2
+    73	          <3>5. GCD(x', y') = GCD(M, N)
+    74	            BY <2>1, <2>3, <3>2, <3>3, <3>4
+    75	          <3>6. QED
+    76	            BY <3>1, <3>5 DEF InductiveInvariant
+    77	        QED
+    78	      <2>4. QED
+    79	        BY <1>1, <2>2, <2>3 DEF Next
+    80	    QED
+    81	  <1>2. QED
+    82	    BY <1>1
+    83	
+    84	=======================================================
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('Euclid_NextProperty.tla')
+s=p.read_text()
+s=s.replace('<3>3. QED','<3> QED')
+s=s.replace('<3>6. QED','<3> QED')
+s=s.replace('<2>4. QED','<2> QED')
+s=s.replace('<1>2. QED','<1> QED')
+p.write_text(s)
+PY
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Euclid_NextProperty.tla"
+File "./Euclid_NextProperty.tla", line 59, character 15:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245,
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The issue was extra standalone `QED` terminators; TLAPS wants numbered/leveled `QED` steps only. I’ll remove those and rerun.
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('Euclid_NextProperty.tla')
+lines=p.read_text().splitlines()
+lines=[line for line in lines if line.strip()"'!='"'QED']
+p.write_text('\\n'.join(lines)+'\\n')
+PY
+nl -ba Euclid_NextProperty.tla | sed -n '43,95p'
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Euclid_NextProperty.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_InductiveInvariant_, ACTION_Next_
+
+** Unexpanded symbols: STATE_InductiveInvariant_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+(* created new ".tlacache/Euclid_NextProperty.tlaps/Euclid_NextProperty.thy" *)
+(* fingerprints written in ".tlacache/Euclid_NextProperty.tlaps/fingerprints" *)
+File "./Euclid_NextProperty.tla", line 1, character 1 to line 81, character 55:
+[INFO]: All 42 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS passes now. I’ll run the required checker to confirm no illegal edits.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Euclid_NextProperty.tla'
+Checking: Euclid_NextProperty.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Euclid_NextProperty.tlaps/Euclid_NextProperty.thy" *)
+(* fingerprints written in ".tlacache/Euclid_NextProperty.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_InductiveInvariant_, ACTION_Next_
+
+** Unexpanded symbols: STATE_InductiveInvariant_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+File "/tmp/tlaps_check_34dbcxh3/Euclid_NextProperty.tla", line 1, character 1 to line 81, character 55:
+[INFO]: All 42 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Euclid_NextProperty_t79i26a1/Euclid_NextProperty.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `NextProperty` in `Euclid_NextProperty.tla:44`.
+
+- Replaced the placeholder `PROOF OBVIOUS` with a structured case proof over the two `Next` branches.
+- Used the admitted GCD axioms plus `Number` expansion to prove primed invariant preservation.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Euclid_NextProperty.tla`: all 42 obligations proved.
+- Ran `python3 check_proof.py Euclid_NextProperty.tla`: PASS, no cheating detected.

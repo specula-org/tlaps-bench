@@ -1,0 +1,212 @@
+Benchmark: ByzantinePaxos/VoteProof_NextDef.tla
+Time: 31s
+Tokens: 136,332 input / 979 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iteratively patch the final proof and run TLAPS/checks until clean.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,260p' VoteProof_NextDef.tla"
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+VoteProof_NextDef.tla
+check_proof.py
+----------------------------- MODULE VoteProof_NextDef ------------------------------ 
+(***************************************************************************)
+(* This is a high-level consensus algorithm in which a set of processes    *)
+(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+(* all voted for the same value in the same ballot.                        *)
+(*                                                                         *)
+(* Ballots are not executed in order.  Different acceptors may be          *)
+(* concurrently performing actions for different ballots.                  *)
+(***************************************************************************)
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+\* THEOREM SMT == TRUE (*{ by (smt) }*)
+-----------------------------------------------------------------------------
+CONSTANT Value,     \* As in module Consensus, the set of choosable values.
+         Acceptor,  \* The set of all acceptors.
+         Quorum     \* The set of all quorums.
+ 
+(***************************************************************************)
+(* The following assumption asserts that a quorum is a set of a
+... (truncated) ...
+<< votes, maxBal >>
+
+ProcSet == (Acceptor)
+
+Init == (* Global variables *)
+        /\ votes = [a \in Acceptor |-> {}]
+        /\ maxBal = [a \in Acceptor |-> -1]
+
+acceptor(self) == \E b \in Ballot:
+                    \/ /\ b > maxBal[self]
+                       /\ maxBal' = [maxBal EXCEPT ![self] = b]
+                       /\ UNCHANGED votes
+                    \/ /\ \E v \in Value:
+                            /\ /\ maxBal[self] \leq b
+                               /\ DidNotVoteIn(self, b)
+                               /\ \A p \in Acceptor \ {self} :
+                                     \A w \in Value : VotedFor(p, b, w) => (w = v)
+                               /\ SafeAt(b, v)
+                            /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+
+Next == (\E self \in Acceptor: acceptor(self))
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '260,620p' VoteProof_NextDef.tla"
+(* recursive definition.  For example, from the recursive definition       *)
+(*                                                                         *)
+(*   Silly[n \in Nat] == CHOOSE v : v # Silly[n]                           *)
+(*                                                                         *)
+(* we cannot deduce that                                                   *)
+(*                                                                         *)
+(*   Silly[42] = CHOOSE v : v # Silly[42]                                  *)
+(*                                                                         *)
+(* (From that, we could easily deduce Silly[42] # Silly[42].)              *)
+(*                                                                         *)
+(* To prove the desired property of SafeAt, we use the following proof     *)
+(* rule.  It will eventually be in a standard module--probably in TLAPS.   *)
+(* However, for now, we put it here.                                       *)
+(***************************************************************************)
+
+THEOREM RecursiveFcnOfNat ==
+          ASSUME NEW Def(_,_), 
+                 \A n \in Nat : 
+                    \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+          PROVE  LET f[n \in Nat] == Def(f, n)
+                 IN  f = [n \in Nat |-> Def(f, n)]
+PROOF OMITTED
+
+(***************************************************************************)
+(* Here is the theorem that ess
+... (truncated) ...
+  /\ SafeAt(b, v)
+  /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+  /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+BallotAction(self, b) ==
+  \/ IncreaseMaxBal(self, b)
+  \/ \E v \in Value : VoteFor(self, b, v)
+
+(***************************************************************************)
+(* When proving lemma NextDef, we were surprised to discover that it       *)
+(* required the assumption that the set of acceptors is non-empty.  This   *)
+(* assumption isn't necessary for safety, since if there are no acceptors  *)
+(* there can be no quorums (see theorem QuorumNonEmpty above) so no value  *)
+(* is ever chosen and the Consensus specification is trivially implemented *)
+(* under our refinement mapping.  However, the assumption is necessary for *)
+(* liveness and it allows us to lemma NextDef for the safety proof as      *)
+(* well, so we assert it now.                                              *)
+(***************************************************************************)
+ASSUME AcceptorNonempty == Acceptor # {}
+
+(***************************************************************************)
+(* The proof of the lemma itself is quite simple.                          *)
+(***************************************************************************)
+LEMMA NextDef ==
+  TypeOK => 
+   (Next =  \E self \in Acceptor :
+                 \E b \in Ballot : BallotAction(self, b) )
+PROOF OBVIOUS
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] The target theorem is mostly definitional, so I’ll first try an explicit expansion proof and see what TLAPS still needs.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_NextDef.tla
+@@
+ LEMMA NextDef ==
+   TypeOK => 
+    (Next =  \\E self \\in Acceptor :
+                  \\E b \\in Ballot : BallotAction(self, b) )
+-PROOF OBVIOUS
++PROOF BY DEF Next, acceptor, BallotAction, IncreaseMaxBal, VoteFor
+ 
+ ===============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_NextDef.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_NextDef.tlaps/VoteProof_NextDef.thy" *)
+File "./VoteProof_NextDef.tla", line 1, character 1 to line 521, character 79:
+[INFO]: All 2 obligations proved.
+(* fingerprints written in ".tlacache/VoteProof_NextDef.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] TLAPS accepted the replacement. I’ll run the repository checker now to confirm no forbidden edits.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py VoteProof_NextDef.tla'
+Checking: VoteProof_NextDef.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_NextDef.tlaps/VoteProof_NextDef.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_NextDef.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+File "/tmp/tlaps_check_6vv7ki1l/VoteProof_NextDef.tla", line 1, character 1 to line 521, character 79:
+[INFO]: All 2 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_VoteProof_NextDef_g8xlxecr/VoteProof_NextDef.result
+[EXIT 0]
+
+[AGENT] Done.
+
+- Replaced the final `PROOF OBVIOUS` with a valid TLAPS proof at `VoteProof_NextDef.tla:520`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_NextDef.tla`.
+- Verified legality with `python3 check_proof.py VoteProof_NextDef.tla`.
+- Checker result: `✅ PASS — all obligations proved`, no cheating detected.

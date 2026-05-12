@@ -1,0 +1,461 @@
+Benchmark: Allocator/Allocator_RequestTypeInvariant.tla
+Time: 64s
+Tokens: 274,657 input / 2,160 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iteratively patch and verify the final proof.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Allocator_RequestTypeInvariant.tla"
+-------------------------- MODULE Allocator_RequestTypeInvariant -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+----------------------------------------------------
+... (truncated) ...
+Client : \A r \in Resource :
+     r \in alloc[c1] \cap alloc[c2] => c1 = c2
+
+ClientsWillReturn ==
+  \A c \in Client : unsat[c]={} ~> alloc[c]={}
+
+ClientsWillObtain ==
+  \A c \in Client, r \in Resource : r \in unsat[c] ~> r \in alloc[c]
+
+InfOftenSatisfied ==
+  \A c \in Client : []<>(unsat[c] = {})
+
+-------------------------------------------------------------------------
+
+(* Used for symmetry reduction with TLC *)
+\* Symmetry == Permutations(Client) \cup Permutations(Resource)
+
+-------------------------------------------------------------------------
+
+(**********************************************************************)
+(* The following version states a weaker fairness requirement for the *)
+(* clients: resources need be returned only if the entire request has *)
+(* been satisfied.                                                    *)
+(**********************************************************************)
+
+(*
+
+SimpleAllocator2 ==
+  /\ Init /\ [][Next]_vars
+  /\ \A c \in Client: WF_vars(unsat[c] = {} /\ Return(c, alloc[c]))
+  /\ \A c \in Client: SF_vars(\E S \in SUBSET Resource: Allocate(c,S))
+
+*)
+
+-------------------------------------------------------------------------
+
+THEOREM InitTypeInvariant == Init => TypeInvariant
+  PROOF OMITTED
+
+THEOREM RequestTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'
+PROOF OBVIOUS
+
+=========================================================================
+[EXIT 0]
+
+[AGENT] The target is a small type-preservation lemma for `Request`; I’ll try a structured proof using function-update facts.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_RequestTypeInvariant.tla'
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_RequestTypeInvariant.tlaps/Allocator_RequestTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+File "./Allocator_RequestTypeInvariant.tla", line 134, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT c \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource
+           PROVE  TypeInvariant /\ Request(c, S) => TypeInvariant'
+File "./Allocator_RequestTypeInvariant.tla", line 1, character 1 to line 136, character 73:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Allocator_RequestTypeInvariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll check the TLAPS library names for function-update lemmas before patching.
+
+[CMD] /bin/zsh -lc "rg -n \"EXCEPT|Function|\\[.*->\" ~/.tlapm15/lib/tlaps | head -80"
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:21:  B \in [DOMAIN B -> {n \in Nat : n > 0}]
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:28:SetToBag(S) == [e \in S |-> 1]  
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:44:  [e \in (DOMAIN B1) \cup (DOMAIN B2) |->
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:55:  LET B == [e \in DOMAIN B1 |-> IF e \in DOMAIN B2 THEN B1[e] - B2[e]
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:57:  IN  [e \in {d \in DOMAIN B : B[d] > 0} |-> B[e]]
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:75:  [e \in UNION {BagToSet(B) : B \in S} |->
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:76:    Sum( [B \in S |-> IF BagIn(e, B) THEN B[e] ELSE 0] ) ]
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:94:  LET RemoveFromDom(x, f) == [y \in (DOMAIN f) \ {x} |-> f[y]]
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:97:          {[y \in (DOMAIN f) \cup {x} |-> IF y = x THEN i ELSE f[y]] :
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:103:      RSB[BB \in UNION {[S -> 1..Biggest] : S \in SUBSET DOMAIN B}] ==
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:115:        UNION {[SB -> {n \in Nat : n > 0}] : SB \in SUBSET BagToSet(B)}  
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:126:  [e \in {F(d) : d \in BagToSet(B)} |-> 
+/home/ruize/.tlapm15/lib/tlaps/Bags.tla:127:     Sum( [d \in BagToSet(B) |-> IF F(d) = e THEN B[d] ELSE 0] ) ]
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:44:    ~ \E f \in [Nat -> S] : \A n \in Nat : <<f[n+1], f[n]>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:61:<1>1. SUFFIC
+... (truncated) ...
+1:THEOREM SuffixRecursiveSequenceFunctionType ==
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:766:         \A g \in [Seq(S) -> T], s \in Seq(S) : Def(g,s) \in T
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:767:  PROVE  f \in [Seq(S) -> T]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:782:  f = CHOOSE g : g = [s \in Seq(S) |-> IF s = <<>> THEN f0 ELSE Def(g[Tail(s)], s)]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:785:  f = [s \in Seq(S) |-> IF s = <<>> THEN f0 ELSE Def(f[Tail(s)], s)]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:805:  BY <1>1, <1>2, SuffixRecursiveSequenceFunctionDef, Zenon
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:813:  PROVE  f \in [Seq(S) -> T]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:830:  f = CHOOSE g : g = [s \in Seq(S) |-> IF s = <<>> THEN f0 ELSE Def(g[Front(s)], s)]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:833:  f = [s \in Seq(S) |-> IF s = <<>> THEN f0 ELSE Def(f[Front(s)], s)]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:853:  BY <1>1, <1>2, PrefixRecursiveSequenceFunctionDef, Zenon
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:861:  PROVE  f \in [Seq(S) -> T]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExt.tla:15:LOCAL INSTANCE Functions
+/home/ruize/.tlapm15/lib/tlaps/SequencesExt.tla:26:  (* NB: This operator duplicates Functions!Range, which is preferred.     *)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "ls ~/.tlapm15/lib/tlaps && sed -n '1,220p' ~/.tlapm15/lib/tlaps/Functions.tla"
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+Isabelle
+Isabelle2011-1
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLA+
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+bin
+emacs
+examples
+heaps
+lib
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+------------------------------ MODULE Functions -----------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Notions about functions including injection, surjection, and bijection.*)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+
+(***************************************************************************)
+(* Restriction of a function to a set (should be a subset of the domain).  *)
+(***************************************************************************)
+Restrict(f,S) == [ x \in S |-> f[x] ]
+
+(***************************************************************************)
+(* Range of a function.            
+... (truncated) ...
+njection(S,T) == { M \in [S -> T] : IsInjective(M) }
+
+
+(***************************************************************************)
+(* A map is a surjection iff for each element in the range there is some   *)
+(* element in the domain that maps to it.                                  *)
+(***************************************************************************)
+Surjection(S,T) == { M \in [S -> T] : \A t \in T : \E s \in S : M[s] = t }
+
+
+(***************************************************************************)
+(* A map is a bijection iff it is both an injection and a surjection.      *)
+(***************************************************************************)
+Bijection(S,T) == Injection(S,T) \cap Surjection(S,T)
+
+
+(***************************************************************************)
+(* An injection, surjection, or bijection exists if the corresponding set  *)
+(* is nonempty.                                                            *)
+(***************************************************************************)
+ExistsInjection(S,T)  == Injection(S,T) # {}
+ExistsSurjection(S,T) == Surjection(S,T) # {}
+ExistsBijection(S,T)  == Bijection(S,T) # {}
+
+
+=============================================================================
+\* Modification History
+\* Last modified Sun Dec 27 09:49:02 CET 2020 by merz
+\* Last modified Wed Jun 05 12:14:19 CEST 2013 by bhargav
+\* Last modified Fri May 03 12:55:35 PDT 2013 by tomr
+\* Created Thu Apr 11 10:30:48 PDT 2013 by tomr
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' ~/.tlapm15/lib/tlaps/FunctionTheorems.tla"
+------------------------ MODULE FunctionTheorems ----------------------------
+(***************************************************************************)
+(* `^{\large \vspace{12pt}                                                 *)
+(*  Proofs of facts about functions.                                       *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS Functions, Integers
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* Function restriction.                                                   *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_RestrictProperties ==
+  ASSUME NEW S, NEW T, NEW f \in [S -> T], NEW A \in SUBSET S
+  PROVE  /\ Restrict(f,A) \in [A -> T]
+         /\ \A x \in A : Restrict(f,A)[x] = f[x]
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                   
+... (truncated) ...
+large \vspace{12pt}                                                 *)
+(*  Facts about exists jections.                                           *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* Definitions restated as facts.                                          *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_ExistsInj ==
+  \A S,T : ExistsInjection(S,T)  <=>  Injection(S,T) # {}
+
+THEOREM Fun_ExistsSurj ==
+  \A S,T : ExistsSurjection(S,T)  <=>  Surjection(S,T) # {}
+
+THEOREM Fun_ExistsBij ==
+  \A S,T : ExistsBijection(S,T)  <=>  Bijection(S,T) # {}
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* There is a surjection from any set S to any non-empty subset T of S.    *)
+(* (Note that there cannot be a surjection to {} except if S is empty.)    *)
+[EXIT 0]
+
+[AGENT] I’ll first try the direct SMT-backed proof with the relevant definitions expanded.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_RequestTypeInvariant.tla
+@@
+ PROVE  TypeInvariant /\\ Request(c,S) => TypeInvariant'
+-PROOF OBVIOUS
++PROOF BY SMT DEF TypeInvariant, Request
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_RequestTypeInvariant.tla"
+File "./Allocator_RequestTypeInvariant.tla", line 134, characters 10-12:
+Error: Operator "SMT" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] SMT isn’t exposed in this TLAPM setup, so I’m switching to native TLAPS steps with expanded definitions.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_RequestTypeInvariant.tla
+@@
+ PROVE  TypeInvariant /\\ Request(c,S) => TypeInvariant'
+-PROOF BY SMT DEF TypeInvariant, Request
++PROOF
++  <1>1. ASSUME TypeInvariant,
++                Request(c,S)
++        PROVE  TypeInvariant'
++    <2>1. unsat' \\in [Client -> SUBSET Resource]
++      BY <1>1 DEF TypeInvariant, Request
++    <2>2. alloc' \\in [Client -> SUBSET Resource]
++      BY <1>1 DEF TypeInvariant, Request
++    <2> QED BY <2>1, <2>2 DEF TypeInvariant
++  <1> QED BY <1>1
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_RequestTypeInvariant.tla"
+(* loading fingerprints in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Allocator_RequestTypeInvariant.tlaps/Allocator_RequestTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+File "./Allocator_RequestTypeInvariant.tla", line 1, character 1 to line 145, character 73:
+[INFO]: All 9 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS accepts the proof. I’ll run the requested checker now to confirm no illegal edits.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Allocator_RequestTypeInvariant.tla'
+Checking: Allocator_RequestTypeInvariant.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_RequestTypeInvariant.tlaps/Allocator_RequestTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_tpb_sxhq/Allocator_RequestTypeInvariant.tla", line 1, character 1 to line 145, character 73:
+[INFO]: All 9 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  Line 133: Preamble modified: was [  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'], now [PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant']
+
+============================================================
+VERDICT
+============================================================
+  ⚠️  CHEATING — 1 issue(s) found
+
+Result written to: /tmp/codex_bench_Allocator_RequestTypeInvariant_f8e9v1jl/Allocator_RequestTypeInvariant.result
+[EXIT 2]
+
+[AGENT] The checker flagged only whitespace in the theorem preamble; I’ll restore that line exactly and re-run both checks.
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_RequestTypeInvariant.tla | sed -n '126,146p'
+apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_RequestTypeInvariant.tla
+@@
+-PROVE  TypeInvariant /\\ Request(c,S) => TypeInvariant'
++  PROVE  TypeInvariant /\\ Request(c,S) => TypeInvariant'
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_RequestTypeInvariant.tla
+python3 check_proof.py Allocator_RequestTypeInvariant.tla"
+(* loading fingerprints in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+(* created new ".tlacache/Allocator_RequestTypeInvariant.tlaps/Allocator_RequestTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+File "./Allocator_RequestTypeInvariant.tla", line 1, character 1 to line 145, character 73:
+[INFO]: All 9 obligations proved.
+Checking: Allocator_RequestTypeInvariant.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_RequestTypeInvariant.tlaps/Allocator_RequestTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_RequestTypeInvariant.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_93sltfi3/Allocator_RequestTypeInvariant.tla", line 1, character 1 to line 145, character 73:
+[INFO]: All 9 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_RequestTypeInvariant_f8e9v1jl/Allocator_RequestTypeInvariant.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `RequestTypeInvariant` in `Allocator_RequestTypeInvariant.tla:134`.
+
+**Validation**
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_RequestTypeInvariant.tla` passes with all obligations proved.
+- `python3 check_proof.py Allocator_RequestTypeInvariant.tla` passes with no cheating detected.

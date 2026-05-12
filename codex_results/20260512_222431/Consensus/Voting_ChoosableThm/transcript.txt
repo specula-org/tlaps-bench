@@ -1,0 +1,267 @@
+Benchmark: Consensus/Voting_ChoosableThm.tla
+Time: 38s
+Tokens: 142,670 input / 1,466 output
+============================================================
+
+[AGENT] I’ll inspect the module and existing lemmas, then iteratively patch the final proof and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Voting_ChoosableThm.tla && printf '\\n--- files ---\\n' && ls -la"
+------------------------------- MODULE Voting_ChoosableThm -------------------------------
+EXTENDS FiniteSets, TLAPS, Integers
+-----------------------------------------------------------------------------
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QuorumAssumption == 
+    /\ \A Q \in Quorum : Q \subseteq Acceptor
+    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+  PROOF OMITTED
+
+Ballot == Nat
+-----------------------------------------------------------------------------
+VARIABLES votes, maxBal
+
+TypeOK == /\ votes \in [Acceptor -> SUBSET (Ballot \X Value)]
+          /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+-----------------------------------------------------------------------------
+VotedFor(a, b, v) == <<b, v>> \in votes[a]
+
+DidNotVoteAt(a, b) == \A v \in Value : ~ VotedFor(a, b, v)
+
+ShowsSafeAt(Q, b, v) ==
+  /\ \A a \in Q : maxBal[a] \geq b \* have promised
+  /\ \E c \in -1..(b-1) :
+      /\ (c # -1) => \E a \in Q : VotedFor(a, c, v)
+      /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteAt(a, d)
+-----------------------------------------------------------------------------
+Init == 
+    /\ votes = [a \in Acceptor |-> {}]
+    /\ maxBal = [a \in Acceptor |-> -1]
+
+IncreaseMaxBal(a, b) ==
+  /\ b > maxBal[a]
+  /\ maxBal' = [maxBal EXCEPT ![a] = b] \* make promise
+  /\ UNCHANGED votes
+
+VoteFor(a, b, v) ==
+    /\ maxBal[a] <= b \* keep promise
+    /\ \A vt \in votes[a] : vt[1] # b
+    /\ \A c \in Acceptor \ {a} :
+         \A vt \in votes
+... (truncated) ...
+    /\ DidNotVoteAt(a, b)
+
+NoneOtherChoosableAt(b, v) == 
+    \E Q \in Quorum : 
+        \A a \in Q : VotedFor(a, b, v) \/ CannotVoteAt(a, b)
+
+SafeAt(b, v) == 
+    \A c \in 0..(b-1) : NoneOtherChoosableAt(c, v)
+
+VotesSafe == 
+    \A a \in Acceptor, b \in Ballot, v \in Value : 
+        VotedFor(a, b, v) => SafeAt(b, v)
+
+OneVote == 
+    \A a \in Acceptor, b \in Ballot, v, w \in Value : 
+        VotedFor(a, b, v) /\ VotedFor(a, b, w) => (v = w)
+
+OneValuePerBallot ==
+    \A a1, a2 \in Acceptor, b \in Ballot, v1, v2 \in Value : 
+        VotedFor(a1, b, v1) /\ VotedFor(a2, b, v2) => (v1 = v2)
+
+Inv == TypeOK /\ VotesSafe /\ OneValuePerBallot
+-----------------------------------------------------------------------------
+THEOREM AllSafeAtZero == \A v \in Value : SafeAt(0, v)
+  PROOF OMITTED
+
+THEOREM ChoosableThm ==
+          \A b \in Ballot, v \in Value :
+             ChosenAt(b, v) => NoneOtherChoosableAt(b, v)
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+total 220
+drwx------    3 ruize ruize   4096 May 12 22:29 .
+drwxrwxrwt 1330 root  root  176128 May 12 22:29 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:29 .git
+-rw-rw-r--    1 ruize ruize    874 May 12 20:11 Consensus.tla
+-rw-rw-r--    1 ruize ruize   4936 May 12 20:11 Sets.tla
+-rw-rw-r--    1 ruize ruize   4537 May 12 20:11 Voting.tla
+-rw-rw-r--    1 ruize ruize   3398 May 12 20:11 Voting_ChoosableThm.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] The target theorem is a direct existential witness from `ChosenAt`; I’ll check local proof style before patching.
+
+[CMD] /bin/zsh -lc 'rg -n "PROOF|PICK|TAKE|SUFFICES|QED|WITNESS|BY DEF" . ~/.tlapm15/lib/tlaps | head -200'
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:48:BY DEF \sqsubseteq, IsABag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:55:BY DEF IsABag, \sqsubseteq
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:62:BY DEF IsABag, \sqsubseteq
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:75:BY DEF EmptyBag, SetToBag, IsABag, \sqsubseteq, BagIn, BagToSet
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:90:  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:92:  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:94:  BY DEF Scaling 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:96:  BY DEF Scaling, IsABag                
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:104:  <2>. QED  BY <2>1, <2>2, <2>3
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:106:  BY DEF Scaling                   
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:107:<1> QED  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:116:BY DEF SetToBag, BagToSet
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:121:BY DEF SetToBag, BagToSet, \sqsubseteq, IsABag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:130:BY DEF SetToBag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:141:BY DEF IsABag, (+), CopiesIn, BagIn, BagToSet
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:155:BY DEF IsABag, (-), 
+... (truncated) ...
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:120:    <3>. QED  BY <3>1, <3>2
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:129:    <3>3. SUFFICES ASSUME NEW n \in Connected
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:140:      <4>. QED  BY <4>2, <3>2, FS_Subset, FS_CardinalityType
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:151:    <3>. QED  BY <2>2, <3>4, <3>5, <3>7
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:160:    <3> QED  BY <2>2, <2>4, <2>8, <3>1, FS_PigeonHole, Isa
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:161:  <2>. QED  BY <1>1, <1>3, <2>9
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:162:<1>. QED  BY <1>2, <1>3
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:139:  BY DEF Init
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:143:  BY DEF Next, vars, Controlled, Environment, InitiateProbe,
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:146:  <2> SUFFICES ASSUME TypeOK,
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:166:  <2>6. QED
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:168:<1>3. QED
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:179:  BY DEF Init, Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:182:  BY DEF Inv, TypeOK, Next, vars, Controlled, Environment,
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:184:<1> QED  BY <1>1, <1>2, <1>3, TypeCorrect, PTL DEF Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:205:    <2>.  TAKE i \in Nodes
+[EXIT 0]
+
+[AGENT] I found the proof obligation is just reusing the chosen quorum as the witness. Patching that structured proof now.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Voting_ChoosableThm.tla
+@@
+ THEOREM ChoosableThm ==
+           \\A b \\in Ballot, v \\in Value :
+              ChosenAt(b, v) => NoneOtherChoosableAt(b, v)
+-PROOF OBVIOUS
++PROOF
++  <1>1. TAKE b \\in Ballot, v \\in Value
++  <1>2. ASSUME ChosenAt(b, v)
++         PROVE  NoneOtherChoosableAt(b, v)
++    <2>1. PICK Q \\in Quorum : \\A a \\in Q : VotedFor(a, b, v)
++      BY <1>2 DEF ChosenAt
++    <2>2. \\A a \\in Q : VotedFor(a, b, v) \\/ CannotVoteAt(a, b)
++      BY <2>1
++    <2>3. NoneOtherChoosableAt(b, v)
++      BY <2>1, <2>2 DEF NoneOtherChoosableAt
++    <2> QED BY <2>3
++  <1> QED BY <1>2
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Voting_ChoosableThm.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_NoneOtherChoosableAt_, CONSTANT_Ballot_, STATE_ChosenAt_
+
+** Unexpanded symbols: STATE_NoneOtherChoosableAt_, CONSTANT_Ballot_, STATE_ChosenAt_
+
+** Unexpanded symbols: STATE_NoneOtherChoosableAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_CannotVoteAt_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_CannotVoteAt_
+
+(* created new ".tlacache/Voting_ChoosableThm.tlaps/Voting_ChoosableThm.thy" *)
+(* fingerprints written in ".tlacache/Voting_ChoosableThm.tlaps/fingerprints" *)
+File "./Voting_ChoosableThm.tla", line 1, character 1 to line 106, character 77:
+[INFO]: All 13 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS accepts the proof. I’ll run the required checker and inspect the diff for final confirmation.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Voting_ChoosableThm.tla && git diff -- Voting_ChoosableThm.tla'
+Checking: Voting_ChoosableThm.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Voting_ChoosableThm.tlaps/Voting_ChoosableThm.thy" *)
+(* fingerprints written in ".tlacache/Voting_ChoosableThm.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_NoneOtherChoosableAt_, CONSTANT_Ballot_, STATE_ChosenAt_
+
+** Unexpanded symbols: STATE_NoneOtherChoosableAt_, CONSTANT_Ballot_, STATE_ChosenAt_
+
+** Unexpanded symbols: STATE_NoneOtherChoosableAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_CannotVoteAt_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_CannotVoteAt_
+
+File "/tmp/tlaps_check_t4iew0iu/Voting_ChoosableThm.tla", line 1, character 1 to line 106, character 77:
+[INFO]: All 13 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Voting_ChoosableThm_t0c1y6ni/Voting_ChoosableThm.result
+diff --git a/Voting_ChoosableThm.tla b/Voting_ChoosableThm.tla
+index 2961a13..11b5241 100644
+--- a/Voting_ChoosableThm.tla
++++ b/Voting_ChoosableThm.tla
+@@ -90,6 +90,17 @@ THEOREM AllSafeAtZero == \A v \in Value : SafeAt(0, v)
+ THEOREM ChoosableThm ==
+           \A b \in Ballot, v \in Value :
+              ChosenAt(b, v) => NoneOtherChoosableAt(b, v)
+-PROOF OBVIOUS
+-
+-=============================================================================
+\ No newline at end of file
++PROOF
++  <1>1. TAKE b \in Ballot, v \in Value
++  <1>2. ASSUME ChosenAt(b, v)
++         PROVE  NoneOtherChoosableAt(b, v)
++    <2>1. PICK Q \in Quorum : \A a \in Q : VotedFor(a, b, v)
++      BY <1>2 DEF ChosenAt
++    <2>2. \A a \in Q : VotedFor(a, b, v) \/ CannotVoteAt(a, b)
++      BY <2>1
++    <2>3. NoneOtherChoosableAt(b, v)
++      BY <2>1, <2>2 DEF NoneOtherChoosableAt
++    <2> QED BY <2>3
++  <1> QED BY <1>2
++
++=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `ChoosableThm` in `Voting_ChoosableThm.tla:93`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder.
+- Used the quorum witness from `ChosenAt(b, v)` to prove `NoneOtherChoosableAt(b, v)`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Voting_ChoosableThm.tla`.
+- Ran `python3 check_proof.py Voting_ChoosableThm.tla`: PASS, no cheating detected, all obligations proved.

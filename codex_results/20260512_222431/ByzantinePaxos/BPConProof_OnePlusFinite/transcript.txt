@@ -1,0 +1,689 @@
+Benchmark: ByzantinePaxos/BPConProof_OnePlusFinite.tla
+Time: 160s
+Tokens: 566,650 input / 6,198 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and nearby lemmas, then iteratively patch the final proof and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,240p' BPConProof_OnePlusFinite.tla"
+BPConProof_OnePlusFinite.tla
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+check_proof.py
+
+---------------------------- MODULE BPConProof_OnePlusFinite ------------------------------
+(***************************************************************************)
+(* This module specifies a Byzantine Paxos algorithm--a version of Paxos   *)
+(* in which failed acceptors and leaders can be malicious.  It is an       *)
+(* abstraction and generalization of the Castro-Liskov algorithm in        *)
+(*                                                                         *)
+(*    author = "Miguel Castro and Barbara Liskov",                         *)
+(*    title = "Practical byzantine fault tolerance and proactive           *)
+(*             recovery",                                                  *)
+(*    journal = ACM Transactions on Computer Systems,                      *)
+(*    volume = 20,                                                         *)
+(*    number = 4,                                                          *)
+(*    year = 2002,                                                         *)
+(*    pages = "398--461"                                                   *)
+(***************************************************************************)
+
+EXTENDS Integers, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* We need the following trivial axioms and theorem about finite sets.     *)
+(***************************************************************************)
+AXIOM EmptySetFinite == IsFiniteSet({})
+
+AXIOM SingletonSetFinite == \A e : IsFiniteSet({e})
+
+AXIOM ImageOfFiniteSetFinite == 
+         \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S})
+
+AXIOM SubsetOfFiniteSetFinite == 
+        \A S, T : IsFiniteSet(T) /\ (S \subseteq T) => IsFiniteSet(S)
+
+AXIOM UnionOfFiniteSetsFinite == 
+        \A S, T : IsFiniteSet(T) /\ IsFiniteSet(S)  => IsFiniteSet(S \cup T)
+
+THEOREM OnePlusFinite == \A S, e : IsFiniteSet(S) => IsFiniteSet(S \cup {e})
+PROOF OBVIOUS
+
+==============================================================================
+[EXIT 0]
+
+[AGENT] I found the target theorem; it should follow from the singleton and union finiteness axioms.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+ THEOREM OnePlusFinite == \\A S, e : IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+-PROOF OBVIOUS
++PROOF
++  SUFFICES ASSUME NEW S, NEW e, IsFiniteSet(S)
++           PROVE  IsFiniteSet(S \\cup {e}) OBVIOUS
++  <1>1. IsFiniteSet({e}) BY SingletonSetFinite
++  <1>2. QED BY <1>1, UnionOfFiniteSetsFinite
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+File "./BPConProof_OnePlusFinite.tla", line 37, character 6
+Unexpected keyword SUFFICES
+File "<unknown>":
+Error: Could not parse "./BPConProof_OnePlusFinite.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first attempt hit TLAPS syntax, so I’m checking local proof idioms and will adjust the structure.
+
+[CMD] /bin/zsh -lc 'rg "SUFFICES|TAKE|PICK|HAVE" -n . ~/.tlapm15/lib/tlaps | head -80'
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:61:<1>1. SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:85:<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:122:<1> SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:186:<1>1. SUFFICES ASSUME T # {}
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:189:<1>2. PICK x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:222:<1>1. SUFFICES ASSUME NEW g, NEW h,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:227:<1> SUFFICES \A x \in S : g[x] = h[x]
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:262:  <2>1. SUFFICES ASSUME NEW x \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:321:<1> TAKE R, S
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:368:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:374:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in U
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:380:  <2>1. SUFFICES ASSUME NEW x \in S, NEW y \in S, NEW z \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:386:  <2>3. PICK s \in S : /\ <<s,z>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInductio
+... (truncated) ...
+ x \in S \ T : TRUE  BY <1>3, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:407:  <2>4. PICK m \in Nat : ExistsBijection(1..m, T) /\ m <= Cardinality(S)-1
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:481:    <3>. SUFFICES ASSUME NEW t \in T, \A s \in S : f[s] # t
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:508:<1>. SUFFICES ASSUME f \in Injection(S,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:559:<1>1. SUFFICES \A n \in Nat : Q(n)  BY FS_CardinalityType
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:564:  <2>1. PICK x \in T : TRUE  BY <1>3, FS_EmptySet
+./VoteProof.tla:757:  <2>1 SUFFICES ASSUME NEW T \in SUBSET S
+./VoteProof.tla:763:    <3>1. PICK s \in T : TRUE
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:246:  <2> SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla:15:<1>1. SUFFICES (System /\ []~(x = TRUE)) => FALSE
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:37:<1>. PICK m,n \in Nodes : e = {m,n}
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:39:<1>. SUFFICES ASSUME m = n PROVE FALSE
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:74:<1>1. SUFFICES ASSUME \A m, n \in Nodes :
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:100:      <4>1. PICK x \in Isolated, y \in Isolated : x # y
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:129:    <3>3. SUFFICES ASSUME NEW n \in Connected
+[EXIT 0]
+
+[AGENT] TLAPS is now parsing and generating obligations; I’ll wait for the proof result and refine if needed.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+ THEOREM OnePlusFinite == \\A S, e : IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+ PROOF
+-  SUFFICES ASSUME NEW S, NEW e, IsFiniteSet(S)
+-           PROVE  IsFiniteSet(S \\cup {e}) OBVIOUS
++  <1>1. SUFFICES ASSUME NEW S, NEW e, IsFiniteSet(S)
++         PROVE  IsFiniteSet(S \\cup {e}) OBVIOUS
+   <1>1. IsFiniteSet({e}) BY SingletonSetFinite
+   <1>2. QED BY <1>1, UnionOfFiniteSetsFinite
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+(* created new ".tlacache/BPConProof_OnePlusFinite.tlaps/BPConProof_OnePlusFinite.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+File "./BPConProof_OnePlusFinite.tla", line 41, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT S,
+                  NEW CONSTANT e,
+                  <1>1_1 ,
+                  UnionOfFiniteSetsFinite 
+           PROVE  IsFiniteSet(S \cup {e})
+File "./BPConProof_OnePlusFinite.tla", line 2, character 1 to line 43, character 78:
+[ERROR]: 1/6 obligations failed.
+There were backend errors processing module `"BPConProof_OnePlusFinite"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The remaining issue is just axiom instantiation, so I’ll make the union axiom instance explicit.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+ PROOF
+   <1>1. SUFFICES ASSUME NEW S, NEW e, IsFiniteSet(S)
+          PROVE  IsFiniteSet(S \\cup {e}) OBVIOUS
+-  <1>1. IsFiniteSet({e}) BY SingletonSetFinite
+-  <1>2. QED BY <1>1, UnionOfFiniteSetsFinite
++  <1>2. IsFiniteSet({e}) BY SingletonSetFinite
++  <1>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
++        BY UnionOfFiniteSetsFinite
++  <1>4. QED BY <1>2, <1>3
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/BPConProof_OnePlusFinite.tlaps/BPConProof_OnePlusFinite.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+File "./BPConProof_OnePlusFinite.tla", line 43, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT S,
+                  NEW CONSTANT e,
+                  <1>2 ,
+                  <1>3 
+           PROVE  IsFiniteSet(S \cup {e})
+File "./BPConProof_OnePlusFinite.tla", line 2, character 1 to line 45, character 78:
+[ERROR]: 1/8 obligations failed.
+There were backend errors processing module `"BPConProof_OnePlusFinite"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll split the final propositional step into a conjunction assertion to help TLAPS’ backend.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+   <1>2. IsFiniteSet({e}) BY SingletonSetFinite
+   <1>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+         BY UnionOfFiniteSetsFinite
+-  <1>4. QED BY <1>2, <1>3
++  <1>4. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <1>2
++  <1>5. QED BY <1>3, <1>4
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/BPConProof_OnePlusFinite.tlaps/BPConProof_OnePlusFinite.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+File "./BPConProof_OnePlusFinite.tla", line 43, characters 44-45:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT S,
+                  NEW CONSTANT e,
+                  <1>2 
+           PROVE  IsFiniteSet({e}) /\ IsFiniteSet(S)
+File "./BPConProof_OnePlusFinite.tla", line 2, character 1 to line 46, character 78:
+[ERROR]: 1/10 obligations failed.
+There were backend errors processing module `"BPConProof_OnePlusFinite"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The suffices assumption scope wasn’t applying to sibling steps, so I’m moving the proof under that step.
+
+[CMD] /bin/zsh -lc "sed -n '250,275p' ~/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla && sed -n '145,155p' ~/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla"
+             /\ \A y \in LT(x) : SetLessThan(y, R, S) \subseteq LT(x)
+             /\ \A y \in LT(x) : LT(y) \subseteq LT(x)
+             /\ LT(x) \subseteq S
+  \* FIXME: SMT backend fails with exception
+  BY Isa DEF SetLessThan, IsTransitivelyClosedOn
+<1> HIDE DEF LT  \** from now on, (mostly) use properties in step <1>1 rather than the definition
+
+<1> DEFINE F(x) == CHOOSE g : g = [y \in LT(x) |-> Def(g, y)]
+           ff == [x \in S |-> F(x)[x]]
+<1> HIDE DEF ff
+
+<1>2. \A x \in S : ff[x] = Def(ff,x)
+  <2>1. SUFFICES ASSUME NEW x \in S,
+                        \A y \in SetLessThan(x, R, S) : ff[y] = Def(ff,y)
+                 PROVE  ff[x] = Def(ff,x)
+    BY WFInduction, Isa
+  <2>2. WFInductiveUnique(LT(x), Def)
+    <3>1. LT(x) \subseteq S
+      BY <1>1
+    <3>2. IsWellFoundedOn(R, LT(x))
+      BY <3>1, IsWellFoundedOnSubset
+    <3>3. \A z \in LT(x) : SetLessThan(z, R, LT(x)) = SetLessThan(z, R, S)
+      BY DEF LT, SetLessThan, IsTransitivelyClosedOn
+    <3>4. WFDefOn(R, LT(x), Def)
+      BY <3>1, <3>3, IsaM("blast") DEF WFDefOn
+    <3>. QED
+        <4>10. SZ[T] = i+1  BY <4>3  DEF SZ
+        <4>. QED  BY <4>9, <4>10
+      <3> HIDE DEF Prop
+      <3> QED BY Isa, <3>1, <3>2, NatInduction
+
+    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE SZ[T] = fn(SZ,T)  BY Zenon DEF SZ
+    <2>2. PICK i \in Nat : ExistsBijection(1..i,T) BY Fun_NatBijSubset
+    <2> QED BY <2>1, <2>2
+
+    
+  (*************************************************************************)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '260,272p' ~/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla && sed -n '118,143p' ~/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla"
+
+<1>2. \A x \in S : ff[x] = Def(ff,x)
+  <2>1. SUFFICES ASSUME NEW x \in S,
+                        \A y \in SetLessThan(x, R, S) : ff[y] = Def(ff,y)
+                 PROVE  ff[x] = Def(ff,x)
+    BY WFInduction, Isa
+  <2>2. WFInductiveUnique(LT(x), Def)
+    <3>1. LT(x) \subseteq S
+      BY <1>1
+    <3>2. IsWellFoundedOn(R, LT(x))
+      BY <3>1, IsWellFoundedOnSubset
+    <3>3. \A z \in LT(x) : SetLessThan(z, R, LT(x)) = SetLessThan(z, R, S)
+      BY DEF LT, SetLessThan, IsTransitivelyClosedOn
+        (*******************************************************************)
+        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+                       PROVE  SZ[T] = fn(SZ,T)
+              OBVIOUS
+        <4>2. Size(T) = 0  BY <4>1, Fun_NatBijSame
+        <4>3. T = {}  BY <4>1, Fun_NatBijEmpty
+        <4>4. SZ[T] = 0  BY <4>2  DEF SZ
+        <4>5. fn(SZ,T) = 0  BY <4>3  DEF fn
+        <4> QED BY <4>4, <4>5
+        
+      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+        (*******************************************************************)
+        (* Inductive step.                                                 *)
+        (*******************************************************************)
+        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+                      PROVE  SZ[T] = fn(SZ,T)
+          OBVIOUS
+        <4>1. ~ExistsBijection(1..0,T)  BY Fun_NatBijSame, Z3
+        <4>2. T # {}  BY <4>1, Fun_NatBijEmpty
+        <4>3. Size(T) = i+1  BY Fun_NatBijSame
+        <4>4. PICK t \in T : t = CHOOSE x : x \in T  BY <4>2
+        <4>. DEFINE U == T \ {t}
+        <4>5. ExistsBijection(1..i,U)  BY Fun_NatBijSubElem, Z3
+        <4>6. SZ[U] = fn(SZ,U)  BY <4>5, <3>2
+        <4>7. SZ[U] = i  BY <4>5, Fun_NatBijSame DEF SZ
+        <4>8. fn(SZ,T) = 1 + SZ[U]  BY <4>2, <4>4 DEF fn
+[EXIT 0]
+
+[AGENT] I’ll nest the argument under the `SUFFICES` step so its assumptions are in scope.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+ PROOF
+   <1>1. SUFFICES ASSUME NEW S, NEW e, IsFiniteSet(S)
+          PROVE  IsFiniteSet(S \\cup {e}) OBVIOUS
+-  <1>2. IsFiniteSet({e}) BY SingletonSetFinite
+-  <1>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+-        BY UnionOfFiniteSetsFinite
+-  <1>4. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <1>2
+-  <1>5. QED BY <1>3, <1>4
++    <2>1. IsFiniteSet({e}) BY SingletonSetFinite
++    <2>2. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
++          BY UnionOfFiniteSetsFinite
++    <2>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <2>1
++    <2>4. QED BY <2>2, <2>3
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+File "./BPConProof_OnePlusFinite.tla", line 38, character 3 to line 39, character 39:
+Error: extra step(s) after finished proof
+ tlapm ending abnormally with Failure("Proof.Parser.toplevel")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "p
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The proof parser treats that top-level suffices as terminal here; I’ll switch to `TAKE`/`ASSUME PROVE`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+ THEOREM OnePlusFinite == \\A S, e : IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+ PROOF
+-  <1>1. SUFFICES ASSUME NEW S, NEW e, IsFiniteSet(S)
+-         PROVE  IsFiniteSet(S \\cup {e}) OBVIOUS
+-    <2>1. IsFiniteSet({e}) BY SingletonSetFinite
+-    <2>2. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+-          BY UnionOfFiniteSetsFinite
+-    <2>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <2>1
+-    <2>4. QED BY <2>2, <2>3
++  <1>1. TAKE S, e
++  <1>2. ASSUME IsFiniteSet(S)
++        PROVE  IsFiniteSet(S \\cup {e})
++    <2>1. IsFiniteSet({e}) BY SingletonSetFinite
++    <2>2. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
++          BY UnionOfFiniteSetsFinite
++    <2>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <2>1
++    <2>4. QED BY <2>2, <2>3
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+File "./BPConProof_OnePlusFinite.tla", line 45, character 17:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", lin
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The `TAKE` proof needs a level-1 `QED`; adding that and rerunning now.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+     <2>2. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+           BY UnionOfFiniteSetsFinite
+     <2>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <2>1
+     <2>4. QED BY <2>2, <2>3
++  <1>3. QED BY <1>2
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+(* created new ".tlacache/BPConProof_OnePlusFinite.tlaps/BPConProof_OnePlusFinite.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+File "./BPConProof_OnePlusFinite.tla", line 44, characters 46-47:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT S,
+                  NEW CONSTANT e,
+                  <2>1 
+           PROVE  IsFiniteSet({e}) /\ IsFiniteSet(S)
+File "./BPConProof_OnePlusFinite.tla", line 2, character 1 to line 48, character 78:
+[ERROR]: 1/13 obligations failed.
+There were backend errors processing module `"BPConProof_OnePlusFinite"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll try a direct quantified instantiation proof, avoiding tricky local assumption scoping.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: BPConProof_OnePlusFinite.tla
+@@
+ THEOREM OnePlusFinite == \\A S, e : IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+ PROOF
+-  <1>1. TAKE S, e
+-  <1>2. ASSUME IsFiniteSet(S)
+-        PROVE  IsFiniteSet(S \\cup {e})
+-    <2>1. IsFiniteSet({e}) BY SingletonSetFinite
+-    <2>2. IsFiniteSet({e}) /\\ IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
+-          BY UnionOfFiniteSetsFinite
+-    <2>3. IsFiniteSet({e}) /\\ IsFiniteSet(S) BY <2>1
+-    <2>4. QED BY <2>2, <2>3
+-  <1>3. QED BY <1>2
++  <1>1. \\A S, e : IsFiniteSet(S) => IsFiniteSet(S \\cup {e})
++        BY SingletonSetFinite, UnionOfFiniteSetsFinite
++  <1>2. QED BY <1>1
+ 
+ ==============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+(* created new ".tlacache/BPConProof_OnePlusFinite.tlaps/BPConProof_OnePlusFinite.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+File "./BPConProof_OnePlusFinite.tla", line 2, character 1 to line 42, character 78:
+[INFO]: All 5 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS passes now. I’ll run the required legality checker before wrapping up.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py BPConProof_OnePlusFinite.tla'
+Checking: BPConProof_OnePlusFinite.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_OnePlusFinite.tlaps/BPConProof_OnePlusFinite.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_OnePlusFinite.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+File "/tmp/tlaps_check_b9wh7bvp/BPConProof_OnePlusFinite.tla", line 2, character 1 to line 42, character 78:
+[INFO]: All 5 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_BPConProof_OnePlusFinite_24y49szx/BPConProof_OnePlusFinite.result
+[EXIT 0]
+
+[AGENT] Implemented a valid TLAPS proof for `OnePlusFinite` in `BPConProof_OnePlusFinite.tla:37`.
+
+**Validation**
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_OnePlusFinite.tla` passes with all obligations proved.
+- `python3 check_proof.py BPConProof_OnePlusFinite.tla` passes:
+  - No cheating detected
+  - All obligations proved
+
+The proof uses the existing `SingletonSetFinite` and `UnionOfFiniteSetsFinite` axioms only.

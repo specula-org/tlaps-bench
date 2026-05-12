@@ -1,0 +1,594 @@
+Benchmark: ByzantinePaxos/BPConProof_MsgsTypeLemmaPrime.tla
+Time: 326s
+Tokens: 780,003 input / 3,135 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and nearby lemmas first, then iteratively patch and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,240p' BPConProof_MsgsTypeLemmaPrime.tla"
+BPConProof_MsgsTypeLemmaPrime.tla
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+check_proof.py
+
+---------------------------- MODULE BPConProof_MsgsTypeLemmaPrime ------------------------------
+(***************************************************************************)
+(* This module specifies a Byzantine Paxos algorithm--a version of Paxos   *)
+(* in which failed acceptors and leaders can be malicious.  It is an       *)
+(* abstraction and generalization of the Castro-Liskov algorithm in        *)
+(*                                                                         *)
+(*    author = "Miguel Castro and Barbara Liskov",                         *)
+(*    title = "Practical byzantine fault tolerance and proactive           *)
+(*             recovery",                                                  *)
+(*    journal = ACM Transactions on Computer Systems,                      *)
+(*    volume = 20,                                                         *)
+(*    number = 4,                                                          *)
+(*    year = 2002,                                                         *)
+(*    pages = "398--461"                                                   *)
+(***************************************************************************)
+
+EXTENDS Integers, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* We need the following t
+... (truncated) ...
+.  It is enabled iff the appropriate 1c message and 2a
+message are legal.  The 1c message is legal iff the leader has received
+the necessary 1b messages.  The acceptor therefore maintains a set of
+1b messages that it knows have been sent, and checks that those 1b
+messages enable the sending of the 1c message.
+
+A 2a message is legal in the PaxosConsensus algorithm iff (i) the
+corresponding 1c message is legal and (ii) it is the only 2a message
+that the leader sends.  In the BPCon algorithm, there are no 
+explicit 2a messages.  They are implicitly sent by the acceptors
+when they send enough 2av messages.
+
+We leave unspecified how an acceptor discovers what 1b messages have
+been sent.  In the Castro-Liskov algorithm, this is done by having
+acceptors relay messages sent by other acceptors.  An acceptor knows
+that a 1b message has been sent if it receives it directly or else
+receives a copy from a weak Byzantine quorum of acceptors.  A
+(non-malicious) leader must determine what 1b messages acceptors know
+about so it chooses a value so that a quorum of acceptors will act on
+its Phase1c message and cause that value to be chosen.  However, this
+is necessary only for liveness, so we ignore this for now.
+
+In other implementations of our algorithm, the leader sends along with
+the 1c message a proof that the necessary 1b messages have been sent.
+The easiest way to do this is to have acceptors digitally sign their 1b
+messages, so a copy of the message proves that it has been sent (by the
+[EXIT 0]
+
+[AGENT] I found the module header; now I’ll jump to the final theorem and supporting definitions.
+
+[CMD] /bin/zsh -lc 'tail -n 220 BPConProof_MsgsTypeLemmaPrime.tla'
+                                      ELSE MaxBallot(T)
+  PROOF OMITTED
+
+1bOr2bMsgs == {m \in bmsgs : m.type \in {"1b", "2b"}}
+
+PmaxBal == [a \in Acceptor |-> 
+              MaxBallot({m.bal : m \in {ma \in 1bOr2bMsgs : 
+                                           ma.acc = a}})]
+
+LEMMA PmaxBalLemma1 == 
+         \A m : /\ bmsgs' = bmsgs \cup {m} 
+                /\ m.type # "1b" /\ m.type # "2b"
+                => PmaxBal' = PmaxBal
+  PROOF OMITTED
+
+LEMMA PmaxBalLemma2 ==
+        \A m : (bmsgs' = bmsgs \cup {m}) =>
+            \A a \in Acceptor : (m.acc # a => PmaxBal'[a] = PmaxBal[a])
+  PROOF OMITTED
+
+P == INSTANCE PConProof WITH maxBal <- PmaxBal
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* We now define the inductive invariant Inv used in our proof.  It is     *)
+(* defined to be the conjunction of a number of separate invariants that   *)
+(* we define first, starting with the ever-present type-correctness        *)
+(* invariant.                                                              *)
+(***************************************************************************)
+TypeOK == /\ maxBal  \in [Acceptor -> Ballot \cup {-1}]
+          /\ 2avSent \in [Acceptor -> SUBSET [val : Value, bal : Ballot]]
+          /\ maxVBal \in [Acceptor -> Ballot \cup {-1}]
+          /\ maxVVal \in [Acceptor -> Value \cup {None}]
+          /\ knowsSent \in [Acceptor -> SUBSET 1bMessag
+... (truncated) ...
+************************************)
+(* The following lemma asserts the obvious relation between KnowsSafeAt    *)
+(* and the top-level definitions KS1, KS2, and KSet.  The second conjunct  *)
+(* is, of course, the primed version of the first.  To understand why it   *)
+(* is needed, see the discussion of MsgsTypeLemmaPrime below.              *)
+(***************************************************************************)
+LEMMA KnowsSafeAtDef == 
+        \A a, b, v : 
+           /\ KnowsSafeAt(a, b, v) = (KS1(KSet(a,b)) \/ KS2(v, b, KSet(a, b)))
+           /\ KnowsSafeAt(a, b, v)' = (KS1(KSet(a,b)') \/ KS2(v, b, KSet(a, b)'))
+  PROOF OMITTED
+
+LEMMA MsgsTypeLemma ==
+        \A m \in msgs : /\ (m.type = "1a") <=> (m \in msgsOfType("1a"))
+                        /\ (m.type = "1b") <=> (m \in 1bmsgs)
+                        /\ (m.type = "1c") <=> (m \in 1cmsgs)
+                        /\ (m.type = "2a") <=> (m \in 2amsgs)
+                        /\ (m.type = "2b") <=> (m \in acceptorMsgsOfType("2b"))
+  PROOF OMITTED
+
+LEMMA MsgsTypeLemmaPrime ==
+        \A m \in msgs' : /\ (m.type = "1a") <=> (m \in msgsOfType("1a")')
+                         /\ (m.type = "1b") <=> (m \in 1bmsgs')
+                         /\ (m.type = "1c") <=> (m \in 1cmsgs')
+                         /\ (m.type = "2a") <=> (m \in 2amsgs')
+                         /\ (m.type = "2b") <=> (m \in acceptorMsgsOfType("2b")')
+PROOF OBVIOUS
+
+==============================================================================
+[EXIT 0]
+
+[AGENT] Next I’ll locate the `msgs`/`msgsOfType` definitions and any imported theorem shape.
+
+[CMD] /bin/zsh -lc 'rg -n "msgsOfType|1bmsgs|1cmsgs|2amsgs|acceptorMsgsOfType|msgs ==|VARIABLES|vars|P ==|INSTANCE" BPConProof_MsgsTypeLemmaPrime.tla PConProof.tla Consensus.tla VoteProof.tla'
+VoteProof.tla:207:VARIABLES votes, maxBal
+VoteProof.tla:227:vars == << votes, maxBal >>
+VoteProof.tla:251:Spec == Init /\ [][Next]_vars
+VoteProof.tla:528:THEOREM InductiveInvariance == VInv /\ [Next]_vars => VInv'
+VoteProof.tla:539:(* The following INSTANCE statement instantiates module Consensus with the *)
+VoteProof.tla:541:(* VARIABLES) of that module:                                              *)
+VoteProof.tla:554:C == INSTANCE Consensus 
+VoteProof.tla:560:(* substitution (refinement mapping) of the INSTANCE statement.            *)
+VoteProof.tla:640:(* enabled, and the [][...]_vars condition ensures that they never perform *)
+VoteProof.tla:647:       /\ WF_vars(BallotAction(self, b))
+VoteProof.tla:648:       /\ [] [\A c \in Ballot : (c > b) => ~ BallotAction(self, c)]_vars
+Consensus.tla:83:vars == << chosen >>
+Consensus.tla:92:Spec == Init /\ [][Next]_vars
+Consensus.tla:139:(*    Init /\ [][Next]_vars                                                *)
+Consensus.tla:141:(* where vars is the tuple <<chosen, pc>> of all variables.  It is a       *)
+Consensus.tla:144:(* satisfies [Next]_vars, which equals                                     *)
+Consensus.tla:146:(*   Next \/ (vars'=vars)                                                  *)
+Consensus.tla:173:           Inv /\ [Next]_vars => Inv'
+Consensus.tla:188:LiveSpec == Spec /\ WF_vars(Next)
+Consensus.tla:216:          ((ENABLED <<Next>>_vars) <=> (chosen = {}))
+Consensus.tla:220:<1>1. []Inv /\ [][Next]_vars /\ WF_vars(Ne
+... (truncated) ...
+                 \E m2av \in acceptorMsgsOfType("2av") : 
+BPConProof_MsgsTypeLemmaPrime.tla:646:msgs == msgsOfType("1a") \cup 1bmsgs \cup 1cmsgs \cup 2amsgs 
+BPConProof_MsgsTypeLemmaPrime.tla:647:         \cup acceptorMsgsOfType("2b")
+BPConProof_MsgsTypeLemmaPrime.tla:719:P == INSTANCE PConProof WITH maxBal <- PmaxBal
+BPConProof_MsgsTypeLemmaPrime.tla:825:knowsSentInv == \A a \in Acceptor : knowsSent[a] \subseteq msgsOfType("1b")
+BPConProof_MsgsTypeLemmaPrime.tla:903:        \A m \in msgs : /\ (m.type = "1a") <=> (m \in msgsOfType("1a"))
+BPConProof_MsgsTypeLemmaPrime.tla:904:                        /\ (m.type = "1b") <=> (m \in 1bmsgs)
+BPConProof_MsgsTypeLemmaPrime.tla:905:                        /\ (m.type = "1c") <=> (m \in 1cmsgs)
+BPConProof_MsgsTypeLemmaPrime.tla:906:                        /\ (m.type = "2a") <=> (m \in 2amsgs)
+BPConProof_MsgsTypeLemmaPrime.tla:907:                        /\ (m.type = "2b") <=> (m \in acceptorMsgsOfType("2b"))
+BPConProof_MsgsTypeLemmaPrime.tla:911:        \A m \in msgs' : /\ (m.type = "1a") <=> (m \in msgsOfType("1a")')
+BPConProof_MsgsTypeLemmaPrime.tla:912:                         /\ (m.type = "1b") <=> (m \in 1bmsgs')
+BPConProof_MsgsTypeLemmaPrime.tla:913:                         /\ (m.type = "1c") <=> (m \in 1cmsgs')
+BPConProof_MsgsTypeLemmaPrime.tla:914:                         /\ (m.type = "2a") <=> (m \in 2amsgs')
+BPConProof_MsgsTypeLemmaPrime.tla:915:                         /\ (m.type = "2b") <=> (m \in acceptorMsgsOfType("2b")')
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '430,670p' BPConProof_MsgsTypeLemmaPrime.tla && sed -n '300,360p' PConProof.tla"
+  (*************************************************************************)
+  process (acceptor \in Acceptor) {
+    acc: while (TRUE) { 
+           with (b \in Ballot) {either Phase1b(b) or Phase2av(b) 
+                                  or Phase2b(b) or LearnsSent(b)}
+    }
+   }
+
+  process (leader \in Ballot) {
+    ldr: while (TRUE) {
+          either Phase1a() or Phase1c() 
+         }
+   }
+
+  process (facceptor \in FakeAcceptor) {
+     facc : while (TRUE) { FakingAcceptor() }
+   }
+}
+
+Below is the TLA+ translation, as produced by the translator.  (Some
+blank lines have been removed.)
+**************************************************************************)
+\* BEGIN TRANSLATION
+VARIABLES maxBal, maxVBal, maxVVal, 2avSent, knowsSent, bmsgs
+
+(* define statement *)
+sentMsgs(type, bal) == {m \in bmsgs: m.type = type /\ m.bal = bal}
+
+KnowsSafeAt(ac, b, v) ==
+  LET S == {m \in knowsSent[ac] : m.bal = b}
+  IN  \/ \E BQ \in ByzQuorum :
+           \A a \in BQ : \E m \in S : /\ m.acc = a
+                                      /\ m.mbal = -1
+      \/ \E c \in 0..(b-1):
+           /\ \E BQ \in ByzQuorum :
+                \A a \in BQ : \E m \in S : /\ m.acc = a
+                                           /\ m.mbal =< c
+                                           /\ (m.mbal = c) => (m.mval = v)
+           /\ \E WQ \in WeakQuorum :
+                \A a \in WQ :
+                  \E m \in S : /\ m.acc = a
+                               /\ \E r \in m.m2av : /\ r.bal >= c
+                     
+... (truncated) ...
+     /\ maxVBal = [a \in Acceptor |-> -1]
+        /\ maxVVal = [a \in Acceptor |-> None]
+        /\ msgs = {}
+
+acceptor(self) == \E b \in Ballot:
+                    \/ /\ (b > maxBal[self]) /\ (sentMsgs("1a", b) # {})
+                       /\ maxBal' = [maxBal EXCEPT ![self] = b]
+                       /\ msgs' = (msgs \cup {[type |-> "1b", acc |-> self, bal |-> b,
+                                               mbal |-> maxVBal[self], mval |-> maxVVal[self]]})
+                       /\ UNCHANGED <<maxVBal, maxVVal>>
+                    \/ /\ b \geq maxBal[self]
+                       /\ \E m \in sentMsgs("2a", b):
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+                            /\ maxVBal' = [maxVBal EXCEPT ![self] = b]
+                            /\ maxVVal' = [maxVVal EXCEPT ![self] = m.val]
+                            /\ msgs' = (msgs \cup {[type |-> "2b", acc |-> self,
+                                                       bal |-> b, val |-> m.val]})
+
+leader(self) == /\ \/ /\ msgs' = (msgs \cup {[type |-> "1a", bal |-> self]})
+                   \/ /\ \E S \in SUBSET Value:
+                           /\ \A v \in S : \E Q \in Quorum : ShowsSafeAt(Q, self, v)
+                           /\ msgs' = (msgs \cup {[type |-> "1c", bal |-> self, val |-> v] : v \in S})
+                   \/ /\ \E v \in Value:
+                           /\ /\ sentMsgs("2a", self) = {}
+                              /\ [type |-> "1c", bal |-> self, val |-> v] \in msgs
+[EXIT 0]
+
+[AGENT] I’ll run TLAPS once to see the exact failing obligation.
+
+[AGENT] TLAPS is still processing the target; while it runs I’ll inspect the generated proof style nearby.
+
+[CMD] /bin/zsh -lc "sed -n '560,650p' BPConProof_MsgsTypeLemmaPrime.tla && rg -n \"Prime ==|PROOF OBVIOUS|BY DEF .*'|ASSUME.*PROVE\" *.tla"
+
+Phase2b(self, b) ==
+  /\ maxBal[self] =< b
+  /\ \E v \in {vv \in Value :
+                 \E Q \in ByzQuorum :
+                    \A a \in Q :
+                       \E m \in sentMsgs("2av", b) : /\ m.val = vv
+                                                     /\ m.acc = a }:
+       /\ bmsgs' = (bmsgs \cup
+                     {[type |-> "2b", acc |-> self, bal |-> b, val |-> v]})
+       /\ maxVVal' = [maxVVal EXCEPT ![self] = v]
+  /\ maxBal' = [maxBal EXCEPT ![self] = b]
+  /\ maxVBal' = [maxVBal EXCEPT ![self] = b]
+  /\ UNCHANGED <<2avSent, knowsSent>>
+
+LearnsSent(self, b) == 
+ /\ \E S \in SUBSET sentMsgs("1b", b):
+       knowsSent' = [knowsSent EXCEPT ![self] = knowsSent[self] \cup S]
+ /\ UNCHANGED <<maxBal, maxVBal, maxVVal, 2avSent, bmsgs>> 
+
+Phase1a(self) == 
+  /\ bmsgs' = (bmsgs \cup {[type |-> "1a", bal |-> self]})
+  /\ UNCHANGED << maxBal, maxVBal, maxVVal, 2avSent, knowsSent >>
+
+Phase1c(self) ==
+  /\ \E S \in SUBSET [type : {"1c"}, bal : {self}, val : Value]:
+                        bmsgs' = (bmsgs \cup S)
+  /\ UNCHANGED << maxBal, maxVBal, maxVVal, 2avSent, knowsSent >>
+
+FakingAcceptor(self) ==
+  /\ \E m \in { mm \in 1bMessage \cup 2avMessage \cup 2bMessage : mm.acc = self} :
+         bmsgs' = (bmsgs \cup {m})
+  /\ UNCHANGED << maxBal, maxVBal, maxVVal, 2avSent, knowsSent >>
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma describes h
+... (truncated) ...
+inition and assumption BQA.   *)
+(***************************************************************************)
+Quorum == {S \cap Acceptor : S \in ByzQuorum}
+
+THEOREM QuorumTheorem == 
+         /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {} 
+         /\ \A Q \in Quorum : Q \subseteq Acceptor
+  PROOF OMITTED
+
+msgsOfType(t) == {m \in bmsgs : m.type = t }
+
+acceptorMsgsOfType(t) == {m \in msgsOfType(t) : m.acc \in  Acceptor}
+ 
+1bRestrict(m) == [type |-> "1b", acc |-> m.acc, bal |-> m.bal, 
+                  mbal |-> m.mbal, mval |-> m.mval]
+
+1bmsgs == { 1bRestrict(m) : m \in acceptorMsgsOfType("1b") }
+
+1cmsgs == {m \in msgsOfType("1c") :
+                   \E a \in Acceptor : KnowsSafeAt(a, m.bal, m.val)}
+
+2amsgs == {m \in [type : {"2a"}, bal : Ballot, val : Value] :
+             \E Q \in Quorum :
+               \A a \in Q :
+                 \E m2av \in acceptorMsgsOfType("2av") : 
+                    /\ m2av.acc = a
+                    /\ m2av.bal = m.bal
+                    /\ m2av.val = m.val }
+
+msgs == msgsOfType("1a") \cup 1bmsgs \cup 1cmsgs \cup 2amsgs 
+         \cup acceptorMsgsOfType("2b")
+
+(***************************************************************************)
+(* We now define PmaxBal, the state function with which we instantiate the *)
+VoteProof.tla:431:THEOREM SafeAtPropPrime ==
+VoteProof.tla:445:LEMMA VT0Prime ==
+VoteProof.tla:453:THEOREM VT1Prime == 
+BPConProof_MsgsTypeLemmaPrime.tla:910:LEMMA MsgsTypeLemmaPrime ==
+BPConProof_MsgsTypeLemmaPrime.tla:916:PROOF OBVIOUS
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '400,470p' VoteProof.tla"
+(* attempting any proofs.) We define VInv1 separately because VInv3 is not *)
+(* needed for proving safety, only for liveness.                           *)
+(***************************************************************************)
+THEOREM VInv3 => VInv1
+BY DEF VInv1, VInv3
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma proves that SafeAt(b, v) implies that no value      *)
+(* other than v can have been chosen in any ballot numbered less than b.   *)
+(* The fact that it also implies that no value other than v can ever be    *)
+(* chosen in the future follows from this and the fact that SafeAt(b, v)   *)
+(* is stable--meaning that once it becomes true, it remains true forever.  *)
+(* The stability of SafeAt(b, v) is proved as step <1>6 of theorem         *)
+(* InductiveInvariance below.                                              *)
+(*                                                                         *)
+(* This lemma is used only in the proof of theorem VT1 below.              *)
+(***************************************************************************)
+LEMMA VT0 == /\ TypeOK
+             /\ VInv1
+             /\ VInv2
+             => \A v, w \in Value, b, c \in Ballot : 
+                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+  PROOF OMITTED
+
+THEOREM VT1 == /\ TypeOK 
+               /\ VInv1
+               /\ VInv2
+   
+... (truncated) ...
+/ \E Q \in Quorum :
+           /\ \A a \in Q : maxBal'[a] \geq b
+           /\ \E c \in -1..(b-1) :
+                /\ (c # -1) => /\ SafeAt(c, v)'
+                               /\ \A a \in Q :
+                                    \A w \in Value :
+                                        VotedFor(a, c, w)' => (w = v)
+                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)'
+PROOF OMITTED
+
+LEMMA VT0Prime ==
+             /\ TypeOK'
+             /\ VInv1'
+             /\ VInv2'
+             => \A v, w \in Value, b, c \in Ballot : 
+                   (b > c) /\ SafeAt(b, v)' /\ ChosenIn(c, w)' => (v = w)
+  PROOF OMITTED
+
+THEOREM VT1Prime == 
+               /\ TypeOK' 
+               /\ VInv1'
+               /\ VInv2'
+               => \A v, w : 
+                    (v \in chosen') /\ (w \in chosen') => (v = w)
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The invariance of VInv2 depends on SafeAt(b, v) being stable, meaning   *)
+(* that once it becomes true it remains true forever.  Stability of        *)
+(* SafeAt(b, v) depends on the following invariant.                        *)
+(***************************************************************************)
+VInv4 == \A a \in Acceptor, b \in Ballot : 
+            maxBal[a] < b => DidNotVoteIn(a, b)
+             
+(***************************************************************************)
+[EXIT 0]
+
+[AGENT] The final lemma mirrors the admitted unprimed lemma, so I’ll first try a minimal proof using it plus definition expansion.
+
+[AGENT] Patch applied; I’ll stop the stale TLAPS run if needed and rerun on the updated proof.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MsgsTypeLemmaPrime.tla'
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+File "./Consensus.tla", line 1, character 1 to line 249, character 77:
+[INFO]: All 0 obligation proved.
+File "./Consensus.tla", line 216, characters 23-26:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./Consensus.tla", line 216, characters 30-33:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+(* created new ".tlacache/VoteProof.tlaps/VoteProof.thy" *)
+(* fingerprints written in ".tlacache/VoteProof.tlaps/fingerprints" *)
+File "./VoteProof.tla", line 1, character 1 to line 805, character 79:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/PConProof.tlaps/PConProof.thy" *)
+(* fingerprints written in ".tlacache/PConProof.tlaps/fingerprints" *)
+File "./PConProof.tla", line 1, character 1 to line 525, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_2amsgs_, CONSTANT_1bmsgs_
+
+Z
+... (truncated) ...
+        NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x)
+           PROVE  \A m \in msgs' :
+                     /\ m.type = "1a" <=> m \in msgsOfType("1a")'
+                     /\ m.type = "1b" <=> m \in 1bmsgs'
+                     /\ m.type = "1c" <=> m \in 1cmsgs'
+                     /\ m.type = "2a" <=> m \in 2amsgs'
+                     /\ m.type = "2b" <=> m \in acceptorMsgsOfType("2b")'
+File "./BPConProof_MsgsTypeLemmaPrime.tla", line 2, character 1 to line 918, character 78:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"BPConProof_MsgsTypeLemmaPrime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MsgsTypeLemmaPrime.tla'
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+File "./Consensus.tla", line 1, character 1 to line 249, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+File "./Consensus.tla", line 216, characters 23-26:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./Consensus.tla", line 216, characters 30-33:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+(* created new ".tlacache/VoteProof.tlaps/VoteProof.thy" *)
+(* fingerprints written in ".tlacache/VoteProof.tlaps/fingerprints" *)
+File "./VoteProof.tla", line 1, character 1 to line 805, character 79:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/PConProof.tlaps/PConProof.thy" *)
+(* fingerprints written in ".tlacache/PConProof.tlaps/fingerprints" *)
+File "./PConProof.tla", line 1, character 1 to line 525, character 77:
+[INFO]: All 0 obligation proved.
+[EXIT 255]
+
+[AGENT] That proof didn’t pass cleanly, but TLAPS didn’t print the obligation; I’ll rerun with cleaner output and inspect cache artifacts if needed.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm --help | head -80; echo EXIT:$?'
+[EXIT -1]
+
+[AGENT] I’ll rerun with a longer wait so the final diagnostic isn’t missed.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MsgsTypeLemmaPrime.tla; echo TLAPM_EXIT:$?'
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+File "./Consensus.tla", line 1, character 1 to line 249, character 77:
+[INFO]: All 0 obligation proved.
+File "./Consensus.tla", line 216, characters 23-26:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./Consensus.tla", line 216, characters 30-33:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+(* created new ".tlacache/VoteProof.tlaps/VoteProof.thy" *)
+(* fingerprints written in ".tlacache/VoteProof.tlaps/fingerprints" *)
+File "./VoteProof.tla", line 1, character 1 to line 805, character 79:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/PConProof.tlaps/PConProof.thy" *)
+(* fingerprints written in ".tlacache/PConProof.tlaps/fingerprints" *)
+File "./PConProof.tla", line 1, character 1 to line 525, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/BPConProof_MsgsTypeLemmaPrime.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Quorum_, CONSTANT_Ballot_, CONSTANT_KnowsSafeAt_
+
+(* created new ".tlacache/BPConProof_MsgsTypeLemmaPrime.tlaps/BPConProof_MsgsTypeLemmaPrime.thy" *)
+File "./BPConProof_MsgsTypeLemmaPrime.tla", line 2, character 1 to line 920, character 78:
+[INFO]: All 2 obligations proved.
+(* fingerprints written in ".tlacache/BPConProof_MsgsTypeLemmaPrime.tlaps/fingerprints" *)
+TLAPM_EXIT:0
+[EXIT 0]
+
+[AGENT] TLAPS passes. I’ll run the required proof-integrity checker now.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py BPConProof_MsgsTypeLemmaPrime.tla'
+Checking: BPConProof_MsgsTypeLemmaPrime.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Consensus.tlaps/Consensus.thy" *)
+(* fingerprints written in ".tlacache/Consensus.tlaps/fingerprints" *)
+File "./Consensus.tla", line 216, characters 23-26:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./Consensus.tla", line 216, characters 30-33:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+(* created new ".tlacache/VoteProof.tlaps/VoteProof.thy" *)
+(* fingerprints written in ".tlacache/VoteProof.tlaps/fingerprints" *)
+(* created new ".tlacache/PConProof.tlaps/PConProof.thy" *)
+(* fingerprints written in ".tlacache/PConProof.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_MsgsTypeLemmaPrime.tlaps/BPConProof_MsgsTypeLemmaPrime.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_MsgsTypeLemmaPrime.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./Consensus.tla", line 1, character 1 to line 249, character 77:
+[INFO]: All 0 obligation proved.
+File "./VoteProof.tla", line 1, character 1 to line 805, character 79:
+[INFO]: All 0 obligation proved.
+File "./PConProof.tla", line 1, character 1 to line 525, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Quorum_, CONSTANT_Ballot_, CONSTANT_KnowsSafeAt_
+
+File "/tmp/tlaps_check_8mpx1ugr/BPConProof_MsgsTypeLemmaPrime.tla", line 2, character 1 to line 920, character 78:
+[INFO]: All 2 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_BPConProof_MsgsTypeLemmaPrime_xqryp89o/BPConProof_MsgsTypeLemmaPrime.result
+[EXIT 0]
+
+[AGENT] Implemented the proof for `MsgsTypeLemmaPrime` in `BPConProof_MsgsTypeLemmaPrime.tla:916`.
+
+- Replaced `PROOF OBVIOUS` with a TLAPS proof using the admitted unprimed `MsgsTypeLemma` and expanding the relevant refinement-mapping definitions.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps BPConProof_MsgsTypeLemmaPrime.tla`.
+- Ran `python3 check_proof.py BPConProof_MsgsTypeLemmaPrime.tla`.
+- Checker verdict: `PASS — all obligations proved`, with no cheating detected.

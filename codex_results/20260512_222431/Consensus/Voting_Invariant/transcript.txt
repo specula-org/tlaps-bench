@@ -1,0 +1,693 @@
+Benchmark: Consensus/Voting_Invariant.tla
+Time: 115s
+Tokens: 459,676 input / 4,162 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and its admitted lemmas, then iteratively patch only the final proof and verify with TLAPS.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Voting_Invariant.tla && printf '\\n--- files ---\\n' && ls -la"
+------------------------------- MODULE Voting_Invariant -------------------------------
+EXTENDS FiniteSets, TLAPS, Integers
+-----------------------------------------------------------------------------
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QuorumAssumption == 
+    /\ \A Q \in Quorum : Q \subseteq Acceptor
+    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+  PROOF OMITTED
+
+Ballot == Nat
+-----------------------------------------------------------------------------
+VARIABLES votes, maxBal
+
+TypeOK == /\ votes \in [Acceptor -> SUBSET (Ballot \X Value)]
+          /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+-----------------------------------------------------------------------------
+VotedFor(a, b, v) == <<b, v>> \in votes[a]
+
+DidNotVoteAt(a, b) == \A v \in Value : ~ VotedFor(a, b, v)
+
+ShowsSafeAt(Q, b, v) ==
+  /\ \A a \in Q : maxBal[a] \geq b \* have promised
+  /\ \E c \in -1..(b-1) :
+      /\ (c # -1) => \E a \in Q : VotedFor(a, c, v)
+      /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteAt(a, d)
+-----------------------------------------------------------------------------
+Init == 
+    /\ votes = [a \in Acceptor |-> {}]
+    /\ maxBal = [a \in Acceptor |-> -1]
+
+IncreaseMaxBal(a, b) ==
+  /\ b > maxBal[a]
+  /\ maxBal' = [maxBal EXCEPT ![a] = b] \* make promise
+  /\ UNCHANGED votes
+
+VoteFor(a, b, v) ==
+    /\ maxBal[a] <= b \* keep promise
+    /\ \A vt \in votes[a] : vt[1] # b
+    /\ \A c \in Acceptor \ {a} :
+         \A vt \in votes[c]
+... (truncated) ...
+A b \in Ballot, v \in Value :
+             ChosenAt(b, v) => NoneOtherChoosableAt(b, v)
+  PROOF OMITTED
+
+THEOREM OneVoteThm == OneValuePerBallot => OneVote
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+THEOREM VotesSafeImpliesConsistency ==
+   ASSUME VotesSafe, OneVote, chosen # {}
+   PROVE  \E v \in Value : chosen = {v}
+  PROOF OMITTED
+
+THEOREM ShowsSafety ==
+          TypeOK /\ VotesSafe /\ OneValuePerBallot =>
+             \A Q \in Quorum, b \in Ballot, v \in Value :
+               ShowsSafeAt(Q, b, v) => SafeAt(b, v)
+  PROOF OMITTED
+
+THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+                            \A b \in Ballot, v \in Value :
+                                SafeAt(b, v) => SafeAt(b, v)'
+  OMITTED                                
+-----------------------------------------------------------------------------
+THEOREM Invariant == Spec => []Inv
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+total 224
+drwx------    3 ruize ruize   4096 May 12 22:29 .
+drwxrwxrwt 1332 root  root  176128 May 12 22:29 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:29 .git
+-rw-rw-r--    1 ruize ruize    874 May 12 20:11 Consensus.tla
+-rw-rw-r--    1 ruize ruize   4936 May 12 20:11 Sets.tla
+-rw-rw-r--    1 ruize ruize   4537 May 12 20:11 Voting.tla
+-rw-rw-r--    1 ruize ruize   4226 May 12 20:11 Voting_Invariant.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I found the final temporal theorem; now I’ll inspect companion specs for proof patterns before editing.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Voting.tla && printf '\\n--- Consensus ---\\n' && sed -n '1,220p' Consensus.tla && printf '\\n--- check script relevant ---\\n' && sed -n '1,220p' check_proof.py"
+------------------------------- MODULE Voting -------------------------------
+EXTENDS FiniteSets, TLAPS, Integers
+-----------------------------------------------------------------------------
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QuorumAssumption == 
+    /\ \A Q \in Quorum : Q \subseteq Acceptor
+    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+  PROOF OMITTED
+
+Ballot == Nat
+-----------------------------------------------------------------------------
+VARIABLES votes, maxBal
+
+TypeOK == /\ votes \in [Acceptor -> SUBSET (Ballot \X Value)]
+          /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+-----------------------------------------------------------------------------
+VotedFor(a, b, v) == <<b, v>> \in votes[a]
+
+DidNotVoteAt(a, b) == \A v \in Value : ~ VotedFor(a, b, v)
+
+ShowsSafeAt(Q, b, v) ==
+  /\ \A a \in Q : maxBal[a] \geq b \* have promised
+  /\ \E c \in -1..(b-1) :
+      /\ (c # -1) => \E a \in Q : VotedFor(a, c, v)
+      /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteAt(a, d)
+-----------------------------------------------------------------------------
+Init == 
+    /\ votes = [a \in Acceptor |-> {}]
+    /\ maxBal = [a \in Acceptor |-> -1]
+
+IncreaseMaxBal(a, b) ==
+  /\ b > maxBal[a]
+  /\ maxBal' = [maxBal EXCEPT ![a] = b] \* make promise
+  /\ UNCHANGED votes
+
+VoteFor(a, b, v) ==
+    /\ maxBal[a] <= b \* keep promise
+    /\ \A vt \in votes[a] : vt[1] # b
+    /\ \A c \in Acceptor \ {a} :
+         \A vt \in votes[c] : (vt[1] 
+... (truncated) ...
+n issues
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Check a single TLAPS benchmark proof')
+    parser.add_argument('file', help='Path to the benchmark .tla file')
+    parser.add_argument('--tlapm', default=None, help='Path to tlapm binary')
+    parser.add_argument('--tlapm-lib', default=None, help='Path to tlapm lib directory')
+    parser.add_argument('--timeout', type=int, default=120, help='Timeout in seconds')
+    parser.add_argument('--output', '-o', default=None, help='Write results to this file (default: <input>.result)')
+    args = parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+[EXIT 0]
+
+[AGENT] The module is a small Paxos-style invariant proof; I’m checking available temporal proof idioms and TLAPS library facts.
+
+[CMD] /bin/zsh -lc "rg \"=> \\[\\]\" ~/.tlapm15/lib/tlaps /tmp/codex_bench_Voting_Invariant_yremjjya -g '*.tla' | head -50 && rg \"INV|Invariant|Induction|Init\" ~/.tlapm15/lib/tlaps -g '*.tla' | head -100"
+/tmp/codex_bench_Voting_Invariant_yremjjya/Consensus.tla:THEOREM Invariance == Spec => []Inv
+/tmp/codex_bench_Voting_Invariant_yremjjya/Voting.tla:THEOREM Invariant == Spec => []Inv
+/tmp/codex_bench_Voting_Invariant_yremjjya/Voting.tla:THEOREM Consistent == Spec => []Consistency
+/tmp/codex_bench_Voting_Invariant_yremjjya/Voting_Invariant.tla:THEOREM Invariant == Spec => []Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:THEOREM Spec => []Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventually.tla:<1>2. (Init /\ [][Next]_x) => []TypeOK
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:LEMMA TypeCorrect == Spec => []TypeOK
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:THEOREM Spec => []TerminationDetection
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:            R(n) == BSpec => [](P(n) => <>Q)
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:    <3>4. R(n) => (BSpec => [](Pn1 => <>Q))
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:<1>2. BSpec => []((\E n \in Nat : P(n)) => <>Q)
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  <2>1. BSpec => [](\A n \in Nat : P(n) => <>Q)
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:            R(n) == BSpec => [](P(n) => <>Q)
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:    <3>4. R(n) => (BSpec => [](Pn1 => <>Q))
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:<1>3. BSpec => []((\E n \in Nat : P(n)) => <>Q)
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  <2>1. BSpec => [](\A n \in Nat
+... (truncated) ...
+HANGED <<x,y>> => InductiveInvariant'
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:  BY DEF InductiveInvariant
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:<1>2 Spec => []InductiveInvariant
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:  BY PTL, InitProperty, NextProperty, <1>1 DEF Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:<1>3 InductiveInvariant => ResultCorrect
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:  BY GCDProperty1 DEF InductiveInvariant, ResultCorrect
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:EXTENDS Integers, NaturalsInduction, TLAPS
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:Init == x = 0
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:System == /\ Init
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:    <2>1. Init => TypeOK
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:        BY DEF Init, TypeOK
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:        BY PTL DEF P, System, Init
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:        BY <2>1, <2>2, NatInduction
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:EXTENDS Naturals, TLC, TLAPS, NaturalsInduction
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:\* Init: i starts at N
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:Init == cnt = N 
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:Spec == Init /\ [][Next]_cnt /\ WF_cnt(Next)
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,220p' ~/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla && printf '\\n--- Atomic relevant ---\\n' && rg -n \"THEOREM Spec => \\[\\]Inv|THEOREM Invariant|PTL|Init => Inv|Next =>\" ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla ~/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla ~/.tlapm15/lib/tlaps/examples/Euclid.tla"
+------------------------------- MODULE Paxos -------------------------------
+(***************************************************************************)
+(* This is a TLA+ specification of the Paxos Consensus algorithm,          *)
+(* described in                                                            *)
+(*                                                                         *)
+(*  Paxos Made Simple:                                                     *)
+(*   http://research.microsoft.com/en-us/um/people/lamport/pubs/pubs.html#paxos-simple *)
+(*                                                                         *)
+(* and a TLAPS-checked proof of its correctness.  This was mostly done as  *)
+(* a test to see how the SMT backend of TLAPS is now working.              *)
+(***************************************************************************)
+EXTENDS Integers, TLAPS, TLC
+
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}                 
+
+(***************************************************************************)
+(* The following lemma is an immediate consequence of the assumption.      *)
+(***************************************************************************)
+LEMMA QuorumNonEmpty == \A Q \in Quorums : Q # {}
+BY QuorumAssumption
+
+Ballots == Nat
+
+VARIABLES msgs,    \* The set of messages that have been sent.
+    
+... (truncated) ...
+ed corresponding to MsgInv 2014/04/02 sm
+    /\ (maxVBal[a] >= 0) => VotedForIn(a, maxVal[a], maxVBal[a])  \* SafeAt(maxVal[a], maxVBal[a])
+    \* conjunct added corresponding to MsgInv 2014/03/29 sm
+    /\ \A c \in Ballots : c > maxVBal[a] => ~ \E v \in Values : VotedForIn(a, v, c)
+                                       
+(***************************************************************************)
+
+--- Atomic relevant ---
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:42:THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:68:  BY PTL, InitProperty, NextProperty, <1>1 DEF Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/Euclid.tla:72:  BY PTL, <1>2, <1>3
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:282:THEOREM Invariant == Spec => []Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:284:<1>1. Init => Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:452:<1>. QED  BY <1>1, <1>2, PTL DEF Spec
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:487:<1>. QED  BY Invariant, <1>1, PTL
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:516:  BY <1>1, <1>2, Invariant, Consistent, PTL DEF Spec, C!Spec, Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:241:THEOREM Spec => []Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:243:<1>1. Init => Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:289:  BY <1>1, <1>2, <1>3, PTL DEF Spec
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '260,460p' ~/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla && printf '\\n--- atomic ---\\n' && sed -n '235,295p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla && printf '\\n--- euclid ---\\n' && sed -n '35,75p' ~/.tlapm15/lib/tlaps/examples/Euclid.tla"
+    <3> DEFINE mm == [type |-> "2b", val |-> vv, bal |-> bb, acc |-> aa]
+    <3>1. mm \notin msgs
+      BY <2>4 DEF WontVoteIn, VotedForIn
+    <3>2. mm \in msgs'
+      <4>1. PICK m1 \in msgs' :
+              /\ m1.type = "2b"
+              /\ m1.val = vv
+              /\ m1.bal = bb
+              /\ m1.acc = aa
+        BY <2>4 DEF VotedForIn
+      <4>. QED  BY <4>1 DEF TypeOK, Messages \* proved by Zenon
+    <3>3. aa = a /\ m.bal = bb
+      BY <2>1, <3>1, <3>2 DEF TypeOK
+    <3>. QED
+      BY <2>1, <2>4, <3>3 DEF Phase2b, WontVoteIn, TypeOK 
+  <2>5 \A aa \in Acceptors, bb \in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'
+    BY <2>3, <2>4 DEF WontVoteIn
+  <2> QED
+    BY <2>2, <2>5, QuorumAssumption DEF SafeAt
+                         
+<1>. QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+
+THEOREM Invariant == Spec => []Inv
+<1> USE DEF Ballots
+<1>1. Init => Inv
+  BY Isa DEF Init, Inv, TypeOK, AccInv, MsgInv, VotedForIn
+  
+<1>2. Inv /\ [Next]_vars => Inv'
+  <2> SUFFICES ASSUME Inv, Next
+               PROVE  Inv'
+    BY DEF vars, Inv, TypeOK, MsgInv, AccInv, SafeAt, VotedForIn, WontVoteIn
+  <2> USE DEF Inv
+  <2>1. TypeOK'
+    <3>1. ASSUME NEW b \in Ballots, Phase1a(b) PROVE TypeOK'
+      BY <3>1 DEF TypeOK, Phase1a, Send, Messages
+    <3>2. ASSUME NEW b \in Ballots, Phase2a(b) PROVE TypeOK'
+      <4>1. PICK v \in Values :
+               /\ Send([type |-> "2a", bal |-> b, val |-> v])
+               /\ UNCHANGED <<maxBal, maxVBal, maxVal>>
+    
+... (truncated) ...
+ualExclusion
+  BY DEFS Inv, After, MutualExclusion 
+<1>4. QED
+  BY <1>1, <1>2, <1>3, PTL DEF Spec
+=============================================================================
+
+
+--- euclid ---
+THEOREM InitProperty == Init => InductiveInvariant
+  BY NumberAssumption DEF Init, InductiveInvariant
+
+AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
+AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+
+THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+<1> SUFFICES ASSUME InductiveInvariant, Next
+             PROVE  InductiveInvariant'
+  OBVIOUS
+<1> USE DEF InductiveInvariant, Next
+<1>1. (x < y) \/ (y < x)
+  OBVIOUS
+<1>a. CASE x < y
+  <2>1. (y - x \in Number) /\ ~(y < x)
+    BY <1>a DEF Number
+  <2>2. QED
+    BY <1>a, <2>1, GCDProperty3
+<1>b. CASE y < x
+  <2>1. (x - y \in Number) /\ ~(x < y)
+    BY <1>b DEF Number
+  <2>2. GCD(y', x') = GCD(y, x)
+    BY <1>b, <2>1, GCDProperty3
+  <2>4. QED
+    BY <1>b, <2>1, <2>2, GCDProperty2
+<1> QED
+  BY <1>1, <1>a, <1>b
+
+THEOREM Correctness == Spec => []ResultCorrect
+<1>1 InductiveInvariant /\ UNCHANGED <<x,y>> => InductiveInvariant'
+  BY DEF InductiveInvariant
+<1>2 Spec => []InductiveInvariant
+  BY PTL, InitProperty, NextProperty, <1>1 DEF Spec
+<1>3 InductiveInvariant => ResultCorrect
+  BY GCDProperty1 DEF InductiveInvariant, ResultCorrect
+<1> QED
+  BY PTL, <1>2, <1>3
+
+=======================================================
+[EXIT 0]
+
+[AGENT] I’ll replace the placeholder with an induction proof skeleton and let TLAPS point out any weak spots.
+
+[AGENT] TLAPS is running; I’ll collect the first proof failures and tighten the exact steps.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Voting_Invariant.tla
+@@
+ THEOREM Invariant == Spec => []Inv
+-PROOF OBVIOUS
++<1> USE DEF Ballot
++<1>1. Init => Inv
++  BY AllSafeAtZero DEF Init, Inv, TypeOK, VotesSafe, OneValuePerBallot, VotedFor
++<1>2. Inv /\\ [Next]_<<votes, maxBal>> => Inv'
++  <2>1. Inv /\\ UNCHANGED <<votes, maxBal>> => Inv'
++    BY DEF Inv, TypeOK, VotesSafe, OneValuePerBallot, VotedFor, SafeAt,
++           NoneOtherChoosableAt, CannotVoteAt, DidNotVoteAt
++  <2>2. Inv /\\ Next => Inv'
++    <3> SUFFICES ASSUME Inv, Next PROVE Inv'
++      OBVIOUS
++    <3>1. TypeOK'
++      <4>1. ASSUME NEW a \\in Acceptor, NEW b \\in Ballot,
++                    IncreaseMaxBal(a, b)
++            PROVE TypeOK'
++        BY <4>1 DEF TypeOK, IncreaseMaxBal
++      <4>2. ASSUME NEW a \\in Acceptor, NEW b \\in Ballot, NEW v \\in Value,
++                    VoteFor(a, b, v)
++            PROVE TypeOK'
++        BY <4>2 DEF TypeOK, VoteFor
++      <4>. QED BY <4>1, <4>2 DEF Next
++    <3>2. VotesSafe'
++      <4>1. ASSUME NEW a \\in Acceptor, NEW b \\in Ballot,
++                    IncreaseMaxBal(a, b)
++            PROVE VotesSafe'
++        BY <3>1, <4>1, SafeAtStable
++           DEF Inv, VotesSafe, VotedFor, IncreaseMaxBal, Next
++      <4>2. ASSUME NEW a \\in Acceptor, NEW b \\in Ballot, NEW v \\in Value,
++                    VoteFor(a, b, v)
++            PROVE VotesSafe'
++        <5>1. SafeAt(b, v)
++          BY <4>2, ShowsSafety DEF Inv, VoteFor
++        <5>2. SafeAt(b, v)'
++          BY <3>1, <4>2, <5>1, SafeAtStable DEF Next
++        <5>3. \\A aa \\in Acceptor, bb \\in Ballot, vv \\in Value :
++                 VotedFor(aa, bb, vv)' =>
++                   VotedFor(aa, bb, vv) \\/ (aa = a /\\ bb = b /\\ vv = v)
++          BY <4>2 DEF VoteFor, VotedFor, TypeOK
++        <5>4. \\A aa \\in Acceptor, bb \\in Ballot, vv \\in Value :
++                 VotedFor(aa, bb, vv)' => SafeAt(bb, vv)'
++          BY <3>1, <4>2, <5>2, <5>3, SafeAtStable DEF Inv, VotesSafe, Next
++        <5>. QED BY <5>4 DEF VotesSafe
++      <4>. QED BY <4>1, <4>2 DEF Next
++    <3>3. OneValuePerBallot'
++      <4>1. ASSUME NEW a \\in Acceptor, NEW b \\in Ballot,
++                    IncreaseMaxBal(a, b)
++            PROVE OneValuePerBallot'
++        BY <4>1 DEF OneValuePerBallot, VotedFor, IncreaseMaxBal
++      <4>2. ASSUME NEW a \\in Acceptor, NEW b \\in Ballot, NEW v \\in Value,
++                    VoteFor(a, b, v)
++            PROVE OneValuePerBallot'
++        <5>1. \\A aa \\in Acceptor, bb \\in Ballot, vv \\in Value :
++                 VotedFor(aa, bb, vv)' =>
++                   VotedFor(aa, bb, vv) \\/ (aa = a /\\ bb = b /\\ vv = v)
++          BY <4>2 DEF VoteFor, VotedFor, TypeOK
++        <5>2. \\A aa \\in Acceptor, vv \\in Value :
++                 VotedFor(aa, b, vv) => vv = v
++          BY <4>2 DEF VoteFor, VotedFor, TypeOK
++        <5>. QED BY <5>1, <5>2 DEF Inv, OneValuePerBallot
++      <4>. QED BY <4>1, <4>2 DEF Next
++    <3>. QED BY <3>1, <3>2, <3>3 DEF Inv
++  <2>. QED BY <2>1, <2>2
++<1>. QED BY <1>1, <1>2, PTL DEF Spec
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Voting_Invariant.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: STATE_SafeAt_, ACTION_VoteFor_, STATE_OneValuePerBallot_, STATE_TypeOK_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: STATE_SafeAt_, ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: STATE_SafeAt_, ACTION_In
+... (truncated) ...
+     /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  TypeOK ==
+                    /\ votes \in [Acceptor -> SUBSET Ballot \X Value]
+                    /\ maxBal \in [Acceptor -> Ballot \cup {-1}],
+                  IncreaseMaxBal(a, b) ==
+                    /\ b > maxBal[a]
+                    /\ maxBal' = [maxBal EXCEPT !
+                                   [a] = b]
+                    /\ UNCHANGED votes,
+                  Inv ,
+                  Next ,
+                  NEW CONSTANT a \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  <4>1 
+           PROVE  TypeOK'
+File "./Voting_Invariant.tla", line 1, character 1 to line 179, character 77:
+[ERROR]: 3/59 obligations failed.
+There were backend errors processing module `"Voting_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first failures were missing invariant expansion in substeps, so I’ll expose `Inv` where those obligations need `TypeOK`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Voting_Invariant.tla
+@@
+-        BY <4>1 DEF TypeOK, IncreaseMaxBal
++        BY <4>1 DEF Inv, TypeOK, IncreaseMaxBal
+@@
+-        BY <4>2 DEF TypeOK, VoteFor
++        BY <4>2 DEF Inv, TypeOK, VoteFor
+@@
+-        BY <4>1 DEF OneValuePerBallot, VotedFor, IncreaseMaxBal
++        BY <4>1 DEF Inv, OneValuePerBallot, VotedFor, IncreaseMaxBal
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Voting_Invariant.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Voting_Invariant.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_
+
+** Unexpanded symbols: STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_
+
+(* created new ".tlacache/Voting_Invariant.tlaps/Voting_Invariant.thy" *)
+(* fingerprints written in ".tlacache/Voting_Invariant.tlaps/fingerprints" *)
+File "./Voting_Invariant.tla", line 1, character 1 to line 179, character 77:
+[INFO]: All 59 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves the theorem; I’ll run the required proof-integrity checker next.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Voting_Invariant.tla'
+Checking: Voting_Invariant.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Voting_Invariant.tlaps/Voting_Invariant.thy" *)
+(* fingerprints written in ".tlacache/Voting_Invariant.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_
+
+** Unexpanded symbols: STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: STATE_SafeAt_, ACTION_VoteFor_, STATE_OneValuePerBallot_, STATE_TypeOK_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_OneValuePerBallot_, STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: STATE_SafeAt_, ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: STATE_SafeAt_, ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_OneValuePerBallot_, STATE_VotedFor_, STATE_TypeOK_
+
+** Unexpanded symbols: ACTION_IncreaseMaxBal_, ACTION_VoteFor_, STATE_Inv_
+
+** Unexpanded symbols: STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_VotesSafe_, ACTION_Next_, STATE_TypeOK_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, STATE_ShowsSafeAt_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, STATE_ShowsSafeAt_
+
+File "/tmp/tlaps_check_7jz9o50n/Voting_Invariant.tla", line 1, character 1 to line 179, character 77:
+[INFO]: All 59 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Voting_Invariant_yremjjya/Voting_Invariant.result
+[EXIT 0]
+
+[AGENT] The checker is still running because it invokes TLAPS too; I’ll wait for its final verdict.
+
+[AGENT] Everything passes; I’ll grab the proof line numbers for a clean handoff.
+
+[CMD] /bin/zsh -lc "nl -ba Voting_Invariant.tla | sed -n '105,182p'"
+   105	          TypeOK /\ VotesSafe /\ OneValuePerBallot =>
+   106	             \A Q \in Quorum, b \in Ballot, v \in Value :
+   107	               ShowsSafeAt(Q, b, v) => SafeAt(b, v)
+   108	  PROOF OMITTED
+   109	
+   110	THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+   111	                            \A b \in Ballot, v \in Value :
+   112	                                SafeAt(b, v) => SafeAt(b, v)'
+   113	  OMITTED                                
+   114	-----------------------------------------------------------------------------
+   115	THEOREM Invariant == Spec => []Inv
+   116	<1> USE DEF Ballot
+   117	<1>1. Init => Inv
+   118	  BY AllSafeAtZero DEF Init, Inv, TypeOK, VotesSafe, OneValuePerBallot, VotedFor
+   119	<1>2. Inv /\ [Next]_<<votes, maxBal>> => Inv'
+   120	  <2>1. Inv /\ UNCHANGED <<votes, maxBal>> => Inv'
+   121	    BY DEF Inv, TypeOK, VotesSafe, OneValuePerBallot, VotedFor, SafeAt,
+   122	           NoneOtherChoosableAt, CannotVoteAt, DidNotVoteAt
+   123	  <2>2. Inv /\ Next => Inv'
+   124	    <3> SUFFICES ASSUME Inv, Next PROVE Inv'
+   125	      OBVIOUS
+   126	    <3>1. TypeOK'
+   127	      <4>1. ASSUME NEW a \in Acceptor, NEW b \in Ballot,
+   128	                    IncreaseMaxBal(a, b)
+   129	            PROVE TypeOK'
+   130	        BY <4>1 DEF Inv, TypeOK, IncreaseMaxBal
+   131	      <4>2. ASSUME NEW a \in Acceptor, NEW b \in Ballot, NEW v \in Value,
+   132	                    VoteFor(a, b, v)
+   133	            PROVE TypeOK'
+   134	        BY <4>2 DEF In
+... (truncated) ...
+ TypeOK
+   153	        <5>4. \A aa \in Acceptor, bb \in Ballot, vv \in Value :
+   154	                 VotedFor(aa, bb, vv)' => SafeAt(bb, vv)'
+   155	          BY <3>1, <4>2, <5>2, <5>3, SafeAtStable DEF Inv, VotesSafe, Next
+   156	        <5>. QED BY <5>4 DEF VotesSafe
+   157	      <4>. QED BY <4>1, <4>2 DEF Next
+   158	    <3>3. OneValuePerBallot'
+   159	      <4>1. ASSUME NEW a \in Acceptor, NEW b \in Ballot,
+   160	                    IncreaseMaxBal(a, b)
+   161	            PROVE OneValuePerBallot'
+   162	        BY <4>1 DEF Inv, OneValuePerBallot, VotedFor, IncreaseMaxBal
+   163	      <4>2. ASSUME NEW a \in Acceptor, NEW b \in Ballot, NEW v \in Value,
+   164	                    VoteFor(a, b, v)
+   165	            PROVE OneValuePerBallot'
+   166	        <5>1. \A aa \in Acceptor, bb \in Ballot, vv \in Value :
+   167	                 VotedFor(aa, bb, vv)' =>
+   168	                   VotedFor(aa, bb, vv) \/ (aa = a /\ bb = b /\ vv = v)
+   169	          BY <4>2 DEF VoteFor, VotedFor, TypeOK
+   170	        <5>2. \A aa \in Acceptor, vv \in Value :
+   171	                 VotedFor(aa, b, vv) => vv = v
+   172	          BY <4>2 DEF VoteFor, VotedFor, TypeOK
+   173	        <5>. QED BY <5>1, <5>2 DEF Inv, OneValuePerBallot
+   174	      <4>. QED BY <4>1, <4>2 DEF Next
+   175	    <3>. QED BY <3>1, <3>2, <3>3 DEF Inv
+   176	  <2>. QED BY <2>1, <2>2
+   177	<1>. QED BY <1>1, <1>2, PTL DEF Spec
+   178	
+   179	=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `Invariant` in `Voting_Invariant.tla:115`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder with an inductive invariant proof.
+- Preserved all preceding declarations, theorem statements, and admitted proofs.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Voting_Invariant.tla`.
+- Ran `python3 check_proof.py Voting_Invariant.tla`.
+- Final checker verdict: `PASS — all obligations proved`, no cheating detected.

@@ -1,0 +1,1154 @@
+Benchmark: Data/Sets_FiniteSubset.tla
+Time: 312s
+Tokens: 1,572,342 input / 9,177 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iteratively patch and run TLAPS/checks until clean.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Sets_FiniteSubset.tla && printf '\\n--- files ---\\n' && ls -la"
+-------------------------------- MODULE Sets_FiniteSubset --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+  \** NB: Module NaturalsInduction comes from the TLAPS library, usually
+  \** installed in /usr/local/lib/tlaps. Make sure this is in your Toolbox
+  \** search path, see Preferences/TLA+ Preferences.
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+(****************************************************************************)
+(* Finite sets and cardinality are defined in the TLA+ standard module      *)
+(* FiniteSets, but this is not yet natively supported by TLAPS. For the     *)
+(* time being, we use the following axiom for defining set cardinality.     *)
+(****************************************************************************)
+\* Cardinality(S) == CHOOSE n : (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM Cardinalit
+... (truncated) ...
+------
+
+THEOREM CardinalityOneConverse ==
+   ASSUME NEW S, IsFiniteSet(S), Cardinality(S) = 1
+   PROVE  \E m : S = {m}
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM IsBijectionInverse ==
+  ASSUME NEW f, NEW S, NEW T, 
+         IsBijection(f, S, T) 
+  PROVE  \E g : IsBijection(g, T, S)
+  PROOF OMITTED
+
+THEOREM IsBijectionTransitive ==
+  ASSUME NEW f1, NEW f2, NEW S, NEW T, NEW U, 
+           IsBijection(f1, S, U),
+           IsBijection(f2, U, T) 
+  PROVE  \E g : IsBijection(g, S, T)
+  PROOF OMITTED
+
+THEOREM IsBijectionCardinality ==
+  \A f, S, T : /\ IsFiniteSet(S)
+               /\ IsFiniteSet(T)
+               => (IsBijection(f, S, T) <=> Cardinality(S) = Cardinality(T))
+
+LEMMA CardinalitySetMinus ==
+      ASSUME NEW S, IsFiniteSet(S),
+             NEW x \in S
+      PROVE /\ IsFiniteSet(S \ {x})
+            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+  PROOF OMITTED
+
+THEOREM FiniteSubset ==
+  ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+total 200
+drwx------    3 ruize ruize   4096 May 12 22:32 .
+drwxrwxrwt 1345 root  root  176128 May 12 22:32 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:32 .git
+-rw-rw-r--    1 ruize ruize   3659 May 12 20:11 Sets_FiniteSubset.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I see the target theorem. Next I’ll inspect line numbers and maybe the checker constraints before patching.
+
+[CMD] /bin/zsh -lc "nl -ba Sets_FiniteSubset.tla | sed -n '70,125p'; sed -n '1,220p' check_proof.py"
+    70	-----------------------------------------------------------------------------
+    71	
+    72	THEOREM IsBijectionInverse ==
+    73	  ASSUME NEW f, NEW S, NEW T, 
+    74	         IsBijection(f, S, T) 
+    75	  PROVE  \E g : IsBijection(g, T, S)
+    76	  PROOF OMITTED
+    77	
+    78	THEOREM IsBijectionTransitive ==
+    79	  ASSUME NEW f1, NEW f2, NEW S, NEW T, NEW U, 
+    80	           IsBijection(f1, S, U),
+    81	           IsBijection(f2, U, T) 
+    82	  PROVE  \E g : IsBijection(g, S, T)
+    83	  PROOF OMITTED
+    84	
+    85	THEOREM IsBijectionCardinality ==
+    86	  \A f, S, T : /\ IsFiniteSet(S)
+    87	               /\ IsFiniteSet(T)
+    88	               => (IsBijection(f, S, T) <=> Cardinality(S) = Cardinality(T))
+    89	
+    90	LEMMA CardinalitySetMinus ==
+    91	      ASSUME NEW S, IsFiniteSet(S),
+    92	             NEW x \in S
+    93	      PROVE /\ IsFiniteSet(S \ {x})
+    94	            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+    95	  PROOF OMITTED
+    96	
+    97	THEOREM FiniteSubset ==
+    98	  ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+    99	  PROVE  /\ IsFiniteSet(S)
+   100	         /\ Cardinality(S) \leq Cardinality(TT)
+   101	PROOF OBVIOUS
+   102	
+   103	=============================================================================
+#!/usr/bin/env python3
+"""
+Check a single TLAPS benchmark proof for correctness and cheating.
+
+Designed for AI agents to get quick feedback during proof writing.
+
+Usage:
+    python3 check_proof.py benchmark/Eu
+... (truncated) ...
+n issues
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Check a single TLAPS benchmark proof')
+    parser.add_argument('file', help='Path to the benchmark .tla file')
+    parser.add_argument('--tlapm', default=None, help='Path to tlapm binary')
+    parser.add_argument('--tlapm-lib', default=None, help='Path to tlapm lib directory')
+    parser.add_argument('--timeout', type=int, default=120, help='Timeout in seconds')
+    parser.add_argument('--output', '-o', default=None, help='Write results to this file (default: <input>.result)')
+    args = parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+[EXIT 0]
+
+[AGENT] I’ll run TLAPS once on the placeholder to see the exact obligation shape and parser behavior.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "./Sets_FiniteSubset.tla", line 101, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT S,
+                  NEW CONSTANT TT,
+                  IsFiniteSet(TT) ,
+                  S \subseteq TT 
+           PROVE  /\ IsFiniteSet(S)
+                  /\ Cardinality(S) =< Cardinality(TT)
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 103, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Sets_FiniteSubset"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Now I’ll check the NaturalsInduction library for the usable induction theorem names/syntax.
+
+[CMD] /bin/zsh -lc "sed -n '1,220p' ~/.tlapm15/lib/tlaps/NaturalsInduction.tla; sed -n '1,120p' ~/.tlapm15/lib/tlaps/TLAPS.tla"
+------------------------- MODULE NaturalsInduction --------------------------
+(***************************************************************************)
+(* This module contains useful theorems for inductive proofs and recursive *)
+(* definitions over the naturals.                                          *)
+(*                                                                         *)
+(* Some of the statements of the theorems are decomposed in terms of       *)
+(* definitions.  This is done for two reasons:                             *)
+(*                                                                         *)
+(*  - It makes it easier for the backends to instantiate the theorems      *)
+(*    when those definitions are not expanded.                             *)
+(*                                                                         *)
+(*  - It can be convenient when writing proofs to use those definitions    *)
+(*    rather than having to write out their expansions.                    *)
+(***************************************************************************)
+EXTENDS Integers
+
+(***************************************************************************)
+(* The following is the simple statement of inductions over the naturals.  *)
+(* For predicates P defined by a moderately complex operator, it is often  *)
+(* useful to hide the operator definition before using this theorem. That  *)
+(* is, you first define a suitable operator P (not necessarily by that     *)
+
+... (truncated) ...
+UE (*{ by (prover: "spass") }*)
+SpassT(X) == TRUE (*{ by (prover:"spass"; timeout:@) }*)
+
+(**************************************************************************)
+(* Backend pragma: The PTL propositional linear time temporal logic       *)
+(* prover.  It currently is the LS4 backend.                              *)
+(*                                                                        *)
+(* This method translates the negetation of the proof obligation to       *)
+(* Seperated Normal Form (TRP++ format) and checks for unsatisfiability   *)
+(**************************************************************************)
+
+LS4 == TRUE (*{ by (prover: "ls4") }*)
+LS4T(X) == TRUE (*{ by (prover: "ls4"; timeout:@) }*)
+PTL == TRUE (*{ by (prover: "ls4") }*)
+
+(**************************************************************************)
+(* Backend pragma: Zenon with different timeouts (default is 10 seconds)  *)
+(*                                                                        *)
+(**************************************************************************)
+
+Zenon == TRUE (*{ by (prover:"zenon") }*)
+ZenonT(X) == TRUE (*{ by (prover:"zenon"; timeout:@) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle with different timeouts and tactics     *)
+(*  (default is 30 seconds/auto)                                    *)
+(********************************************************************)
+
+Isa == TRUE (*{ by (prover:"isabelle") }*)
+[EXIT 0]
+
+[AGENT] The proof needs induction over cardinality. I’ll search local TLAPS examples for induction syntax to avoid parser churn.
+
+[CMD] /bin/zsh -lc "rg \"GeneralNatInduction|NatInduction|SUFFICES ASSUME\" -n ~/.tlapm15/lib/tlaps /tmp/codex_bench_Sets_FiniteSubset_6adx72t4 -g '*.tla' | head -80"
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:25:THEOREM NatInduction == 
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:32:(* A useful corollary of NatInduction                                      *)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:34:THEOREM DownwardNatInduction == 
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:44:THEOREM GeneralNatInduction ==
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:25:THEOREM NatInduction == 
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:33:(* A useful corollary of NatInduction                                      *)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:35:THEOREM DownwardNatInduction == 
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:44:<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:52:THEOREM GeneralNatInduction ==
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:59:<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:74:<1>. SUFFICES ASSUME \A m \in Nat : P(m) => \E k \in 0 .. m-1 : P(k)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:81:<1>. QED  BY ONLY <1>1, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:138:        <5>. SUFFICES ASSUME NEW n \in 0 .. k+1, NEW i \in 0 .. n-1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:151:    
+... (truncated) ...
+ROVE FALSE
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:508:    <3> SUFFICES ASSUME NEW t \in Ci[i+1]  PROVE t \in S  OBVIOUS
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:513:  <2> QED BY <2>1, <2>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:576:    <3> SUFFICES ASSUME NEW s \in S  PROVE H[s] \in T  BY <1>13
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:749:    <3>1. SUFFICES ASSUME NEW nn \in Nat, nn > mm+1,
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:762:  <2>. QED  BY Isa, NatInduction, <2>2, <2>3
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleEventuallyInt.tla:72:        BY <2>1, <2>2, NatInduction
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:233:<1> SUFFICES ASSUME Inv, Next, TypeOK',
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:288:  <2> SUFFICES ASSUME Inv, Next
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:408:          <6>. SUFFICES ASSUME NEW d \in 0 .. (b-1)
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:459:  <2> SUFFICES ASSUME Inv,  
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:503:  <2> SUFFICES ASSUME TypeOK', Consistency', Next, chosenBar' # chosenBar
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:63:\* We use the DownwardNatInduction rule which actually has the same goal as our algorithm:
+/home/ruize/.tlapm15/lib/tlaps/examples/CountDown.tla:100:        BY NAssumption, <2>1, <2>2, DownwardNatInduction, Isa
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '90,220p' ~/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla; sed -n '500,585p' ~/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla"
+    IsCS(CS) == CS = [T \in SUBSET S |-> fn(CS,T)]
+    
+    (***********************************************************************)
+    (* CS function for subsets of S.  Since this is defined as CHOOSE      *)
+    (* something that satisfies the CS property, we do not know that the   *)
+    (* CS function actually satisfies the CS property until we know that   *)
+    (* there exists something that satisfies the CS property.              *)
+    (***********************************************************************)
+    CS       == CHOOSE CS : IsCS(CS) 
+  
+  <1> HIDE DEF SZ, CS, fn
+  
+
+  (*************************************************************************)
+  (* The SZ function satisfies the CS property.                            *)
+  (*************************************************************************)
+  <1>1. IsCS(SZ)
+    (***********************************************************************)
+    (* Use induction on the size of T to show that the values match at     *)
+    (* each T \in SUBSET S.                                                *)
+    (***********************************************************************)
+    <2> DEFINE
+      Prop(i) == \A T \in SUBSET S : ExistsBijection(1..i,T) => SZ[T] = fn(SZ,T)
+
+    <2>1. \A i \in Nat : Prop(i)
+      <3>1. Prop(0)
+        (*******************************************************************)
+        (* Base step.                                                      *)
+        (***************************
+... (truncated) ...
+
+  ASSUME NEW S, IsFiniteSet(S),
+         NEW P(_), P({}),
+         ASSUME NEW T, NEW x, IsFiniteSet(T), P(T), x \notin T
+         PROVE  P(T \cup {x})
+  PROVE  P(S)
+<1>.  DEFINE Q(n) == \A T : IsFiniteSet(T) /\ Cardinality(T) = n => P(T)
+<1>1. SUFFICES \A n \in Nat : Q(n)  BY FS_CardinalityType
+<1>2. Q(0)  BY FS_EmptySet, Zenon
+<1>3. ASSUME NEW n \in Nat, Q(n),
+             NEW T, IsFiniteSet(T), Cardinality(T) = n+1
+      PROVE  P(T)
+  <2>1. PICK x \in T : TRUE  BY <1>3, FS_EmptySet
+  <2>2. /\ IsFiniteSet(T \ {x})
+        /\ Cardinality(T \ {x}) = n
+    BY <1>3, FS_RemoveElement, Isa
+  <2>3. P(T \ {x})  BY <2>2, Q(n)
+  <2>4. P((T \ {x}) \cup {x})  BY <2>2, <2>3, Zenon
+  <2>. QED  BY <2>4, Zenon
+<1>4. QED  BY <1>2, <1>3, NatInduction, Isa
+
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* The finite subsets form a well-founded ordering with respect to strict  *)
+(* set inclusion.                                                          *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+FiniteSubsetsOf(S) == { T \in SUBSET S : IsFiniteSet(T) }
+StrictSubsetOrdering(S) == { ss \in (SUBSET S) \X (SUBSET S) :
+[EXIT 0]
+
+[AGENT] I found a matching finite-set induction pattern in the TLAPS library. I’ll adapt it using the admitted cardinality lemmas.
+
+[AGENT] Proof skeleton is in place. I’ll run TLAPS and tighten any failing steps.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fi
+... (truncated) ...
+NSTANT S,
+                  NEW CONSTANT TT,
+                  IsFiniteSet(TT) ,
+                  S \subseteq TT ,
+                  P(n) ==
+                    \A U :
+                       IsFiniteSet(U) /\ Cardinality(U) = n
+                       => (\A R :
+                              R \subseteq U
+                              => (/\ IsFiniteSet(R)
+                                  /\ Cardinality(R) =< n)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT U,
+                  IsFiniteSet(U) ,
+                  Cardinality(U) = n + 1 ,
+                  NEW CONSTANT R,
+                  R \subseteq U ,
+                  NEW CONSTANT x \in U,
+                  <3>4 
+           PROVE  /\ IsFiniteSet(R)
+                  /\ Cardinality(R) =< n + 1
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 143, character 77:
+[ERROR]: 2/45 obligations failed.
+There were backend errors processing module `"Sets_FiniteSubset"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Two small proof obligations remain: induction instantiation and `n <= n+1`. I’ll make those explicit.
+
+[CMD] /bin/zsh -lc "nl -ba Sets_FiniteSubset.tla | sed -n '97,150p'"
+    97	THEOREM FiniteSubset ==
+    98	  ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+    99	  PROVE  /\ IsFiniteSet(S)
+   100	         /\ Cardinality(S) \leq Cardinality(TT)
+   101	<1>. DEFINE P(n) == \A U : IsFiniteSet(U) /\ Cardinality(U) = n
+   102	                         => \A R : R \subseteq U
+   103	                            => /\ IsFiniteSet(R)
+   104	                               /\ Cardinality(R) \leq n
+   105	<1>1. Cardinality(TT) \in Nat  BY CardinalityInNat
+   106	<1>2. P(0)
+   107	  <2>. SUFFICES ASSUME NEW U, IsFiniteSet(U), Cardinality(U) = 0,
+   108	                       NEW R, R \subseteq U
+   109	                 PROVE  /\ IsFiniteSet(R)
+   110	                        /\ Cardinality(R) \leq 0
+   111	    OBVIOUS
+   112	  <2>1. U = {}  BY CardinalityZero
+   113	  <2>2. R = {}  BY <2>1
+   114	  <2>3. /\ IsFiniteSet(R)
+   115	        /\ Cardinality(R) = 0
+   116	    BY <2>2, CardinalityZero
+   117	  <2>. QED BY <2>3
+   118	<1>3. ASSUME NEW n \in Nat, P(n)
+   119	      PROVE  P(n+1)
+   120	  <2>. SUFFICES ASSUME NEW U, IsFiniteSet(U), Cardinality(U) = n+1,
+   121	                       NEW R, R \subseteq U
+   122	                 PROVE  /\ IsFiniteSet(R)
+   123	                        /\ Cardinality(R) \leq n+1
+   124	    OBVIOUS
+   125	  <2>1. CASE R = U
+   126	    <3>1. IsFiniteSet(R)  BY <2>1
+   127	    <3>2. Cardinality(R) = n+1  BY <2>1
+   128	    <3>. QED BY <3>1, <3>2
+   129	  <2>2. CASE R # U
+   130	    <3>1. PICK x \in U : x \notin R  BY <2>2
+   131	    <3>2. R \subseteq U \ {x}  BY <3>1
+   132	    <3>3. /\ IsFiniteSet(U \ {x})
+   133	          /\ Cardinality(U \ {x}) = n
+   134	      BY <3>1, CardinalitySetMinus, Isa
+   135	    <3>4. /\ IsFiniteSet(R)
+   136	          /\ Cardinality(R) \leq n
+   137	      BY <1>3, <3>2, <3>3
+   138	    <3>. QED BY <3>4
+   139	  <2>. QED BY <2>1, <2>2
+   140	<1>4. \A n \in Nat : P(n)  BY <1>2, <1>3, NatInduction, Isa
+   141	<1>. QED BY <1>1, <1>4
+   142	
+   143	=============================================================================
+[EXIT 0]
+
+[AGENT] The remaining arithmetic is explicit now. I’ll rerun TLAPS to find any deeper issues.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "./Sets_FiniteSubset.tla", line 141, characters 28-29:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+            
+... (truncated) ...
+   NEW CONSTANT TT,
+                  IsFiniteSet(TT) ,
+                  S \subseteq TT ,
+                  P(n) ==
+                    \A U :
+                       IsFiniteSet(U) /\ Cardinality(U) = n
+                       => (\A R :
+                              R \subseteq U
+                              => (/\ IsFiniteSet(R)
+                                  /\ Cardinality(R) =< n)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT U,
+                  IsFiniteSet(U) ,
+                  Cardinality(U) = n + 1 ,
+                  NEW CONSTANT R,
+                  R \subseteq U ,
+                  NEW CONSTANT x \in U,
+                  <3>4 ,
+                  <3>5 
+           PROVE  /\ IsFiniteSet(R)
+                  /\ Cardinality(R) =< n + 1
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 144, character 77:
+[ERROR]: 2/47 obligations failed.
+There were backend errors processing module `"Sets_FiniteSubset"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS wants a more literal induction premise. I’ll split it into an explicit universal step and use SMT for arithmetic transitivity.
+
+[AGENT] I’ll rerun the prover after splitting the induction step.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+[EXIT 255]
+
+[AGENT] That TLAPS run exited oddly without diagnostics, so I’ll rerun with the generated result captured plainly.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla; echo EXIT:$?'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+[EXIT -1]
+
+[AGENT] The prover isn’t printing the failing obligation now, likely a backend crash. I’ll isolate by trying a tiny proof adjustment away from SMT in that step.
+
+[CMD] /bin/zsh -lc "tail -80 Sets_FiniteSubset.tla; ls -l *.result .tlacache/Sets_FiniteSubset.tlaps 2>/dev/null || true; find .tlacache/Sets_FiniteSubset.tlaps -maxdepth 1 -type f -name '*.err' -o -name '*.out' -o -name '*.log' -print 2>/dev/null"
+   ASSUME NEW S, IsFiniteSet(S), Cardinality(S) = 1
+   PROVE  \E m : S = {m}
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM IsBijectionInverse ==
+  ASSUME NEW f, NEW S, NEW T, 
+         IsBijection(f, S, T) 
+  PROVE  \E g : IsBijection(g, T, S)
+  PROOF OMITTED
+
+THEOREM IsBijectionTransitive ==
+  ASSUME NEW f1, NEW f2, NEW S, NEW T, NEW U, 
+           IsBijection(f1, S, U),
+           IsBijection(f2, U, T) 
+  PROVE  \E g : IsBijection(g, S, T)
+  PROOF OMITTED
+
+THEOREM IsBijectionCardinality ==
+  \A f, S, T : /\ IsFiniteSet(S)
+               /\ IsFiniteSet(T)
+               => (IsBijection(f, S, T) <=> Cardinality(S) = Cardinality(T))
+
+LEMMA CardinalitySetMinus ==
+      ASSUME NEW S, IsFiniteSet(S),
+             NEW x \in S
+      PROVE /\ IsFiniteSet(S \ {x})
+            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+  PROOF OMITTED
+
+THEOREM FiniteSubset ==
+  ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+<1>. DEFINE P(n) == \A U : IsFiniteSet(U) /\ Cardinality(U) = n
+                         => \A R : R \subseteq U
+                            => /\ IsFiniteSet(R)
+                               /\ Cardinality(R) \leq n
+<1>1. Cardinality(TT) \in Nat  BY CardinalityInNat
+<1>2. P(0)
+  <2>. SUFFICES ASSUME NEW U, IsFiniteSet(U), Cardinality(U) = 0,
+                       NEW R, R \subseteq U
+                 PROVE  /\ IsFiniteSet(R)
+                        /\ Cardinality(R) \leq 0
+    OBVIOUS
+  <2>1. U = {}  BY CardinalityZero
+  <2>2. R = {}  BY <2>1
+  <2>3. /\ IsFiniteSet(R)
+        /\ Cardinality(R) = 0
+    BY <2>2, CardinalityZero
+  <2>. QED BY <2>3
+<1>3. ASSUME NEW n \in Nat, P(n)
+      PROVE  P(n+1)
+  <2>. SUFFICES ASSUME NEW U, IsFiniteSet(U), Cardinality(U) = n+1,
+                       NEW R, R \subseteq U
+                 PROVE  /\ IsFiniteSet(R)
+                        /\ Cardinality(R) \leq n+1
+    OBVIOUS
+  <2>1. CASE R = U
+    <3>1. IsFiniteSet(R)  BY <2>1
+    <3>2. Cardinality(R) = n+1  BY <2>1
+    <3>. QED BY <3>1, <3>2
+  <2>2. CASE R # U
+    <3>1. PICK x \in U : x \notin R  BY <2>2
+    <3>2. R \subseteq U \ {x}  BY <3>1
+    <3>3. /\ IsFiniteSet(U \ {x})
+          /\ Cardinality(U \ {x}) = n
+      BY <3>1, CardinalitySetMinus, Isa
+    <3>4. /\ IsFiniteSet(R)
+          /\ Cardinality(R) \leq n
+      BY <1>3, <3>2, <3>3
+    <3>5. n \leq n+1  BY SMT
+    <3>. QED BY <3>4, <3>5, SMT
+  <2>. QED BY <2>1, <2>2
+<1>4. \A n \in Nat : P(n) => P(n+1)  BY <1>3
+<1>5. \A n \in Nat : P(n)  BY <1>2, <1>4, NatInduction, Isa
+<1>. QED BY <1>1, <1>5
+
+=============================================================================
+zsh:1: no matches found: *.result
+[EXIT 0]
+
+[AGENT] I’ll avoid the SMT backend here and use Isabelle-style steps instead, which this library already relies on.
+
+[AGENT] I swapped out the crash-prone SMT call. Now I’ll run TLAPS again.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla; echo EXIT:$?'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "./Sets_FiniteSubset.tla", line 142, characters 28-29:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT S,
+                  NEW CONSTANT TT,
+                  IsFiniteSet(TT) ,
+                  S \subseteq TT ,
+                  P(n) ==
+            
+... (truncated) ...
+       IsFiniteSet(TT) ,
+                  S \subseteq TT ,
+                  P(n) ==
+                    \A U :
+                       IsFiniteSet(U) /\ Cardinality(U) = n
+                       => (\A R :
+                              R \subseteq U
+                              => (/\ IsFiniteSet(R)
+                                  /\ Cardinality(R) =< n)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT U,
+                  IsFiniteSet(U) ,
+                  Cardinality(U) = n + 1 ,
+                  NEW CONSTANT R,
+                  R \subseteq U ,
+                  NEW CONSTANT x \in U,
+                  <3>4 ,
+                  <3>5 ,
+                  Isa 
+           PROVE  /\ IsFiniteSet(R)
+                  /\ Cardinality(R) =< n + 1
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 145, character 77:
+[ERROR]: 2/51 obligations failed.
+There were backend errors processing module `"Sets_FiniteSubset"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+EXIT:3
+[EXIT 0]
+
+[AGENT] TLAPS now reports cleanly: only induction instantiation and arithmetic transitivity remain. I’ll use the standard arithmetic backend explicitly and simplify induction invocation.
+
+[CMD] /bin/zsh -lc 'rg "SimpleArithmetic|THEOREM.*<=" -n ~/.tlapm15/lib/tlaps | head -60'
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:212:THEOREM GEQorLT == \A n, m \in Nat : n >= m <=> ~(m > n)
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakeryWithoutSMT.tla:215:THEOREM NatGEQZero == \A n \in Nat: (n > 0) <=> (n # 0)
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/PConProof.tla:430:THEOREM NextDef == (Next <=> TLANext) 
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:26:SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:129:(*    THEOREM  \A S, T : (S = T) <=> (\A x : (x \in S) <=> (x \in T))      *)
+/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla:140:THEOREM SetExtensionality == \A S,T : (\A x : x \in S <=> x \in T) => S = T
+[EXIT 0]
+
+[AGENT] I made the arithmetic conclusion direct. I’ll rerun TLAPS.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla; echo EXIT:$?'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "./Sets_FiniteSubset.tla", line 142, characters 28-29:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT S,
+                  NEW CONSTANT TT,
+   
+... (truncated) ...
+T S,
+                  NEW CONSTANT TT,
+                  IsFiniteSet(TT) ,
+                  S \subseteq TT ,
+                  P(n) ==
+                    \A U :
+                       IsFiniteSet(U) /\ Cardinality(U) = n
+                       => (\A R :
+                              R \subseteq U
+                              => (/\ IsFiniteSet(R)
+                                  /\ Cardinality(R) =< n)),
+                  NEW CONSTANT n \in Nat,
+                  NEW CONSTANT U,
+                  IsFiniteSet(U) ,
+                  Cardinality(U) = n + 1 ,
+                  NEW CONSTANT R,
+                  R \subseteq U ,
+                  NEW CONSTANT x \in U,
+                  <3>4 ,
+                  SimpleArithmetic 
+           PROVE  Cardinality(R) =< n + 1
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 145, character 77:
+[ERROR]: 2/50 obligations failed.
+There were backend errors processing module `"Sets_FiniteSubset"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+EXIT:3
+[EXIT 0]
+
+[AGENT] The arithmetic backend may need type information for `Cardinality(R)`. I’ll derive that before the inequality.
+
+[CMD] /bin/zsh -lc "sed -n '1,70p' ~/.tlapm15/lib/tlaps/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+***************************************)
+(* Backend pragma: CVC4 SMT solver                                        *)
+(*                                                                        *)
+(* These methods translate the proof obligation to SMTLIB2 and call CVC4. *)
+(**************************************************************************)
+
+(* The CVC3* methods are here for backward compatibility. They call CVC4. *)
+CVC3 == TRUE (*{ by (prover: "cvc33") }*)
+CVC3T(X) == TRUE (*{ by (prover:"cvc33"; timeout:@) }*)
+
+CVC4 == TRUE (*{ by (prover: "cvc33") }*)
+CVC4T(X) == TRUE (*{ by (prover:"cvc33"; timeout:@) }*)
+
+
+(**************************************************************************)
+(* Backend pragma: Yices SMT solver                                       *)
+(*                                                                        *)
+(* This method translates the proof obligation to Yices native language.  *)
+(**************************************************************************)
+
+Yices == TRUE (*{ by (prover: "yices3") }*)
+YicesT(X) == TRUE (*{ by (prover:"yices3"; timeout:@) }*)
+
+(**************************************************************************)
+(* Backend pragma: veriT SMT solver                                       *)
+(*                                                                        *)
+(* This method translates the proof obligation to SMTLIB2 and calls veriT.*)
+(**************************************************************************)
+[EXIT 0]
+
+[AGENT] I added the missing natural-number type fact for cardinality. I’ll rerun TLAPS again.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla; echo EXIT:$?'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "./Sets_FiniteSubset.tla", line 143, characters 28-29:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT S,
+                  NEW CONSTANT TT,
+                  IsFiniteSet(TT) ,
+                  S \subseteq TT ,
+                  P(n) ==
+                    \A U :
+                       IsFiniteSet(U) /\ Cardinality(U) = n
+                       => (\A R :
+                              R \subseteq U
+                              => (/\ IsFiniteSet(R)
+                                  /\ Cardinality(R) =< n)),
+                  <1>2 ,
+                  <1>4 ,
+                  NatInduction 
+           PROVE  \A n \in Nat : P(n)
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 146, character 77:
+[ERROR]: 1/54 obligations failed.
+There were backend errors processing module `"Sets_FiniteSubset"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+EXIT:3
+[EXIT 0]
+
+[AGENT] Only the induction invocation remains. I’ll mirror the library pattern by hiding the predicate definition before applying induction.
+
+[AGENT] Induction now matches TLAPS examples more closely. I’ll rerun verification.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla; echo EXIT:$?'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "./Sets_FiniteSubset.tla", line 1, character 1 to line 147, character 77:
+[INFO]: All 55 obligations proved.
+EXIT:0
+[EXIT 0]
+
+[AGENT] TLAPS passes. I’ll run the required checker for illegal changes.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Sets_FiniteSubset.tla'
+Checking: Sets_FiniteSubset.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Sets_FiniteSubset.tlaps/Sets_FiniteSubset.thy" *)
+(* fingerprints written in ".tlacache/Sets_FiniteSubset.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+File "/tmp/tlaps_check_n3pooeyx/Sets_FiniteSubset.tla", line 1, character 1 to line 147, character 77:
+[INFO]: All 55 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Sets_FiniteSubset_6adx72t4/Sets_FiniteSubset.result
+[EXIT 0]
+
+[AGENT] Checker passes too. I’ll quickly inspect the diff so I can summarize exactly what changed.
+
+[CMD] /bin/zsh -lc "git diff -- Sets_FiniteSubset.tla | sed -n '1,220p'"
+diff --git a/Sets_FiniteSubset.tla b/Sets_FiniteSubset.tla
+index 2b6ff75..d2c6d60 100644
+--- a/Sets_FiniteSubset.tla
++++ b/Sets_FiniteSubset.tla
+@@ -98,6 +98,50 @@ THEOREM FiniteSubset ==
+   ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+   PROVE  /\ IsFiniteSet(S)
+          /\ Cardinality(S) \leq Cardinality(TT)
+-PROOF OBVIOUS
+-
+-=============================================================================
+\ No newline at end of file
++<1>. DEFINE P(n) == \A U : IsFiniteSet(U) /\ Cardinality(U) = n
++                         => \A R : R \subseteq U
++                            => /\ IsFiniteSet(R)
++                               /\ Cardinality(R) \leq n
++<1>1. Cardinality(TT) \in Nat  BY CardinalityInNat
++<1>2. P(0)
++  <2>. SUFFICES ASSUME NEW U, IsFiniteSet(U), Cardinality(U) = 0,
++                       NEW R, R \subseteq U
++                 PROVE  /\ IsFiniteSet(R)
++                        /\ Cardinality(R) \leq 0
++    OBVIOUS
++  <2>1. U = {}  BY CardinalityZero
++  <2>2. R = {}  BY <2>1
++  <2>3. /\ IsFiniteSet(R)
++        /\ Cardinality(R) = 0
++    BY <2>2, CardinalityZero
++  <2>. QED BY <2>3
++<1>3. ASSUME NEW n \in Nat, P(n)
++      PROVE  P(n+1)
++  <2>. SUFFICES ASSUME NEW U, IsFiniteSet(U), Cardinality(U) = n+1,
++                       NEW R, R \subseteq U
++                 PROVE  /\ IsFiniteSet(R)
++                        /\ Cardinality(R) \leq n+1
++    OBVIOUS
++  <2>1. CASE R = U
++    <3>1. IsFiniteSet(R)  BY <2>1
++    <3>2. Cardinality(R) = n+1  BY <2>1
++    <3>. QED BY <3>1, <3>2
++  <2>2. CASE R # U
++    <3>1. PICK x \in U : x \notin R  BY <2>2
++    <3>2. R \subseteq U \ {x}  BY <3>1
++    <3>3. /\ IsFiniteSet(U \ {x})
++          /\ Cardinality(U \ {x}) = n
++      BY <3>1, CardinalitySetMinus, Isa
++    <3>4. /\ IsFiniteSet(R)
++          /\ Cardinality(R) \leq n
++      BY <1>3, <3>2, <3>3
++    <3>5. Cardinality(R) \in Nat  BY <3>4, CardinalityInNat
++    <3>6. Cardinality(R) \leq n+1  BY <3>4, <3>5, SimpleArithmetic
++    <3>. QED BY <3>4, <3>6
++  <2>. QED BY <2>1, <2>2
++<1>4. \A n \in Nat : P(n) => P(n+1)  BY <1>3
++<1>5. HIDE DEF P
++<1>6. \A n \in Nat : P(n)  BY <1>2, <1>4, NatInduction, Isa
++<1>. QED BY <1>1, <1>6 DEF P
++
++=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `FiniteSubset` in `Sets_FiniteSubset.tla:101`.
+
+**Verification**
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Sets_FiniteSubset.tla` passes with `All 55 obligations proved`.
+- `python3 check_proof.py Sets_FiniteSubset.tla` passes with `No cheating detected`.
+
+**Approach**
+- Proved the theorem by induction on `Cardinality(TT)`.
+- Base case uses `CardinalityZero`.
+- Inductive step removes an element from the finite superset via `CardinalitySetMinus`.
+- Final arithmetic bound uses `SimpleArithmetic`.

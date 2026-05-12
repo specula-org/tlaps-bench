@@ -1,0 +1,289 @@
+Benchmark: SimpleMutex/SimpleMutex_Mutex.tla
+Time: 38s
+Tokens: 163,371 input / 1,234 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iterate with `tlapm` until the final proof checks.
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' SimpleMutex_Mutex.tla && printf '\\n--- files ---\\n' && ls -la"
+----------------------------- MODULE SimpleMutex_Mutex -----------------------------
+EXTENDS Integers, TLAPS
+
+(***********
+
+(***************************************************************************)
+(* The following algorithm is an important mutual exclusion protocol.      *)
+(* This protocol is at the heart of many mutual exclusion algorithms.  It  *)
+(* is a two-process protocol that guarantees that both processes cannot    *)
+(* execute statement cs.  (However, they can both deadlock.)               *)
+(***************************************************************************)
+--algorithm Mutex {
+  variable trying = [i \in {0,1} |-> FALSE]
+
+  process (p \in {0,1}) {
+a:   trying[self] := TRUE ;
+b:   await ~trying[1 - self];
+cs:  skip  \* the critical section
+   }
+}
+
+***********)
+
+\* BEGIN TRANSLATION
+VARIABLES trying, pc
+
+vars == << trying, pc >>
+
+ProcSet == ({0,1})
+
+Init == (* Global variables *)
+        /\ trying = [i \in {0,1} |-> FALSE]
+        /\ pc = [self \in ProcSet |-> CASE self \in {0,1} -> "a"]
+
+a(self) == /\ pc[self] = "a"
+           /\ trying' = [trying EXCEPT ![self] = TRUE]
+           /\ pc' = [pc EXCEPT ![self] = "b"]
+
+b(self) == /\ pc[self] = "b"
+           /\ ~trying[1 - self]
+           /\ pc' = [pc EXCEPT ![self] = "cs"]
+           /\ UNCHANGED trying
+
+cs(self) == /\ pc[self] = "cs"
+            /\ TRUE
+            /\ pc' = [pc EXCEPT ![self] = "Done"]
+            /\ UNCHANGED trying
+
+p(self) == a(self) \/ b(self) \/ cs(self)
+
+Next == (\E self \in {0
+... (truncated) ...
+
+   (************************************************************************)
+   (* TypeOK /\ Inv is an inductive invariant Spec iff it is an invariant  *)
+   (* of IndInvSpec.  TLC can be used to check what we are about to prove. *)
+   (************************************************************************)
+
+
+(***************************************************************************)
+(* The following theorem asserts that TypeOK /\ Inv is true in the initial *)
+(* state.                                                                  *)
+(***************************************************************************)
+THEOREM Initialization == Init => TypeOK /\ Inv
+  PROOF OMITTED
+
+MutualExclusion == ~(pc[0] = "cs" /\ pc[1] = "cs")
+
+(***************************************************************************)
+(* The following theorem asserts that our invariant implies mutual         *)
+(* exclusion.                                                              *)
+(***************************************************************************)
+THEOREM Mutex == Inv => MutualExclusion
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+total 204
+drwx------    3 ruize ruize   4096 May 12 22:34 .
+drwxrwxrwt 1361 root  root  180224 May 12 22:34 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:34 .git
+-rw-rw-r--    1 ruize ruize   3210 May 12 21:05 SimpleMutex_Mutex.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] The goal is just mutual exclusion from `Inv`; I’m checking TLAPS proof idioms for quantified invariant instantiation.
+
+[CMD] /bin/zsh -lc "rg \"SUFFICES ASSUME|PICK|TAKE|MutualExclusion|# \\\"cs\\\"|DEF .*Inv\" -n ~/.tlapm15/lib/tlaps . | head -80"
+./SimpleMutex_Mutex.tla:67:          /\ pc[i] = "cs" => pc[1-i] # "cs"
+./SimpleMutex_Mutex.tla:84:MutualExclusion == ~(pc[0] = "cs" /\ pc[1] = "cs")
+./SimpleMutex_Mutex.tla:90:THEOREM Mutex == Inv => MutualExclusion
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:61:<1>1. SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:85:<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:122:<1> SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:186:<1>1. SUFFICES ASSUME T # {}
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:189:<1>2. PICK x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:222:<1>1. SUFFICES ASSUME NEW g, NEW h,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:262:  <2>1. SUFFICES ASSUME NEW x \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:321:<1> TAKE R, S
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:368:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:374:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in U
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:380:  <2>1. SUFFICES ASSUME NEW x \in S, NEW y \in S, NEW z \in S,
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedIndu
+... (truncated) ...
+laps/FiniteSetTheorems_proofs.tla:302:    <3>2. PICK l \in 1..n : g[l] = s  BY DEF Bijection, Surjection
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:398:<1>2. PICK n \in Nat : ExistsBijection(1..n, T) /\ n <= Cardinality(S)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:402:  <2>1. PICK x \in S \ T : TRUE  BY <1>3, Zenon
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:407:  <2>4. PICK m \in Nat : ExistsBijection(1..m, T) /\ m <= Cardinality(S)-1
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:481:    <3>. SUFFICES ASSUME NEW t \in T, \A s \in S : f[s] # t
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:508:<1>. SUFFICES ASSUME f \in Injection(S,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:564:  <2>1. PICK x \in T : TRUE  BY <1>3, FS_EmptySet
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:172:(* MutualExclusion asserts that two distinct processes are in their        *)
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:175:MutualExclusion == \A i,j \in P : (i # j) => ~ /\ pc[i] = "cs"
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:246:  <2> SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:286:<1>3. Inv => MutualExclusion
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:287:  BY DEFS Inv, After, MutualExclusion 
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:37:<1>. PICK m,n \in Nodes : e = {m,n}
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '270,292p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla && sed -n '1,140p' check_proof.py"
+    <3>p. P \subseteq Nat
+      BY N \in Nat DEF P
+    <3>1. CASE num[nxt[self]] = 0
+      BY <2>6, <3>1 DEF p6
+    <3>2. CASE LL(self, nxt[self])
+      BY <2>6, <3>2, <3>p DEF p6
+    <3>3. QED
+      BY <2>6, <3>1, <3>2 DEF p6
+  <2>7. ASSUME NEW self \in P, cs(self) PROVE Inv'
+    BY <2>7 DEF cs
+  <2>8. ASSUME NEW self \in P, p7(self) PROVE Inv'
+    BY <2>8 DEF p7
+  <2>9. CASE UNCHANGED vars
+    BY <2>9 DEF vars
+  <2>10. QED
+    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7, <2>8, <2>9 DEF Next, p
+<1>3. Inv => MutualExclusion
+  BY DEFS Inv, After, MutualExclusion 
+<1>4. QED
+  BY <1>1, <1>2, <1>3, PTL DEF Spec
+=============================================================================
+
+#!/usr/bin/env python3
+"""
+Check a single TLAPS benchmark proof for correctness and cheating.
+
+Designed for AI agents to get quick feedback during proof writing.
+
+Usage:
+    python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+
+Output:
+    - Raw tlapm output (preserved verbatim)
+    - Cheating check (compares against main branch)
+    - Summary verdict: PASS / FAIL / CHEATING
+
+Exit codes:
+    0 = PASS
+    1 = FAIL (proof doesn't verify)
+    2 = CHEATING (tampering detected)
+    3 = ERROR (could not run check)
+"""
+
+import os
+import sys
+import re
+import shutil
+import subprocess
+import tempfile
+import argparse
+import glob
+
+
+def find_tlapm():
+    """Find tlapm binary."""
+    for candidate in ['/tmp/tlapm15/bin/tlapm', '/tmp/tlap
+... (truncated) ...
+ preamble_end = po_line  # exclusive
+
+    for i in range(preamble_end):
+        if i >= len(current_lines):
+            issues.append((i + 1, f"Line deleted from preamble (was: {main_lines[i].rstrip()})"))
+            continue
+        if main_lines[i] != current_lines[i]:
+            issues.append((i + 1, f"Preamble modified: was [{main_lines[i].rstrip()}], now [{current_lines[i].rstrip()}]"))
+
+    if len(current_lines) < preamble_end:
+        issues.append((len(current_lines), f"File truncated: preamble had {preamble_end} lines, file has {len(current_lines)}"))
+        return issues
+
+    # The proof section: from PROOF OBVIOUS line onwards (until ====)
+    # Check for cheating patterns in the proof section
+    proof_section = '\n'.join(current_lines[po_line:])
+
+    # Remove comments for analysis
+    clean_proof = re.sub(r'\(\*.*?\*\)', '', proof_section, flags=re.DOTALL)
+
+    # Check for PROOF OMITTED in the proof
+    for j, line in enumerate(current_lines[po_line:]):
+        line_num = po_line + j + 1
+        stripped = line.strip()
+
+        # Still has PROOF OBVIOUS = hasn't attempted the proof
+        if stripped == 'PROOF OBVIOUS':
+            continue  # Not cheating, just unchanged
+
+        if re.match(r'^PROOF\s+OMITTED\b', stripped):
+            issues.append((line_num, "PROOF OMITTED used — skips proof obligation"))
+
+        if stripped == 'OMITTED':
+            # Check it's not inside a comment
+            prefix = '\n'.join(current_lines[po_line:po_line + j + 1])
+[EXIT 0]
+
+[AGENT] This may be a one-line TLAPS proof; I’ll try the direct definition expansion first.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Mutex.tla
+@@
+ THEOREM Mutex == Inv => MutualExclusion
+-PROOF OBVIOUS
++PROOF
++  BY DEF Inv, MutualExclusion
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SimpleMutex_Mutex.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/SimpleMutex_Mutex.tlaps/SimpleMutex_Mutex.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Mutex.tlaps/fingerprints" *)
+File "./SimpleMutex_Mutex.tla", line 1, character 1 to line 94, character 77:
+[INFO]: All 1 obligation proved.
+[EXIT 0]
+
+[AGENT] `tlapm` accepts the proof. I’ll run the required checker now to confirm no illegal edits.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py SimpleMutex_Mutex.tla'
+Checking: SimpleMutex_Mutex.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_Mutex.tlaps/SimpleMutex_Mutex.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Mutex.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_hnvbs36x/SimpleMutex_Mutex.tla", line 1, character 1 to line 94, character 77:
+[INFO]: All 1 obligation proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SimpleMutex_Mutex_jkb87vmb/SimpleMutex_Mutex.result
+[EXIT 0]
+
+[AGENT] Done.
+
+- Replaced the final `PROOF OBVIOUS` with a valid TLAPS proof in `SimpleMutex_Mutex.tla:91`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SimpleMutex_Mutex.tla`.
+- Ran `python3 check_proof.py SimpleMutex_Mutex.tla`.
+- Checker verdict: `PASS — all obligations proved`, with no cheating detected.

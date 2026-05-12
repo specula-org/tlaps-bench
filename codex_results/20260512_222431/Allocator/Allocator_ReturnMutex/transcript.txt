@@ -1,0 +1,1270 @@
+Benchmark: Allocator/Allocator_ReturnMutex.tla
+Time: 226s
+Tokens: 1,011,528 input / 11,151 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch only the final proof and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "ls && sed -n '1,260p' Allocator_ReturnMutex.tla"
+Allocator_ReturnMutex.tla
+check_proof.py
+-------------------------- MODULE Allocator_ReturnMutex -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+--------------------
+... (truncated) ...
+*********************************************************)
+
+(*
+
+SimpleAllocator2 ==
+  /\ Init /\ [][Next]_vars
+  /\ \A c \in Client: WF_vars(unsat[c] = {} /\ Return(c, alloc[c]))
+  /\ \A c \in Client: SF_vars(\E S \in SUBSET Resource: Allocate(c,S))
+
+*)
+
+-------------------------------------------------------------------------
+
+THEOREM InitTypeInvariant == Init => TypeInvariant
+  PROOF OMITTED
+
+THEOREM RequestTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM AllocateTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM ReturnTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Return(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+  PROOF OMITTED
+
+-------------------------------------------------------------------------
+
+THEOREM InitMutex == Init => Mutex
+  PROOF OMITTED
+
+THEOREM RequestMutexBis ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  Mutex /\ Request(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM ReturnMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+PROOF OBVIOUS
+
+=========================================================================
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; now I’ll run TLAPS once to see the exact backend failure shape.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla'
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_, STATE_Mutex_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_ReturnMutex.tlaps/Allocator_ReturnMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+File "./Allocator_ReturnMutex.tla", line 166, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource
+           PROVE  TypeInvariant /\ Mutex /\ Return(clt, S) => Mutex'
+File "./Allocator_ReturnMutex.tla", line 1, character 1 to line 168, character 73:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Allocator_ReturnMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The theorem is a removal-only update, so I’ll prove each post-allocation set is a subset of its prior set, then reuse `Mutex`.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+ THEOREM ReturnMutex ==
+   ASSUME NEW clt \\in Client,
+          NEW S \\in SUBSET Resource
+   PROVE  TypeInvariant /\\ Mutex /\\ Return(clt,S) => Mutex'
+-PROOF OBVIOUS
++PROOF
++  <1>1. ASSUME TypeInvariant /\\ Mutex /\\ Return(clt,S)
++        PROVE  Mutex'
++    PROOF
++      <2>1. alloc' = [alloc EXCEPT "'![clt] = alloc[clt] '"\\ S]
++        BY <1>1 DEF Return
++      <2>2. \\A c \\in Client : alloc'[c] \\subseteq alloc[c]
++        PROOF
++          <3>1. TAKE c \\in Client
++          <3>2. CASE c = clt
++            BY <2>1, <3>2
++          <3>3. CASE c # clt
++            BY <2>1, <3>3
++          <3>4. QED BY <3>2, <3>3
++        QED
++      <2>3. TAKE c1 \\in Client
++      <2>4. TAKE c2 \\in Client
++      <2>5. TAKE r \\in Resource
++      <2>6. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
++             PROVE  c1 = c2
++        PROOF
++          <3>1. r \\in alloc'[c1] /\\ r \\in alloc'[c2]
++            BY <2>6
++          <3>2. r \\in alloc[c1] /\\ r \\in alloc[c2]
++            BY <2>2, <2>3, <2>4, <3>1
++          <3>3. r \\in alloc[c1] \\cap alloc[c2]
++            BY <3>2
++          <3>4. c1 = c2
++            BY <1>1, <2>3, <2>4, <2>5, <3>3 DEF Mutex
++        QED
++    QED
++  <1>2. QED BY <1>1
+ 
+ =========================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+File "./Allocator_ReturnMutex.tla", line 179, character 23:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 2
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS parsed the case proof awkwardly; I’ll simplify that subproof into direct assertions without CASE branches.
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_ReturnMutex.tla | sed -n '155,205p'"
+   155	
+   156	THEOREM RequestMutexBis ==
+   157	  ASSUME NEW clt \in Client,
+   158	         NEW S \in SUBSET Resource
+   159	  PROVE  Mutex /\ Request(clt,S) => Mutex'
+   160	  PROOF OMITTED
+   161	
+   162	THEOREM ReturnMutex ==
+   163	  ASSUME NEW clt \in Client,
+   164	         NEW S \in SUBSET Resource
+   165	  PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+   166	PROOF
+   167	  <1>1. ASSUME TypeInvariant /\ Mutex /\ Return(clt,S)
+   168	        PROVE  Mutex'
+   169	    PROOF
+   170	      <2>1. alloc' = [alloc EXCEPT ![clt] = alloc[clt] \ S]
+   171	        BY <1>1 DEF Return
+   172	      <2>2. \A c \in Client : alloc'[c] \subseteq alloc[c]
+   173	        PROOF
+   174	          <3>1. TAKE c \in Client
+   175	          <3>2. CASE c = clt
+   176	            BY <2>1, <3>2
+   177	          <3>3. CASE c # clt
+   178	            BY <2>1, <3>3
+   179	          <3>4. QED BY <3>2, <3>3
+   180	        QED
+   181	      <2>3. TAKE c1 \in Client
+   182	      <2>4. TAKE c2 \in Client
+   183	      <2>5. TAKE r \in Resource
+   184	      <2>6. ASSUME r \in alloc'[c1] \cap alloc'[c2]
+   185	             PROVE  c1 = c2
+   186	        PROOF
+   187	          <3>1. r \in alloc'[c1] /\ r \in alloc'[c2]
+   188	            BY <2>6
+   189	          <3>2. r \in alloc[c1] /\ r \in alloc[c2]
+   190	            BY <2>2, <2>3, <2>4, <3>1
+   191	          <3>3. r \in alloc[c1] \cap alloc[c2]
+   192	            BY <3>2
+   193	          <3>4. c1 = c2
+   194	            BY <1>1, <2>3, <2>4, <2>5, <3>3 DEF Mutex
+   195	        QED
+   196	    QED
+   197	  <1>2. QED BY <1>1
+   198	
+   199	=========================================================================
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+       <2>2. \\A c \\in Client : alloc'[c] \\subseteq alloc[c]
+         PROOF
+           <3>1. TAKE c \\in Client
+-          <3>2. CASE c = clt
+-            BY <2>1, <3>2
+-          <3>3. CASE c # clt
+-            BY <2>1, <3>3
+-          <3>4. QED BY <3>2, <3>3
++          <3>2. alloc'[c] = IF c = clt THEN alloc[clt] \\ S ELSE alloc[c]
++            BY <2>1, <3>1
++          <3>3. QED BY <3>2
+         QED
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+File "./Allocator_ReturnMutex.tla", line 177, character 23:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 2
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The parser issue is QED-step syntax; I’ll switch to TLAPS’s unnumbered `QED` form throughout the new proof.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+-          <3>3. QED BY <3>2
++          <3> QED BY <3>2
+@@
+-    QED
+-  <1>2. QED BY <1>1
++      <2> QED BY <2>3, <2>4, <2>5, <2>6 DEF Mutex
++    QED
++  <1> QED BY <1>1
+*** End Patch
+PATCH
+nl -ba Allocator_ReturnMutex.tla | sed -n '166,205p'
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+File "./Allocator_ReturnMutex.tla", line 177, character 21:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 2
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll check nearby TLAPS examples for the exact QED and `TAKE` proof syntax this version expects.
+
+[CMD] /bin/zsh -lc "rg -n \"TAKE .*\\\\in|QED BY\" ~/.tlapm15/lib/tlaps /tmp/codex_bench_Allocator_ReturnMutex_bijaksl5 -g '*.tla' | head -80"
+rg: regex parse error:
+    (?:TAKE .*\in|QED BY)
+              ^^
+error: unrecognized escape sequence
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg -n 'TAKE .*\\\\in|QED BY' ~/.tlapm15/lib/tlaps /tmp/codex_bench_Allocator_ReturnMutex_bijaksl5 -g '*.tla' | head -100"
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:174:          <3>1. TAKE c \in Client
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:177:          <3> QED BY <3>2
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:179:      <2>3. TAKE c1 \in Client
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:180:      <2>4. TAKE c2 \in Client
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:181:      <2>5. TAKE r \in Resource
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:194:      <2> QED BY <2>3, <2>4, <2>5, <2>6 DEF Mutex
+/tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.tla:196:  <1> QED BY <1>1
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:60:<1>4. QED BY <1>3
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:150:      <4>. QED BY <4>1, <4>2
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:151:    <3>3. QED BY <3>1, <3>2
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:152:  <2>3. QED BY <2>1, <2>2, Fun_IsSurj
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:153:<1>. QED BY <1>4, <1>5
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:475:  <2> QED BY DEF NatInductiveDefHypothesis, f
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:511:    <3> QED BY <3>1, <3>2, <1>1
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:513:  <2> QED BY <
+... (truncated) ...
+QED BY <1>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor5.tla:13:<1> QED BY <1>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor8.tla:21:              <3>4. QED BY <3>2, <3>3 DEF Surj
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor8.tla:22:        <2>3. QED BY <2>2
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor8.tla:23:  <1>2. QED BY <1>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor9.tla:18:  <2>4. QED BY <2>2, <2>3 DEF Surj
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor9.tla:19:<1>4. QED BY <1>3
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor1.tla:12:  <1>2. TAKE f \in [S -> SUBSET S]
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor1.tla:15:  <1>5. TAKE x \in S
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor1.tla:16:  <1>6. QED BY x \in T \/ x \notin T
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor4.tla:11:<1>. TAKE f \in [S -> SUBSET S]
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor4.tla:14:  <2>. TAKE x \in S
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor4.tla:17:    <3>2. QED BY <3>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor4.tla:20:    <3>2. QED BY <3>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor4.tla:21:  <2>3. QED BY <2>1, <2>2
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor4.tla:23:<1>. QED BY <1>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor2.tla:23:  <2>2. QED BY <2>1
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor2.tla:26:  <2>2. QED BY <2>1
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,40p' ~/.tlapm15/lib/tlaps/examples/cantor/Cantor1.tla && sed -n '195,215p' ~/.tlapm15/lib/tlaps/examples/EWD840.tla"
+(* Contributed by Damien Doligez *)
+
+-------------- MODULE Cantor1 -----------------
+THEOREM cantor ==
+  \A S :
+    \A f \in [S -> SUBSET S] :
+      \E A \in SUBSET S :
+        \A x \in S :
+          f [x] # A
+PROOF
+  <1>1. TAKE S
+  <1>2. TAKE f \in [S -> SUBSET S]
+  <1>3. DEFINE T == { z \in S : z \notin f[z] }
+  <1>4. WITNESS T \in SUBSET S
+  <1>5. TAKE x \in S
+  <1>6. QED BY x \in T \/ x \notin T
+===============================================
+      PROVE  \A i \in Nodes : ~ active[i]
+
+(* first of all, let's establish which case of the invariant we're in: *)
+    <2>1. ~ Inv!P2 (* = ~ tcolor = "black" *) 
+        BY <1>1
+    <2>2. ~ Inv!P1 (* = ~ \E j \in 0 .. tpos : color[j] = "black" *)
+        BY <1>1 
+    <2>3. Inv!P0  (* = \A i \in Nodes : tpos < i => ~ active[i] *)
+        BY Inv, <2>1, <2>2 DEF Inv
+    
+    <2>.  TAKE i \in Nodes
+    
+    <2>4. CASE i = 0  BY <2>4, <1>1
+    
+    <2>5. CASE i \in 1 .. N-1
+        <3>1. tpos < i  BY tpos=0, <2>5
+        <3>. QED  BY <3>1, <2>3
+    
+    <2>. QED  BY <2>4, <2>5 DEF Nodes
+    
+<1>. QED
+[EXIT 0]
+
+[AGENT] I’ll reduce the proof structure further to avoid nested universal-subproof parsing quirks.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+ PROOF
+   <1>1. ASSUME TypeInvariant /\\ Mutex /\\ Return(clt,S)
+         PROVE  Mutex'
+     PROOF
+       <2>1. alloc' = [alloc EXCEPT "'![clt] = alloc[clt] '"\\ S]
+         BY <1>1 DEF Return
+-      <2>2. \\A c \\in Client : alloc'[c] \\subseteq alloc[c]
+-        PROOF
+-          <3>1. TAKE c \\in Client
+-          <3>2. alloc'[c] = IF c = clt THEN alloc[clt] \\ S ELSE alloc[c]
+-            BY <2>1, <3>1
+-          <3> QED BY <3>2
+-        QED
+-      <2>3. TAKE c1 \\in Client
+-      <2>4. TAKE c2 \\in Client
+-      <2>5. TAKE r \\in Resource
+-      <2>6. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
++      <2>2. TAKE c1 \\in Client
++      <2>3. TAKE c2 \\in Client
++      <2>4. TAKE r \\in Resource
++      <2>5. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
+              PROVE  c1 = c2
+         PROOF
+           <3>1. r \\in alloc'[c1] /\\ r \\in alloc'[c2]
+-            BY <2>6
+-          <3>2. r \\in alloc[c1] /\\ r \\in alloc[c2]
+-            BY <2>2, <2>3, <2>4, <3>1
+-          <3>3. r \\in alloc[c1] \\cap alloc[c2]
+-            BY <3>2
+-          <3>4. c1 = c2
+-            BY <1>1, <2>3, <2>4, <2>5, <3>3 DEF Mutex
++            BY <2>5
++          <3>2. alloc'[c1] \\subseteq alloc[c1]
++            BY <2>1, <2>2
++          <3>3. alloc'[c2] \\subseteq alloc[c2]
++            BY <2>1, <2>3
++          <3>4. r \\in alloc[c1] /\\ r \\in alloc[c2]
++            BY <3>1, <3>2, <3>3
++          <3>5. r \\in alloc[c1] \\cap alloc[c2]
++            BY <3>4
++          <3>6. c1 = c2
++            BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
+         QED
+-      <2> QED BY <2>3, <2>4, <2>5, <2>6 DEF Mutex
++      <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+     QED
+   <1> QED BY <1>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+File "./Allocator_ReturnMutex.tla", line 189, character 15:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", 
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_ReturnMutex.tla | sed -n '166,200p'"
+   166	PROOF
+   167	  <1>1. ASSUME TypeInvariant /\ Mutex /\ Return(clt,S)
+   168	        PROVE  Mutex'
+   169	    PROOF
+   170	      <2>1. alloc' = [alloc EXCEPT ![clt] = alloc[clt] \ S]
+   171	        BY <1>1 DEF Return
+   172	      <2>2. TAKE c1 \in Client
+   173	      <2>3. TAKE c2 \in Client
+   174	      <2>4. TAKE r \in Resource
+   175	      <2>5. ASSUME r \in alloc'[c1] \cap alloc'[c2]
+   176	             PROVE  c1 = c2
+   177	        PROOF
+   178	          <3>1. r \in alloc'[c1] /\ r \in alloc'[c2]
+   179	            BY <2>5
+   180	          <3>2. alloc'[c1] \subseteq alloc[c1]
+   181	            BY <2>1, <2>2
+   182	          <3>3. alloc'[c2] \subseteq alloc[c2]
+   183	            BY <2>1, <2>3
+   184	          <3>4. r \in alloc[c1] /\ r \in alloc[c2]
+   185	            BY <3>1, <3>2, <3>3
+   186	          <3>5. r \in alloc[c1] \cap alloc[c2]
+   187	            BY <3>4
+   188	          <3>6. c1 = c2
+   189	            BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
+   190	        QED
+   191	      <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+   192	    QED
+   193	  <1> QED BY <1>1
+   194	
+   195	=========================================================================
+[EXIT 0]
+
+[AGENT] The inner implication needs an explicit level-3 QED step; I’ll add it and rerun.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+           <3>6. c1 = c2
+             BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
+-        QED
++          <3> QED BY <3>6
+       <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+File "./Allocator_ReturnMutex.tla", line 191, character 17:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The outer quantified proof also needs explicit conclusion handling; I’ll inspect and tighten those closing steps.
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_ReturnMutex.tla | sed -n '166,198p'"
+   166	PROOF
+   167	  <1>1. ASSUME TypeInvariant /\ Mutex /\ Return(clt,S)
+   168	        PROVE  Mutex'
+   169	    PROOF
+   170	      <2>1. alloc' = [alloc EXCEPT ![clt] = alloc[clt] \ S]
+   171	        BY <1>1 DEF Return
+   172	      <2>2. TAKE c1 \in Client
+   173	      <2>3. TAKE c2 \in Client
+   174	      <2>4. TAKE r \in Resource
+   175	      <2>5. ASSUME r \in alloc'[c1] \cap alloc'[c2]
+   176	             PROVE  c1 = c2
+   177	        PROOF
+   178	          <3>1. r \in alloc'[c1] /\ r \in alloc'[c2]
+   179	            BY <2>5
+   180	          <3>2. alloc'[c1] \subseteq alloc[c1]
+   181	            BY <2>1, <2>2
+   182	          <3>3. alloc'[c2] \subseteq alloc[c2]
+   183	            BY <2>1, <2>3
+   184	          <3>4. r \in alloc[c1] /\ r \in alloc[c2]
+   185	            BY <3>1, <3>2, <3>3
+   186	          <3>5. r \in alloc[c1] \cap alloc[c2]
+   187	            BY <3>4
+   188	          <3>6. c1 = c2
+   189	            BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
+   190	          <3> QED BY <3>6
+   191	      <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+   192	    QED
+   193	  <1> QED BY <1>1
+   194	
+   195	=========================================================================
+[EXIT 0]
+
+[CMD] /bin/zsh -lc 'rg -n "ASSUME .*PROVE|PROVE .*" ~/.tlapm15/lib/tlaps/examples ~/.tlapm15/lib/tlaps/*_proofs.tla | head -80'
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:53:        PROVE  IsWellFoundedOn(R,T)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:60:       PROVE  IsWellFoundedOn(RR,S)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:63:               PROVE  FALSE
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:84:         PROVE  \E x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:86:             PROVE  FALSE
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:104:      PROVE  <<f[n+1], f[n]>> \in R 
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:121:         PROVE  IsWellFoundedOn(R,S)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:124:             PROVE  FALSE
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:140:        PROVE  <<x, x>> \notin R
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:151:        PROVE  FALSE
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:163:        PROVE  x \notin SetLessThan(x,R,S)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:170:        PROVE  SetLessThan(y, R, S) \subseteq SetLessThan(x, R, S)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:184:          PROVE  \A x \in S : P(x)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:187:               PROVE  FALSE
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_p
+... (truncated) ...
+ve(Front(seq))
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:173:      PROVE  e \in Range(seq) \ {Last(seq)}
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:176:      PROVE  e \in Range(ft)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:188:  PROVE  \A s \in Seq(S) : P(s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:195:      PROVE  Q(n+1)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:197:                PROVE  P(s)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:212:  PROVE  /\ Reverse(seq) \in Seq(S)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:222:  PROVE  s = t
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:225:      PROVE  s[i] = t[i]
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:232:  PROVE  seq = <<>>
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:237:  PROVE  Reverse(s1 \o s2) = Reverse(s2) \o Reverse(s1)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:242:  PROVE  Reverse(Append(seq,e)) = Cons(e, Reverse(seq))
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:247:  PROVE  Reverse(Cons(e,seq)) = Append(Reverse(seq), e)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:256:  PROVE  Reverse(SubSeq(seq, m , n)) = SubSeq(Reverse(seq), Len(seq)-n+1, Len(seq)-m+1)
+/home/ruize/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:262:  PROVE  Reverse(seq \o seq) = seq \o seq
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '45,75p' ~/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla && sed -n '50,75p' ~/.tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla"
+
+LEMMA EmptyIsWellFounded == \A S : IsWellFoundedOn({}, S)
+BY DEF IsWellFoundedOn
+
+
+LEMMA IsWellFoundedOnSubset ==
+        ASSUME NEW R, NEW S, NEW T \in SUBSET S,
+               IsWellFoundedOn(R,S)
+        PROVE  IsWellFoundedOn(R,T)
+BY DEF IsWellFoundedOn
+
+
+LEMMA IsWellFoundedOnSubrelation ==
+       ASSUME NEW S, NEW R, NEW RR, RR \cap (S \X S) \subseteq R,
+              IsWellFoundedOn(R,S)
+       PROVE  IsWellFoundedOn(RR,S)
+<1>1. SUFFICES ASSUME NEW f \in [Nat -> S],
+                      \A n \in Nat : <<f[n+1], f[n]>> \in RR
+               PROVE  FALSE
+  BY DEF IsWellFoundedOn
+<1>2. \A n \in Nat : <<f[n+1], f[n]>> \in RR \cap (S \X S)
+  BY <1>1
+<1>. QED  BY <1>2 DEF IsWellFoundedOn
+
+(***************************************************************************)
+(* If we think of R as a less-than relation on S, then the following is    *)
+(* the set of elements of S that are less than x.                          *)
+(***************************************************************************)
+SetLessThan(x, R, S) ==  {y \in S : <<y, x>> \in R}
+
+(***************************************************************************)
+         P(<< >>),
+         \A s \in Seq(S), e \in S : P(s) => P(Cons(e,s))
+  PROVE \A seq \in Seq(S) : P(seq)
+<1>. DEFINE Q(n) == \A seq \in Seq(S) : Len(seq) = n => P(seq)
+<1>1. SUFFICES \A k \in Nat : Q(k)
+  OBVIOUS
+<1>2. Q(0)
+  OBVIOUS
+<1>3. ASSUME NEW n \in Nat, Q(n)
+      PROVE  Q(n+1)
+  <2>1. ASSUME NEW s \in Seq(S), Len(s) = n+1
+        PROVE P(s)
+    <3>1. /\ Tail(s) \in Seq(S)
+          /\ Head(s) \in S
+          /\ Len(Tail(s)) = n
+          /\ Cons(Head(s), Tail(s)) = s
+      BY <2>1, ConsHeadTail 
+    <3>2. P(Tail(s))
+      BY <1>3, <3>1, Zenon
+    <3>. QED  BY <3>1, <3>2, Zenon                  
+  <2>. QED  BY <2>1          
+<1>. QED  BY <1>2, <1>3, NatInduction, Isa
+
+(***************************************************************************)
+(* Theorems about InsertAt and RemoveAt.                                   *)
+(* InsertAt(seq,i,elt) ==                                                  *)
+[EXIT 0]
+
+[AGENT] I’ll align the proof with standard TLAPS style: nested steps without explicit `PROOF`/`QED` block delimiters.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+   <1>1. ASSUME TypeInvariant /\\ Mutex /\\ Return(clt,S)
+         PROVE  Mutex'
+-    PROOF
+-      <2>1. alloc' = [alloc EXCEPT "'![clt] = alloc[clt] '"\\ S]
+-        BY <1>1 DEF Return
+-      <2>2. TAKE c1 \\in Client
+-      <2>3. TAKE c2 \\in Client
+-      <2>4. TAKE r \\in Resource
+-      <2>5. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
+-             PROVE  c1 = c2
+-        PROOF
+-          <3>1. r \\in alloc'[c1] /\\ r \\in alloc'[c2]
+-            BY <2>5
+-          <3>2. alloc'[c1] \\subseteq alloc[c1]
+-            BY <2>1, <2>2
+-          <3>3. alloc'[c2] \\subseteq alloc[c2]
+-            BY <2>1, <2>3
+-          <3>4. r \\in alloc[c1] /\\ r \\in alloc[c2]
+-            BY <3>1, <3>2, <3>3
+-          <3>5. r \\in alloc[c1] \\cap alloc[c2]
+-            BY <3>4
+-          <3>6. c1 = c2
+-            BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
+-          <3> QED BY <3>6
+-      <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+-    QED
++    <2>1. alloc' = [alloc EXCEPT "'![clt] = alloc[clt] '"\\ S]
++      BY <1>1 DEF Return
++    <2>2. TAKE c1 \\in Client
++    <2>3. TAKE c2 \\in Client
++    <2>4. TAKE r \\in Resource
++    <2>5. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
++           PROVE  c1 = c2
++      <3>1. r \\in alloc'[c1] /\\ r \\in alloc'[c2]
++        BY <2>5
++      <3>2. alloc'[c1] \\subseteq alloc[c1]
++        BY <2>1, <2>2
++      <3>3. alloc'[c2] \\subseteq alloc[c2]
++        BY <2>1, <2>3
++      <3>4. r \\in alloc[c1] /\\ r \\in alloc[c2]
++        BY <3>1, <3>2, <3>3
++      <3>5. r \\in alloc[c1] \\cap alloc[c2]
++        BY <3>4
++      <3>6. c1 = c2
++        BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
++      <3> QED BY <3>6
++    <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+   <1> QED BY <1>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_ReturnMutex.tlaps/Allocator_ReturnMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+File "./Allocator_ReturnMutex.tla", line 171, characters 5-28:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  <2>2 ,
+                  Client' \subseteq Client 
+           PROVE  Mutex'
+File "./Allocator_ReturnMutex.tla", line 1, character 1 to line 192, character 73:
+[ERROR]: 1/40 obligations failed.
+There were backend errors processing module `"Allocator_ReturnMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Parsing is fixed; one obligation remains around expanding `Mutex'`, so I’ll make the primed definition proof more explicit.
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_ReturnMutex.tla | sed -n '166,195p'"
+   166	PROOF
+   167	  <1>1. ASSUME TypeInvariant /\ Mutex /\ Return(clt,S)
+   168	        PROVE  Mutex'
+   169	    <2>1. alloc' = [alloc EXCEPT ![clt] = alloc[clt] \ S]
+   170	      BY <1>1 DEF Return
+   171	    <2>2. TAKE c1 \in Client
+   172	    <2>3. TAKE c2 \in Client
+   173	    <2>4. TAKE r \in Resource
+   174	    <2>5. ASSUME r \in alloc'[c1] \cap alloc'[c2]
+   175	           PROVE  c1 = c2
+   176	      <3>1. r \in alloc'[c1] /\ r \in alloc'[c2]
+   177	        BY <2>5
+   178	      <3>2. alloc'[c1] \subseteq alloc[c1]
+   179	        BY <2>1, <2>2
+   180	      <3>3. alloc'[c2] \subseteq alloc[c2]
+   181	        BY <2>1, <2>3
+   182	      <3>4. r \in alloc[c1] /\ r \in alloc[c2]
+   183	        BY <3>1, <3>2, <3>3
+   184	      <3>5. r \in alloc[c1] \cap alloc[c2]
+   185	        BY <3>4
+   186	      <3>6. c1 = c2
+   187	        BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
+   188	      <3> QED BY <3>6
+   189	    <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
+   190	  <1> QED BY <1>1
+   191	
+   192	=========================================================================
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+-    <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex
++    <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex'
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+File "./Allocator_ReturnMutex.tla", line 189, character 15:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] It looks like `Mutex'` primes the constant set expressions in this TLAPS obligation, so I’ll prove using the primed domains explicitly and derive their rigidity where needed.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+-    <2>2. TAKE c1 \\in Client
+-    <2>3. TAKE c2 \\in Client
+-    <2>4. TAKE r \\in Resource
++    <2>2. Client' = Client
++      OBVIOUS
++    <2>3. Resource' = Resource
++      OBVIOUS
++    <2>4. TAKE c1 \\in Client'
++    <2>5. TAKE c2 \\in Client'
++    <2>6. TAKE r \\in Resource'
+-    <2>5. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
++    <2>7. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
+            PROVE  c1 = c2
+       <3>1. r \\in alloc'[c1] /\\ r \\in alloc'[c2]
+-        BY <2>5
++        BY <2>7
+       <3>2. alloc'[c1] \\subseteq alloc[c1]
+-        BY <2>1, <2>2
++        BY <2>1, <2>2, <2>4
+       <3>3. alloc'[c2] \\subseteq alloc[c2]
+-        BY <2>1, <2>3
++        BY <2>1, <2>2, <2>5
+       <3>4. r \\in alloc[c1] /\\ r \\in alloc[c2]
+         BY <3>1, <3>2, <3>3
+       <3>5. r \\in alloc[c1] \\cap alloc[c2]
+         BY <3>4
+       <3>6. c1 = c2
+-        BY <1>1, <2>2, <2>3, <2>4, <3>5 DEF Mutex
++        BY <1>1, <2>2, <2>3, <2>4, <2>5, <2>6, <3>5 DEF Mutex
+       <3> QED BY <3>6
+-    <2> QED BY <2>2, <2>3, <2>4, <2>5 DEF Mutex'
++    <2> QED BY <2>4, <2>5, <2>6, <2>7 DEF Mutex
+*** End Patch
+PATCH
+nl -ba Allocator_ReturnMutex.tla | sed -n '166,200p'
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_ReturnMutex.tlaps/Allocator_ReturnMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+File "./Allocator_ReturnMutex.tla", line 175, characters 5-29:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT clt \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  <2>4 
+           PROVE  Mutex'
+File "./Allocator_ReturnMutex.tla", line 1, character 1 to line 196, character 73:
+[ERROR]: 1/43 obligations failed.
+There were backend errors processing module `"Allocator_ReturnMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll use a `SUFFICES` step to turn `Mutex'` into the exact unprimed-domain formula before taking witnesses.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_ReturnMutex.tla
+@@
+     <2>1. alloc' = [alloc EXCEPT "'![clt] = alloc[clt] '"\\ S]
+       BY <1>1 DEF Return
+-    <2>2. Client' = Client
+-      OBVIOUS
+-    <2>3. Resource' = Resource
+-      OBVIOUS
+-    <2>4. TAKE c1 \\in Client'
+-    <2>5. TAKE c2 \\in Client'
+-    <2>6. TAKE r \\in Resource'
+-    <2>7. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
++    <2>2. SUFFICES \\A c1,c2 \\in Client : \\A r \\in Resource :
++                       r \\in alloc'[c1] \\cap alloc'[c2] => c1 = c2
++      BY DEF Mutex
++    <2>3. TAKE c1 \\in Client
++    <2>4. TAKE c2 \\in Client
++    <2>5. TAKE r \\in Resource
++    <2>6. ASSUME r \\in alloc'[c1] \\cap alloc'[c2]
+            PROVE  c1 = c2
+       <3>1. r \\in alloc'[c1] /\\ r \\in alloc'[c2]
+-        BY <2>7
++        BY <2>6
+       <3>2. alloc'[c1] \\subseteq alloc[c1]
+-        BY <2>1, <2>2, <2>4
++        BY <2>1, <2>3
+       <3>3. alloc'[c2] \\subseteq alloc[c2]
+-        BY <2>1, <2>2, <2>5
++        BY <2>1, <2>4
+       <3>4. r \\in alloc[c1] /\\ r \\in alloc[c2]
+         BY <3>1, <3>2, <3>3
+       <3>5. r \\in alloc[c1] \\cap alloc[c2]
+         BY <3>4
+       <3>6. c1 = c2
+-        BY <1>1, <2>2, <2>3, <2>4, <2>5, <2>6, <3>5 DEF Mutex
++        BY <1>1, <2>3, <2>4, <2>5, <3>5 DEF Mutex
+       <3> QED BY <3>6
+-    <2> QED BY <2>4, <2>5, <2>6, <2>7 DEF Mutex
++    <2> QED BY <2>3, <2>4, <2>5, <2>6
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla"
+(* loading fingerprints in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Allocator_ReturnMutex.tlaps/Allocator_ReturnMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+File "./Allocator_ReturnMutex.tla", line 1, character 1 to line 195, character 73:
+[INFO]: All 38 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now verifies the proof. I’ll run the required legality checker and inspect final diff.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Allocator_ReturnMutex.tla && git diff -- Allocator_ReturnMutex.tla'
+Checking: Allocator_ReturnMutex.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_ReturnMutex.tlaps/Allocator_ReturnMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_ReturnMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, STATE_Mutex_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Return_
+
+File "/tmp/tlaps_check_2juuf7kt/Allocator_ReturnMutex.tla", line 1, character 1 to line 195, character 73:
+[INFO]: All 38 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_ReturnMutex_bijaksl5/Allocator_ReturnMutex.result
+diff --git a/Allocator_ReturnMutex.tla b/Allocator_ReturnMutex.tla
+index c45908d..9a26b26 100644
+--- a/Allocator_ReturnMutex.tla
++++ b/Allocator_ReturnMutex.tla
+@@ -163,6 +163,33 @@ THEOREM ReturnMutex ==
+   ASSUME NEW clt \in Client,
+          NEW S \in SUBSET Resource
+   PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+-PROOF OBVIOUS
+-
+-=========================================================================
+\ No newline at end of file
++PROOF
++  <1>1. ASSUME TypeInvariant /\ Mutex /\ Return(clt,S)
++        PROVE  Mutex'
++    <2>1. alloc' = [alloc EXCEPT ![clt] = alloc[clt] \ S]
++      BY <1>1 DEF Return
++    <2>2. SUFFICES \A c1,c2 \in Client : \A r \in Resource :
++                       r \in alloc'[c1] \cap alloc'[c2] => c1 = c2
++      BY DEF Mutex
++    <2>3. TAKE c1 \in Client
++    <2>4. TAKE c2 \in Client
++    <2>5. TAKE r \in Resource
++    <2>6. ASSUME r \in alloc'[c1] \cap alloc'[c2]
++           PROVE  c1 = c2
++      <3>1. r \in alloc'[c1] /\ r \in alloc'[c2]
++        BY <2>6
++      <3>2. alloc'[c1] \subseteq alloc[c1]
++        BY <2>1, <2>3
++      <3>3. alloc'[c2] \subseteq alloc[c2]
++        BY <2>1, <2>4
++      <3>4. r \in alloc[c1] /\ r \in alloc[c2]
++        BY <3>1, <3>2, <3>3
++      <3>5. r \in alloc[c1] \cap alloc[c2]
++        BY <3>4
++      <3>6. c1 = c2
++        BY <1>1, <2>3, <2>4, <2>5, <3>5 DEF Mutex
++      <3> QED BY <3>6
++    <2> QED BY <2>3, <2>4, <2>5, <2>6
++  <1> QED BY <1>1
++
++=========================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `ReturnMutex` in `Allocator_ReturnMutex.tla:166`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder.
+- Proved `Mutex'` by showing returned resources only shrink `alloc[clt]`, so any resource shared after the return was already shared before.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_ReturnMutex.tla`.
+- Ran `python3 check_proof.py Allocator_ReturnMutex.tla`, which passed with “No cheating detected” and all obligations proved.

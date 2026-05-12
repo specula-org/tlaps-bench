@@ -1,0 +1,197 @@
+Benchmark: EWD840/EWD840_Inv_implies_Termination.tla
+Time: 51s
+Tokens: 190,319 input / 1,661 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and its admitted lemmas, then iteratively patch only the final proof and verify with TLAPS.
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' EWD840_Inv_implies_Termination.tla"
+------------------------------- MODULE EWD840_Inv_implies_Termination -------------------------------
+EXTENDS Naturals, TLAPS
+
+CONSTANT N
+ASSUME NAssumption == N \in Nat \ {0}
+
+VARIABLES active, color, tpos, tcolor
+
+Nodes == 0 .. N-1
+Color == {"white", "black"}
+
+TypeOK ==
+  /\ active \in [Nodes -> BOOLEAN]    \* status of nodes (active or passive)
+  /\ color \in [Nodes -> Color]       \* color of nodes
+  /\ tpos \in Nodes                    \* token position
+  /\ tcolor \in Color                  \* token color
+
+(* Initially the token is at node 0, and it is black. There
+   are no constraints on the status and color of the nodes. *)
+Init ==
+  /\ active \in [Nodes -> BOOLEAN]
+  /\ color \in [Nodes -> Color]
+  /\ tpos = 0
+  /\ tcolor = "black"
+
+(* Node 0 may initiate a probe when it has the token and when
+   it is black or the token color is black. It passes
+   a white token to node N-1 and paints itself white. *)
+InitiateProbe ==
+  /\ tpos = 0
+  /\ tcolor = "black" \/ color[0] = "black"
+  /\ tpos' = N-1
+  /\ tcolor' = "white"
+  /\ active' = active
+  /\ color' = [color EXCEPT ![0] = "white"]
+
+(* An inactive node different from 0 that possesses the token
+   may pass it to node i-1 under the following circumstances:
+   - node i is inactive or
+   - node i is colored black or
+   - the token is black.
+   Note that the last two conditions will result in an
+   inconclusive round, since the token will be black.
+   The token will be stained if node i is black, otherwise 
+   its color is
+... (truncated) ...
+************************************************************)
+(* Dijkstra's invariant                                                    *)
+(***************************************************************************)
+Inv == 
+  \/ P0:: \A i \in Nodes : tpos < i => ~ active[i]
+  \/ P1:: \E j \in 0 .. tpos : color[j] = "black"
+  \/ P2:: tcolor = "black"
+
+-----------------------------------------------------------------------------
+
+(* TypeOK is an inductive invariant *)
+LEMMA TypeOK_inv == Spec => []TypeOK
+  PROOF OMITTED
+
+THEOREM Spec => []TerminationDetection
+<1> USE NAssumption  (* Type information about the constants will be needed ! *)
+
+(* Dijkstra's invariant implies correctness *)
+<1>1 Inv => TerminationDetection
+  BY  DEF Inv, TerminationDetection, terminationDetected, Nodes
+
+(* Dijkstra's invariant is (trivially) established by the initial condition *)
+<1>2 Init => Inv
+  BY DEF Init, Inv
+
+(* Dijkstra's invariant is inductive relative to the type invariant *)
+<1>3 TypeOK /\ Inv /\ [Next]_vars => Inv'
+  BY  DEF Inv, TypeOK, Next, vars, Controlled, Environment,
+          InitiateProbe, PassToken, SendMsg, Deactivate, Nodes, Color
+
+<1>q QED
+  BY <1>1, <1>2, <1>3, TypeOK_inv, PTL DEF Spec
+
+
+
+(* If the one-line proof of step <1>1 above is too obscure, 
+    here is a more detailed, hierarchical proof of the same property. *)
+LEMMA Inv_implies_Termination == Inv => TerminationDetection
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] I’ve found the target lemma; now I’ll run TLAPS once to see the exact failure shape.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Color_, CONSTANT_Nodes_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TerminationDetection_, STATE_Inv_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/EWD840_Inv_implies_Termination.tlaps/EWD840_Inv_implies_Termination.thy" *)
+(* fingerprints written in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+File "./EWD840_Inv_implies_Termination.tla", line 160, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT N,
+                  NAssumption == N \in Nat \ {0},
+                  NEW VARIABLE active,
+                  NEW VARIABLE color,
+                  NEW VARIABLE tpos,
+                  NEW VARIABLE tcolor
+           PROVE  Inv => TerminationDetection
+File "./EWD840_Inv_implies_Termination.tla", line 1, character 1 to line 162, character 77:
+[ERROR]: 1/11 obligations failed.
+There were backend errors processing module `"EWD840_Inv_implies_Termination"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The placeholder fails only because definitions aren’t expanded. I’ll first try the minimal explicit TLAPS proof matching the admitted earlier step.
+
+[AGENT] The proof is now explicit; I’ll verify it and deepen it only if TLAPS still needs help.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+(* created new ".tlacache/EWD840_Inv_implies_Termination.tlaps/EWD840_Inv_implies_Termination.thy" *)
+(* fingerprints written in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+File "./EWD840_Inv_implies_Termination.tla", line 1, character 1 to line 163, character 77:
+[INFO]: All 12 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS passes. I’ll run the required checker to confirm the edit stayed within bounds.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py EWD840_Inv_implies_Termination.tla'
+Checking: EWD840_Inv_implies_Termination.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/EWD840_Inv_implies_Termination.tlaps/EWD840_Inv_implies_Termination.thy" *)
+(* fingerprints written in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Color_, CONSTANT_Nodes_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_rxhds6j1/EWD840_Inv_implies_Termination.tla", line 1, character 1 to line 163, character 77:
+[INFO]: All 12 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_EWD840_Inv_implies_Termination_k6zlal7b/EWD840_Inv_implies_Termination.result
+[EXIT 0]
+
+[AGENT] Done.
+
+- Replaced the final `PROOF OBVIOUS` with a valid TLAPS proof in `EWD840_Inv_implies_Termination.tla:160`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla`.
+- Ran `python3 check_proof.py EWD840_Inv_implies_Termination.tla`; result: `PASS — all obligations proved`, no cheating detected.

@@ -1,0 +1,544 @@
+Benchmark: ByzantinePaxos/VoteProof_VT0.tla
+Time: 104s
+Tokens: 502,114 input / 4,434 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iterate with `tlapm` until the final proof checks.
+
+[CMD] /bin/zsh -lc "ls && rg -n \"THEOREM|LEMMA|PROOF OBVIOUS|PROOF OMITTED|====\" VoteProof_VT0.tla && sed -n '1,260p' VoteProof_VT0.tla"
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+VoteProof_VT0.tla
+check_proof.py
+15:\* THEOREM SMT == TRUE (*{ by (smt) }*)
+29:THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+30:  PROOF OMITTED
+275:THEOREM RecursiveFcnOfNat ==
+281:PROOF OMITTED
+287:THEOREM SafeAtProp ==
+299:  PROOF OMITTED
+347:THEOREM GeneralNatInduction == 
+351:  PROOF OMITTED
+358:LEMMA SafeLemma == 
+368:  PROOF OMITTED
+403:THEOREM VInv3 => VInv1
+417:LEMMA VT0 == /\ TypeOK
+422:PROOF OBVIOUS
+424:===============================================================================
+----------------------------- MODULE VoteProof_VT0 ------------------------------ 
+(***************************************************************************)
+(* This is a high-level consensus algorithm in which a set of processes    *)
+(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+(* all voted for the same value in the same ballot.                        *)
+(*                                                                         *)
+(* Ballots are not executed in order.  Different acceptors may be          *)
+(* concurrently performing actions for different ballots.                  *)
+(***************************************************************************)
+EXTENDS Integer
+... (truncated) ...
+<< votes, maxBal >>
+
+ProcSet == (Acceptor)
+
+Init == (* Global variables *)
+        /\ votes = [a \in Acceptor |-> {}]
+        /\ maxBal = [a \in Acceptor |-> -1]
+
+acceptor(self) == \E b \in Ballot:
+                    \/ /\ b > maxBal[self]
+                       /\ maxBal' = [maxBal EXCEPT ![self] = b]
+                       /\ UNCHANGED votes
+                    \/ /\ \E v \in Value:
+                            /\ /\ maxBal[self] \leq b
+                               /\ DidNotVoteIn(self, b)
+                               /\ \A p \in Acceptor \ {self} :
+                                     \A w \in Value : VotedFor(p, b, w) => (w = v)
+                               /\ SafeAt(b, v)
+                            /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+
+Next == (\E self \in Acceptor: acceptor(self))
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+[EXIT 0]
+
+[AGENT] Output was truncated, so I’ll read the proof-relevant tail and any local instructions before editing.
+
+[CMD] /bin/zsh -lc "find .. -name AGENTS.md -print -maxdepth 3 && sed -n '250,440p' VoteProof_VT0.tla"
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-chrony.service-o39yXW’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-ModemManager.service-lp6MuZ’: Permission denied
+find: ‘../snap-private-tmp’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-systemd-logind.service-tevgcv’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-systemd-resolved.service-141Hbw’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-polkit.service-aTAsBM’: Permission denied
+find: ‘../a2J8Gr__6G’: Permission denied
+../asterinas/AGENTS.md
+[EXIT 1]
+
+[CMD] /bin/zsh -lc "if [ -f AGENTS.md ]; then cat AGENTS.md; fi; sed -n '250,440p' VoteProof_VT0.tla"
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+(*                                                                         *)
+(*   Silly[n \in Nat] == CHOOSE v : v # Silly[n]                           *)
+(*                                                                         *)
+(* we cannot deduce that                                                   *)
+(*                                                                         *)
+(*   Silly[42] = CHOOSE v : v # Silly[42]                                  *)
+(*                                                                         *)
+(* (From that, we could easily deduce Silly[42] # Silly[42].)              *)
+(*                                                                         *)
+(* To prove the desired property of SafeAt, we use the following proof     *)
+(* rule.  It will eventually be in a standard module--probably in TLAPS.   *)
+(* However, for now, we put it here.         
+... (truncated) ...
+(* attempting any proofs.) We define VInv1 separately because VInv3 is not *)
+(* needed for proving safety, only for liveness.                           *)
+(***************************************************************************)
+THEOREM VInv3 => VInv1
+BY DEF VInv1, VInv3
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma proves that SafeAt(b, v) implies that no value      *)
+(* other than v can have been chosen in any ballot numbered less than b.   *)
+(* The fact that it also implies that no value other than v can ever be    *)
+(* chosen in the future follows from this and the fact that SafeAt(b, v)   *)
+(* is stable--meaning that once it becomes true, it remains true forever.  *)
+(* The stability of SafeAt(b, v) is proved as step <1>6 of theorem         *)
+(* InductiveInvariance below.                                              *)
+(*                                                                         *)
+(* This lemma is used only in the proof of theorem VT1 below.              *)
+(***************************************************************************)
+LEMMA VT0 == /\ TypeOK
+             /\ VInv1
+             /\ VInv2
+             => \A v, w \in Value, b, c \in Ballot : 
+                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+PROOF OBVIOUS
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] I found the target lemma; now I’ll run TLAPS once to see the exact obligations it reports.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_VT0.tla'
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_, STATE_VInv2_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_VT0.tlaps/VoteProof_VT0.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT0.tlaps/fingerprints" *)
+File "./VoteProof_VT0.tla", line 422, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n])
+           PROVE  (/\ TypeOK
+                   /\ VInv1
+                   /\ VInv2)
+                  => (\A v, w \in Value, b, c \in Ballot :
+                         b > c /\ SafeAt(b, v) /\ ChosenIn(c, w) => v = w)
+File "./VoteProof_VT0.tla", line 1, character 1 to line 424, character 79:
+[ERROR]: 1/2 obligations failed.
+There were backend errors processing module `"VoteProof_VT0"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The failed obligation is just the placeholder. I’ll check sibling proof files for the intended VT0 proof pattern.
+
+[CMD] /bin/zsh -lc "rg -n \"LEMMA VT0|THEOREM VT0|SafeAt\\(b, v\\).*ChosenIn\" -C 8 ."
+./VoteProof.tla-409-(* The fact that it also implies that no value other than v can ever be    *)
+./VoteProof.tla-410-(* chosen in the future follows from this and the fact that SafeAt(b, v)   *)
+./VoteProof.tla-411-(* is stable--meaning that once it becomes true, it remains true forever.  *)
+./VoteProof.tla-412-(* The stability of SafeAt(b, v) is proved as step <1>6 of theorem         *)
+./VoteProof.tla-413-(* InductiveInvariance below.                                              *)
+./VoteProof.tla-414-(*                                                                         *)
+./VoteProof.tla-415-(* This lemma is used only in the proof of theorem VT1 below.              *)
+./VoteProof.tla-416-(***************************************************************************)
+./VoteProof.tla:417:LEMMA VT0 == /\ TypeOK
+./VoteProof.tla-418-             /\ VInv1
+./VoteProof.tla-419-             /\ VInv2
+./VoteProof.tla-420-             => \A v, w \in Value, b, c \in Ballot : 
+./VoteProof.tla:421:                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+./VoteProof.tla-422-  PROOF OMITTED
+./VoteProof.tla-423-
+./VoteProof.tla-424-THEOREM VT1 == /\ TypeOK 
+./VoteProof.tla-425-               /\ VInv1
+./VoteProof.tla-426-               /\ VInv2
+./VoteProof.tla-427-               => \A v, w : 
+./VoteProof.tla-428-                    (v \in chosen) /\ (w \in chosen) => (v = w)
+./VoteProof.tla-429-  PROOF OMITTED
+--
+./VoteProof.tla-437-           /\ \E c \in -1..(b-1) :
+./Vot
+... (truncated) ...
+           /\ VInv1'
+./VoteProof.tla-456-               /\ VInv2'
+./VoteProof.tla-457-               => \A v, w : 
+./VoteProof.tla-458-                    (v \in chosen') /\ (w \in chosen') => (v = w)
+--
+./VoteProof_VT0.tla-409-(* The fact that it also implies that no value other than v can ever be    *)
+./VoteProof_VT0.tla-410-(* chosen in the future follows from this and the fact that SafeAt(b, v)   *)
+./VoteProof_VT0.tla-411-(* is stable--meaning that once it becomes true, it remains true forever.  *)
+./VoteProof_VT0.tla-412-(* The stability of SafeAt(b, v) is proved as step <1>6 of theorem         *)
+./VoteProof_VT0.tla-413-(* InductiveInvariance below.                                              *)
+./VoteProof_VT0.tla-414-(*                                                                         *)
+./VoteProof_VT0.tla-415-(* This lemma is used only in the proof of theorem VT1 below.              *)
+./VoteProof_VT0.tla-416-(***************************************************************************)
+./VoteProof_VT0.tla:417:LEMMA VT0 == /\ TypeOK
+./VoteProof_VT0.tla-418-             /\ VInv1
+./VoteProof_VT0.tla-419-             /\ VInv2
+./VoteProof_VT0.tla-420-             => \A v, w \in Value, b, c \in Ballot : 
+./VoteProof_VT0.tla:421:                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+./VoteProof_VT0.tla-422-PROOF OBVIOUS
+./VoteProof_VT0.tla-423-
+./VoteProof_VT0.tla-424-===============================================================================
+[EXIT 0]
+
+[AGENT] The proof needs quorum intersection plus `SafeLemma`. I’ll inspect local/library proof idioms for interval arithmetic and witnesses.
+
+[CMD] /bin/zsh -lc 'rg -n "PICK|SUFFICES|HAVE|TAKE|QED|SafeLemma|BY.*SMT|SimpleArithmetic|PTL|DEF DidNotVoteIn" -S *.tla ~/.tlapm15/lib/tlaps | head -200'
+VoteProof_VT0.tla:358:LEMMA SafeLemma == 
+VoteProof.tla:358:LEMMA SafeLemma == 
+VoteProof.tla:753:  <2>2. QED
+VoteProof.tla:757:  <2>1 SUFFICES ASSUME NEW T \in SUBSET S
+VoteProof.tla:763:    <3>1. PICK s \in T : TRUE
+VoteProof.tla:773:      BY AlwaysForall (* PTL *)
+VoteProof.tla:775:      BY <3>4 (* PTL *)
+VoteProof.tla:779:      BY <3>3, <3>5, <3>6 (* PTL *)
+VoteProof.tla:780:    <3>8. QED
+VoteProof.tla:781:      BY <3>7, <3>2 (* PTL *)
+VoteProof.tla:783:    OBVIOUS (* PTL, which implies A ~> A *)
+VoteProof.tla:784:  <2>4. QED
+VoteProof.tla:789:  BY <1>1, <1>3 (* PTL *)
+VoteProof.tla:790:<1>5. QED
+VoteProof.tla:793:  <2>2. QED
+Consensus.tla:221:  <2>1. SUFFICES [][Next]_vars /\ WF_vars(Next) => ((Inv /\ chosen = {}) ~> chosen # {})
+Consensus.tla:222:    \* OBVIOUS (* PTL *)
+Consensus.tla:231:  <2>5. QED
+Consensus.tla:235:\*   OBVIOUS (* PTL *)
+Consensus.tla:237:<1>3. QED
+Consensus.tla:238:\*   BY Invariance, <1>1, <1>2 DEF LiveSpec, Spec, Init, Success (* PTL *)
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:104:  <2>. QED  BY <2>1, <2>2, <2>3
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:107:<1> QED  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:262:  <2>. QED  BY <2>1, FS_CardinalityType, FS_EmptySet, Zenon
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:263:<1>. QED  BY <1>1 DEF IsABag, SeqToBag
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:61:<1>1. SUFFICES ASSUME NEW f \in [Nat -> 
+... (truncated) ...
+1>1, <1>2, SeqEqual, Zenon
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:246:<1>. QED  BY Zenon
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:258:<1>. SUFFICES \A k \in Nat : Q(k)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:264:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:267:  <2>. PICK seq \in Seq(S), e \in S : s = Append(seq,e) /\ Len(seq) = n
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:269:  <2>. QED  BY <1>2
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:270:<1>3. QED  BY <1>1, <1>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:278:<1>. SUFFICES \A k \in Nat : Q(k)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:284:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:290:  <2>. QED  BY <2>1, <1>2, Zenon
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:291:<1>3. QED  BY <1>1, <1>2, NatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:320:  <2>1. SUFFICES ASSUME NEW i \in 1 .. Len(s2)
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:326:  <2>. QED  BY <2>2 DEF Range
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:329:<1>. QED  BY <1>1, <1>2, <1>3
+/home/ruize/.tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:348:  <2>1. SUFFICES ASSUME NEW i \in DOMAIN t, NEW j \in DOMAIN t, t[i] = t[j]
+[EXIT 0]
+
+[AGENT] I’ll patch a structured proof using the admitted lemmas, then let TLAPS identify any weak steps.
+
+[AGENT] The first proof draft is in place. I’ll run TLAPS and refine any failed sub-obligations.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_VT0.tla'
+File "./VoteProof_VT0.tla", line 427, character 17
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "./VoteProof_VT0.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS rejects local named assumptions there, so I’ll rewrite that step with ordinary assumptions.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_VT0.tla | sed -n '417,470p'"
+   417	LEMMA VT0 == /\ TypeOK
+   418	             /\ VInv1
+   419	             /\ VInv2
+   420	             => \A v, w \in Value, b, c \in Ballot : 
+   421	                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+   422	PROOF
+   423	  <1>1. ASSUME NEW v \in Value,
+   424	               NEW w \in Value,
+   425	               NEW b \in Ballot,
+   426	               NEW c \in Ballot,
+   427	               H == /\ TypeOK
+   428	                    /\ VInv1
+   429	                    /\ VInv2,
+   430	               HC == /\ b > c
+   431	                     /\ SafeAt(b, v)
+   432	                     /\ ChosenIn(c, w)
+   433	        PROVE  v = w
+   434	    <2>1. c \in 0..(b-1)
+   435	      BY <1>1 DEF Ballot
+   436	    <2>2. \E Q \in Quorum :
+   437	             \A a \in Q : /\ maxBal[a] >= c
+   438	                          /\ \/ DidNotVoteIn(a, c)
+   439	                             \/ VotedFor(a, c, v)
+   440	      BY <1>1, <2>1, SafeLemma
+   441	    <2>3. PICK Q1 \in Quorum :
+   442	             \A a \in Q1 : /\ maxBal[a] >= c
+   443	                           /\ \/ DidNotVoteIn(a, c)
+   444	                              \/ VotedFor(a, c, v)
+   445	      BY <2>2
+   446	    <2>4. PICK Q2 \in Quorum : \A a \in Q2 : VotedFor(a, c, w)
+   447	      BY <1>1 DEF ChosenIn
+   448	    <2>5. Q1 \cap Q2 # {}
+   449	      BY <2>3, <2>4, QA
+   450	    <2>6. PICK a \in Q1 \cap Q2 : TRUE
+   451	      BY <2>5
+   452	    <2>7. a \in Q1 /\ a \in Q2
+   453	      BY <2>6
+   454	    <2>8. VotedFor(a, c, w)
+   455	      BY <2>4, <2>7
+   456	    <2>9. \/ DidNotVoteIn(a, c)
+   457	           \/ VotedFor(a, c, v)
+   458	      BY <2>3, <2>7
+   459	    <2>10. VotedFor(a, c, v)
+   460	      BY <1>1, <2>8, <2>9 DEF DidNotVoteIn
+   461	    <2>11. QED
+   462	      BY <1>1, <2>8, <2>10 DEF VInv1
+   463	  <1>2. QED
+   464	    BY <1>1
+   465	
+   466	===============================================================================
+[EXIT 0]
+
+[AGENT] The parse issue is fixed; running TLAPS again to localize proof gaps.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_VT0.tla'
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT0.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_ChosenIn_, STATE_TypeOK_, STATE_VInv1_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_, STATE_DidNotVoteIn_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpa
+... (truncated) ...
+mpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  VInv1 ==
+                    \A a \in Acceptor, b \in Ballot, v, w \in Value :
+                       VotedFor(a, b, v) /\ VotedFor(a, b, w) => v = w,
+                  NEW CONSTANT v \in Value,
+                  NEW CONSTANT w \in Value,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT c \in Ballot,
+                  NEW CONSTANT Q1 \in Quorum,
+                  NEW CONSTANT Q2 \in Quorum,
+                  NEW CONSTANT a \in 
+                  Q1 \cap Q2,
+                  <1>1 ,
+                  <2>8 ,
+                  <2>10 
+           PROVE  v = w
+File "./VoteProof_VT0.tla", line 1, character 1 to line 466, character 79:
+[ERROR]: 1/35 obligations failed.
+There were backend errors processing module `"VoteProof_VT0"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Only the final use of `VInv1` needs more context. I’ll add the acceptor-membership instantiation explicitly.
+
+[AGENT] Membership is now explicit. I’ll rerun TLAPS to catch the next obligation.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_VT0.tla'
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT0.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv2_
+
+(* created new ".tlacache/VoteProof_VT0.tlaps/VoteProof_VT0.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT0.tlaps/fingerprints" *)
+File "./VoteProof_VT0.tla", line 1, character 1 to line 470, character 79:
+[INFO]: All 42 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS passes. I’ll run the required legality checker and inspect the final diff.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py VoteProof_VT0.tla && git diff -- VoteProof_VT0.tla'
+Checking: VoteProof_VT0.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_VT0.tlaps/VoteProof_VT0.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT0.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_ChosenIn_, STATE_TypeOK_, STATE_VInv1_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_ChosenIn_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_, STATE_DidNotVoteIn_, STATE_VInv2_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, STATE_TypeOK_, CONSTANT_Ballot_, STATE_VInv1_,
+... (truncated) ...
+   /\ TypeOK
++               /\ VInv1
++               /\ VInv2,
++               /\ b > c
++               /\ SafeAt(b, v)
++               /\ ChosenIn(c, w)
++        PROVE  v = w
++    <2>1. c \in 0..(b-1)
++      BY <1>1 DEF Ballot
++    <2>2. \E Q \in Quorum :
++             \A a \in Q : /\ maxBal[a] >= c
++                          /\ \/ DidNotVoteIn(a, c)
++                             \/ VotedFor(a, c, v)
++      BY <1>1, <2>1, SafeLemma
++    <2>3. PICK Q1 \in Quorum :
++             \A a \in Q1 : /\ maxBal[a] >= c
++                           /\ \/ DidNotVoteIn(a, c)
++                              \/ VotedFor(a, c, v)
++      BY <2>2
++    <2>4. PICK Q2 \in Quorum : \A a \in Q2 : VotedFor(a, c, w)
++      BY <1>1 DEF ChosenIn
++    <2>5. Q1 \cap Q2 # {}
++      BY <2>3, <2>4, QA
++    <2>6. PICK a \in Q1 \cap Q2 : TRUE
++      BY <2>5
++    <2>7. a \in Q1 /\ a \in Q2
++      BY <2>6
++    <2>8. VotedFor(a, c, w)
++      BY <2>4, <2>7
++    <2>9. \/ DidNotVoteIn(a, c)
++           \/ VotedFor(a, c, v)
++      BY <2>3, <2>7
++    <2>10. VotedFor(a, c, v)
++      BY <1>1, <2>8, <2>9 DEF DidNotVoteIn
++    <2>11. a \in Acceptor
++      BY <2>3, <2>7, QA
++    <2>12. VotedFor(a, c, v) /\ VotedFor(a, c, w) => v = w
++      BY <1>1, <2>11 DEF VInv1
++    <2>13. QED
++      BY <2>8, <2>10, <2>12
++  <1>2. QED
++    BY <1>1
+ 
+-===============================================================================
+\ No newline at end of file
++===============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `VT0` in `VoteProof_VT0.tla:422`.
+
+**Validation**
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_VT0.tla` passes: all 42 obligations proved.
+- `python3 check_proof.py VoteProof_VT0.tla` passes: no cheating detected, all obligations proved.
+
+The proof uses `SafeLemma`, quorum intersection from `QA`, expands `ChosenIn`, `DidNotVoteIn`, and applies `VInv1` to conclude `v = w`.

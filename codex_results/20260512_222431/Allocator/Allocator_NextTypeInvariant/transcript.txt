@@ -1,0 +1,458 @@
+Benchmark: Allocator/Allocator_NextTypeInvariant.tla
+Time: 62s
+Tokens: 268,066 input / 2,989 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch only the final proof and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Allocator_NextTypeInvariant.tla && printf '\\n--- files ---\\n' && ls -la"
+-------------------------- MODULE Allocator_NextTypeInvariant -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+-------------------------------------------------------
+... (truncated) ...
+ly if the entire request has *)
+(* been satisfied.                                                    *)
+(**********************************************************************)
+
+(*
+
+SimpleAllocator2 ==
+  /\ Init /\ [][Next]_vars
+  /\ \A c \in Client: WF_vars(unsat[c] = {} /\ Return(c, alloc[c]))
+  /\ \A c \in Client: SF_vars(\E S \in SUBSET Resource: Allocate(c,S))
+
+*)
+
+-------------------------------------------------------------------------
+
+THEOREM InitTypeInvariant == Init => TypeInvariant
+  PROOF OMITTED
+
+THEOREM RequestTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM AllocateTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM ReturnTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Return(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+PROOF OBVIOUS
+
+=========================================================================
+--- files ---
+total 204
+drwx------    3 ruize ruize   4096 May 12 22:24 .
+drwxrwxrwt 1312 root  root  176128 May 12 22:24 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:24 .git
+-rw-rw-r--    1 ruize ruize   5593 May 12 20:53 Allocator_NextTypeInvariant.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] The target is just the existential/disjunction split over `Next`; I’ll replace the placeholder with a structured proof using the admitted action lemmas.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextTypeInvariant.tla
+@@
+ THEOREM NextTypeInvariant == TypeInvariant /\\ Next => TypeInvariant'
+-PROOF OBVIOUS
++PROOF
++  <1>1. ASSUME TypeInvariant, Next
++        PROVE  TypeInvariant'
++    PROOF
++      <2>1. PICK c \\in Client, S \\in SUBSET Resource :
++              Request(c,S) \\/ Allocate(c,S) \\/ Return(c,S)
++        BY <1>1 DEF Next
++      <2>2. CASE Request(c,S)
++        BY <1>1, <2>2, RequestTypeInvariant
++      <2>3. CASE Allocate(c,S)
++        BY <1>1, <2>3, AllocateTypeInvariant
++      <2>4. CASE Return(c,S)
++        BY <1>1, <2>4, ReturnTypeInvariant
++      <2>5. QED
++        BY <2>1, <2>2, <2>3, <2>4
++    QED
++  <1>2. QED
++    BY <1>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextTypeInvariant.tla"
+File "./Allocator_NextTypeInvariant.tla", line 163, character 11:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined)
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS didn’t like the nested `ASSUME/PROVE` proof shape; I’ll adjust to a theorem-level `SUFFICES` style it parses reliably.
+
+[CMD] /bin/zsh -lc "nl -ba Allocator_NextTypeInvariant.tla | sed -n '135,180p'"
+   135	
+   136	THEOREM AllocateTypeInvariant ==
+   137	  ASSUME NEW c \in Client,
+   138	         NEW S \in SUBSET Resource
+   139	  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+   140	  PROOF OMITTED
+   141	
+   142	THEOREM ReturnTypeInvariant ==
+   143	  ASSUME NEW c \in Client,
+   144	         NEW S \in SUBSET Resource
+   145	  PROVE  TypeInvariant /\ Return(c,S) => TypeInvariant'
+   146	  PROOF OMITTED
+   147	
+   148	THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+   149	PROOF
+   150	  <1>1. ASSUME TypeInvariant, Next
+   151	        PROVE  TypeInvariant'
+   152	    PROOF
+   153	      <2>1. PICK c \in Client, S \in SUBSET Resource :
+   154	              Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
+   155	        BY <1>1 DEF Next
+   156	      <2>2. CASE Request(c,S)
+   157	        BY <1>1, <2>2, RequestTypeInvariant
+   158	      <2>3. CASE Allocate(c,S)
+   159	        BY <1>1, <2>3, AllocateTypeInvariant
+   160	      <2>4. CASE Return(c,S)
+   161	        BY <1>1, <2>4, ReturnTypeInvariant
+   162	      <2>5. QED
+   163	        BY <2>1, <2>2, <2>3, <2>4
+   164	    QED
+   165	  <1>2. QED
+   166	    BY <1>1
+   167	
+   168	=========================================================================
+[EXIT 0]
+
+[AGENT] I’m checking local TLAPS examples for the exact accepted hierarchical syntax before the next patch.
+
+[CMD] /bin/zsh -lc "rg -n \"SUFFICES ASSUME|PICK .*\\\\in|CASE .*\\\\/|ASSUME .*PROVE\" ~/.tlapm15/lib/tlaps /tmp/codex_bench_Allocator_NextTypeInvariant_rsfhjlq4 -g '*.tla' | head -80"
+rg: regex parse error:
+    (?:SUFFICES ASSUME|PICK .*\in|CASE .*\/|ASSUME .*PROVE)
+                              ^^
+error: unrecognized escape sequence
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg -n 'SUFFICES ASSUME|PICK .*\\\\in|CASE .*\\\\/|ASSUME .*PROVE' ~/.tlapm15/lib/tlaps /tmp/codex_bench_Allocator_NextTypeInvariant_rsfhjlq4 -g '*.tla' | head -80"
+/tmp/codex_bench_Allocator_NextTypeInvariant_rsfhjlq4/Allocator_NextTypeInvariant.tla:153:      <2>1. PICK c \in Client, S \in SUBSET Resource :
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:38:<1>1. ASSUME IsFiniteSet(S)  PROVE \E n \in Nat : ExistsSurjection(1..n,S)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:39:  <2>1. PICK Q \in Seq(S) : \A s \in S : \E i \in 1..Len(Q) : Q[i] = s
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:46:<1>2. ASSUME NEW n \in Nat, ExistsSurjection(1..n,S)  PROVE  IsFiniteSet(S)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:119:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:128:      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:132:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:138:        <4>4. PICK t \in T : t = CHOOSE x : x \in T  BY <4>2
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:150:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE SZ[T] = fn(SZ,T)  BY Zenon DEF SZ
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:151:    <2>2. PICK i \in Nat : ExistsBijection(1..i,T) BY Fun_NatBijSubset
+/home/ruize/.tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:174:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0
+... (truncated) ...
+.tlapm15/lib/tlaps/examples/BubbleSort.tla:93:<1> SUFFICES ASSUME NEW A \in [1..N -> Int], NEW B \in [1..N -> Int],
+/home/ruize/.tlapm15/lib/tlaps/examples/BubbleSort.tla:97:<1>1. PICK f, g \in Perms : (A = B ** g) /\  (B = C ** f)
+/home/ruize/.tlapm15/lib/tlaps/examples/BubbleSort.tla:205:  <2> SUFFICES ASSUME Inv, Lbl_1 \/ Lbl_2 \* Next
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor8.tla:13:        <2>. PICK f \in [S -> SUBSET S] : Surj (f, SUBSET S)
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor9.tla:9:<1>1. SUFFICES ASSUME \E f : Surj (f, SUBSET (DOMAIN f))
+/home/ruize/.tlapm15/lib/tlaps/examples/cantor/Cantor2.tla:17:<1>3. SUFFICES ASSUME NEW x \in S
+/home/ruize/.tlapm15/lib/tlaps/examples/SumAndMax.tla:95:  <2>. SUFFICES ASSUME Inv, Lbl_1 PROVE Inv'
+/home/ruize/.tlapm15/lib/tlaps/examples/SimpleMutex.tla:141:  <1> SUFFICES ASSUME TypeOK,
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla:313:  <2> SUFFICES ASSUME Inv,
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla:322:    <3>2. ASSUME NEW i \in P PROVE IInv(i)'
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla:338:    <3>2. ASSUME NEW i \in P PROVE IInv(i)'
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:134:<1>2. SUFFICES ASSUME f \notin Injection(S,T) PROVE FALSE
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:136:<1>3. PICK a,b \in S : a # b /\ f[a] = f[b]
+/home/ruize/.tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:144:  <2>2. ASSUME NEW t \in T PROVE \E u \in U : g[u] = t
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '235,288p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla && sed -n '38,52p' ~/.tlapm15/lib/tlaps/examples/Euclid.tla"
+(*                                                                         *)
+(* This is a standard invariance proof, where <1>2 asserts that any step   *)
+(* of the algorithm (including a stuttering step) starting in a state in   *)
+(* which Inv is true leaves Inv true.  Step <1>4 follows easily from       *)
+(* <1>1-<1>3 by simple temporal reasoning.                                 *)
+(***************************************************************************)
+THEOREM Spec => []Inv
+<1> USE DEFS TypeOK, Inv, IInv, ProcSet
+<1>1. Init => Inv
+  BY DEFS Init, Inv
+<1>2. Inv /\ [Next]_vars => Inv'
+  <2> SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+    OBVIOUS
+  <2> USE DEFS After, LL
+  <2>1. ASSUME NEW self \in P, p1(self) PROVE Inv'
+    BY <2>1 DEF p1
+  <2>2. ASSUME NEW self \in P, p2(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>2, <3>1 DEF p2
+    <3>2. CASE unread[self] # {}
+      BY <2>2, <3>2 DEF p2
+    <3>3. QED
+      BY <3>1, <3>2    
+  <2>3. ASSUME NEW self \in P, p3(self) PROVE Inv'
+    BY <2>3 DEF p3
+  <2>4. ASSUME NEW self \in P, p4(self) PROVE Inv'
+    BY <2>4 DEF p4
+  <2>5. ASSUME NEW self \in P, p5(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>5, <3>1 DEF p5
+    <3>2. CASE unread[self] # {}
+      BY <2>5, <3>2, CVC4T(30) DEF p5
+    <3>3. QED
+      BY <3>1, <3>2
+  <2>6. ASSUME NEW self \in P, p6(self) PROVE Inv'
+    <3>p. P \subseteq Nat
+      BY N \in Nat DEF P
+    <3>1. CASE num[nxt[self]] = 0
+      BY <2>6, <3>1 DEF p6
+    <3>2. CASE LL(self, nxt[self])
+      BY <2>6, <3>2, <3>p DEF p6
+    <3>3. QED
+      BY <2>6, <3>1, <3>2 DEF p6
+  <2>7. ASSUME NEW self \in P, cs(self) PROVE Inv'
+    BY <2>7 DEF cs
+  <2>8. ASSUME NEW self \in P, p7(self) PROVE Inv'
+    BY <2>8 DEF p7
+  <2>9. CASE UNCHANGED vars
+    BY <2>9 DEF vars
+  <2>10. QED
+    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7, <2>8, <2>9 DEF Next, p
+<1>3. Inv => MutualExclusion
+  BY DEFS Inv, After, MutualExclusion 
+<1>4. QED
+AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
+AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+
+THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+<1> SUFFICES ASSUME InductiveInvariant, Next
+             PROVE  InductiveInvariant'
+  OBVIOUS
+<1> USE DEF InductiveInvariant, Next
+<1>1. (x < y) \/ (y < x)
+  OBVIOUS
+<1>a. CASE x < y
+  <2>1. (y - x \in Number) /\ ~(y < x)
+    BY <1>a DEF Number
+  <2>2. QED
+[EXIT 0]
+
+[AGENT] I found examples using `SUFFICES` directly as a proof step; I’ll simplify to that canonical TLAPS pattern.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextTypeInvariant.tla
+@@
+ THEOREM NextTypeInvariant == TypeInvariant /\\ Next => TypeInvariant'
+ PROOF
+-  <1>1. ASSUME TypeInvariant, Next
+-        PROVE  TypeInvariant'
+-    PROOF
+-      <2>1. PICK c \\in Client, S \\in SUBSET Resource :
+-              Request(c,S) \\/ Allocate(c,S) \\/ Return(c,S)
+-        BY <1>1 DEF Next
+-      <2>2. CASE Request(c,S)
+-        BY <1>1, <2>2, RequestTypeInvariant
+-      <2>3. CASE Allocate(c,S)
+-        BY <1>1, <2>3, AllocateTypeInvariant
+-      <2>4. CASE Return(c,S)
+-        BY <1>1, <2>4, ReturnTypeInvariant
+-      <2>5. QED
+-        BY <2>1, <2>2, <2>3, <2>4
+-    QED
+-  <1>2. QED
+-    BY <1>1
++  <1> SUFFICES ASSUME TypeInvariant, Next
++               PROVE  TypeInvariant'
++    OBVIOUS
++  <1>1. PICK c \\in Client, S \\in SUBSET Resource :
++          Request(c,S) \\/ Allocate(c,S) \\/ Return(c,S)
++    BY DEF Next
++  <1>2. CASE Request(c,S)
++    BY <1>2, RequestTypeInvariant
++  <1>3. CASE Allocate(c,S)
++    BY <1>3, AllocateTypeInvariant
++  <1>4. CASE Return(c,S)
++    BY <1>4, ReturnTypeInvariant
++  <1>5. QED
++    BY <1>1, <1>2, <1>3, <1>4
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextTypeInvariant.tla"
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Allocate_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_
+
+(* created new ".tlacache/Allocator_NextTypeInvariant.tlaps/Allocator_NextTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextTypeInvariant.tlaps/fingerprints" *)
+File "./Allocator_NextTypeInvariant.tla", line 1, character 1 to line 165, character 73:
+[INFO]: All 16 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves the module. I’ll run the required proof-integrity checker and inspect the final diff.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Allocator_NextTypeInvariant.tla && git diff -- Allocator_NextTypeInvariant.tla'
+Checking: Allocator_NextTypeInvariant.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_NextTypeInvariant.tlaps/Allocator_NextTypeInvariant.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextTypeInvariant.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Allocate_
+
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_
+
+File "/tmp/tlaps_check_07kope8k/Allocator_NextTypeInvariant.tla", line 1, character 1 to line 165, character 73:
+[INFO]: All 16 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_NextTypeInvariant_rsfhjlq4/Allocator_NextTypeInvariant.result
+diff --git a/Allocator_NextTypeInvariant.tla b/Allocator_NextTypeInvariant.tla
+index a4a7dee..ded066f 100644
+--- a/Allocator_NextTypeInvariant.tla
++++ b/Allocator_NextTypeInvariant.tla
+@@ -146,6 +146,20 @@ THEOREM ReturnTypeInvariant ==
+   PROOF OMITTED
+ 
+ THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+-PROOF OBVIOUS
+-
+-=========================================================================
+\ No newline at end of file
++PROOF
++  <1> SUFFICES ASSUME TypeInvariant, Next
++               PROVE  TypeInvariant'
++    OBVIOUS
++  <1>1. PICK c \in Client, S \in SUBSET Resource :
++          Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
++    BY DEF Next
++  <1>2. CASE Request(c,S)
++    BY <1>2, RequestTypeInvariant
++  <1>3. CASE Allocate(c,S)
++    BY <1>3, AllocateTypeInvariant
++  <1>4. CASE Return(c,S)
++    BY <1>4, ReturnTypeInvariant
++  <1>5. QED
++    BY <1>1, <1>2, <1>3, <1>4
++
++=========================================================================
+[EXIT 0]
+
+[AGENT] Implemented the final TLAPS proof in `Allocator_NextTypeInvariant.tla:149`.
+
+**What Changed**
+- Replaced the failing `PROOF OBVIOUS` with a structured proof.
+- The proof unfolds `Next`, picks the witnessing `c` and `S`, then dispatches the three action cases using the admitted lemmas:
+  - `RequestTypeInvariant`
+  - `AllocateTypeInvariant`
+  - `ReturnTypeInvariant`
+
+**Validation**
+- Ran `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Allocator_NextTypeInvariant.tla`
+  - Result: `All 16 obligations proved.`
+- Ran `python3 check_proof.py Allocator_NextTypeInvariant.tla`
+  - Result: `PASS — all obligations proved`
+  - No cheating detected.

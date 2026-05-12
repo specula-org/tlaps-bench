@@ -1,0 +1,353 @@
+Benchmark: ByzantinePaxos/VoteProof_GeneralNatInduction.tla
+Time: 69s
+Tokens: 252,644 input / 2,549 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and proof context first, then iterate with `tlapm` until the final theorem verifies.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' VoteProof_GeneralNatInduction.tla && printf '\\n--- files ---\\n' && ls -la"
+----------------------------- MODULE VoteProof_GeneralNatInduction ------------------------------ 
+(***************************************************************************)
+(* This is a high-level consensus algorithm in which a set of processes    *)
+(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+(* all voted for the same value in the same ballot.                        *)
+(*                                                                         *)
+(* Ballots are not executed in order.  Different acceptors may be          *)
+(* concurrently performing actions for different ballots.                  *)
+(***************************************************************************)
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+\* THEOREM SMT == TRUE (*{ by (smt) }*)
+-----------------------------------------------------------------------------
+CONSTANT Value,     \* As in module Consensus, the set of choosable values.
+         Acceptor,  \* The set of all acceptors.
+         Quorum     \* The set of all quorums.
+ 
+(***************************************************************************)
+(* The following assumption asserts that a quorum is a set of acceptors,   *)
+(* and the fundamental assumption we make about quor
+... (truncated) ...
+                    /\ \A p \in Acceptor \ {self} :
+                                     \A w \in Value : VotedFor(p, b, w) => (w = v)
+                               /\ SafeAt(b, v)
+                            /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+
+Next == (\E self \in Acceptor: acceptor(self))
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+
+--- files ---
+total 316
+drwx------    3 ruize ruize   4096 May 12 22:25 .
+drwxrwxrwt 1315 root  root  176128 May 12 22:25 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:25 .git
+-rw-rw-r--    1 ruize ruize  14179 May 12 20:11 Consensus.tla
+-rw-rw-r--    1 ruize ruize  30218 May 12 20:11 PConProof.tla
+-rw-rw-r--    1 ruize ruize  46078 May 12 20:11 VoteProof.tla
+-rw-rw-r--    1 ruize ruize  20684 May 12 20:11 VoteProof_GeneralNatInduction.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I’ve got the module shape; now I’ll focus on the final theorem and nearby lemmas.
+
+[CMD] /bin/zsh -lc "sed -n '260,620p' VoteProof_GeneralNatInduction.tla"
+(* recursive definition.  For example, from the recursive definition       *)
+(*                                                                         *)
+(*   Silly[n \in Nat] == CHOOSE v : v # Silly[n]                           *)
+(*                                                                         *)
+(* we cannot deduce that                                                   *)
+(*                                                                         *)
+(*   Silly[42] = CHOOSE v : v # Silly[42]                                  *)
+(*                                                                         *)
+(* (From that, we could easily deduce Silly[42] # Silly[42].)              *)
+(*                                                                         *)
+(* To prove the desired property of SafeAt, we use the following proof     *)
+(* rule.  It will eventually be in a standard module--probably in TLAPS.   *)
+(* However, for now, we put it here.                                       *)
+(***************************************************************************)
+
+THEOREM RecursiveFcnOfNat ==
+          ASSUME NEW Def(_,_), 
+                 \A n \in Nat : 
+                    \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+          PROVE  LET f[n \in Nat] == Def(f, n)
+                 IN  f = [n \in Nat |-> Def(f, n)]
+PROOF OMITTED
+
+(***************************************************************************)
+(* Here is the theorem that ess
+... (truncated) ...
+ent to use one expressed *)
+(* as follows in terms of an operator f:                                   *)
+(*                                                                         *)
+(*    AXIOM ASSUME NEW f(_), f(0), \A n \in Nat : f(n) => f(n+1)           *)
+(*          PROVE  \A n \in Nat : f(n)                                     *)
+(*                                                                         *)
+(* However, the TLAPS proof system cannot yet handle proofs that use this  *)
+(* rule.  So, for now we use this axiom.                                   *)
+(***************************************************************************)
+AXIOM SimpleNatInduction == \A f : /\ f[0]
+                                   /\ \A n \in Nat : f[n] => f[n+1]
+                                   => \A n \in Nat : f[n]
+
+(***************************************************************************)
+(* We use the SimpleNatInduction rule to prove the following rule, which   *)
+(* expresses the soundness of what I believe is sometimes called "General  *)
+(* Induction" or "Strong Induction".                                       *)
+(***************************************************************************)                                
+THEOREM GeneralNatInduction == 
+         \A f : /\ f[0]
+                /\ \A n \in Nat : (\A j \in 0..n : f[j]) => f[n+1]
+                => \A n \in Nat : f[n]
+PROOF OBVIOUS
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] The target is a strong-induction derivation from `SimpleNatInduction`; I’ll check sibling files for an existing TLAPS pattern.
+
+[CMD] /bin/zsh -lc "rg -n \"GeneralNatInduction|SimpleNatInduction\" . ~/.tlapm15/lib/tlaps -g '*.tla'"
+./VoteProof_GeneralNatInduction.tla:1:----------------------------- MODULE VoteProof_GeneralNatInduction ------------------------------ 
+./VoteProof_GeneralNatInduction.tla:338:AXIOM SimpleNatInduction == \A f : /\ f[0]
+./VoteProof_GeneralNatInduction.tla:343:(* We use the SimpleNatInduction rule to prove the following rule, which   *)
+./VoteProof_GeneralNatInduction.tla:347:THEOREM GeneralNatInduction == 
+./VoteProof.tla:338:AXIOM SimpleNatInduction == \A f : /\ f[0]
+./VoteProof.tla:343:(* We use the SimpleNatInduction rule to prove the following rule, which   *)
+./VoteProof.tla:347:THEOREM GeneralNatInduction == 
+./VoteProof.tla:356:(* It is proved from SafeAtProp by GeneralNatInduction.                    *)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla:44:THEOREM GeneralNatInduction ==
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:176:(* well-founded set.  It generalizes theorem GeneralNatInduction of module *)
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:561:    BY ONLY <1>3, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/WellFoundedInduction.tla:113:(* well-founded set.  It generalizes theorem GeneralNatInduction of module *)
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:52:THEOREM GeneralNatInduction ==
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:81:<1>. QED  BY ONLY <1>1, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:247:  <2>. QED  BY <2>1, GeneralNatInduction, Blast
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:304:<1>. QED  BY <1>2, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:343:  BY <1>2, GeneralNatInduction, Isa
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:504:  <2>. QED  BY <1>2, GeneralNatInduction, Isa
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '330,370p' VoteProof.tla; printf '\\n--- std ---\\n'; sed -n '1,110p' ~/.tlapm15/lib/tlaps/NaturalsInduction.tla; printf '\\n--- proofs ---\\n'; sed -n '40,70p' ~/.tlapm15/lib/tlaps/NaturalsInduction_proofs.tla"
+(* as follows in terms of an operator f:                                   *)
+(*                                                                         *)
+(*    AXIOM ASSUME NEW f(_), f(0), \A n \in Nat : f(n) => f(n+1)           *)
+(*          PROVE  \A n \in Nat : f(n)                                     *)
+(*                                                                         *)
+(* However, the TLAPS proof system cannot yet handle proofs that use this  *)
+(* rule.  So, for now we use this axiom.                                   *)
+(***************************************************************************)
+AXIOM SimpleNatInduction == \A f : /\ f[0]
+                                   /\ \A n \in Nat : f[n] => f[n+1]
+                                   => \A n \in Nat : f[n]
+
+(***************************************************************************)
+(* We use the SimpleNatInduction rule to prove the following rule, which   *)
+(* expresses the soundness of what I believe is sometimes called "General  *)
+(* Induction" or "Strong Induction".                                       *)
+(***************************************************************************)                                
+THEOREM GeneralNatInduction == 
+         \A f : /\ f[0]
+                /\ \A n \in Nat : (\A j \in 0..n : f[j]) => f[n+1]
+                => \A n \in Nat : f[n]
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(**************************
+... (truncated) ...
+IOUS
+<1>2. ASSUME NEW n \in Nat, Q(n)
+      PROVE  Q(n+1)
+  BY <1>2
+<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+<1>. QED  BY <1>3, Isa
+
+(***************************************************************************)
+(* The following theorem expresses a stronger induction principle,         *)
+(* also known as course-of-values induction, where the induction           *)
+(* hypothesis is available for all strictly smaller natural numbers.       *)
+(***************************************************************************)
+THEOREM GeneralNatInduction ==
+          ASSUME NEW P(_),
+                 \A n \in Nat : (\A m \in 0..(n-1) : P(m)) => P(n)
+          PROVE  \A n \in Nat : P(n)
+<1> DEFINE Q(n) == \A m \in 0..n : P(m)
+<1>1. Q(0)  OBVIOUS
+<1>2. \A n \in Nat : Q(n) => Q(n+1)  OBVIOUS
+<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+<1>4. QED BY <1>3
+
+(***************************************************************************)
+(* The following theorem expresses the ``least-number principle'':         *)
+(* if P(n) is true for some natural number n then there is a               *)
+(* smallest natural number for which P is true. It could be derived in     *)
+(* module WellFoundedInduction as a corollary of the fact that the natural *)
+(* numbers are well ordered, but we give a direct proof.                   *)
+(***************************************************************************)
+THEOREM SmallestNatural ==
+  ASSUME NEW P(_), NEW n \in Nat, P(n)
+[EXIT 0]
+
+[AGENT] I found the standard-library pattern; now I’ll adapt it to this module’s function-form axiom.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_GeneralNatInduction.tla
+@@
+ THEOREM GeneralNatInduction == 
+          \\A f : /\\ f[0]
+                 /\\ \\A n \\in Nat : (\\A j \\in 0..n : f[j]) => f[n+1]
+                 => \\A n \\in Nat : f[n]
+-PROOF OBVIOUS
++PROOF
++  <1>1. TAKE f
++  <1>2. ASSUME H0 == f[0],
++               HInd == \\A n \\in Nat : (\\A j \\in 0..n : f[j]) => f[n+1]
++        PROVE  \\A n \\in Nat : f[n]
++    <2> DEFINE g == [n \\in Nat |-> \\A j \\in 0..n : f[j]]
++    <2>1. g[0]
++      BY <1>2 DEF g
++    <2>2. \\A n \\in Nat : g[n] => g[n+1]
++      BY <1>2 DEF g
++    <2>3. \\A n \\in Nat : g[n]
++      BY <2>1, <2>2, SimpleNatInduction
++    <2>4. QED
++      BY <2>3 DEF g
++  <1>3. QED
++    BY <1>1, <1>2
+ 
+ ===============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_GeneralNatInduction.tla"
+File "./VoteProof_GeneralNatInduction.tla", line 353, character 18
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "./VoteProof_GeneralNatInduction.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first draft hit a TLAPS syntax issue with named assumptions; I’ll simplify the assumption block and rerun.
+
+[AGENT] `tlapm` is still running; I’ll wait for the proof obligations to finish.
+
+[CMD] /bin/zsh -lc "nl -ba VoteProof_GeneralNatInduction.tla | sed -n '346,370p'
+apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_GeneralNatInduction.tla
+@@
+-  <1>2. ASSUME H0 == f[0],
+-               HInd == \\A n \\in Nat : (\\A j \\in 0..n : f[j]) => f[n+1]
++  <1>2. ASSUME f[0],
++               \\A n \\in Nat : (\\A j \\in 0..n : f[j]) => f[n+1]
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_GeneralNatInduction.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/VoteProof_GeneralNatInduction.tlaps/VoteProof_GeneralNatInduction.thy" *)
+File "./VoteProof_GeneralNatInduction.tla", line 1, character 1 to line 368, character 79:
+[INFO]: All 15 obligations proved.
+(* fingerprints written in ".tlacache/VoteProof_GeneralNatInduction.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] `tlapm` verifies cleanly. I’ll run the requested proof-integrity checker now.
+
+[AGENT] The checker is still running; I’ll collect its result.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py VoteProof_GeneralNatInduction.tla'
+Checking: VoteProof_GeneralNatInduction.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_GeneralNatInduction.tlaps/VoteProof_GeneralNatInduction.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_GeneralNatInduction.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_eydytspp/VoteProof_GeneralNatInduction.tla", line 1, character 1 to line 368, character 79:
+[INFO]: All 15 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_VoteProof_GeneralNatInduction_f4qhnlc6/VoteProof_GeneralNatInduction.result
+[EXIT 0]
+
+[AGENT] All validation passed; I’ll mark the work complete and summarize the proof change.
+
+[AGENT] Implemented a complete TLAPS proof for `GeneralNatInduction` in `VoteProof_GeneralNatInduction.tla:351`.
+
+**What Changed**
+- Replaced `PROOF OBVIOUS` with a valid proof deriving strong induction from `SimpleNatInduction`.
+- Introduced local helper function `g == [n \in Nat |-> \A j \in 0..n : f[j]]`.
+- Proved `g[0]`, the induction step for `g`, then concluded `\A n \in Nat : f[n]`.
+
+**Validation**
+- Ran `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps VoteProof_GeneralNatInduction.tla`
+- Ran `python3 check_proof.py VoteProof_GeneralNatInduction.tla`
+- Result: `PASS — all obligations proved`, no cheating detected.

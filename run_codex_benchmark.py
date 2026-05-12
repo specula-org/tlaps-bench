@@ -17,7 +17,9 @@ import sys
 import re
 import glob
 import json
+import shlex
 import shutil
+import signal
 import subprocess
 import argparse
 import tempfile
@@ -266,21 +268,34 @@ def run_single_benchmark(args_tuple):
             '-o', codex_last_msg,
         ]
 
+        # Build a shell command that sources ~/.zshrc to pick up env vars
+        # (e.g. AZURE_OPENAI_API_KEY) without hardcoding secrets in code
+        shell_cmd = 'source ~/.zshrc 2>/dev/null; exec ' + ' '.join(
+            shlex.quote(c) for c in cmd
+        )
+
         start_time = time.time()
         try:
             with open(codex_jsonl, 'w') as jsonl_f:
-                proc = subprocess.run(
-                    cmd,
-                    input=prompt,
+                proc = subprocess.Popen(
+                    ['zsh', '-c', shell_cmd],
+                    stdin=subprocess.PIPE,
                     stdout=jsonl_f,
                     stderr=subprocess.PIPE,
                     text=True,
-                    timeout=timeout,
+                    start_new_session=True,  # own process group for clean kill
                 )
+                try:
+                    _, stderr = proc.communicate(input=prompt, timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    # Kill entire process group (codex + tlapm + z3 + isabelle)
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                    raise
             result['codex_exit'] = proc.returncode
-            if proc.stderr:
+            if stderr:
                 with open(os.path.join(result_dir, 'codex_stderr.txt'), 'w') as f:
-                    f.write(proc.stderr)
+                    f.write(stderr)
         except subprocess.TimeoutExpired:
             result['codex_exit'] = -1
             result['error'] = f'codex timeout after {timeout}s'
@@ -324,6 +339,12 @@ def run_single_benchmark(args_tuple):
                 capture_output=True, text=True, timeout=180,
                 cwd=workspace,
             )
+            # Save check output for debugging
+            check_log = os.path.join(result_dir, 'check_debug.txt')
+            with open(check_log, 'w') as dbg:
+                dbg.write(f"exit code: {check_proc.returncode}\n")
+                dbg.write(f"stdout:\n{check_proc.stdout}\n")
+                dbg.write(f"stderr:\n{check_proc.stderr}\n")
             if check_proc.returncode == 0:
                 result['check_verdict'] = 'PASS'
             elif check_proc.returncode == 2:
@@ -361,6 +382,7 @@ def main():
     else:
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         output_dir = os.path.join(SCRIPT_DIR, 'codex_results', timestamp)
+    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Output directory: {output_dir}")

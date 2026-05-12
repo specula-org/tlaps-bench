@@ -1,0 +1,570 @@
+Benchmark: Paxos/Paxos_VotedInv.tla
+Time: 89s
+Tokens: 384,113 input / 3,004 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemma structure first, then iterate with TLAPS until the final proof checks.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' Paxos_VotedInv.tla && printf '\\n--- tail ---\\n' && tail -n 120 Paxos_VotedInv.tla"
+------------------------------- MODULE Paxos_VotedInv -------------------------------
+(* 
+Specification and Verification of Basic Paxos.
+
+See http://research.microsoft.com/en-us/um/people/lamport/pubs/pubs.html#paxos-simple
+*)
+EXTENDS Integers, TLAPS, TLC
+-----------------------------------------------------------------------------
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}                 
+
+LEMMA QuorumNonEmpty == \A Q \in Quorums : Q # {}
+  PROOF OMITTED
+
+Ballots == Nat
+
+None == CHOOSE v : v \notin Values
+
+LEMMA NoneNotAValue == None \notin Values
+  PROOF OMITTED
+
+Messages ==      [type : {"1a"}, bal : Ballots]
+            \cup [type : {"1b"}, bal : Ballots, maxVBal : Ballots \cup {-1},
+                    maxVal : Values \cup {None}, acc : Acceptors]
+            \cup [type : {"2a"}, bal : Ballots, val : Values]
+            \cup [type : {"2b"}, bal : Ballots, val : Values, acc : Acceptors]
+-----------------------------------------------------------------------------
+VARIABLES msgs,    \* the set of messages that have been sent.
+          maxBal,  \* maxBal[a]: the highest-number ballot acceptor a has participated in.
+          maxVBal, \* maxVBal[a]: the highest ballot in which a has voted;
+          maxVal   \* maxVal[a]: the value it voted for in that ballot.
+
+vars == <<msgs, maxBal, maxVBal, maxVal>>
+
+TypeOK == /\ msgs \in SUBSET Messages
+          
+... (truncated) ...
+ \/ WontVoteIn(a, c)
+-----------------------------------------------------------------------------
+MsgInv ==
+  \A m \in msgs : 
+    /\ (m.type = "1b") => /\ m.bal =< maxBal[m.acc]
+                          /\ \/ /\ m.maxVal \in Values
+                                /\ m.maxVBal \in Ballots
+                                \* conjunct strengthened 2014/04/02 sm
+                                /\ VotedForIn(m.acc, m.maxVal, m.maxVBal)
+                                \* /\ SafeAt(m.maxVal, m.maxVBal)
+                             \/ /\ m.maxVal = None
+                                /\ m.maxVBal = -1
+                          \* conjunct added 2014/03/29 sm
+                          /\ \A c \in (m.maxVBal+1) .. (m.bal-1) : 
+                                ~ \E v \in Values : VotedForIn(m.acc, v, c)
+    /\ (m.type = "2a") => 
+         /\ SafeAt(m.val, m.bal)
+         /\ \A ma \in msgs : (ma.type = "2a") /\ (ma.bal = m.bal) => (ma = m)
+    /\ (m.type = "2b") => 
+         /\ \E ma \in msgs : /\ ma.type = "2a"
+                             /\ ma.bal  = m.bal
+                             /\ ma.val  = m.val
+         /\ m.bal =< maxVBal[m.acc]
+-----------------------------------------------------------------------------
+LEMMA VotedInv ==
+        MsgInv /\ TypeOK => 
+            \A a \in Acceptors, v \in Values, b \in Ballots :
+                VotedForIn(a, v, b) => SafeAt(v, b) /\ b =< maxVBal[a]
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] I found the target theorem; now I’ll check the repository files and run TLAPS to see the current failure shape.
+
+[CMD] /bin/zsh -lc 'ls -la && find .. -name AGENTS.md -print && ~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla'
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-ModemManager.service-lp6MuZ’: Permission denied
+find: ‘../snap-private-tmp’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-systemd-logind.service-tevgcv’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-systemd-resolved.service-141Hbw’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-polkit.service-aTAsBM’: Permission denied
+find: ‘../a2J8Gr__6G’: Permission denied
+../asterinas/AGENTS.md
+[EXIT 1]
+
+[AGENT] The broad parent search hit unrelated permission traps, so I’ll restrict checks to this workspace and then run TLAPS directly.
+
+[CMD] /bin/zsh -lc 'find . -name AGENTS.md -print; ~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_SafeAt_, STATE_MsgInv_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Paxos_VotedInv.tlaps/Paxos_VotedInv.thy" *)
+(* fingerprints written in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+File "./Paxos_VotedInv.tla", line 138, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal
+           PROVE  MsgInv /\ TypeOK
+                  => (\A a \in Acceptors, v \in Values, b \in Ballots :
+                         VotedForIn(a, v, b)
+                         => SafeAt(v, b) /\ b =< maxVBal[a])
+File "./Paxos_VotedInv.tla", line 1, character 1 to line 140, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Paxos_VotedInv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS only fails on the placeholder theorem. I’ll inspect the exact line context and available library facts before patching the proof.
+
+[CMD] /bin/zsh -lc "nl -ba Paxos_VotedInv.tla | sed -n '95,150p'; ls ~/.tlapm15/lib/tlaps | head -50"
+    95	                                       /\ m.acc  = a
+    96	
+    97	ChosenIn(v, b) == \E Q \in Quorums :
+    98	                     \A a \in Q : VotedForIn(a, v, b)
+    99	
+   100	Chosen(v) == \E b \in Ballots : ChosenIn(v, b)
+   101	
+   102	Consistency == \A v1, v2 \in Values : Chosen(v1) /\ Chosen(v2) => (v1 = v2)
+   103	-----------------------------------------------------------------------------
+   104	WontVoteIn(a, b) == /\ \A v \in Values : ~ VotedForIn(a, v, b)
+   105	                    /\ maxBal[a] > b
+   106	
+   107	SafeAt(v, b) == 
+   108	  \A c \in 0..(b-1) :
+   109	    \E Q \in Quorums : 
+   110	      \A a \in Q : VotedForIn(a, v, c) \/ WontVoteIn(a, c)
+   111	-----------------------------------------------------------------------------
+   112	MsgInv ==
+   113	  \A m \in msgs : 
+   114	    /\ (m.type = "1b") => /\ m.bal =< maxBal[m.acc]
+   115	                          /\ \/ /\ m.maxVal \in Values
+   116	                                /\ m.maxVBal \in Ballots
+   117	                                \* conjunct strengthened 2014/04/02 sm
+   118	                                /\ VotedForIn(m.acc, m.maxVal, m.maxVBal)
+   119	                                \* /\ SafeAt(m.maxVal, m.maxVBal)
+   120	                             \/ /\ m.maxVal = None
+   121	                                /\ m.maxVBal = -1
+   122	                          \* conjunct added 2014/03/29 sm
+   123	                          /\ \A c \in (m.maxVBal+1) .. (m.bal-1) : 
+   124	                                ~ \E v \in Values : VotedForIn(m.acc, v, c)
+   125	    /\ (m.type = "2a") => 
+   126	         /\ SafeAt(m.val, m.bal)
+   127	         /\ \A ma \in msgs : (ma.type = "2a") /\ (ma.bal = m.bal) => (ma = m)
+   128	    /\ (m.type = "2b") => 
+   129	         /\ \E ma \in msgs : /\ ma.type = "2a"
+   130	                             /\ ma.bal  = m.bal
+   131	                             /\ ma.val  = m.val
+   132	         /\ m.bal =< maxVBal[m.acc]
+   133	-----------------------------------------------------------------------------
+   134	LEMMA VotedInv ==
+   135	        MsgInv /\ TypeOK => 
+   136	            \A a \in Acceptors, v \in Values, b \in Ballots :
+   137	                VotedForIn(a, v, b) => SafeAt(v, b) /\ b =< maxVBal[a]
+   138	PROOF OBVIOUS
+   139	
+   140	=============================================================================
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+Isabelle
+Isabelle2011-1
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLA+
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+bin
+emacs
+examples
+heaps
+lib
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+[EXIT 0]
+
+[AGENT] The proof is a direct “follow the 2b message to its 2a message” argument, so I’ll encode that structure explicitly.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Paxos_VotedInv.tla
+@@
+ LEMMA VotedInv ==
+         MsgInv /\\ TypeOK => 
+             \\A a \\in Acceptors, v \\in Values, b \\in Ballots :
+                 VotedForIn(a, v, b) => SafeAt(v, b) /\\ b =< maxVBal[a]
+-PROOF OBVIOUS
++PROOF
++<1>1. ASSUME NEW a \\in Acceptors,
++             NEW v \\in Values,
++             NEW b \\in Ballots,
++             MsgInv,
++             TypeOK,
++             VotedForIn(a, v, b)
++      PROVE SafeAt(v, b) /\\ b =< maxVBal[a]
++  PROOF
++  <2>1. PICK m \\in msgs : /\\ m.type = \"2b\"
++                         /\\ m.val  = v
++                         /\\ m.bal  = b
++                         /\\ m.acc  = a
++        BY DEF VotedForIn
++  <2>2. /\\ \\E ma \\in msgs : /\\ ma.type = \"2a\"
++                            /\\ ma.bal  = m.bal
++                            /\\ ma.val  = m.val
++        /\\ m.bal =< maxVBal[m.acc]
++        BY <1>1, <2>1 DEF MsgInv
++  <2>3. PICK ma \\in msgs : /\\ ma.type = \"2a\"
++                          /\\ ma.bal  = m.bal
++                          /\\ ma.val  = m.val
++        BY <2>2
++  <2>4. SafeAt(ma.val, ma.bal)
++        BY <1>1, <2>3 DEF MsgInv
++  <2>5. QED BY <2>1, <2>2, <2>3, <2>4
++  QED
++<1>2. QED BY <1>1
+ 
+ =============================================================================
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla"
+File "./Paxos_VotedInv.tla", line 163, character 15:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, c
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The initial structure parsed badly at the outer `QED`; I’ll switch to standard hierarchical `QED` steps.
+
+[CMD] /bin/zsh -lc "grep -R \"ASSUME NEW.*PROVE\" -n ~/.tlapm15/lib/tlaps/examples ~/.tlapm15/lib/tlaps/*.tla 2>/dev/null | head -20; grep -R \"<1>.*QED\" -n ~/.tlapm15/lib/tlaps/examples ~/.tlapm15/lib/tlaps/*.tla 2>/dev/null | head -20; nl -ba Paxos_VotedInv.tla | sed -n '134,175p'"
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:293:    <3>1. ASSUME NEW b \in Ballots, Phase1a(b) PROVE TypeOK'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:295:    <3>2. ASSUME NEW b \in Ballots, Phase2a(b) PROVE TypeOK'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:302:    <3>3. ASSUME NEW a \in Acceptors, Phase1b(a) PROVE TypeOK'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:306:    <3>4. ASSUME NEW a \in Acceptors, Phase2b(a) PROVE TypeOK'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:312:    <3>1. ASSUME NEW b \in Ballots, Phase1a(b) PROVE AccInv'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:314:    <3>2. ASSUME NEW b \in Ballots, Phase2a(b) PROVE AccInv'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:316:    <3>3. ASSUME NEW a \in Acceptors, Phase1b(a) PROVE AccInv'
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:318:    <3>4. ASSUME NEW a \in Acceptors, Phase2b(a) PROVE AccInv'
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla:322:    <3>2. ASSUME NEW i \in P PROVE IInv(i)'
+/home/ruize/.tlapm15/lib/tlaps/examples/Bakery.tla:338:    <3>2. ASSUME NEW i \in P PROVE IInv(i)'
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:249:  <2>1. ASSUME NEW self \in P, p1(self) PROVE Inv'
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:251:  <2>2. ASSUME NEW self \in P, p2(self) PROVE Inv'
+/home/ruize/.tlapm15/lib/tlaps/examples/AtomicBakery.tla:258:  <2>3. ASSUME NEW self \in P, 
+... (truncated) ...
+D     BY <1>1
+/home/ruize/.tlapm15/lib/tlaps/examples/ByzPaxos/VoteProof.tla:593:<1>. QED     BY <1>1
+   134	LEMMA VotedInv ==
+   135	        MsgInv /\ TypeOK => 
+   136	            \A a \in Acceptors, v \in Values, b \in Ballots :
+   137	                VotedForIn(a, v, b) => SafeAt(v, b) /\ b =< maxVBal[a]
+   138	PROOF
+   139	<1>1. ASSUME NEW a \in Acceptors,
+   140	             NEW v \in Values,
+   141	             NEW b \in Ballots,
+   142	             MsgInv,
+   143	             TypeOK,
+   144	             VotedForIn(a, v, b)
+   145	      PROVE SafeAt(v, b) /\ b =< maxVBal[a]
+   146	  PROOF
+   147	  <2>1. PICK m \in msgs : /\ m.type = "2b"
+   148	                         /\ m.val  = v
+   149	                         /\ m.bal  = b
+   150	                         /\ m.acc  = a
+   151	        BY DEF VotedForIn
+   152	  <2>2. /\ \E ma \in msgs : /\ ma.type = "2a"
+   153	                            /\ ma.bal  = m.bal
+   154	                            /\ ma.val  = m.val
+   155	        /\ m.bal =< maxVBal[m.acc]
+   156	        BY <1>1, <2>1 DEF MsgInv
+   157	  <2>3. PICK ma \in msgs : /\ ma.type = "2a"
+   158	                          /\ ma.bal  = m.bal
+   159	                          /\ ma.val  = m.val
+   160	        BY <2>2
+   161	  <2>4. SafeAt(ma.val, ma.bal)
+   162	        BY <1>1, <2>3 DEF MsgInv
+   163	  <2>5. QED BY <2>1, <2>2, <2>3, <2>4
+   164	  QED
+   165	<1>2. QED BY <1>1
+   166	
+   167	=============================================================================
+[EXIT 0]
+
+[AGENT] The parser wants `QED` as a proof step rather than a separate terminator; I’ll align the syntax with TLAPS examples.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Paxos_VotedInv.tla
+@@
+-  <2>5. QED BY <2>1, <2>2, <2>3, <2>4
+-  QED
+-<1>2. QED BY <1>1
++  <2>. QED BY <2>1, <2>2, <2>3, <2>4
++<1>. QED BY <1>1
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_MsgInv_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_None_, CONSTANT_VotedForIn_
+[EXIT 255]
+
+[AGENT] That run ended with an odd silent backend exit, so I’ll rerun TLAPS with the current proof to get the actual failing obligation.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_SafeAt_, STATE_MsgInv_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Paxos_VotedInv.tlaps/Paxos_VotedInv.thy" *)
+(* fingerprints written in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+File "./Paxos_VotedInv.tla", line 151, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  VotedForIn(a, v, b) ==
+                    \E m \in msgs :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  NEW CONSTANT a \in Acceptors,
+                  NEW CONSTANT v \in Values,
+                  NEW CONSTANT b \in Ballots
+           PROVE  \E m \in msgs :
+                     (/\ m.type = "2b") /\ m.val = v /\ m.bal = b
+                     /\ m.acc = a
+File "./Paxos_VotedInv.tla", line 1, character 1 to line 166, character 77:
+[ERROR]: 1/16 obligations failed.
+There were backend errors processing module `"Paxos_VotedInv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first failed sub-obligation just needs the local assumption cited explicitly; I’ll tighten those references and rerun.
+
+[CMD] /bin/zsh -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Paxos_VotedInv.tla
+@@
+   <2>1. PICK m \\in msgs : /\\ m.type = \"2b\"
+                          /\\ m.val  = v
+                          /\\ m.bal  = b
+                          /\\ m.acc  = a
+-        BY DEF VotedForIn
++        BY <1>1 DEF VotedForIn
+*** End Patch
+PATCH
+~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_, STATE_TypeOK_
+
+(* created new ".tlacache/Paxos_VotedInv.tlaps/Paxos_VotedInv.thy" *)
+(* fingerprints written in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+File "./Paxos_VotedInv.tla", line 1, character 1 to line 166, character 77:
+[INFO]: All 17 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves all obligations. I’ll run the required legality checker and inspect the final diff.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py Paxos_VotedInv.tla && git diff -- Paxos_VotedInv.tla'
+Checking: Paxos_VotedInv.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Paxos_VotedInv.tlaps/Paxos_VotedInv.thy" *)
+(* fingerprints written in ".tlacache/Paxos_VotedInv.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_SafeAt_, STATE_MsgInv_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_MsgInv_, CONSTANT_Ballots_, STATE_TypeOK_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_None_, CONSTANT_VotedForIn_
+
+File "/tmp/tlaps_check_4d_a59px/Paxos_VotedInv.tla", line 1, character 1 to line 166, character 77:
+[INFO]: All 17 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+===================================================
+... (truncated) ...
+v_1qk41rel/Paxos_VotedInv.result
+diff --git a/Paxos_VotedInv.tla b/Paxos_VotedInv.tla
+index f972351..bfb78e1 100644
+--- a/Paxos_VotedInv.tla
++++ b/Paxos_VotedInv.tla
+@@ -135,6 +135,32 @@ LEMMA VotedInv ==
+         MsgInv /\ TypeOK => 
+             \A a \in Acceptors, v \in Values, b \in Ballots :
+                 VotedForIn(a, v, b) => SafeAt(v, b) /\ b =< maxVBal[a]
+-PROOF OBVIOUS
+-
+-=============================================================================
+\ No newline at end of file
++PROOF
++<1>1. ASSUME NEW a \in Acceptors,
++             NEW v \in Values,
++             NEW b \in Ballots,
++             MsgInv,
++             TypeOK,
++             VotedForIn(a, v, b)
++      PROVE SafeAt(v, b) /\ b =< maxVBal[a]
++  PROOF
++  <2>1. PICK m \in msgs : /\ m.type = "2b"
++                         /\ m.val  = v
++                         /\ m.bal  = b
++                         /\ m.acc  = a
++        BY <1>1 DEF VotedForIn
++  <2>2. /\ \E ma \in msgs : /\ ma.type = "2a"
++                            /\ ma.bal  = m.bal
++                            /\ ma.val  = m.val
++        /\ m.bal =< maxVBal[m.acc]
++        BY <1>1, <2>1 DEF MsgInv
++  <2>3. PICK ma \in msgs : /\ ma.type = "2a"
++                          /\ ma.bal  = m.bal
++                          /\ ma.val  = m.val
++        BY <2>2
++  <2>4. SafeAt(ma.val, ma.bal)
++        BY <1>1, <2>3 DEF MsgInv
++  <2>. QED BY <2>1, <2>2, <2>3, <2>4
++<1>. QED BY <1>1
++
++=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final `VotedInv` lemma in `Paxos_VotedInv.tla:138`.
+
+- Replaced only the final `PROOF OBVIOUS` placeholder with a hierarchical proof.
+- The proof extracts the witnessing `2b` message from `VotedForIn`, uses `MsgInv` to find the matching `2a` message and max-vote bound, then derives `SafeAt`.
+- Verified with `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps Paxos_VotedInv.tla`: all 17 obligations proved.
+- Ran `python3 check_proof.py Paxos_VotedInv.tla`: PASS, no cheating detected.

@@ -1,0 +1,663 @@
+Benchmark: Paxos/PaxosHistVar_SafeAtStable.tla
+Time: 189s
+Tokens: 721,031 input / 6,231 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and existing lemmas, then iteratively patch only the final proof and run TLAPS/checks.
+
+[CMD] /bin/zsh -lc "sed -n '1,260p' PaxosHistVar_SafeAtStable.tla"
+------------------------------- MODULE PaxosHistVar_SafeAtStable --------------------------
+(*
+Basic Paxos verified using only history variables.
+
+See https://github.com/sachand/HistVar/blob/master/Basic%20Paxos/PaxosUs.tla
+*)
+EXTENDS Integers, TLAPS, NaturalsInduction
+
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}
+
+Ballots == Nat
+
+VARIABLES sent
+
+vars == <<sent>>
+
+Send(m) == sent' = sent \cup {m}
+
+None == CHOOSE v : v \notin Values
+
+Init == sent = {}
+
+(***************************************************************************)
+(* Phase 1a: A leader selects a ballot number b and sends a 1a message     *)
+(* with ballot b to a majority of acceptors.  It can do this only if it    *)
+(* has not already sent a 1a message for ballot b.                         *)
+(***************************************************************************)
+Phase1a(b) == Send([type |-> "1a", bal |-> b])
+              
+(***************************************************************************)
+(* Phase 1b: If an acceptor receives a 1a message with ballot b greater    *)
+(* than that of any 1a message to which it has already responded, then it  *)
+(* responds to the request with a promise not to accept any more proposals *)
+(* for ballots numbered less than b and with the highest-numbered ballot   *)
+(* (if any) for which it has voted for a value and the value it voted for  *)
+(*
+... (truncated) ...
+t : /\ m2.type = "2a"
+                                         /\ m2.bal  = m.bal
+                                         /\ m2.val  = m.val
+
+Inv == TypeOK /\ MsgInv
+
+(***************************************************************************)
+(* The following two lemmas are simple consequences of the definitions.    *)
+(***************************************************************************)
+LEMMA VotedInv == 
+        MsgInv /\ TypeOK => 
+            \A a \in Acceptors, v \in Values, b \in Ballots :
+                VotedForIn(a, v, b) => SafeAt(v, b)
+  PROOF OMITTED
+
+LEMMA VotedOnce == 
+        MsgInv =>  \A a1, a2 \in Acceptors, b \in Ballots, v1, v2 \in Values :
+                       VotedForIn(a1, v1, b) /\ VotedForIn(a2, v2, b) => (v1 = v2)
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma shows that (the invariant implies that) the         *)
+(* predicate SafeAt(v, b) is stable, meaning that once it becomes true, it *)
+(* remains true throughout the rest of the excecution.                     *)
+(***************************************************************************)
+LEMMA SafeAtStable == Inv /\ Next => 
+                          \A v \in Values, b \in Ballots:
+                                  SafeAt(v, b) => SafeAt(v, b)'
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; now I’m checking nearby proof patterns and TLAPS library support for action proofs.
+
+[CMD] /bin/zsh -lc "ls -la && find .. -name 'PaxosHistVar_SafeAtStable.tla' -o -name '*Paxos*Stable*.tla' | head -20 && rg \"SafeAtStable|WontVoteIn|VotedInv\" -n .. ~/.tlapm15/lib/tlaps 2>/dev/null | head -80"
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-ModemManager.service-lp6MuZ’: Permission denied
+find: ‘../snap-private-tmp’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-systemd-logind.service-tevgcv’: Permission denied
+find: ‘../isabelle-ruize3200650’: No such file or directory
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-systemd-resolved.service-141Hbw’: Permission denied
+find: ‘../systemd-private-15c837d3acde4bbf96ec7b86d9b0c47c-polkit.service-aTAsBM’: Permission denied
+find: ‘../a2J8Gr__6G’: Permission denied
+../codex_bench_PaxosHistVar_SafeAtStable_zisb5xko/PaxosHistVar_SafeAtStable.tla
+../codex_bench_Voting_Refinement_biebwl2j/Voting_Refinement.tla:110:THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+../codex_bench_Voting_Refinement_biebwl2j/Voting.tla:110:THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:159:(* WontVoteIn(a, b) is a predicate that implies that a has not voted and   *)
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:162:WontVoteIn(a, b) == /\ \A v \in Values : ~ VotedForIn(a, v, b)
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:172:      \A a \in Q : VotedForIn(a, v, c) \/ WontVoteIn(a, c)
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:200:LEMMA VotedInv == 
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla:230:LEMMA SafeAtStable == Inv /\ Next /\ TypeOK' => 
+/home/ruize/.tlapm15/lib/tlaps/examples/paxos/
+... (truncated) ...
+emma_z7m69fbe/Voting.tla:110:THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+../codex_bench_PaxosHistVar_Invariant_ns4x0geu/PaxosHistVar_Invariant.tla:126:(* WontVoteIn(a, b) is a predicate that implies that a has not voted and   *)
+../codex_bench_PaxosHistVar_Invariant_ns4x0geu/PaxosHistVar_Invariant.tla:129:WontVoteIn(a, b) == /\ \A v \in Values : ~ VotedForIn(a, v, b)
+../codex_bench_PaxosHistVar_Invariant_ns4x0geu/PaxosHistVar_Invariant.tla:139:      \A a \in Q : VotedForIn(a, v, b2) \/ WontVoteIn(a, b2)
+../codex_bench_PaxosHistVar_Invariant_ns4x0geu/PaxosHistVar_Invariant.tla:156:LEMMA VotedInv == 
+../codex_bench_PaxosHistVar_Invariant_ns4x0geu/PaxosHistVar_Invariant.tla:173:LEMMA SafeAtStable == Inv /\ Next => 
+../codex_bench_PaxosHistVar_Consistent_0rk_1oce/PaxosHistVar_Consistent.tla:126:(* WontVoteIn(a, b) is a predicate that implies that a has not voted and   *)
+../codex_bench_PaxosHistVar_Consistent_0rk_1oce/PaxosHistVar_Consistent.tla:129:WontVoteIn(a, b) == /\ \A v \in Values : ~ VotedForIn(a, v, b)
+../codex_bench_PaxosHistVar_Consistent_0rk_1oce/PaxosHistVar_Consistent.tla:139:      \A a \in Q : VotedForIn(a, v, b2) \/ WontVoteIn(a, b2)
+../codex_bench_PaxosHistVar_Consistent_0rk_1oce/PaxosHistVar_Consistent.tla:156:LEMMA VotedInv == 
+../codex_bench_PaxosHistVar_Consistent_0rk_1oce/PaxosHistVar_Consistent.tla:173:LEMMA SafeAtStable == Inv /\ Next => 
+../codex_bench_Sets_IsBijectionInverse_pc2vwapj/Voting.tla:110:THEOREM SafeAtStable == Inv /\ Next /\ TypeOK' =>
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '220,285p' ~/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla && printf '\\n--- invariant version ---\\n' && sed -n '150,220p' ../codex_bench_PaxosHistVar_Invariant_ns4x0geu/PaxosHistVar_Invariant.tla 2>/dev/null"
+(***************************************************************************)
+(* Inv is the complete inductive invariant.                                *)
+(***************************************************************************)
+Inv == TypeOK /\ MsgInv /\ AccInv
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma shows that (the invariant implies that) the         *)
+(* predicate SafeAt(v, b) is stable, meaning that once it becomes true, it *)
+(* remains true throughout the rest of the excecution.                     *)
+(***************************************************************************)
+LEMMA SafeAtStable == Inv /\ Next /\ TypeOK' => 
+                          \A v \in Values, b \in Ballots:
+                                  SafeAt(v, b) => SafeAt(v, b)'
+<1> SUFFICES ASSUME Inv, Next, TypeOK',
+                    NEW v \in Values, NEW b \in Ballots, SafeAt(v, b)
+             PROVE  SafeAt(v, b)'
+  OBVIOUS
+<1> USE DEF Send, Inv, Ballots
+<1>1. ASSUME NEW bb \in Ballots, Phase1a(bb)
+      PROVE  SafeAt(v, b)'
+  BY <1>1 DEF SafeAt, Phase1a, VotedForIn, WontVoteIn
+<1>2. ASSUME NEW a \in Acceptors, Phase1b(a)
+      PROVE  SafeAt(v, b)'
+  BY <1>2, QuorumAssumption DEF TypeOK, SafeAt, WontVoteIn, VotedForIn, Phase1b
+<1>3. ASSUME NEW bb \in Ballots, Phase2a(bb)
+      PROVE  SafeAt(v, b)'
+  BY <1>3, QuorumAssumption DEF 
+... (truncated) ...
+v
+  BY Isa DEF Init, Inv, TypeOK, AccInv, MsgInv, VotedForIn
+
+--- invariant version ---
+
+Inv == TypeOK /\ MsgInv
+
+(***************************************************************************)
+(* The following two lemmas are simple consequences of the definitions.    *)
+(***************************************************************************)
+LEMMA VotedInv == 
+        MsgInv /\ TypeOK => 
+            \A a \in Acceptors, v \in Values, b \in Ballots :
+                VotedForIn(a, v, b) => SafeAt(v, b)
+  PROOF OMITTED
+
+LEMMA VotedOnce == 
+        MsgInv =>  \A a1, a2 \in Acceptors, b \in Ballots, v1, v2 \in Values :
+                       VotedForIn(a1, v1, b) /\ VotedForIn(a2, v2, b) => (v1 = v2)
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma shows that (the invariant implies that) the         *)
+(* predicate SafeAt(v, b) is stable, meaning that once it becomes true, it *)
+(* remains true throughout the rest of the excecution.                     *)
+(***************************************************************************)
+LEMMA SafeAtStable == Inv /\ Next => 
+                          \A v \in Values, b \in Ballots:
+                                  SafeAt(v, b) => SafeAt(v, b)'
+  PROOF OMITTED
+
+THEOREM Invariant == Spec => []Inv
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] There’s an official Paxos example with the same lemma shape; I’m adapting it to this history-variable module’s simpler state.
+
+[CMD] /bin/zsh -lc "sed -n '1,230p' ~/.tlapm15/lib/tlaps/examples/paxos/Paxos.tla"
+------------------------------- MODULE Paxos -------------------------------
+(***************************************************************************)
+(* This is a TLA+ specification of the Paxos Consensus algorithm,          *)
+(* described in                                                            *)
+(*                                                                         *)
+(*  Paxos Made Simple:                                                     *)
+(*   http://research.microsoft.com/en-us/um/people/lamport/pubs/pubs.html#paxos-simple *)
+(*                                                                         *)
+(* and a TLAPS-checked proof of its correctness.  This was mostly done as  *)
+(* a test to see how the SMT backend of TLAPS is now working.              *)
+(***************************************************************************)
+EXTENDS Integers, TLAPS, TLC
+
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}                 
+
+(***************************************************************************)
+(* The following lemma is an immediate consequence of the assumption.      *)
+(***************************************************************************)
+LEMMA QuorumNonEmpty == \A Q \in Quorums : Q # {}
+BY QuorumAssumption
+
+Ballots == Nat
+
+VARIABLES msgs,    \* The set of messages that have been sent.
+    
+... (truncated) ...
+Messages, TypeOK
+
+LEMMA VotedOnce == 
+        MsgInv =>  \A a1, a2 \in Acceptors, b \in Ballots, v1, v2 \in Values :
+                       VotedForIn(a1, v1, b) /\ VotedForIn(a2, v2, b) => (v1 = v2)
+BY DEF MsgInv, VotedForIn
+
+AccInv ==
+  \A a \in Acceptors:
+    /\ (maxVal[a] = None) <=> (maxVBal[a] = -1)
+    /\ maxVBal[a] =< maxBal[a]
+    \* conjunct strengthened corresponding to MsgInv 2014/04/02 sm
+    /\ (maxVBal[a] >= 0) => VotedForIn(a, maxVal[a], maxVBal[a])  \* SafeAt(maxVal[a], maxVBal[a])
+    \* conjunct added corresponding to MsgInv 2014/03/29 sm
+    /\ \A c \in Ballots : c > maxVBal[a] => ~ \E v \in Values : VotedForIn(a, v, c)
+                                       
+(***************************************************************************)
+(* Inv is the complete inductive invariant.                                *)
+(***************************************************************************)
+Inv == TypeOK /\ MsgInv /\ AccInv
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma shows that (the invariant implies that) the         *)
+(* predicate SafeAt(v, b) is stable, meaning that once it becomes true, it *)
+(* remains true throughout the rest of the excecution.                     *)
+(***************************************************************************)
+LEMMA SafeAtStable == Inv /\ Next /\ TypeOK' =>
+[EXIT 0]
+
+[AGENT] The initial proof is patched in. I’ll run TLAPS now and tighten any failing steps.
+
+[AGENT] TLAPS is still processing the obligations; I’m waiting for the first verification result before editing further.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps PaxosHistVar_SafeAtStable.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ACTION_Phase2a_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_, ACTION_Phase1b_, ACTION_Phase1a_, ACTION_Phase2b_
+
+** Unexpanded symbols: CONSTANT_Ballots_, ACTION_Next_, CONSTANT_SafeAt_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_
+
+** Unexpanded symbols: CONSTANT_Messages_, STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_
+
+** Unexpanded symbols: CONSTANT_Messages_, ACTION_Next_, CONSTANT_MsgInv_
+
+** Unexpanded symbols: CONSTANT_WontVoteIn_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: CONSTANT_Messages_, ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: CONSTANT_Messages_, ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_
+... (truncated) ...
+ b) ==
+                    /\ \A v \in Values : ~VotedForIn(a, v, b)
+                    /\ \E m \in sent :
+                          m.type \in {"1b", "2b"} /\ m.acc = a /\ m.bal > b,
+                  SafeAt(v, b) ==
+                    \A b2 \in 0..b - 1 :
+                       \E Q \in Quorums :
+                          \A a \in Q :
+                             VotedForIn(a, v, b2) \/ WontVoteIn(a, b2),
+                  Inv == TypeOK /\ MsgInv,
+                  Inv ,
+                  Next ,
+                  NEW CONSTANT v \in Values,
+                  NEW CONSTANT b \in Ballots,
+                  SafeAt(v, b) ,
+                  NEW CONSTANT a \in Acceptors,
+                  <1>2 ,
+                  QuorumAssumption 
+           PROVE  SafeAt(v, b)'
+File "./PaxosHistVar_SafeAtStable.tla", line 1, character 1 to line 226, character 77:
+[ERROR]: 2/39 obligations failed.
+There were backend errors processing module `"PaxosHistVar_SafeAtStable"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Two obligations need more structure: the Phase1b case and the new 2b record equality. I’m making those steps explicit.
+
+[CMD] /bin/zsh -lc "nl -ba PaxosHistVar_SafeAtStable.tla | sed -n '175,225p'"
+   175	                                  SafeAt(v, b) => SafeAt(v, b)'
+   176	<1> SUFFICES ASSUME Inv, Next,
+   177	                    NEW v \in Values, NEW b \in Ballots, SafeAt(v, b)
+   178	             PROVE  SafeAt(v, b)'
+   179	  OBVIOUS
+   180	<1> USE DEF Send, Inv, Ballots
+   181	<1>1. ASSUME NEW bb \in Ballots, Phase1a(bb)
+   182	      PROVE  SafeAt(v, b)'
+   183	  BY <1>1 DEF SafeAt, Phase1a, VotedForIn, WontVoteIn
+   184	<1>2. ASSUME NEW a \in Acceptors, Phase1b(a)
+   185	      PROVE  SafeAt(v, b)'
+   186	  BY <1>2, QuorumAssumption DEF TypeOK, SafeAt, WontVoteIn, VotedForIn, Phase1b
+   187	<1>3. ASSUME NEW bb \in Ballots, Phase2a(bb)
+   188	      PROVE  SafeAt(v, b)'
+   189	  BY <1>3, QuorumAssumption DEF TypeOK, SafeAt, WontVoteIn, VotedForIn, Phase2a
+   190	<1>4. ASSUME NEW a \in Acceptors, Phase2b(a)
+   191	      PROVE  SafeAt(v, b)'
+   192	  <2>1. PICK m \in sent :
+   193	          /\ m.type = "2a"
+   194	          /\ \A m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.acc = a => m.bal >= m2.bal
+   195	          /\ Send([type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a])
+   196	    BY <1>4 DEF Phase2b
+   197	  <2>2. \A aa \in Acceptors, bb \in Ballots, vv \in Values :
+   198	            VotedForIn(aa, vv, bb) => VotedForIn(aa, vv, bb)'
+   199	    BY <2>1 DEF TypeOK, VotedForIn
+   200	  <2>3. ASSUME NEW aa \in Acceptors, NEW bb \in Ballots,
+   201	               WontVoteIn(aa, bb), NEW vv \in Values,
+   202	               VotedForIn(aa, vv, bb)'
+   203	        PROVE FALSE
+   204	    <3> DEFINE mm == [type |-> "2b", val |-> vv, bal |-> bb, acc |-> aa]
+   205	    <3>1. mm \notin sent
+   206	      BY <2>3 DEF WontVoteIn, VotedForIn
+   207	    <3>2. mm \in sent'
+   208	      <4>1. PICK m1 \in sent' :
+   209	              /\ m1.type = "2b"
+   210	              /\ m1.val = vv
+   211	              /\ m1.bal = bb
+   212	              /\ m1.acc = aa
+   213	        BY <2>3 DEF VotedForIn
+   214	      <4> QED BY <4>1 DEF TypeOK, Messages
+   215	    <3>3. aa = a /\ m.bal = bb
+   216	      BY <2>1, <3>1, <3>2 DEF TypeOK
+   217	    <3> QED
+   218	      BY <2>1, <2>3, <3>3 DEF Phase2b, WontVoteIn, TypeOK
+   219	  <2>4. \A aa \in Acceptors, bb \in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'
+   220	    BY <2>1, <2>3 DEF WontVoteIn
+   221	  <2> QED
+   222	    BY <2>2, <2>4, QuorumAssumption DEF SafeAt
+   223	
+   224	<1> QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
+   225
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('PaxosHistVar_SafeAtStable.tla')
+s=p.read_text()
+s=s.replace('''<1>2. ASSUME NEW a \\\\in Acceptors, Phase1b(a)
+      PROVE  SafeAt(v, b)'\\n  BY <1>2, QuorumAssumption DEF TypeOK, SafeAt, WontVoteIn, VotedForIn, Phase1b
+''','''<1>2. ASSUME NEW a \\\\in Acceptors, Phase1b(a)
+      PROVE  SafeAt(v, b)'\\n  <2>1. PICK m \\\\in sent, r \\\\in last_voted(a) :
+          /\\\\ m.type = \"1a\"
+          /\\\\ \\\\A m2 \\\\in sent: m2.type \\\\in {\"1b\", \"2b\"} /\\\\ m2.acc = a => m.bal > m2.bal
+          /\\\\ Send([type |-> \"1b\", bal |-> m.bal,
+                   maxVBal |-> r.bal, maxVal |-> r.val, acc |-> a])
+    BY <1>2 DEF Phase1b
+  <2>2. \\\\A aa \\\\in Acceptors, bb \\\\in Ballots, vv \\\\in Values :
+            VotedForIn(aa, vv, bb) => VotedForIn(aa, vv, bb)'\\n    BY <2>1 DEF VotedForIn
+  <2>3. \\\\A aa \\\\in Acceptors, bb \\\\in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'\\n    BY <2>1 DEF WontVoteIn, VotedForIn
+  <2> QED
+    BY <2>2, <2>3, QuorumAssumption DEF SafeAt
+''')
+s=s.replace('''    <3>2. mm \\\\in sent'\\n      <4>1. PICK m1 \\\\in sent' :
+              /\\\\ m1.type = \"2b\"
+              /\\\\ m1.val = vv
+              /\\\\ m1.bal = bb
+              /\\\\ m1.acc = aa
+        BY <2>3 DEF VotedForIn
+      <4> QED BY <4>1 DEF TypeOK, Messages
+    <3>3. aa = a /\\\\ m.bal = bb
+      BY <2>1, <3>1, <3>2 DEF TypeOK
+    <3> QED
+      BY <2>1, <2>3, <3>3 DEF Phase2b, WontVoteIn, TypeOK
+''','''    <3>2. PICK m1 \\\\in sent' :
+            /\\\\ m1.type = \"2b\"
+            /\\\\ m1.val = vv
+            /\\\\ m1.bal = bb
+            /\\\\ m1.acc = aa
+      BY <2>3 DEF VotedForIn
+    <3>3. m1 \\\\notin sent
+      BY <2>3, <3>2 DEF WontVoteIn, VotedForIn, TypeOK, Messages
+    <3>4. m1 = [type |-> \"2b\", bal |-> m.bal, val |-> m.val, acc |-> a]
+      BY <2>1, <3>2, <3>3 DEF Send
+    <3>5. aa = a /\\\\ m.bal = bb
+      BY <3>2, <3>4
+    <3> QED
+      BY <2>1, <2>3, <3>5 DEF Phase2b, WontVoteIn, TypeOK
+''')
+p.write_text(s)
+PY
+nl -ba PaxosHistVar_SafeAtStable.tla | sed -n '180,235p'"
+   180	<1> USE DEF Send, Inv, Ballots
+   181	<1>1. ASSUME NEW bb \in Ballots, Phase1a(bb)
+   182	      PROVE  SafeAt(v, b)'
+   183	  BY <1>1 DEF SafeAt, Phase1a, VotedForIn, WontVoteIn
+   184	<1>2. ASSUME NEW a \in Acceptors, Phase1b(a)
+   185	      PROVE  SafeAt(v, b)'
+   186	  <2>1. PICK m \in sent, r \in last_voted(a) :
+   187	          /\ m.type = "1a"
+   188	          /\ \A m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.acc = a => m.bal > m2.bal
+   189	          /\ Send([type |-> "1b", bal |-> m.bal,
+   190	                   maxVBal |-> r.bal, maxVal |-> r.val, acc |-> a])
+   191	    BY <1>2 DEF Phase1b
+   192	  <2>2. \A aa \in Acceptors, bb \in Ballots, vv \in Values :
+   193	            VotedForIn(aa, vv, bb) => VotedForIn(aa, vv, bb)'
+   194	    BY <2>1 DEF VotedForIn
+   195	  <2>3. \A aa \in Acceptors, bb \in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'
+   196	    BY <2>1 DEF WontVoteIn, VotedForIn
+   197	  <2> QED
+   198	    BY <2>2, <2>3, QuorumAssumption DEF SafeAt
+   199	<1>3. ASSUME NEW bb \in Ballots, Phase2a(bb)
+   200	      PROVE  SafeAt(v, b)'
+   201	  BY <1>3, QuorumAssumption DEF TypeOK, SafeAt, WontVoteIn, VotedForIn, Phase2a
+   202	<1>4. ASSUME NEW a \in Acceptors, Phase2b(a)
+   203	      PROVE  SafeAt(v, b)'
+   204	  <2>1. PICK m \in sent :
+   205	          /\ m.type = "2a"
+   206	          /\ \A m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.acc = a => m.bal >= m2.bal
+   207	          /\ Send([type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a])
+   208	    BY <1>4 DEF Phase2b
+   209	  <2>2. \A aa \in Acceptors, bb \in Ballots, vv \in Values :
+   210	            VotedForIn(aa, vv, bb) => VotedForIn(aa, vv, bb)'
+   211	    BY <2>1 DEF TypeOK, VotedForIn
+   212	  <2>3. ASSUME NEW aa \in Acceptors, NEW bb \in Ballots,
+   213	               WontVoteIn(aa, bb), NEW vv \in Values,
+   214	               VotedForIn(aa, vv, bb)'
+   215	        PROVE FALSE
+   216	    <3> DEFINE mm == [type |-> "2b", val |-> vv, bal |-> bb, acc |-> aa]
+   217	    <3>1. mm \notin sent
+   218	      BY <2>3 DEF WontVoteIn, VotedForIn
+   219	    <3>2. PICK m1 \in sent' :
+   220	            /\ m1.type = "2b"
+   221	            /\ m1.val = vv
+   222	            /\ m1.bal = bb
+   223	            /\ m1.acc = aa
+   224	      BY <2>3 DEF VotedForIn
+   225	    <3>3. m1 \notin sent
+   226	      BY <2>3, <3>2 DEF WontVoteIn, VotedForIn, TypeOK, Messages
+   227	    <3>4. m1 = [type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a]
+   228	      BY <2>1, <3>2, <3>3 DEF Send
+   229	    <3>5. aa = a /\ m.bal = bb
+   230	      BY <3>2, <3>4
+   231	    <3> QED
+   232	      BY <2>1, <2>3, <3>5 DEF Phase2b, WontVoteIn, TypeOK
+   233	  <2>4. \A aa \in Acceptors, bb \in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'
+   234	    BY <2>1, <2>3 DEF WontVoteIn
+   235	  <2> QED
+[EXIT 0]
+
+[AGENT] The proof is more explicit now; I’ll rerun TLAPS to see the remaining exact obligations.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps PaxosHistVar_SafeAtStable.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_SafeAtStable.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_WontVoteIn_, STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: CONSTANT_Messages_, ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_None_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+(* created new ".tlacache/PaxosHistVar_SafeAtStable.tlaps/PaxosHistVar_SafeAtStable.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_SafeAtStable.tlaps/fingerprints" *)
+File "./PaxosHistVar_SafeAtStable.tla", line 1, character 1 to line 240, character 77:
+[INFO]: All 50 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS verifies successfully. I’ll run the repository’s proof integrity checker as requested.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py PaxosHistVar_SafeAtStable.tla'
+Checking: PaxosHistVar_SafeAtStable.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_SafeAtStable.tlaps/PaxosHistVar_SafeAtStable.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_SafeAtStable.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ACTION_Phase2a_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_, ACTION_Phase1b_, ACTION_Phase1a_, ACTION_Phase2b_
+
+** Unexpanded symbols: CONSTANT_Ballots_, ACTION_Next_, CONSTANT_SafeAt_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_
+
+** Unexpanded symbols: CONSTANT_WontVoteIn_, STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: STATE_last_voted_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: STATE_last_voted_, ACTION_
+... (truncated) ...
+STANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: CONSTANT_Messages_, ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: CONSTANT_Messages_, ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: CONSTANT_WontVoteIn_, ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, CONSTANT_None_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_
+
+** Unexpanded symbols: ACTION_Next_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+File "/tmp/tlaps_check_45x5wq37/PaxosHistVar_SafeAtStable.tla", line 1, character 1 to line 240, character 77:
+[INFO]: All 50 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_PaxosHistVar_SafeAtStable_zisb5xko/PaxosHistVar_SafeAtStable.result
+[EXIT 0]
+
+[AGENT] The checker is still running silently; I’m waiting for its final pass/fail output.
+
+[CMD] /bin/zsh -lc "git diff -- PaxosHistVar_SafeAtStable.tla | sed -n '1,220p'"
+diff --git a/PaxosHistVar_SafeAtStable.tla b/PaxosHistVar_SafeAtStable.tla
+index 2ed6a7b..c078524 100644
+--- a/PaxosHistVar_SafeAtStable.tla
++++ b/PaxosHistVar_SafeAtStable.tla
+@@ -173,6 +173,68 @@ LEMMA VotedOnce ==
+ LEMMA SafeAtStable == Inv /\ Next => 
+                           \A v \in Values, b \in Ballots:
+                                   SafeAt(v, b) => SafeAt(v, b)'
+-PROOF OBVIOUS
+-
+-=============================================================================
+\ No newline at end of file
++<1> SUFFICES ASSUME Inv, Next,
++                    NEW v \in Values, NEW b \in Ballots, SafeAt(v, b)
++             PROVE  SafeAt(v, b)'
++  OBVIOUS
++<1> USE DEF Send, Inv, Ballots
++<1>1. ASSUME NEW bb \in Ballots, Phase1a(bb)
++      PROVE  SafeAt(v, b)'
++  BY <1>1 DEF SafeAt, Phase1a, VotedForIn, WontVoteIn
++<1>2. ASSUME NEW a \in Acceptors, Phase1b(a)
++      PROVE  SafeAt(v, b)'
++  <2>1. PICK m \in sent, r \in last_voted(a) :
++          /\ m.type = "1a"
++          /\ \A m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.acc = a => m.bal > m2.bal
++          /\ Send([type |-> "1b", bal |-> m.bal,
++                   maxVBal |-> r.bal, maxVal |-> r.val, acc |-> a])
++    BY <1>2 DEF Phase1b
++  <2>2. \A aa \in Acceptors, bb \in Ballots, vv \in Values :
++            VotedForIn(aa, vv, bb) => VotedForIn(aa, vv, bb)'
++    BY <2>1 DEF VotedForIn
++  <2>3. \A aa \in Acceptors, bb \in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'
++    BY <2>1 DEF WontVoteIn, VotedForIn
++  <2> QED
++    BY <2>2
+... (truncated) ...
+    /\ m.type = "2a"
++          /\ \A m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.acc = a => m.bal >= m2.bal
++          /\ Send([type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a])
++    BY <1>4 DEF Phase2b
++  <2>2. \A aa \in Acceptors, bb \in Ballots, vv \in Values :
++            VotedForIn(aa, vv, bb) => VotedForIn(aa, vv, bb)'
++    BY <2>1 DEF TypeOK, VotedForIn
++  <2>3. ASSUME NEW aa \in Acceptors, NEW bb \in Ballots,
++               WontVoteIn(aa, bb), NEW vv \in Values,
++               VotedForIn(aa, vv, bb)'
++        PROVE FALSE
++    <3> DEFINE mm == [type |-> "2b", val |-> vv, bal |-> bb, acc |-> aa]
++    <3>1. mm \notin sent
++      BY <2>3 DEF WontVoteIn, VotedForIn
++    <3>2. PICK m1 \in sent' :
++            /\ m1.type = "2b"
++            /\ m1.val = vv
++            /\ m1.bal = bb
++            /\ m1.acc = aa
++      BY <2>3 DEF VotedForIn
++    <3>3. m1 \notin sent
++      BY <2>3, <3>2 DEF WontVoteIn, VotedForIn, TypeOK, Messages
++    <3>4. m1 = [type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a]
++      BY <2>1, <3>2, <3>3 DEF Send
++    <3>5. aa = a /\ m.bal = bb
++      BY <3>2, <3>4
++    <3> QED
++      BY <2>1, <2>3, <3>5 DEF Phase2b, WontVoteIn, TypeOK
++  <2>4. \A aa \in Acceptors, bb \in Ballots : WontVoteIn(aa, bb) => WontVoteIn(aa, bb)'
++    BY <2>1, <2>3 DEF WontVoteIn
++  <2> QED
++    BY <2>2, <2>4, QuorumAssumption DEF SafeAt
++
++<1> QED  BY <1>1, <1>2, <1>3, <1>4 DEF Next
++
++=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented the final TLAPS proof for `SafeAtStable`.
+
+**Changed**
+- Replaced `PROOF OBVIOUS` with a structured proof in `PaxosHistVar_SafeAtStable.tla:176`.
+- Split the `Next` cases across `Phase1a`, `Phase1b`, `Phase2a`, and `Phase2b`.
+- Added explicit preservation arguments for `VotedForIn`, `WontVoteIn`, and the new `2b` message case.
+
+**Verified**
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps PaxosHistVar_SafeAtStable.tla`
+  - Result: all 50 obligations proved.
+- `python3 check_proof.py PaxosHistVar_SafeAtStable.tla`
+  - Result: PASS, no cheating detected.

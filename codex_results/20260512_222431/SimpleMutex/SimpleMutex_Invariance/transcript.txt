@@ -1,0 +1,477 @@
+Benchmark: SimpleMutex/SimpleMutex_Invariance.tla
+Time: 59s
+Tokens: 298,202 input / 2,110 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and existing lemmas, then iteratively patch the final proof and run TLAPS/checks until clean.
+
+[CMD] /bin/zsh -lc "sed -n '1,240p' SimpleMutex_Invariance.tla && printf '\\n--- files ---\\n' && ls -la"
+----------------------------- MODULE SimpleMutex_Invariance -----------------------------
+EXTENDS Integers, TLAPS
+
+(***********
+
+(***************************************************************************)
+(* The following algorithm is an important mutual exclusion protocol.      *)
+(* This protocol is at the heart of many mutual exclusion algorithms.  It  *)
+(* is a two-process protocol that guarantees that both processes cannot    *)
+(* execute statement cs.  (However, they can both deadlock.)               *)
+(***************************************************************************)
+--algorithm Mutex {
+  variable trying = [i \in {0,1} |-> FALSE]
+
+  process (p \in {0,1}) {
+a:   trying[self] := TRUE ;
+b:   await ~trying[1 - self];
+cs:  skip  \* the critical section
+   }
+}
+
+***********)
+
+\* BEGIN TRANSLATION
+VARIABLES trying, pc
+
+vars == << trying, pc >>
+
+ProcSet == ({0,1})
+
+Init == (* Global variables *)
+        /\ trying = [i \in {0,1} |-> FALSE]
+        /\ pc = [self \in ProcSet |-> CASE self \in {0,1} -> "a"]
+
+a(self) == /\ pc[self] = "a"
+           /\ trying' = [trying EXCEPT ![self] = TRUE]
+           /\ pc' = [pc EXCEPT ![self] = "b"]
+
+b(self) == /\ pc[self] = "b"
+           /\ ~trying[1 - self]
+           /\ pc' = [pc EXCEPT ![self] = "cs"]
+           /\ UNCHANGED trying
+
+cs(self) == /\ pc[self] = "cs"
+            /\ TRUE
+            /\ pc' = [pc EXCEPT ![self] = "Done"]
+            /\ UNCHANGED trying
+
+p(self) == a(self) \/ b(self) \/ cs(self)
+
+Next == (\E self \
+... (truncated) ...
+TypeOK /\ Inv is an inductive invariant Spec iff it is an invariant  *)
+   (* of IndInvSpec.  TLC can be used to check what we are about to prove. *)
+   (************************************************************************)
+
+
+(***************************************************************************)
+(* The following theorem asserts that TypeOK /\ Inv is true in the initial *)
+(* state.                                                                  *)
+(***************************************************************************)
+THEOREM Initialization == Init => TypeOK /\ Inv
+  PROOF OMITTED
+
+MutualExclusion == ~(pc[0] = "cs" /\ pc[1] = "cs")
+
+(***************************************************************************)
+(* The following theorem asserts that our invariant implies mutual         *)
+(* exclusion.                                                              *)
+(***************************************************************************)
+THEOREM Mutex == Inv => MutualExclusion
+  PROOF OMITTED
+
+THEOREM Invariance == TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+total 204
+drwx------    3 ruize ruize   4096 May 12 22:34 .
+drwxrwxrwt 1361 root  root  180224 May 12 22:34 ..
+drwxrwxr-x    8 ruize ruize   4096 May 12 22:34 .git
+-rw-rw-r--    1 ruize ruize   3295 May 12 20:11 SimpleMutex_Invariance.tla
+-rw-rw-r--    1 ruize ruize  11070 May 12 21:47 check_proof.py
+[EXIT 0]
+
+[AGENT] I’ve got the invariant shape; next I’ll run TLAPS once to see the exact failed obligations.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SimpleMutex_Invariance.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_Inv_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 94, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE trying,
+                  NEW VARIABLE pc
+           PROVE  TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 96, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"SimpleMutex_Invariance"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS needs decomposition, so I’ll check nearby proof idioms and then patch a structured case proof.
+
+[CMD] /bin/zsh -lc "rg \"CASE|SUFFICES|PICK|QED|BY DEF\" ~/.tlapm15/lib/tlaps -g '*.tla' | head -80"
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF \sqsubseteq, IsABag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF IsABag, \sqsubseteq
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF IsABag, \sqsubseteq
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF EmptyBag, SetToBag, IsABag, \sqsubseteq, BagIn, BagToSet
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  BY DEF Scaling 
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  BY DEF Scaling, IsABag                
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  <2>1. CASE m>0 /\ n>0
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  <2>2. CASE m=0
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  <2>3. CASE n=0
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  <2>. QED  BY <2>1, <2>2, <2>3
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  BY DEF Scaling                   
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:<1> QED  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF SetToBag, BagToSet
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF SetToBag, BagToSet, \sqsubseteq, IsABag
+/home/ruize/.tlapm15/lib/tlaps/BagsTheorems_proofs.tla:BY DEF SetToBag
+/home/rui
+... (truncated) ...
+apm15/lib/tlaps/examples/GraphTheorem.tla:    <3>. QED  BY <3>1, <3>2
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:    <3>3. SUFFICES ASSUME NEW n \in Connected
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:      <4>. QED  BY <4>2, <3>2, FS_Subset, FS_CardinalityType
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:    <3>. QED  BY <2>2, <3>4, <3>5, <3>7
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:    <3> QED  BY <2>2, <2>4, <2>8, <3>1, FS_PigeonHole, Isa
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:  <2>. QED  BY <1>1, <1>3, <2>9
+/home/ruize/.tlapm15/lib/tlaps/examples/GraphTheorem.tla:<1>. QED  BY <1>2, <1>3
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  BY DEF Init
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  BY DEF Next, vars, Controlled, Environment, InitiateProbe,
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  <2> SUFFICES ASSUME TypeOK,
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  <2>1. CASE InitiateProbe
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  <2>5. CASE UNCHANGED vars
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  <2>6. QED
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:<1>3. QED
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  BY DEF Init, Inv
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:  BY DEF Inv, TypeOK, Next, vars, Controlled, Environment,
+/home/ruize/.tlapm15/lib/tlaps/examples/EWD840.tla:<1> QED  BY <1>1, <1>2, <1>3, TypeCorrect, PTL DEF Spec
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '1,140p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla"
+------------ MODULE AtomicBakery ----------------------------
+(***************************************************************************)
+(* The Atomic Bakery algorithm is a version of the bakery algorithm in     *)
+(* which reading and writing of a process's number is an atomic operation. *)
+(* The bakery algorithm originally appeared in:                            *)
+(*                                                                         *)
+(*   Leslie Lamport                                                        *)
+(*   A New Solution of Dijkstra's Concurrent Programming Problem           *)
+(*   Communications of the ACM 17, 8   (August 1974), 453-455              *)
+(*                                                                         *)
+(* This PlusCal version of the Atomic Bakery algorithm is one in which     *)
+(* variables whose initial values are not used are initialized to          *)
+(* arbitrary type-correct values.  It is good for proving correctness but  *)
+(* not for model checking, because it produces an unnecessarily large      *)
+(* number of reachable states.  If the variables were left uninitialized,  *)
+(* the PlusCal translation would initialize them to a particular           *)
+(* unspecified value.  This would complicate the proof because it would    *)
+(* make the type-correctness invariant more complicated, but it would be   *)
+(* efficient to model check.  We could write a version that is both easy   *)
+(* to prove and
+... (truncated) ...
+f] = TRUE]
+            /\ pc' = [pc EXCEPT ![self] = "p2"]
+            /\ UNCHANGED << num, nxt >>
+
+p2(self) == /\ pc[self] = "p2"
+            /\ IF unread[self] # {}
+                  THEN /\ \E i \in unread[self]:
+                            /\ unread' = [unread EXCEPT ![self] = unread[self] \ {i}]
+                            /\ IF num[i] > max[self]
+                                  THEN /\ max' = [max EXCEPT ![self] = num[i]]
+                                  ELSE /\ TRUE
+                                       /\ max' = max
+                       /\ pc' = [pc EXCEPT ![self] = "p2"]
+                  ELSE /\ pc' = [pc EXCEPT ![self] = "p3"]
+                       /\ UNCHANGED << unread, max >>
+            /\ UNCHANGED << num, flag, nxt >>
+
+p3(self) == /\ pc[self] = "p3"
+            /\ num' = [num EXCEPT ![self] = max[self] + 1]
+            /\ pc' = [pc EXCEPT ![self] = "p4"]
+            /\ UNCHANGED << flag, unread, max, nxt >>
+
+p4(self) == /\ pc[self] = "p4"
+            /\ flag' = [flag EXCEPT ![self] = FALSE]
+            /\ unread' = [unread EXCEPT ![self] = P \ {self}]
+            /\ pc' = [pc EXCEPT ![self] = "p5"]
+            /\ UNCHANGED << num, max, nxt >>
+
+p5(self) == /\ pc[self] = "p5"
+            /\ IF unread[self] # {}
+                  THEN /\ \E i \in unread[self]:
+                            nxt' = [nxt EXCEPT ![self] = i]
+                       /\ ~ flag[nxt'[self]]
+                       /\ pc' = [pc EXCEPT ![self] = "p6"]
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "rg \"THEOREM.*Invariance|TypeCorrect|Invariant\" -n ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla && sed -n '250,380p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla"
+179:(* The Inductive Invariant                                                 *)
+    BY <2>1 DEF p1
+  <2>2. ASSUME NEW self \in P, p2(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>2, <3>1 DEF p2
+    <3>2. CASE unread[self] # {}
+      BY <2>2, <3>2 DEF p2
+    <3>3. QED
+      BY <3>1, <3>2    
+  <2>3. ASSUME NEW self \in P, p3(self) PROVE Inv'
+    BY <2>3 DEF p3
+  <2>4. ASSUME NEW self \in P, p4(self) PROVE Inv'
+    BY <2>4 DEF p4
+  <2>5. ASSUME NEW self \in P, p5(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>5, <3>1 DEF p5
+    <3>2. CASE unread[self] # {}
+      BY <2>5, <3>2, CVC4T(30) DEF p5
+    <3>3. QED
+      BY <3>1, <3>2
+  <2>6. ASSUME NEW self \in P, p6(self) PROVE Inv'
+    <3>p. P \subseteq Nat
+      BY N \in Nat DEF P
+    <3>1. CASE num[nxt[self]] = 0
+      BY <2>6, <3>1 DEF p6
+    <3>2. CASE LL(self, nxt[self])
+      BY <2>6, <3>2, <3>p DEF p6
+    <3>3. QED
+      BY <2>6, <3>1, <3>2 DEF p6
+  <2>7. ASSUME NEW self \in P, cs(self) PROVE Inv'
+    BY <2>7 DEF cs
+  <2>8. ASSUME NEW self \in P, p7(self) PROVE Inv'
+    BY <2>8 DEF p7
+  <2>9. CASE UNCHANGED vars
+    BY <2>9 DEF vars
+  <2>10. QED
+    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7, <2>8, <2>9 DEF Next, p
+<1>3. Inv => MutualExclusion
+  BY DEFS Inv, After, MutualExclusion 
+<1>4. QED
+  BY <1>1, <1>2, <1>3, PTL DEF Spec
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/zsh -lc "sed -n '190,270p' ~/.tlapm15/lib/tlaps/examples/AtomicBakery.tla"
+          /\ nxt \in [P -> P]
+          /\ \A i \in P : (pc[i] = "p6") => nxt[i] # i
+          /\ pc \in
+              [P -> {"p1", "p2", "p3", "p4", "p5", "p6", "cs", "p7"}]
+
+
+(***************************************************************************)
+(* After(i, j) is a condition that implies that num[j] > 0 and, if i is    *)
+(* trying to enter its critical section and j does not change num[j], then *)
+(* i either has or will choose a value of num[i] for which LL(j, i) is     *)
+(* true.                                                                   *)
+(***************************************************************************)
+After(i, j) == /\ num[j] > 0
+               /\ \/ pc[i] = "p1"
+                  \/ /\ pc[i] = "p2"
+                     /\ \/ j \in unread[i]
+                        \/ max[i] >= num[j]
+                  \/ /\ pc[i] = "p3"
+                     /\ max[i] >= num[j]
+                  \/ /\ pc[i] \in {"p4", "p5", "p6"}
+                     /\ LL(j,i)
+                     /\ (pc[i] \in {"p5", "p6"}) => (j \in unread[i])
+
+(***************************************************************************)
+(* IInv(i) is the part of the inductive invariant that ensures that when i *)
+(* is in its critical section, no other process is.                        *)
+(***************************************************************************)
+IInv(i) ==
+  /\ (num[i] = 0) <=> (pc[i] \in {"p1", "p2", "p3"})
+  /\ flag[i] <=> (pc[i] \in {
+... (truncated) ...
+ual Exclusion                                               *)
+(*                                                                         *)
+(* This is a standard invariance proof, where <1>2 asserts that any step   *)
+(* of the algorithm (including a stuttering step) starting in a state in   *)
+(* which Inv is true leaves Inv true.  Step <1>4 follows easily from       *)
+(* <1>1-<1>3 by simple temporal reasoning.                                 *)
+(***************************************************************************)
+THEOREM Spec => []Inv
+<1> USE DEFS TypeOK, Inv, IInv, ProcSet
+<1>1. Init => Inv
+  BY DEFS Init, Inv
+<1>2. Inv /\ [Next]_vars => Inv'
+  <2> SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+    OBVIOUS
+  <2> USE DEFS After, LL
+  <2>1. ASSUME NEW self \in P, p1(self) PROVE Inv'
+    BY <2>1 DEF p1
+  <2>2. ASSUME NEW self \in P, p2(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>2, <3>1 DEF p2
+    <3>2. CASE unread[self] # {}
+      BY <2>2, <3>2 DEF p2
+    <3>3. QED
+      BY <3>1, <3>2    
+  <2>3. ASSUME NEW self \in P, p3(self) PROVE Inv'
+    BY <2>3 DEF p3
+  <2>4. ASSUME NEW self \in P, p4(self) PROVE Inv'
+    BY <2>4 DEF p4
+  <2>5. ASSUME NEW self \in P, p5(self) PROVE Inv'
+    <3>1. CASE unread[self] = {}
+      BY <2>5, <3>1 DEF p5
+    <3>2. CASE unread[self] # {}
+      BY <2>5, <3>2, CVC4T(30) DEF p5
+    <3>3. QED
+      BY <3>1, <3>2
+  <2>6. ASSUME NEW self \in P, p6(self) PROVE Inv'
+    <3>p. P \subseteq Nat
+[EXIT 0]
+
+[AGENT] I’m going to replace only the final placeholder with a case split over the action disjuncts.
+
+[AGENT] The proof is patched. I’ll run TLAPS now and refine any failed sub-obligations.
+
+[CMD] /bin/zsh -lc '~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SimpleMutex_Invariance.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/home/ruize/.tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+** Unexpanded symbols: ACTION_cs_, ACTION_a_, STATE_vars_, ACTION_b_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_
+
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 109, character 77:
+[INFO]: All 14 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS verifies cleanly; I’ll run the required proof legality checker next.
+
+[CMD] /bin/zsh -lc 'python3 check_proof.py SimpleMutex_Invariance.tla'
+Checking: SimpleMutex_Invariance.tla
+tlapm: /tmp/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "/tmp/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ACTION_cs_, ACTION_a_, STATE_vars_, ACTION_b_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_
+
+File "/tmp/tlaps_check_d6lwj8p0/SimpleMutex_Invariance.tla", line 1, character 1 to line 109, character 77:
+[INFO]: All 14 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SimpleMutex_Invariance_sgohf5dr/SimpleMutex_Invariance.result
+[EXIT 0]
+
+[AGENT] The required checker passed too. I’ll quickly inspect the final diff for a clean handoff.
+
+[CMD] /bin/zsh -lc "git diff -- SimpleMutex_Invariance.tla && nl -ba SimpleMutex_Invariance.tla | sed -n '88,112p'"
+diff --git a/SimpleMutex_Invariance.tla b/SimpleMutex_Invariance.tla
+index bc41aca..eed6d58 100644
+--- a/SimpleMutex_Invariance.tla
++++ b/SimpleMutex_Invariance.tla
+@@ -91,6 +91,19 @@ THEOREM Mutex == Inv => MutualExclusion
+   PROOF OMITTED
+ 
+ THEOREM Invariance == TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+-PROOF OBVIOUS
+-
+-=============================================================================
+\ No newline at end of file
++<1> SUFFICES ASSUME TypeOK, Inv, Next PROVE TypeOK' /\ Inv'
++  OBVIOUS
++<1> USE DEF TypeOK, Inv
++<1>1. ASSUME NEW self \in {0,1}, a(self) PROVE TypeOK' /\ Inv'
++  BY <1>1 DEF a
++<1>2. ASSUME NEW self \in {0,1}, b(self) PROVE TypeOK' /\ Inv'
++  BY <1>2 DEF b
++<1>3. ASSUME NEW self \in {0,1}, cs(self) PROVE TypeOK' /\ Inv'
++  BY <1>3 DEF cs
++<1>4. ASSUME (\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars
++      PROVE TypeOK' /\ Inv'
++  BY <1>4 DEF vars
++<1>5. QED
++  BY <1>1, <1>2, <1>3, <1>4 DEF Next, p, ProcSet
++
++=============================================================================
+    88	(* exclusion.                                                              *)
+    89	(***************************************************************************)
+    90	THEOREM Mutex == Inv => MutualExclusion
+    91	  PROOF OMITTED
+    92	
+    93	THEOREM Invariance == TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+    94	<1> SUFFICES ASSUME TypeOK, Inv, Next PROVE TypeOK' /\ Inv'
+    95	  OBVIOUS
+    96	<1> USE DEF TypeOK, Inv
+    97	<1>1. ASSUME NEW self \in {0,1}, a(self) PROVE TypeOK' /\ Inv'
+    98	  BY <1>1 DEF a
+    99	<1>2. ASSUME NEW self \in {0,1}, b(self) PROVE TypeOK' /\ Inv'
+   100	  BY <1>2 DEF b
+   101	<1>3. ASSUME NEW self \in {0,1}, cs(self) PROVE TypeOK' /\ Inv'
+   102	  BY <1>3 DEF cs
+   103	<1>4. ASSUME (\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars
+   104	      PROVE TypeOK' /\ Inv'
+   105	  BY <1>4 DEF vars
+   106	<1>5. QED
+   107	  BY <1>1, <1>2, <1>3, <1>4 DEF Next, p, ProcSet
+   108	
+   109	=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final `Invariance` theorem.
+
+- Replaced `PROOF OBVIOUS` with a structured action-case proof in `SimpleMutex_Invariance.tla:94`.
+- Proves each `Next` disjunct: `a(self)`, `b(self)`, `cs(self)`, and the termination stutter case.
+- Did not alter earlier theorem statements, definitions, declarations, or omitted proofs.
+
+Validation passed:
+
+- `~/.tlapm15/bin/tlapm -I ~/.tlapm15/lib/tlaps SimpleMutex_Invariance.tla`
+- `python3 check_proof.py SimpleMutex_Invariance.tla`
+
+Both report all obligations proved / pass.
