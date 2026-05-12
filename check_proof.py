@@ -148,6 +148,36 @@ def check_cheating(filepath):
         if re.match(r'^(AXIOM|ASSUME|ASSUMPTION)\b', line.strip()):
             issues.append((line_num, f"New {line.strip().split()[0]} declaration in proof section"))
 
+    # Check that dependency files (other .tla files in same dir) are unmodified
+    bench_dir = os.path.dirname(filepath)
+    repo_root = subprocess.run(
+        ['git', 'rev-parse', '--show-toplevel'],
+        capture_output=True, text=True, cwd=bench_dir or '.'
+    ).stdout.strip()
+
+    if repo_root:
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            if os.path.abspath(dep_file) == os.path.abspath(filepath):
+                continue
+            dep_basename = os.path.basename(dep_file)
+            dep_rel = os.path.relpath(dep_file, repo_root)
+            # Get main branch version of this dependency
+            dep_main = None
+            for branch in ['main', 'master']:
+                r = subprocess.run(
+                    ['git', 'show', f'{branch}:{dep_rel}'],
+                    capture_output=True, text=True, cwd=repo_root
+                )
+                if r.returncode == 0:
+                    dep_main = r.stdout
+                    break
+            if dep_main is None:
+                continue  # dependency wasn't in initial commit, skip
+            with open(dep_file, 'r') as f:
+                dep_current = f.read()
+            if dep_current != dep_main:
+                issues.append((0, f"Dependency file {dep_basename} was modified — not allowed"))
+
     return issues
 
 
@@ -157,6 +187,7 @@ def main():
     parser.add_argument('--tlapm', default=None, help='Path to tlapm binary')
     parser.add_argument('--tlapm-lib', default=None, help='Path to tlapm lib directory')
     parser.add_argument('--timeout', type=int, default=120, help='Timeout in seconds')
+    parser.add_argument('--output', '-o', default=None, help='Write results to this file (default: <input>.result)')
     args = parser.parse_args()
 
     filepath = os.path.abspath(args.file)
@@ -164,25 +195,41 @@ def main():
         print(f"ERROR: File not found: {filepath}")
         sys.exit(3)
 
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
     # Find tlapm
     tlapm_path = args.tlapm or find_tlapm()
     if not tlapm_path:
-        print("ERROR: tlapm not found. Use --tlapm to specify path.")
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
         sys.exit(3)
 
     tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
     if not tlapm_lib:
-        print("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
         sys.exit(3)
 
-    print(f"Checking: {os.path.relpath(filepath)}")
-    print(f"tlapm: {tlapm_path}")
-    print()
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
 
     # --- Step 1: Run tlapm ---
-    print("=" * 60)
-    print("TLAPM OUTPUT")
-    print("=" * 60)
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
 
     tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
     try:
@@ -212,55 +259,61 @@ def main():
             tlapm_output = f"ERROR: {e}"
             tlapm_exit = -2
 
-        print(tlapm_output)
+        for line in tlapm_output.split('\n'):
+            emit(line)
         tlapm_passed = (tlapm_exit == 0)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # --- Step 2: Cheating check ---
-    print()
-    print("=" * 60)
-    print("CHEATING CHECK")
-    print("=" * 60)
+    emit()
+    emit("=" * 60)
+    emit("CHEATING CHECK")
+    emit("=" * 60)
 
     cheating_issues = check_cheating(filepath)
     real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
     warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
 
     for line_num, desc in warnings:
-        print(f"  WARNING: {desc}")
+        emit(f"  WARNING: {desc}")
 
     if real_issues:
         for line_num, desc in real_issues:
-            print(f"  Line {line_num}: {desc}")
+            emit(f"  Line {line_num}: {desc}")
     else:
-        print("  No cheating detected.")
+        emit("  No cheating detected.")
 
     # --- Step 3: Verdict ---
-    print()
-    print("=" * 60)
-    print("VERDICT")
-    print("=" * 60)
+    emit()
+    emit("=" * 60)
+    emit("VERDICT")
+    emit("=" * 60)
 
     if real_issues:
         verdict = "CHEATING"
         exit_code = 2
-        print(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
     elif tlapm_passed:
         verdict = "PASS"
         exit_code = 0
-        print(f"  ✅ PASS — all obligations proved")
+        emit(f"  ✅ PASS — all obligations proved")
     else:
         verdict = "FAIL"
         exit_code = 1
         # Extract obligation summary
         m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
         if m:
-            print(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
         elif "TIMEOUT" in tlapm_output:
-            print(f"  ❌ FAIL — timeout after {args.timeout}s")
+            emit(f"  ❌ FAIL — timeout after {args.timeout}s")
         else:
-            print(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+            emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+
+    # Write result file
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(output_lines) + '\n')
+    emit(f"\nResult written to: {output_path}")
 
     sys.exit(exit_code)
 
