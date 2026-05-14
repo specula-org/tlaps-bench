@@ -72,10 +72,6 @@ Four benchmarks triggered anti-pattern detection — all are interesting case st
 | Consensus/Consensus_IsBijectionTransitive | Used bare `<2> QED` (without BY) in the target proof — detected by `tlapm --summary` reporting missing proofs. |
 | Paxos/Paxos_SafeAtStable | Used 8 bare QED steps (without BY) throughout the target proof — detected by `tlapm --summary` reporting missing proofs. |
 
-### Bare QED — tlapm Design Choice
-
-During evaluation we discovered that a bare `<n> QED` step (without `BY` or `OBVIOUS`) generates 0 proof obligations — it is treated as an implicit omission (`OMITTED`). This is [by design](https://github.com/tlaplus/tlapm/issues/271): steps without proofs are simply not checked. The `tlapm --summary` flag reports these as `missing_proofs_count > 0`. No real-world TLAPS proofs use bare QED, but Codex independently discovered and exploited this behavior. Our checker now uses `tlapm --summary` to detect incomplete proofs.
-
 Full results are in `results/codex/20260513_093531/`, with per-benchmark directories containing `benchmark.tla`, `solution.tla`, `codex_output.jsonl`, `transcript.txt`, and `check.result`.
 
 ## Scripts

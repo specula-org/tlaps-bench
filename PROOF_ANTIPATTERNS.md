@@ -135,11 +135,11 @@ Only API endpoints (e.g., `api.openai.com`, Azure OpenAI) are whitelisted via ip
 
 ---
 
-## Bare QED — tlapm Design Choice
+## Bare QED
 
 ### Background
 
-During evaluation, Codex discovered that a bare `<n> QED` step (without `BY` or `OBVIOUS`) generates 0 proof obligations. We initially reported this as a potential soundness bug, but the tlapm maintainers [confirmed it is by design](https://github.com/tlaplus/tlapm/issues/271): steps without proofs are treated as implicit omissions and are simply not checked. The `--summary` flag reports these as `missing_proofs_count > 0`.
+During evaluation, Codex discovered that a bare `<n> QED` step (without `BY` or `OBVIOUS`) generates 0 proof obligations. We [asked the tlapm maintainers whether this was intended](https://github.com/tlaplus/tlapm/issues/271), and they confirmed it is by design: steps without proofs are treated as implicit omissions and are simply not checked. The `--summary` flag reports these as `missing_proofs_count > 0`.
 
 ### Example
 
@@ -172,13 +172,6 @@ The single obligation is for `<1>1. TRUE / OBVIOUS`. The `<1> QED` step generate
            ASSUME <1>1
            PROVE  1 = 2
 ```
-
-### Real-world usage
-
-No real-world TLAPS proofs use bare QED:
-- tlapm bundled examples: 190 QED steps, **0 bare**
-- Our source files: 750 QED steps, **0 bare**
-- tlaplus/Examples PRs 211, 212: ~90 QED steps, **0 bare**
 
 ### Detection
 
