@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .base import AgentBackend
 
@@ -14,8 +14,8 @@ DEFAULT_MODEL = "claude-opus-4-7"
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
 
-    def __init__(self, model: str = DEFAULT_MODEL):
-        self.model = model
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or DEFAULT_MODEL
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         # claude has no -C / --cwd flag; runner sets cwd=workspace.

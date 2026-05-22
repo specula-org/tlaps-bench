@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .base import AgentBackend
 
 
+DEFAULT_MODEL = "gpt55"
+
+
 class CodexBackend(AgentBackend):
     name = "codex"
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or DEFAULT_MODEL
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         last_msg_path = os.path.join(result_dir, "codex_last_message.txt")
@@ -18,7 +24,7 @@ class CodexBackend(AgentBackend):
             "npx", "codex", "exec",
             "--dangerously-bypass-approvals-and-sandbox",
             "-C", workspace,
-            "-m", "gpt55",
+            "-m", self.model,
             "--json",
             "-o", last_msg_path,
         ]
