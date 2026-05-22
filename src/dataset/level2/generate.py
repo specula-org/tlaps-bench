@@ -305,11 +305,19 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None):
         if not target_thm['name']:
             # Not a warning: unnamed THEOREMs are top-level by construction.
             # This entry just records how the filename was derived.
-            audit_writer.write(
-                f"[level2-audit] {source_path}: unnamed top-level THEOREM at line "
-                f"{target_thm['loc']['line_start']} — filename derived from rhs "
-                f"primary name `{target_thm['shape'].get('rhs_primary_name')}`\n"
-            )
+            line = target_thm['loc']['line_start']
+            rhs = target_thm['shape'].get('rhs_primary_name')
+            if rhs:
+                audit_writer.write(
+                    f"[level2-audit] {source_path}: unnamed top-level THEOREM at line "
+                    f"{line} — filename derived from rhs primary name `{rhs}`\n"
+                )
+            else:
+                audit_writer.write(
+                    f"[level2-audit] {source_path}: unnamed top-level THEOREM at line "
+                    f"{line} — no usable rhs primary name; filename uses line "
+                    f"number `line{line}`\n"
+                )
         thm_name, sanitized = target_theorem_name(target_thm)
         if sanitized:
             audit_writer.write(
