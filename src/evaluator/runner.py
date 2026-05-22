@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Run Codex CLI on TLAPS benchmarks to attempt automated proof writing.
+Run an agent CLI on TLAPS benchmarks to attempt automated proof writing.
 
 For each benchmark:
 1. Creates an isolated workspace (fresh git repo with only benchmark files)
-2. Runs codex exec with a proof-writing prompt
+2. Runs the chosen backend (codex / claude_code) with a proof-writing prompt
 3. Validates the result with check_proof (binary)
 4. Saves all outputs
 
 Usage:
-    python3 run_codex_benchmark.py [--jobs N] [--filter PATTERN] [--timeout SECS] [--output-dir DIR]
+    python3 runner.py [--backend codex|claude_code] [--jobs N] [--filter PATTERN] [--timeout SECS] [--output-dir DIR]
 """
 
 import os
@@ -25,8 +25,11 @@ import argparse
 import tempfile
 import time
 import threading
-from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+# Allow `python3 src/evaluator/runner.py` as well as module import.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from backends import get_backend, list_backends
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File now at <repo>/src/evaluator/runner.py — ascend two levels for the repo root.
@@ -79,71 +82,6 @@ def get_dependency_files(benchmark_path):
         if '_' not in bn:
             deps.append(f)
     return deps
-
-
-def parse_codex_jsonl(jsonl_path):
-    """Parse codex JSONL output into human-readable transcript and token usage."""
-    transcript_lines = []
-    total_input_tokens = 0
-    total_output_tokens = 0
-
-    try:
-        with open(jsonl_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                etype = event.get('type', '')
-
-                if etype == 'item.completed':
-                    item = event.get('item', {})
-                    itype = item.get('type', '')
-
-                    if itype == 'agent_message':
-                        text = item.get('text', '')
-                        if text:
-                            transcript_lines.append(f"[AGENT] {text}")
-                            transcript_lines.append("")
-
-                    elif itype == 'command_execution':
-                        cmd = item.get('command', '')
-                        output = item.get('aggregated_output', '')
-                        exit_code = item.get('exit_code', '')
-                        transcript_lines.append(f"[CMD] {cmd}")
-                        if output:
-                            if len(output) > 3000:
-                                output = output[:1500] + "\n... (truncated) ...\n" + output[-1500:]
-                            transcript_lines.append(output.rstrip())
-                        if exit_code is not None:
-                            transcript_lines.append(f"[EXIT {exit_code}]")
-                        transcript_lines.append("")
-
-                    elif itype == 'file_edit':
-                        filepath = item.get('filepath', '')
-                        transcript_lines.append(f"[EDIT] {filepath}")
-                        transcript_lines.append("")
-
-                elif etype == 'error':
-                    msg = event.get('message', '')
-                    transcript_lines.append(f"[ERROR] {msg}")
-                    transcript_lines.append("")
-
-                # Check for usage in any event
-                if 'usage' in event:
-                    u = event['usage']
-                    total_input_tokens += u.get('input_tokens', 0)
-                    total_output_tokens += u.get('output_tokens', 0)
-
-    except FileNotFoundError:
-        pass
-
-    transcript = '\n'.join(transcript_lines)
-    return transcript, total_input_tokens, total_output_tokens
 
 
 # Lock for thread-safe summary updates
@@ -218,8 +156,8 @@ def build_prompt(benchmark_basename, level='level1'):
 
 
 def run_single_benchmark(args_tuple):
-    """Run codex on a single benchmark. Returns result dict."""
-    benchmark_path, output_dir, timeout = args_tuple
+    """Run the agent backend on a single benchmark. Returns result dict."""
+    benchmark_path, output_dir, timeout, backend = args_tuple
 
     rel_path = os.path.relpath(benchmark_path, BENCHMARK_DIR)
     module_dir = os.path.basename(os.path.dirname(benchmark_path))
@@ -234,7 +172,8 @@ def run_single_benchmark(args_tuple):
         'benchmark': rel_path,
         'module': module_dir,
         'theorem': name_no_ext,
-        'codex_exit': -1,
+        'backend': backend.name,
+        'agent_exit': -1,
         'check_verdict': 'ERROR',
         'time_secs': 0,
         'error': '',
@@ -277,18 +216,9 @@ def run_single_benchmark(args_tuple):
         with open(prompt_file, 'w') as f:
             f.write(prompt)
 
-        # Run codex
-        codex_jsonl = os.path.join(result_dir, 'codex_output.jsonl')
-        codex_last_msg = os.path.join(result_dir, 'codex_last_message.txt')
-
-        cmd = [
-            'npx', 'codex', 'exec',
-            '--dangerously-bypass-approvals-and-sandbox',
-            '-C', workspace,
-            '-m', 'gpt55',
-            '--json',
-            '-o', codex_last_msg,
-        ]
+        # Run the agent
+        agent_jsonl = os.path.join(result_dir, f'{backend.name}_output.jsonl')
+        cmd = backend.build_command(workspace, result_dir)
 
         # Build a shell command; source shell profile for host env vars (no-op in docker)
         shell_cmd = 'source ~/.zshrc 2>/dev/null; source ~/.bashrc 2>/dev/null; exec ' + ' '.join(
@@ -300,38 +230,39 @@ def run_single_benchmark(args_tuple):
 
         start_time = time.time()
         try:
-            with open(codex_jsonl, 'w') as jsonl_f:
+            with open(agent_jsonl, 'w') as jsonl_f:
                 proc = subprocess.Popen(
                     [shell, '-c', shell_cmd],
                     stdin=subprocess.PIPE,
                     stdout=jsonl_f,
                     stderr=subprocess.PIPE,
                     text=True,
+                    cwd=workspace,
                     start_new_session=True,  # own process group for clean kill
                 )
                 try:
                     _, stderr = proc.communicate(input=prompt, timeout=timeout)
                 except subprocess.TimeoutExpired:
-                    # Kill entire process group (codex + tlapm + z3 + isabelle)
+                    # Kill entire process group (agent + tlapm + z3 + isabelle)
                     os.killpg(proc.pid, signal.SIGKILL)
                     proc.wait()
                     raise
-            result['codex_exit'] = proc.returncode
+            result['agent_exit'] = proc.returncode
             if stderr:
-                with open(os.path.join(result_dir, 'codex_stderr.txt'), 'w') as f:
+                with open(os.path.join(result_dir, 'agent_stderr.txt'), 'w') as f:
                     f.write(stderr)
         except subprocess.TimeoutExpired:
-            result['codex_exit'] = -1
-            result['error'] = f'codex timeout after {timeout}s'
+            result['agent_exit'] = -1
+            result['error'] = f'{backend.name} timeout after {timeout}s'
         except Exception as e:
-            result['codex_exit'] = -2
+            result['agent_exit'] = -2
             result['error'] = str(e)
 
         elapsed = time.time() - start_time
         result['time_secs'] = elapsed
 
         # Parse JSONL for human-readable transcript and token usage
-        transcript, input_tokens, output_tokens = parse_codex_jsonl(codex_jsonl)
+        transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
         result['input_tokens'] = input_tokens
         result['output_tokens'] = output_tokens
 
@@ -352,10 +283,10 @@ def run_single_benchmark(args_tuple):
         if os.path.isfile(solution_path):
             shutil.copy2(solution_path, os.path.join(result_dir, 'solution.tla'))
 
-        # Copy .result file if check_proof was run by codex
+        # Copy .result file if check_proof was run by the agent itself
         result_file = os.path.join(workspace, name_no_ext + '.result')
         if os.path.isfile(result_file):
-            shutil.copy2(result_file, os.path.join(result_dir, 'codex_check.result'))
+            shutil.copy2(result_file, os.path.join(result_dir, 'agent_check.result'))
 
         # Run our own check_proof on the solution
         check_result_path = os.path.join(result_dir, 'check.result')
@@ -403,29 +334,40 @@ def run_single_benchmark(args_tuple):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run Codex on TLAPS benchmarks')
-    parser.add_argument('--jobs', type=int, default=1, help='Parallel codex runs')
+    parser = argparse.ArgumentParser(description='Run an agent CLI on TLAPS benchmarks')
+    parser.add_argument('--backend', default='codex', choices=list_backends(),
+                        help='Agent backend (default: codex)')
+    parser.add_argument('--jobs', type=int, default=1, help='Parallel agent runs')
     parser.add_argument('--filter', default=None, help='Only run benchmarks matching pattern')
     parser.add_argument('--timeout', type=int, default=7200, help='Timeout per benchmark in seconds (default: 2 hours)')
     parser.add_argument('--output-dir', default=None, help='Output directory')
     args = parser.parse_args()
 
+    backend = get_backend(args.backend)
+
+    # Sanity-check required env vars early so we fail fast.
+    missing_env = [v for v in backend.required_env() if not os.environ.get(v)]
+    if missing_env:
+        print(f"ERROR: {backend.name} backend requires env vars: {', '.join(missing_env)}")
+        sys.exit(1)
+
     # Ensure tlapm is persistent
     ensure_tlapm()
 
-    # Set up output directory
+    # Set up output directory: results/<backend>/<ts>/
     if args.output_dir:
         output_dir = args.output_dir
     else:
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        # In Docker, /result is mounted; on host, use results/codex/ relative to script
+        # In Docker, /result is mounted; on host, use results/<backend>/ relative to script
         if os.path.isdir('/result'):
-            output_dir = os.path.join('/result', 'codex', timestamp)
+            output_dir = os.path.join('/result', backend.name, timestamp)
         else:
-            output_dir = os.path.join(SCRIPT_DIR, 'results', 'codex', timestamp)
+            output_dir = os.path.join(SCRIPT_DIR, 'results', backend.name, timestamp)
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
+    print(f"Backend: {backend.name}")
     print(f"Output directory: {output_dir}")
 
     # Get benchmarks
@@ -434,7 +376,7 @@ def main():
 
     # Prepare work items
     work_items = [
-        (bf, output_dir, args.timeout)
+        (bf, output_dir, args.timeout, backend)
         for bf in benchmark_files
     ]
 
