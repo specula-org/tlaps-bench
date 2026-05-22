@@ -95,27 +95,45 @@ lib/                           Vendored: tla2tools.jar (gitignored)
 docker/                        Container build + isolation
 ```
 
-### Run Codex benchmark
+### Run the benchmark
+
+First build the checker binary (one-time, required before any run):
 
 ```bash
-# Single benchmark
-python3 src/evaluator/runner.py --filter GCD_GCD3
-
-# Full run (40 parallel, 2h timeout)
-python3 src/evaluator/runner.py --jobs 40 --timeout 7200
+make            # produces ./check_proof_bin via PyInstaller
 ```
 
-Requires: [OpenAI Codex CLI](https://github.com/openai/codex) installed, tlapm 1.6 pre-release at `~/.tlapm/` or `/tmp/tlapm/`.
+Then drive the runner. It is `--backend` × `--level` parameterised — pick one of each.
+
+```bash
+# Single benchmark, L1, Codex (default backend, default level)
+python3 src/evaluator/runner.py --filter GCD_GCD3
+
+# Full L1 run, Codex, 40 parallel, 2h timeout
+python3 src/evaluator/runner.py --jobs 40 --timeout 7200
+
+# Same on L2 (proof from scratch)
+python3 src/evaluator/runner.py --level level2 --jobs 40 --timeout 7200
+
+# Claude Code backend on L1 (override the default model if you like)
+python3 src/evaluator/runner.py --backend claude_code --jobs 40
+python3 src/evaluator/runner.py --backend claude_code --model claude-sonnet-4-6 --jobs 40
+```
+
+Requires: tlapm 1.6 pre-release at `~/.tlapm/` (or `/tmp/tlapm/` as a host-only fallback the runner will copy on first use) and the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex) for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for `--backend claude_code`.
 
 ### Run with Docker (recommended)
 
 ```bash
 cd docker && bash build.sh
-# Set OPENAI_API_KEY or AZURE_OPENAI_API_KEY + AZURE_OPENAI_HOST
-docker-compose run bench python3 /scripts/runner.py --jobs 40
+# Set the API key(s) your chosen backend needs:
+#   OPENAI_API_KEY (or AZURE_OPENAI_API_KEY + AZURE_OPENAI_HOST) for codex
+#   ANTHROPIC_API_KEY                                            for claude_code
+docker-compose run bench python3 /scripts/runner.py --jobs 40                       # L1 + codex
+docker-compose run bench python3 /scripts/runner.py --backend claude_code --level level2 --jobs 40
 ```
 
-Docker blocks access to GitHub/TLA+ sites to prevent data leakage.
+The container mounts the whole `benchmark/` tree and the prebuilt `check_proof_bin`, so make sure you've run `make` on the host first. Docker blocks access to GitHub/TLA+ sites to prevent data leakage.
 
 ### Validate benchmarks
 
@@ -135,8 +153,11 @@ python3 src/common/validate.py --filter Paxos --jobs 10
 ### Check a single proof
 
 ```bash
-python3 src/common/check_proof.py benchmark/level1/Euclid/GCD_GCD3.tla [--tlapm PATH] [--timeout SECS]
+python3 src/common/check_proof.py benchmark/level1/Euclid/GCD_GCD3.tla [--level 1] [--tlapm PATH] [--timeout SECS]
+python3 src/common/check_proof.py benchmark/level2/Cantor/Cantor1_cantor.tla --level 2
 ```
+
+`--level` controls which cheating rules apply: L1 enforces a byte-identical preamble (the agent only fills in the last proof); L2 lets the agent add new lemmas above the target theorem. Both levels still reject `PROOF OMITTED`, new `AXIOM`/`ASSUME`, bare-QED tricks, and dependency-file tampering.
 
 Exit codes: `0` = PASS, `1` = FAIL, `2` = CHEATING, `3` = ERROR.
 
