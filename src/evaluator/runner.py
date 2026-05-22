@@ -5,11 +5,13 @@ Run an agent CLI on TLAPS benchmarks to attempt automated proof writing.
 For each benchmark:
 1. Creates an isolated workspace (fresh git repo with only benchmark files)
 2. Runs the chosen backend (codex / claude_code) with a proof-writing prompt
-3. Validates the result with check_proof (binary)
+3. Validates the result with the level's checker
 4. Saves all outputs
 
 Usage:
-    python3 runner.py [--backend codex|claude_code] [--jobs N] [--filter PATTERN] [--timeout SECS] [--output-dir DIR]
+    python3 runner.py [--backend codex|claude_code] [--level level1|level2] \\
+                      [--model NAME] [--jobs N] [--filter PATTERN] \\
+                      [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """
 
 import os
@@ -26,35 +28,40 @@ import tempfile
 import time
 import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
+from typing import Optional
 
 # Allow `python3 src/evaluator/runner.py` as well as module import.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backends import get_backend, list_backends
+from backends import get_backend, list_backends  # noqa: E402
+from levels import get_level, list_levels  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# File now at <repo>/src/evaluator/runner.py — ascend two levels for the repo root.
+# File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
 
-# In Docker: benchmark at /benchmark, scripts at /scripts (set in docker-compose).
-# On host: default to benchmark/level1 under the repo root.
-if os.path.isdir('/benchmark'):
-    BENCHMARK_DIR = '/benchmark'
-    CHECK_PROOF_SCRIPT = '/scripts/check_proof_bin'
-else:
-    BENCHMARK_DIR = os.path.join(REPO_ROOT, 'benchmark', 'level1')
-    CHECK_PROOF_SCRIPT = os.path.join(REPO_ROOT, 'check_proof_bin')
 
-# Persistent tlapm location — use /opt/tlapm in docker, ~/.tlapm on host
+def resolve_paths():
+    """Return (benchmark_root, checker_binary) based on environment.
+
+    Docker: /benchmark + /usr/local/bin/check_proof_bin (set by docker-compose).
+    Host:   <repo>/benchmark + <repo>/check_proof_bin.
+    """
+    if os.path.isdir('/benchmark'):
+        return '/benchmark', '/usr/local/bin/check_proof_bin'
+    return os.path.join(REPO_ROOT, 'benchmark'), os.path.join(REPO_ROOT, 'check_proof_bin')
+
+
+# Persistent tlapm location — /opt/tlapm in docker, ~/.tlapm on host.
 TLAPM_PERSISTENT = '/opt/tlapm' if os.path.isdir('/opt/tlapm') else os.path.expanduser('~/.tlapm')
 TLAPM_SOURCE = '/tmp/tlapm'
 
 
 def ensure_tlapm():
-    """Ensure tlapm is available."""
+    """Ensure tlapm is available at TLAPM_PERSISTENT (host-only fallback)."""
     if os.path.isfile(os.path.join(TLAPM_PERSISTENT, 'bin', 'tlapm')):
         print(f"tlapm at {TLAPM_PERSISTENT}")
         return
-    # Try copying from /tmp/tlapm (host-only fallback)
     if not os.path.isdir(TLAPM_SOURCE):
         print(f"ERROR: tlapm not found at {TLAPM_PERSISTENT} or {TLAPM_SOURCE}")
         sys.exit(1)
@@ -63,33 +70,34 @@ def ensure_tlapm():
     print("Done.")
 
 
-def get_benchmark_files(filter_pattern=None):
-    """Get list of benchmark .tla files (those with underscore in name)."""
-    files = sorted(glob.glob(os.path.join(BENCHMARK_DIR, '**', '*.tla'), recursive=True))
-    files = [f for f in files if '_' in os.path.splitext(os.path.basename(f))[0]]
-    if filter_pattern:
-        patterns = filter_pattern.split(',')
-        files = [f for f in files if any(p.strip() in f for p in patterns)]
-    return files
+def find_tlapm_lib(tlapm_path: str) -> Optional[str]:
+    """Derive lib path from tlapm binary path. Supports 1.5 and 1.6 layouts."""
+    base = os.path.dirname(os.path.dirname(tlapm_path))
+    for sub in ['lib/tlapm/stdlib', 'lib/tlaps', 'lib/tlapm', 'lib']:
+        path = os.path.join(base, sub)
+        if os.path.isdir(path):
+            return path
+    return None
 
 
-def get_dependency_files(benchmark_path):
-    """Get dependency .tla files from the same directory (no underscore in name)."""
-    bench_dir = os.path.dirname(benchmark_path)
-    deps = []
-    for f in glob.glob(os.path.join(bench_dir, '*.tla')):
-        bn = os.path.splitext(os.path.basename(f))[0]
-        if '_' not in bn:
-            deps.append(f)
-    return deps
-
-
-# Lock for thread-safe summary updates
 _summary_lock = threading.Lock()
 
 
-def update_summary(results, output_dir, total_benchmarks):
-    """Incrementally update summary.md with current results."""
+@dataclass
+class WorkItem:
+    """A single (benchmark, backend, level) task fed to the worker pool."""
+    benchmark_path: str
+    output_dir: str
+    timeout: int
+    check_timeout: int
+    backend: object
+    level: object
+    tlapm_path: str
+    tlapm_lib: str
+
+
+def update_summary(results, output_dir, total_benchmarks, backend_name, level_name):
+    """Incrementally update summary.md + results.json with current results."""
     with _summary_lock:
         total = len(results)
         verdicts = {}
@@ -101,7 +109,7 @@ def update_summary(results, output_dir, total_benchmarks):
         total_output = sum(r.get('output_tokens', 0) for r in results)
 
         lines = []
-        lines.append("# Codex Benchmark Results\n")
+        lines.append(f"# {backend_name} on {level_name}\n")
         lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"**Progress**: {total}/{total_benchmarks}")
         lines.append(f"**Total tokens**: {total_input:,} input / {total_output:,} output\n")
@@ -141,31 +149,17 @@ def update_summary(results, output_dir, total_benchmarks):
             json.dump(results, f, indent=2)
 
 
-_PROMPT_DIR = os.path.join(SCRIPT_DIR, 'prompts')
-
-
-def build_prompt(benchmark_basename, level='level1'):
-    """Build the proof-writing prompt by loading the template for the given level."""
-    template_path = os.path.join(_PROMPT_DIR, f'{level}.txt')
-    with open(template_path, 'r') as f:
-        template = f.read()
-    return template.format(
-        benchmark_basename=benchmark_basename,
-        tlapm_path=TLAPM_PERSISTENT,
-    )
-
-
-def run_single_benchmark(args_tuple):
+def run_single_benchmark(item: WorkItem):
     """Run the agent backend on a single benchmark. Returns result dict."""
-    benchmark_path, output_dir, timeout, backend = args_tuple
+    backend = item.backend
+    level = item.level
 
-    rel_path = os.path.relpath(benchmark_path, BENCHMARK_DIR)
-    module_dir = os.path.basename(os.path.dirname(benchmark_path))
-    basename = os.path.basename(benchmark_path)
+    rel_path = os.path.relpath(item.benchmark_path, level.benchmark_dir())
+    module_dir = os.path.basename(os.path.dirname(item.benchmark_path))
+    basename = os.path.basename(item.benchmark_path)
     name_no_ext = os.path.splitext(basename)[0]
 
-    # Create output directory
-    result_dir = os.path.join(output_dir, module_dir, name_no_ext)
+    result_dir = os.path.join(item.output_dir, module_dir, name_no_ext)
     os.makedirs(result_dir, exist_ok=True)
 
     result = {
@@ -173,24 +167,22 @@ def run_single_benchmark(args_tuple):
         'module': module_dir,
         'theorem': name_no_ext,
         'backend': backend.name,
+        'level': level.name,
         'agent_exit': -1,
         'check_verdict': 'ERROR',
         'time_secs': 0,
         'error': '',
     }
 
-    # Create isolated workspace
-    workspace = tempfile.mkdtemp(prefix=f'codex_bench_{name_no_ext}_')
+    workspace = tempfile.mkdtemp(prefix=f'{backend.name}_bench_{name_no_ext}_')
     try:
-        # Copy benchmark file
-        shutil.copy2(benchmark_path, os.path.join(workspace, basename))
-
-        # Copy dependency files
-        for dep in get_dependency_files(benchmark_path):
+        # Copy benchmark + dependencies into the isolated workspace
+        shutil.copy2(item.benchmark_path, os.path.join(workspace, basename))
+        for dep in level.get_dependencies(item.benchmark_path):
             shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
 
-        # Copy check_proof binary (after initial commit so it's not in the baseline)
-        # Init git repo with the original benchmark as the initial commit
+        # Init git repo with original files as initial commit (the baseline
+        # the cheating check compares against)
         subprocess.run(['git', 'init'], capture_output=True, cwd=workspace)
         subprocess.run(['git', 'add', '.'], capture_output=True, cwd=workspace)
         subprocess.run(['git', 'commit', '-m', 'initial benchmark'],
@@ -200,18 +192,18 @@ def run_single_benchmark(args_tuple):
                             'GIT_COMMITTER_NAME': 'bench',
                             'GIT_COMMITTER_EMAIL': 'bench@bench'})
 
-        # Now copy check_proof binary (after initial commit so it's not in the baseline)
-        check_bin_dest = os.path.join(workspace, 'check_proof_bin')
-        shutil.copy2(CHECK_PROOF_SCRIPT, check_bin_dest)
+        # Copy checker binary AFTER the initial commit so it's not in the baseline
+        checker_bin = level.checker_binary_path()
+        check_bin_name = os.path.basename(checker_bin)
+        check_bin_dest = os.path.join(workspace, check_bin_name)
+        shutil.copy2(checker_bin, check_bin_dest)
         os.chmod(check_bin_dest, 0o755)
 
-        # Save original benchmark to results
-        shutil.copy2(benchmark_path, os.path.join(result_dir, 'benchmark.tla'))
+        # Archive the original benchmark
+        shutil.copy2(item.benchmark_path, os.path.join(result_dir, 'benchmark.tla'))
 
         # Build prompt
-        prompt = build_prompt(basename)
-
-        # Save prompt to file for stdin
+        prompt = level.build_prompt(basename, item.tlapm_path, item.tlapm_lib)
         prompt_file = os.path.join(result_dir, 'prompt.txt')
         with open(prompt_file, 'w') as f:
             f.write(prompt)
@@ -220,19 +212,16 @@ def run_single_benchmark(args_tuple):
         agent_jsonl = os.path.join(result_dir, f'{backend.name}_output.jsonl')
         cmd = backend.build_command(workspace, result_dir)
 
-        # Build a shell command; source shell profile for host env vars (no-op in docker)
+        # Source shell profile for host env vars (no-op in docker).
         shell_cmd = 'source ~/.zshrc 2>/dev/null; source ~/.bashrc 2>/dev/null; exec ' + ' '.join(
             shlex.quote(c) for c in cmd
         )
-
-        # Use bash (available in docker); fall back to zsh on host
-        shell = 'bash'
 
         start_time = time.time()
         try:
             with open(agent_jsonl, 'w') as jsonl_f:
                 proc = subprocess.Popen(
-                    [shell, '-c', shell_cmd],
+                    ['bash', '-c', shell_cmd],
                     stdin=subprocess.PIPE,
                     stdout=jsonl_f,
                     stderr=subprocess.PIPE,
@@ -241,7 +230,7 @@ def run_single_benchmark(args_tuple):
                     start_new_session=True,  # own process group for clean kill
                 )
                 try:
-                    _, stderr = proc.communicate(input=prompt, timeout=timeout)
+                    _, stderr = proc.communicate(input=prompt, timeout=item.timeout)
                 except subprocess.TimeoutExpired:
                     # Kill entire process group (agent + tlapm + z3 + isabelle)
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -253,7 +242,7 @@ def run_single_benchmark(args_tuple):
                     f.write(stderr)
         except subprocess.TimeoutExpired:
             result['agent_exit'] = -1
-            result['error'] = f'{backend.name} timeout after {timeout}s'
+            result['error'] = f'{backend.name} timeout after {item.timeout}s'
         except Exception as e:
             result['agent_exit'] = -2
             result['error'] = str(e)
@@ -261,12 +250,10 @@ def run_single_benchmark(args_tuple):
         elapsed = time.time() - start_time
         result['time_secs'] = elapsed
 
-        # Parse JSONL for human-readable transcript and token usage
         transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
         result['input_tokens'] = input_tokens
         result['output_tokens'] = output_tokens
 
-        # Write human-readable transcript
         transcript_path = os.path.join(result_dir, 'transcript.txt')
         with open(transcript_path, 'w') as f:
             f.write(f"Benchmark: {rel_path}\n")
@@ -275,29 +262,27 @@ def run_single_benchmark(args_tuple):
             f.write("=" * 60 + "\n\n")
             f.write(transcript)
 
-        # Copy all .tla files from workspace (solution + dependencies) — skip .tlacache
+        # Copy all .tla files from workspace (solution + dependencies)
         solution_path = os.path.join(workspace, basename)
         for tla_file in glob.glob(os.path.join(workspace, '*.tla')):
             shutil.copy2(tla_file, os.path.join(result_dir, os.path.basename(tla_file)))
-        # Also save solution.tla as a convenience alias
         if os.path.isfile(solution_path):
             shutil.copy2(solution_path, os.path.join(result_dir, 'solution.tla'))
 
-        # Copy .result file if check_proof was run by the agent itself
+        # Copy .result file if the agent ran the checker itself
         result_file = os.path.join(workspace, name_no_ext + '.result')
         if os.path.isfile(result_file):
             shutil.copy2(result_file, os.path.join(result_dir, 'agent_check.result'))
 
-        # Run our own check_proof on the solution
+        # Run our own checker via the level
         check_result_path = os.path.join(result_dir, 'check.result')
+        cmd = level.checker_command(workspace, basename, check_result_path, item.check_timeout)
         try:
             check_proc = subprocess.run(
-                [os.path.join(workspace, 'check_proof_bin'), solution_path,
-                 '--output', check_result_path, '--timeout', '120'],
-                capture_output=True, text=True, timeout=180,
+                cmd,
+                capture_output=True, text=True, timeout=item.check_timeout + 60,
                 cwd=workspace,
             )
-            # Save check output for debugging
             check_log = os.path.join(result_dir, 'check_debug.txt')
             with open(check_log, 'w') as dbg:
                 dbg.write(f"exit code: {check_proc.returncode}\n")
@@ -311,12 +296,10 @@ def run_single_benchmark(args_tuple):
                 result['check_verdict'] = 'FAIL'
             else:
                 result['check_verdict'] = 'ERROR'
-            # Extract obligation count from tlapm output
             ob_matches = re.findall(r'All (\d+) obligation', check_proc.stdout)
             if ob_matches:
                 result['obligations'] = int(ob_matches[-1])
             else:
-                # Try failed obligation pattern: "X/Y obligations failed"
                 fail_match = re.search(r'(\d+)/(\d+) obligation', check_proc.stdout)
                 if fail_match:
                     result['obligations_failed'] = int(fail_match.group(1))
@@ -337,50 +320,73 @@ def main():
     parser = argparse.ArgumentParser(description='Run an agent CLI on TLAPS benchmarks')
     parser.add_argument('--backend', default='codex', choices=list_backends(),
                         help='Agent backend (default: codex)')
+    parser.add_argument('--level', default='level1', choices=list_levels(),
+                        help='Benchmark level (default: level1)')
+    parser.add_argument('--model', default=None,
+                        help='Override the backend default model')
     parser.add_argument('--jobs', type=int, default=1, help='Parallel agent runs')
     parser.add_argument('--filter', default=None, help='Only run benchmarks matching pattern')
-    parser.add_argument('--timeout', type=int, default=7200, help='Timeout per benchmark in seconds (default: 2 hours)')
+    parser.add_argument('--timeout', type=int, default=7200,
+                        help='Agent timeout per benchmark in seconds (default: 7200)')
+    parser.add_argument('--check-timeout', type=int, default=120,
+                        help='Checker timeout per benchmark in seconds (default: 120)')
     parser.add_argument('--output-dir', default=None, help='Output directory')
     args = parser.parse_args()
 
-    backend = get_backend(args.backend)
+    backend = get_backend(args.backend, model=args.model)
 
-    # Sanity-check required env vars early so we fail fast.
     missing_env = [v for v in backend.required_env() if not os.environ.get(v)]
     if missing_env:
         print(f"ERROR: {backend.name} backend requires env vars: {', '.join(missing_env)}")
         sys.exit(1)
 
-    # Ensure tlapm is persistent
     ensure_tlapm()
+    tlapm_path = os.path.join(TLAPM_PERSISTENT, 'bin', 'tlapm')
+    tlapm_lib = find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        print(f"ERROR: tlapm lib not found near {tlapm_path}")
+        sys.exit(1)
 
-    # Set up output directory: results/<backend>/<ts>/
+    benchmark_root, checker_binary = resolve_paths()
+    if not os.path.isfile(checker_binary):
+        print(f"ERROR: checker binary not found at {checker_binary}")
+        print(f"       run `make` at the repo root to build it.")
+        sys.exit(1)
+    level = get_level(args.level, benchmark_root, checker_binary)
+
+    # results/<backend>/<level>/<ts>/
     if args.output_dir:
         output_dir = args.output_dir
     else:
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        # In Docker, /result is mounted; on host, use results/<backend>/ relative to script
         if os.path.isdir('/result'):
-            output_dir = os.path.join('/result', backend.name, timestamp)
+            output_dir = os.path.join('/result', backend.name, level.name, timestamp)
         else:
-            output_dir = os.path.join(SCRIPT_DIR, 'results', backend.name, timestamp)
+            output_dir = os.path.join(SCRIPT_DIR, 'results', backend.name, level.name, timestamp)
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Backend: {backend.name}")
-    print(f"Output directory: {output_dir}")
+    print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
+    print(f"Level:   {level.name} — {level.description}")
+    print(f"Output:  {output_dir}")
 
-    # Get benchmarks
-    benchmark_files = get_benchmark_files(args.filter)
+    benchmark_files = level.get_benchmark_files(args.filter)
     print(f"Found {len(benchmark_files)} benchmarks")
 
-    # Prepare work items
     work_items = [
-        (bf, output_dir, args.timeout, backend)
+        WorkItem(
+            benchmark_path=bf,
+            output_dir=output_dir,
+            timeout=args.timeout,
+            check_timeout=args.check_timeout,
+            backend=backend,
+            level=level,
+            tlapm_path=tlapm_path,
+            tlapm_lib=tlapm_lib,
+        )
         for bf in benchmark_files
     ]
 
-    # Run
     results = []
     start_time = time.time()
     icons = {'PASS': '✅', 'FAIL': '❌', 'CHEATING': '⚠️', 'TIMEOUT': '⏱️', 'ERROR': '💥'}
@@ -393,7 +399,7 @@ def main():
             icon = icons.get(r['check_verdict'], '❓')
             tokens = f"{r.get('input_tokens',0):,}/{r.get('output_tokens',0):,}"
             print(f"[{i+1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)")
-            update_summary(results, output_dir, total_benchmarks)
+            update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
             futures = {executor.submit(run_single_benchmark, item): item for item in work_items}
@@ -405,12 +411,11 @@ def main():
                 icon = icons.get(r['check_verdict'], '❓')
                 tokens = f"{r.get('input_tokens',0):,}/{r.get('output_tokens',0):,}"
                 print(f"[{done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)")
-                update_summary(results, output_dir, total_benchmarks)
+                update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
 
     total_time = time.time() - start_time
 
-    # Final summary
-    update_summary(results, output_dir, total_benchmarks)
+    update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
     report_path = os.path.join(output_dir, 'summary.md')
 
     print(f"\n{'='*60}")
