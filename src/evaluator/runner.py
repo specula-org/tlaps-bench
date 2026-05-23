@@ -335,9 +335,9 @@ def main():
 
     backend = get_backend(args.backend, model=args.model)
 
-    missing_env = [v for v in backend.required_env() if not os.environ.get(v)]
-    if missing_env:
-        print(f"ERROR: {backend.name} backend requires env vars: {', '.join(missing_env)}")
+    auth_err = backend.check_auth()
+    if auth_err:
+        print(f"ERROR: {auth_err}")
         sys.exit(1)
 
     ensure_tlapm()

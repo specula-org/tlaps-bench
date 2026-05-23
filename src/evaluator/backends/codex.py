@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from typing import Optional, Tuple
 
 from .base import AgentBackend
@@ -29,13 +30,25 @@ class CodexBackend(AgentBackend):
             "-o", last_msg_path,
         ]
 
-    def required_env(self) -> list[str]:
-        # Accept Azure routing as an alternative: codex respects
-        # AZURE_OPENAI_API_KEY when ~/.codex/config.toml selects an azure
-        # provider. If Azure is configured, no other env var is required.
-        if os.environ.get("AZURE_OPENAI_API_KEY"):
-            return []
-        return ["OPENAI_API_KEY"]
+    def check_auth(self) -> Optional[str]:
+        # Fast paths: an env var is set (direct OpenAI or Azure routing).
+        if os.environ.get("OPENAI_API_KEY") or os.environ.get("AZURE_OPENAI_API_KEY"):
+            return None
+        # Slow path: ask codex itself whether it's logged in (OAuth/ChatGPT).
+        # This is a local read of ~/.codex state, no API call, no session.
+        try:
+            r = subprocess.run(
+                ["codex", "login", "status"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0 and "Logged in" in (r.stdout + r.stderr):
+                return None
+        except FileNotFoundError:
+            return "codex: `codex` CLI not found on PATH"
+        except Exception:
+            pass
+        return ("codex: no auth detected. Set OPENAI_API_KEY or "
+                "AZURE_OPENAI_API_KEY, or run `codex login`.")
 
     def firewall_hosts(self) -> list[str]:
         return ["api.openai.com"]

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from typing import Optional, Tuple
 
 from .base import AgentBackend
@@ -20,17 +22,44 @@ class ClaudeCodeBackend(AgentBackend):
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         # claude has no -C / --cwd flag; runner sets cwd=workspace.
         # stream-json requires --verbose in non-interactive (--print) mode.
+        # --no-session-persistence keeps benchmark runs out of the user's
+        # /resume history (193 entries per full run otherwise).
         return [
             "claude",
             "--print",
             "--dangerously-skip-permissions",
+            "--no-session-persistence",
             "--output-format", "stream-json",
             "--verbose",
             "--model", self.model,
         ]
 
-    def required_env(self) -> list[str]:
-        return ["ANTHROPIC_API_KEY"]
+    def check_auth(self) -> Optional[str]:
+        # Fast path: env var present.
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            return None
+        # Slow path: probe the CLI with --no-session-persistence so the
+        # probe doesn't pollute the user's resume history. This makes one
+        # tiny API call but covers OAuth / subscription auth that env-var
+        # checks can't see.
+        try:
+            r = subprocess.run(
+                ["claude", "--print", "--no-session-persistence",
+                 "--output-format", "text", "ok"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                return None
+            stderr = (r.stderr or r.stdout or "").strip()
+            if len(stderr) > 300:
+                stderr = stderr[:300] + "..."
+            return f"claude_code: auth probe failed (exit {r.returncode}): {stderr}"
+        except subprocess.TimeoutExpired:
+            return "claude_code: auth probe timed out (>30s)"
+        except FileNotFoundError:
+            return "claude_code: `claude` CLI not found on PATH"
+        except Exception as e:
+            return f"claude_code: auth probe error: {e}"
 
     def firewall_hosts(self) -> list[str]:
         return ["api.anthropic.com"]
