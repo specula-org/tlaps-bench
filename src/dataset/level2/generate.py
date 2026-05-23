@@ -34,11 +34,24 @@ Post-selection filters:
      `THEOREM Spec => []MutualExclusion` decls the author wrote to
      showcase different prover backends; as L2 prompts they are
      indistinguishable, so keep the first by line.
+  C. Cross-directory dedup: across all output directories, collapse
+     byte-identical target benchmarks. Catches the seven `Sets_*.tla`
+     pairs that arise because source/Consensus/Sets.tla and
+     source/Data/Sets.tla are near-identical copies of the same
+     utility library (only two prover-hint lines differ, both inside
+     proof bodies that L2 strips, so the emitted L2 prompts are
+     byte-identical). When duplicates are detected, the copy under
+     `Data/` is kept (utility libraries are at home in `Data/`); the
+     copies in other directories are removed and the audit log records
+     each drop. Dep files (e.g. `Sets.tla` itself, copied alongside
+     targets) are not subject to this pass — they may legitimately need
+     to live in multiple directories because other targets in those
+     directories depend on them.
 
 Spec formulas are identified by SANY-AST shape (see src/dataset/sany-dump/),
 not by name match. The audit log flags non-`Spec` names, zero specs,
 multiple specs, multiple top-level theorems, unnamed top-levels, and
-every drop made by filters A and B.
+every drop made by filters A, B, and C.
 """
 
 import argparse
@@ -290,8 +303,52 @@ def copy_deps(dump, source_path, out_dir):
     return copied
 
 
-def process_file(source_path, audit_writer, output_root, module_subdir=None):
-    """Generate L2 benchmarks for one source .tla file. Returns count emitted."""
+def cross_dir_dedup(target_paths, audit_writer, preferred_dir='Data'):
+    """Filter C — drop target benchmarks that are byte-identical to a target
+    in another output directory.
+
+    When duplicates exist we keep the copy under `preferred_dir` (default
+    `Data` — the natural home for utility-library benchmarks); if no copy
+    is under `preferred_dir`, the alphabetically-first path wins. The
+    other copies are deleted and every drop is recorded in the audit log.
+
+    Returns the number of files removed.
+    """
+    import hashlib
+    by_hash = {}
+    for path in target_paths:
+        with open(path, 'rb') as f:
+            h = hashlib.sha256(f.read()).hexdigest()
+        by_hash.setdefault(h, []).append(path)
+
+    sep = os.sep
+    preferred_marker = f"{sep}{preferred_dir}{sep}"
+    removed = 0
+    for group in by_hash.values():
+        if len(group) < 2:
+            continue
+        preferred = sorted(p for p in group if preferred_marker in p)
+        keeper = preferred[0] if preferred else sorted(group)[0]
+        for path in group:
+            if path == keeper:
+                continue
+            os.remove(path)
+            audit_writer.write(
+                f"[level2-audit] {os.path.relpath(path, PROJECT_ROOT)}: "
+                f"byte-identical to {os.path.relpath(keeper, PROJECT_ROOT)} "
+                f"— removed (filter C, cross-dir dedup)\n"
+            )
+            removed += 1
+    return removed
+
+
+def process_file(source_path, audit_writer, output_root, module_subdir=None,
+                 generated_paths=None):
+    """Generate L2 benchmarks for one source .tla file. Returns count emitted.
+
+    If `generated_paths` is a list, each generated target benchmark path is
+    appended to it (for downstream cross-directory dedup).
+    """
     with open(source_path, encoding='utf-8') as f:
         text = f.read()
     source_lines = text.splitlines(keepends=True)
@@ -430,6 +487,8 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None):
             f.write(bench_text)
         copy_deps(dump, source_path, out_dir)
         count += 1
+        if generated_paths is not None:
+            generated_paths.append(bench_file)
         print(f"  generated: {os.path.relpath(bench_file, PROJECT_ROOT)}")
 
     return count
@@ -471,16 +530,20 @@ def main():
                 targets.append((full, subdir))
 
     total = 0
+    generated_paths = []
     with open(audit_path, 'w', encoding='utf-8') as audit_writer:
         for path, subdir in targets:
             print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
             try:
-                total += process_file(path, audit_writer, output_root, module_subdir=subdir)
+                total += process_file(path, audit_writer, output_root,
+                                      module_subdir=subdir,
+                                      generated_paths=generated_paths)
             except Exception as e:
                 audit_writer.write(f"[level2-audit] {path}: ERROR {e!r}\n")
                 print(f"  ERROR: {e}", file=sys.stderr)
+        removed = cross_dir_dedup(generated_paths, audit_writer)
 
-    print(f"\nTotal L2 benchmarks: {total}")
+    print(f"\nTotal L2 benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
 
 
