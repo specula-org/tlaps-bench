@@ -366,15 +366,15 @@ def main():
         sys.exit(1)
     level = get_level(args.level, benchmark_root, checker_binary)
 
-    # results/<backend>/<level>/<ts>/
+    # results/<level>/<backend>/<ts>/  (level first, then agent)
     if args.output_dir:
         output_dir = args.output_dir
     else:
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         if os.path.isdir('/result'):
-            output_dir = os.path.join('/result', backend.name, level.name, timestamp)
+            output_dir = os.path.join('/result', level.name, backend.name, timestamp)
         else:
-            output_dir = os.path.join(SCRIPT_DIR, 'results', backend.name, level.name, timestamp)
+            output_dir = os.path.join(SCRIPT_DIR, 'results', level.name, backend.name, timestamp)
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
