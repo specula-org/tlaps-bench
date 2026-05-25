@@ -38,6 +38,14 @@ Post-selection filters:
      `Spec => [](chosen = V!chosen)` (model-checked by TLC, no TLAPS
      proof written). Both are genuine main theorems; they can be revived
      later in a separate "no-reference-proof" track if we ever want it.
+  A'. Known-false filter: drop a top-level theorem whose goal TLC has shown
+     to be FALSE, even though the source "proves" it via an OMITTED sub-step
+     that papers over the gap (e.g. PaxosProof StructOK3). A false goal admits
+     no honest proof, so it cannot be a benchmark. This is now the ONLY reason
+     an OMITTED-sub-step theorem is dropped: every other such theorem is a
+     published/verified result and is KEPT as a (hard) from-scratch benchmark,
+     since L2 grades by tlapm rather than by the human reference proof.
+     See KNOWN_FALSE_TARGETS for the per-target TLC evidence.
   B. Within-file dedup: collapse exact-text-duplicate statements. Catches
      Peterson.tla L124/L134/L183 — three identical
      `THEOREM Spec => []MutualExclusion` decls the author wrote to
@@ -83,6 +91,22 @@ from generate import (  # noqa: E402
 
 KEYWORD_PATTERN = re.compile(r'^\s*(THEOREM|LEMMA|AXIOM|COROLLARY|PROPOSITION)\b')
 MODULE_HEADER = re.compile(r'^(-+\s*MODULE\s+)(\w+)(\s*-+)')
+
+# Top-level theorems whose goal is actually FALSE — TLC finds a counterexample —
+# even though the source "proves" them with an OMITTED sub-step that papers over
+# the gap. A false goal admits no honest proof (an agent can only pass it by
+# cheating), so it must never become a benchmark. Keyed by
+# (source-module basename, target name); each entry is justified by a TLC run.
+# This is the *only* reason filter A' now drops an OMITTED-sub-step theorem —
+# every other such theorem is a published, verified result and is kept.
+KNOWN_FALSE_TARGETS = {
+    ("PaxosProof", "StructOK3"):
+        "TLC counterexample: PaxosTuple.tla Phase2a's uniqueness guard tests "
+        "m[3] (the value field) instead of m[2] (the ballot), so a single ballot "
+        "can carry two distinct 2a values, violating StructOK3's one-value-per-"
+        "ballot conjunct. The author commented StructOK3 out of the proven "
+        "StructOK and left its inductive step PROOF OMITTED.",
+}
 
 
 def dump_sany(tla_path):
@@ -570,14 +594,33 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
                 f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has no manual TLAPS proof body — skipped (filter A)\n"
             )
-        elif _proof_has_omitted_substep(target_thm, source_lines):
-            # Structured proof, but an OMITTED leaf means the goal was never
-            # actually verified — and may be false (e.g. StructOK3). Drop it.
+        elif (os.path.splitext(os.path.basename(source_path))[0],
+              target_theorem_name(target_thm)[0]) in KNOWN_FALSE_TARGETS:
+            # Filter A' — drop ONLY a goal TLC has shown to be false. An OMITTED
+            # sub-step that papers over a *false* claim (e.g. PaxosProof
+            # StructOK3) admits no honest proof, so it must not become a
+            # benchmark. See KNOWN_FALSE_TARGETS for the per-target evidence.
+            reason = KNOWN_FALSE_TARGETS[(
+                os.path.splitext(os.path.basename(source_path))[0],
+                target_theorem_name(target_thm)[0])]
             audit_writer.write(
                 f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
-                f"{line} has an OMITTED sub-step — goal never verified, may be "
-                f"unprovable — skipped (filter A')\n"
+                f"{line} asserts a FALSE goal — skipped (filter A', known-false): "
+                f"{reason}\n"
             )
+        elif _proof_has_omitted_substep(target_thm, source_lines):
+            # An OMITTED sub-step is NO LONGER grounds for dropping: the proof is
+            # structured (an OMITTED leaf still "counts as a proof"), the goal is
+            # a published/verified result, and L2 grades by tlapm — not by the
+            # human reference — so a missing reference proof is fine. Keep it as
+            # a (hard) from-scratch benchmark. Record that it carries an OMITTED
+            # sub-step for traceability.
+            audit_writer.write(
+                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"{line} has an OMITTED sub-step — kept (goal vetted true; hard "
+                f"from-scratch benchmark)\n"
+            )
+            survivors.append(entry)
         else:
             survivors.append(entry)
     top_level = survivors
