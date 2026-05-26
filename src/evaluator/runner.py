@@ -80,6 +80,91 @@ def find_tlapm_lib(tlapm_path: str) -> Optional[str]:
     return None
 
 
+def fetch_usage(usage_script: str) -> Optional[dict]:
+    """Return the parsed OAuth usage JSON, or None if unavailable.
+
+    Fails open (returns None) on any error — missing script, API-key-only auth
+    with no OAuth token, network failure, bad JSON. Callers treat None as
+    "can't tell, proceed", so the quota gate never blocks a run it can't
+    measure (e.g. the docker / API-key path).
+    """
+    if not usage_script or not os.path.isfile(usage_script):
+        return None
+    try:
+        r = subprocess.run(['bash', usage_script], capture_output=True,
+                            text=True, timeout=30)
+    except Exception:
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def _usage_over(usage: dict, quota_5h: float, quota_7d: float):
+    """Return (list of "5h=NN% (limit MM%)" strings, earliest resets_at) for
+    any window over its limit. A limit <= 0 disables that window's check."""
+    over = []
+    resets = []
+    for key, limit in (('five_hour', quota_5h), ('seven_day', quota_7d)):
+        if limit <= 0:
+            continue
+        obj = usage.get(key) or {}
+        util = obj.get('utilization') or 0
+        if util > limit:
+            over.append(f"{key}={util}% (limit {limit}%)")
+            ra = obj.get('resets_at')
+            if ra:
+                resets.append(ra)
+    earliest = sorted(resets)[0] if resets else None
+    return over, earliest
+
+
+def _secs_until(resets_at: str) -> int:
+    """Seconds from now until an ISO-8601 resets_at, + 120s buffer.
+    Falls back to 600s if the timestamp can't be parsed."""
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(resets_at)
+        secs = int(dt.timestamp() - time.time()) + 120
+        return max(secs, 60)
+    except Exception:
+        return 600
+
+
+def wait_for_quota(item: "WorkItem", log_prefix: str = "") -> bool:
+    """Block until the subscription's 5h/7d usage is under threshold.
+
+    Polls usage_script; if a window is over its limit, sleeps until that
+    window's resets_at (+2min), then re-checks. Returns True once under
+    threshold (or when gating is disabled / usage can't be measured), or
+    False after exceeding quota_max_waits resets (caller should abort).
+    """
+    if not item.usage_script or (item.quota_5h <= 0 and item.quota_7d <= 0):
+        return True
+    waits = 0
+    while True:
+        usage = fetch_usage(item.usage_script)
+        if usage is None:
+            return True  # fail open — can't measure, don't block
+        over, reset_at = _usage_over(usage, item.quota_5h, item.quota_7d)
+        if not over:
+            return True
+        waits += 1
+        if waits > item.quota_max_waits:
+            print(f"{log_prefix}quota over after {item.quota_max_waits} waits "
+                  f"({', '.join(over)}); aborting this benchmark", flush=True)
+            return False
+        sleep_secs = _secs_until(reset_at) if reset_at else 600
+        when = reset_at or f"+{sleep_secs}s"
+        print(f"{log_prefix}quota over: {', '.join(over)} — sleeping "
+              f"{sleep_secs}s until {when} (wait {waits}/{item.quota_max_waits})",
+              flush=True)
+        time.sleep(sleep_secs)
+
+
 _summary_lock = threading.Lock()
 
 
@@ -94,6 +179,11 @@ class WorkItem:
     level: object
     tlapm_path: str
     tlapm_lib: str
+    # Quota gate (Claude Max subscription). usage_script=None disables it.
+    usage_script: Optional[str] = None
+    quota_5h: float = 0
+    quota_7d: float = 0
+    quota_max_waits: int = 0
 
 
 def update_summary(results, output_dir, total_benchmarks, backend_name, level_name):
@@ -173,6 +263,18 @@ def run_single_benchmark(item: WorkItem):
         'time_secs': 0,
         'error': '',
     }
+
+    # Quota gate: pause before doing any work if the Claude Max subscription
+    # is over threshold (sleeps until the window resets, then resumes). Gated
+    # here — before workspace setup — so sleeping workers don't hold temp dirs.
+    # No-op when gating is disabled or usage can't be measured (codex / API-key
+    # auth / docker), in which case it returns True immediately.
+    if not wait_for_quota(item, log_prefix=f"[{name_no_ext}] "):
+        result['agent_exit'] = -3
+        result['error'] = 'quota exceeded (max waits reached); skipped'
+        result['input_tokens'] = 0
+        result['output_tokens'] = 0
+        return result
 
     workspace = tempfile.mkdtemp(prefix=f'{backend.name}_bench_{name_no_ext}_')
     try:
@@ -333,6 +435,17 @@ def main():
     parser.add_argument('--check-timeout', type=int, default=120,
                         help='Checker timeout per benchmark in seconds (default: 120)')
     parser.add_argument('--output-dir', default=None, help='Output directory')
+    # Quota gate (claude_code + Claude Max subscription only). Pauses before
+    # launching an agent when subscription usage is over threshold, sleeping
+    # until the window resets. 0 disables a window's check.
+    parser.add_argument('--quota-5h', type=float, default=80,
+                        help='Pause when 5-hour usage exceeds this %% (default: 80; 0 = off)')
+    parser.add_argument('--quota-7d', type=float, default=95,
+                        help='Pause when 7-day usage exceeds this %% (default: 95; 0 = off)')
+    parser.add_argument('--quota-max-waits', type=int, default=6,
+                        help='Max window resets to sleep through before aborting a benchmark (default: 6)')
+    parser.add_argument('--usage-script', default=None,
+                        help='Path to usage.sh (default: <repo>/scripts/usage.sh)')
     args = parser.parse_args()
 
     backend = get_backend(args.backend, model=args.model)
@@ -374,13 +487,33 @@ def main():
         if os.path.isdir('/result'):
             output_dir = os.path.join('/result', level.name, backend.name, timestamp)
         else:
-            output_dir = os.path.join(SCRIPT_DIR, 'results', level.name, backend.name, timestamp)
+            output_dir = os.path.join(REPO_ROOT, 'results', level.name, backend.name, timestamp)
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
     print(f"Level:   {level.name} — {level.description}")
     print(f"Output:  {output_dir}")
+
+    # Quota gate: only meaningful for claude_code on a Claude Max subscription.
+    # For other backends, or when usage.sh / OAuth creds are absent, it stays
+    # disabled and never blocks a run.
+    usage_script = None
+    if backend.name == 'claude_code' and (args.quota_5h > 0 or args.quota_7d > 0):
+        candidate = args.usage_script or os.path.join(REPO_ROOT, 'scripts', 'usage.sh')
+        if os.path.isfile(candidate):
+            usage = fetch_usage(candidate)
+            if usage is not None:
+                usage_script = candidate
+                u5 = (usage.get('five_hour') or {}).get('utilization', 0)
+                u7 = (usage.get('seven_day') or {}).get('utilization', 0)
+                print(f"Quota:   gate ON — now 5h={u5}% (limit {args.quota_5h}%), "
+                      f"7d={u7}% (limit {args.quota_7d}%), max-waits={args.quota_max_waits}")
+            else:
+                print(f"Quota:   gate OFF — usage endpoint unavailable "
+                      f"(API-key auth or no OAuth token at ~/.claude/.credentials.json)")
+        elif args.usage_script:
+            print(f"Quota:   gate OFF — usage script not found at {candidate}")
 
     benchmark_files = level.get_benchmark_files(args.filter)
     print(f"Found {len(benchmark_files)} benchmarks")
@@ -395,6 +528,10 @@ def main():
             level=level,
             tlapm_path=tlapm_root,
             tlapm_lib=tlapm_lib,
+            usage_script=usage_script,
+            quota_5h=args.quota_5h,
+            quota_7d=args.quota_7d,
+            quota_max_waits=args.quota_max_waits,
         )
         for bf in benchmark_files
     ]

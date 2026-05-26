@@ -122,6 +122,35 @@ python3 src/evaluator/runner.py --backend claude_code --model claude-sonnet-4-6 
 
 Requires: tlapm 1.6 pre-release at `~/.tlapm/` (or `/tmp/tlapm/` as a host-only fallback the runner will copy on first use) and the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex) for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for `--backend claude_code`.
 
+### Usage monitoring & quota gate (Claude Max)
+
+`scripts/usage.sh` queries the Claude OAuth usage endpoint (subscription auth
+only) and reports the rolling-window utilization, mirroring Specula's monitor:
+
+```bash
+bash scripts/usage.sh              # full JSON from /api/oauth/usage
+bash scripts/usage.sh --summary    # one human-readable line per window
+bash scripts/usage.sh --check 80   # exit 1 if any 5h/7d window > 80%
+```
+
+When `--backend claude_code` runs on a Max subscription, the runner uses this
+to **gate before launching each agent**: if 5h/7d usage is over threshold it
+sleeps until the window's `resets_at` (+2 min), then resumes — so a long
+parallel run pauses instead of failing when quota runs out.
+
+```bash
+# Defaults: pause at 5h>80% or 7d>95%, sleep through up to 6 resets.
+python3 src/evaluator/runner.py --backend claude_code --jobs 40
+# Tune thresholds, or set 0 to disable a window:
+python3 src/evaluator/runner.py --backend claude_code --jobs 40 \
+    --quota-5h 90 --quota-7d 95 --quota-max-waits 4
+python3 src/evaluator/runner.py --backend claude_code --quota-5h 0 --quota-7d 0  # off
+```
+
+The gate fails open: it is skipped for `--backend codex`, and for API-key auth
+(incl. Docker) where the OAuth usage endpoint and `~/.claude/.credentials.json`
+token are absent — so it never blocks a run it can't measure.
+
 ### Run with Docker (recommended)
 
 ```bash
