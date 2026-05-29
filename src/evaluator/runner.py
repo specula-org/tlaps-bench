@@ -124,12 +124,17 @@ def _usage_over(usage: dict, quota_5h: float, quota_7d: float):
 
 def _secs_until(resets_at: str) -> int:
     """Seconds from now until an ISO-8601 resets_at, + 120s buffer.
-    Falls back to 600s if the timestamp can't be parsed."""
+
+    Clamped to [60, 3600]. The 1h cap is a safety net against a skewed system
+    clock (this host has shown corrupt process times): a bad time.time() could
+    otherwise compute a multi-day sleep. The gate re-polls after each sleep, so
+    capping just means an extra usage check, never a missed resume.
+    """
     try:
         from datetime import datetime
         dt = datetime.fromisoformat(resets_at)
         secs = int(dt.timestamp() - time.time()) + 120
-        return max(secs, 60)
+        return min(max(secs, 60), 3600)
     except Exception:
         return 600
 
@@ -165,6 +170,124 @@ def wait_for_quota(item: "WorkItem", log_prefix: str = "") -> bool:
         time.sleep(sleep_secs)
 
 
+def _proc_descendants(root_pid: int) -> list:
+    """All live descendant PIDs of root_pid, via a /proc ppid walk."""
+    children: dict = {}
+    try:
+        entries = os.listdir('/proc')
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f'/proc/{entry}/stat', 'rb') as f:
+                data = f.read().decode('latin1')
+            # comm (field 2) is parenthesised and may contain spaces; ppid is
+            # the 2nd field after the closing ')'.
+            ppid = int(data[data.rindex(')') + 2:].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+    out, stack = [], [root_pid]
+    while stack:
+        for c in children.get(stack.pop(), []):
+            out.append(c)
+            stack.append(c)
+    return out
+
+
+def _procs_with_cwd_under(path: str) -> list:
+    """PIDs whose cwd is at/under `path`. Catches Isabelle/poly that detach
+    from the process group but still run in the benchmark's workspace."""
+    base = os.path.realpath(path)
+    out = []
+    try:
+        entries = os.listdir('/proc')
+    except OSError:
+        return out
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            cwd = os.readlink(f'/proc/{entry}/cwd')
+        except OSError:
+            continue
+        if cwd == base or cwd.startswith(base + os.sep):
+            out.append(int(entry))
+    return out
+
+
+def kill_agent_tree(proc, workspace: str):
+    """SIGKILL the agent's whole process tree plus any process whose cwd is in
+    `workspace` (detached Isabelle/poly). Scoped to THIS benchmark only — it
+    never touches processes from other runs (e.g. a concurrent codex run), so
+    it is safe to run on a shared host. This is what reliably reaps tlapm's
+    Isabelle backend, which leaks `poly` children that the process-group kill
+    alone leaves behind."""
+    try:
+        pid = proc.pid
+    except Exception:
+        return
+    targets = set()
+    try:
+        targets.update(_proc_descendants(pid))
+    except Exception:
+        pass
+    try:
+        targets.update(_procs_with_cwd_under(workspace))
+    except Exception:
+        pass
+    targets.add(pid)
+    # Process group first (cheap, scoped to our own session).
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception:
+        pass
+    for t in targets:
+        try:
+            os.kill(t, signal.SIGKILL)
+        except Exception:
+            pass
+
+
+def _mem_available_gb() -> Optional[float]:
+    """MemAvailable in GiB from /proc/meminfo, or None if unreadable."""
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) / 1024 / 1024
+    except OSError:
+        pass
+    return None
+
+
+def wait_for_memory(min_free_gb: float, max_waits: int, log_prefix: str = "") -> bool:
+    """Block until MemAvailable >= min_free_gb before launching a heavy agent.
+
+    Guards a no-swap host against OOM when this run shares the machine with
+    another memory-hungry run (e.g. concurrent codex): a single ByzantinePaxos
+    Isabelle proof can hold ~150GB, so we hold off launching until there's room.
+    Returns True once memory is free (or the check is disabled / unreadable),
+    False after max_waits (caller proceeds anyway rather than abort)."""
+    if min_free_gb <= 0:
+        return True
+    waits = 0
+    while True:
+        avail = _mem_available_gb()
+        if avail is None or avail >= min_free_gb:
+            return True
+        waits += 1
+        if waits > max_waits:
+            print(f"{log_prefix}low memory ({avail:.0f}GB < {min_free_gb:.0f}GB) "
+                  f"after {max_waits} waits — launching anyway", flush=True)
+            return True
+        print(f"{log_prefix}waiting for memory: {avail:.0f}GB free < "
+              f"{min_free_gb:.0f}GB needed (wait {waits}/{max_waits})", flush=True)
+        time.sleep(60)
+
+
 _summary_lock = threading.Lock()
 
 
@@ -184,6 +307,9 @@ class WorkItem:
     quota_5h: float = 0
     quota_7d: float = 0
     quota_max_waits: int = 0
+    # Memory gate: hold off launching the agent until this many GB are free
+    # (0 = off). Guards a no-swap host against OOM under concurrent heavy runs.
+    min_free_gb: float = 0
 
 
 def update_summary(results, output_dir, total_benchmarks, backend_name, level_name):
@@ -319,7 +445,15 @@ def run_single_benchmark(item: WorkItem):
             shlex.quote(c) for c in cmd
         )
 
+        # Memory gate: on a no-swap host shared with another heavy run, hold off
+        # launching until there's RAM headroom (no-op when min_free_gb == 0).
+        wait_for_memory(item.min_free_gb, 120, log_prefix=f"[{name_no_ext}] ")
+
         start_time = time.time()
+        # timeout <= 0 means no limit.
+        _to = item.timeout if item.timeout and item.timeout > 0 else None
+        timed_out = {'v': False}
+        proc = None
         try:
             with open(agent_jsonl, 'w') as jsonl_f:
                 proc = subprocess.Popen(
@@ -329,27 +463,50 @@ def run_single_benchmark(item: WorkItem):
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=workspace,
-                    start_new_session=True,  # own process group for clean kill
+                    start_new_session=True,  # own process group / session
                 )
+
+                # Watchdog is the PRIMARY timeout: at _to it forcibly reaps the
+                # agent's whole tree incl. detached Isabelle/poly (process-group
+                # kill alone leaves those behind, which is what hung the run and
+                # leaked ~150GB). We don't rely on communicate()'s own timeout —
+                # it failed to fire when a hung tlapm child held the pipe open.
+                def _watchdog():
+                    timed_out['v'] = True
+                    kill_agent_tree(proc, workspace)
+                timer = threading.Timer(_to, _watchdog) if _to else None
+                if timer:
+                    timer.daemon = True
+                    timer.start()
                 try:
-                    # timeout <= 0 means no limit (communicate waits forever).
-                    _to = item.timeout if item.timeout and item.timeout > 0 else None
-                    _, stderr = proc.communicate(input=prompt, timeout=_to)
+                    # Backstop timeout 10min past the watchdog so communicate can
+                    # never block forever even if a stray pipe holder lingers.
+                    _bt = (_to + 600) if _to else None
+                    _, stderr = proc.communicate(input=prompt, timeout=_bt)
                 except subprocess.TimeoutExpired:
-                    # Kill entire process group (agent + tlapm + z3 + isabelle)
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait()
-                    raise
+                    timed_out['v'] = True
+                    kill_agent_tree(proc, workspace)
+                    try:
+                        proc.wait(timeout=30)
+                    except Exception:
+                        pass
+                    stderr = ''
+                finally:
+                    if timer:
+                        timer.cancel()
             result['agent_exit'] = proc.returncode
             if stderr:
                 with open(os.path.join(result_dir, 'agent_stderr.txt'), 'w') as f:
                     f.write(stderr)
-        except subprocess.TimeoutExpired:
-            result['agent_exit'] = -1
-            result['error'] = f'{backend.name} timeout after {item.timeout}s'
+            if timed_out['v']:
+                result['agent_exit'] = -1
+                result['error'] = f'{backend.name} timeout after {item.timeout}s'
+                kill_agent_tree(proc, workspace)  # final sweep
         except Exception as e:
             result['agent_exit'] = -2
             result['error'] = str(e)
+            if proc is not None:
+                kill_agent_tree(proc, workspace)
 
         elapsed = time.time() - start_time
         result['time_secs'] = elapsed
@@ -446,6 +603,11 @@ def main():
                         help='Max window resets to sleep through before aborting a benchmark (default: 6)')
     parser.add_argument('--usage-script', default=None,
                         help='Path to usage.sh (default: <repo>/scripts/usage.sh)')
+    parser.add_argument('--resume', action='store_true',
+                        help='Reuse --output-dir: skip benchmarks already PASS there, run the rest')
+    parser.add_argument('--min-free-gb', type=float, default=0,
+                        help='Hold off launching an agent until this many GB RAM are free '
+                             '(0 = off). Use on a no-swap host shared with another heavy run.')
     args = parser.parse_args()
 
     backend = get_backend(args.backend, model=args.model)
@@ -518,8 +680,33 @@ def main():
     benchmark_files = level.get_benchmark_files(args.filter)
     print(f"Found {len(benchmark_files)} benchmarks")
 
-    work_items = [
-        WorkItem(
+    # Resume: reuse --output-dir, skip benchmarks already recorded PASS there,
+    # and seed `results` so the summary stays cumulative across the rerun.
+    results = []
+    done_pass = set()
+    if args.resume:
+        prev_json = os.path.join(output_dir, 'results.json')
+        if os.path.isfile(prev_json):
+            with open(prev_json) as f:
+                results = json.load(f)
+            # Skip both PASS (already done) and SKIP (operator-marked frontier
+            # benchmarks deliberately excluded from retry, e.g. theorems known
+            # to time out for reasons outside the agent's control).
+            done_pass = {r['benchmark'] for r in results
+                         if r.get('check_verdict') in ('PASS', 'SKIP')}
+            n_pass = sum(1 for r in results if r.get('check_verdict') == 'PASS')
+            n_skip = len(done_pass) - n_pass
+            print(f"Resume: loaded {len(results)} prior results, skipping "
+                  f"{n_pass} PASS + {n_skip} SKIP")
+        else:
+            print(f"Resume: no prior results.json in {output_dir} — running all")
+
+    work_items = []
+    for bf in benchmark_files:
+        rel = os.path.relpath(bf, level.benchmark_dir())
+        if rel in done_pass:
+            continue
+        work_items.append(WorkItem(
             benchmark_path=bf,
             output_dir=output_dir,
             timeout=args.timeout,
@@ -532,14 +719,15 @@ def main():
             quota_5h=args.quota_5h,
             quota_7d=args.quota_7d,
             quota_max_waits=args.quota_max_waits,
-        )
-        for bf in benchmark_files
-    ]
+            min_free_gb=args.min_free_gb,
+        ))
 
-    results = []
     start_time = time.time()
     icons = {'PASS': '✅', 'FAIL': '❌', 'CHEATING': '⚠️', 'TIMEOUT': '⏱️', 'ERROR': '💥'}
-    total_benchmarks = len(work_items)
+    total_benchmarks = len(benchmark_files)
+    prior_done = len(results)
+    if args.resume:
+        print(f"Resume: {len(work_items)} benchmarks left to run")
 
     if args.jobs == 1:
         for i, item in enumerate(work_items):
@@ -547,7 +735,7 @@ def main():
             results.append(r)
             icon = icons.get(r['check_verdict'], '❓')
             tokens = f"{r.get('input_tokens',0):,}/{r.get('output_tokens',0):,}"
-            print(f"[{i+1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)")
+            print(f"[{prior_done+i+1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)")
             update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
@@ -559,7 +747,7 @@ def main():
                 results.append(r)
                 icon = icons.get(r['check_verdict'], '❓')
                 tokens = f"{r.get('input_tokens',0):,}/{r.get('output_tokens',0):,}"
-                print(f"[{done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)")
+                print(f"[{prior_done+done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)")
                 update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
 
     total_time = time.time() - start_time
