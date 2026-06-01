@@ -1,0 +1,129 @@
+-------------------------------- MODULE Sets --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+           /\ IsFiniteSet({})
+           /\ Cardinality({}) = 0
+           /\ \A S : IsFiniteSet(S) /\ (Cardinality(S)=0) => (S = {})
+  PROOF OMITTED
+
+THEOREM CardinalityPlusOne ==
+    ASSUME NEW S, IsFiniteSet(S),
+           NEW x, x \notin S
+    PROVE  /\ IsFiniteSet(S \cup {x})
+           /\ Cardinality(S \cup {x}) = Cardinality(S) + 1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOne == \A m : /\ IsFiniteSet({m})
+                                 /\ Cardinality({m}) = 1
+  PROOF OMITTED
+
+THEOREM CardinalityTwo == \A m, p : m # p => 
+                              /\ IsFiniteSet({m,p})
+                              /\ Cardinality({m,p}) = 2
+  PROOF OMITTED
+
+THEOREM IntervalCardinality ==  
+  ASSUME NEW a \in Nat, NEW b \in Nat 
+  PROVE  /\ IsFiniteSet(a..b)
+         /\ Cardinality(a..b) = IF a > b THEN 0 ELSE b-a+1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOneConverse ==
+   ASSUME NEW S, IsFiniteSet(S), Cardinality(S) = 1
+   PROVE  \E m : S = {m}
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM IsBijectionInverse ==
+  ASSUME NEW f, NEW S, NEW T, 
+         IsBijection(f, S, T) 
+  PROVE  \E g : IsBijection(g, T, S)
+  PROOF OMITTED
+
+THEOREM IsBijectionTransitive ==
+  ASSUME NEW f1, NEW f2, NEW S, NEW T, NEW U, 
+           IsBijection(f1, S, U),
+           IsBijection(f2, U, T) 
+  PROVE  \E g : IsBijection(g, S, T)
+  PROOF OMITTED
+
+THEOREM IsBijectionCardinality ==
+  \A f, S, T : /\ IsFiniteSet(S)
+               /\ IsFiniteSet(T)
+               => (IsBijection(f, S, T) <=> Cardinality(S) = Cardinality(T))
+  PROOF OMITTED
+
+LEMMA CardinalitySetMinus ==
+      ASSUME NEW S, IsFiniteSet(S),
+             NEW x \in S
+      PROVE /\ IsFiniteSet(S \ {x})
+            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+  PROOF OMITTED
+
+THEOREM FiniteSubset ==
+  ASSUME NEW S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM CardinalityUnion ==
+          \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) =>
+                      /\ IsFiniteSet(S \cup T)
+                      /\ IsFiniteSet(S \cap T)
+                      /\ Cardinality(S \cup T) =
+                              Cardinality(S) + Cardinality(T)
+                              - Cardinality(S \cap T)  
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+                       /\ f \in [S -> T]
+                       /\ \A y \in T : \E x \in S : y = f[x]
+                       => /\ IsFiniteSet(T)
+                          /\ Cardinality(T) \leq Cardinality(S)
+PROOF OMITTED
+
+THEOREM ProductFinite ==
+     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+PROOF OMITTED
+
+THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+PROOF OMITTED
+=============================================================================

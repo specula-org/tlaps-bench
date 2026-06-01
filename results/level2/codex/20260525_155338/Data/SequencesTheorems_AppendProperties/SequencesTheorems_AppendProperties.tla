@@ -1,0 +1,40 @@
+-------------------------- MODULE SequencesTheorems_AppendProperties -------------------------
+
+EXTENDS Integers, Sequences, TLAPS
+
+AXIOM SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+AXIOM LenDef == \A S : \A seq \in Seq(S) :
+                     /\ Len(seq) \in Nat 
+                     /\ DOMAIN seq = 1..Len(seq)
+
+AXIOM HeadDef == \A s : Head(s) = s[1]
+AXIOM TailDef == \A s : Tail(s) = [i \in 1..(Len(s)-1) |-> s[i+1]]
+
+AXIOM SubSeqDef ==
+        \A s, m, n : SubSeq(s, m, n) = [i \in 1..(1+n-m) |-> s[i+m-1]]
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+THEOREM AppendProperties ==
+          \A S :
+            \A seq \in Seq(S), elt \in S :
+                /\ Append(seq, elt) \in Seq(S)
+                /\ Len(Append(seq, elt)) = Len(seq)+1
+                /\ \A i \in 1.. Len(seq) : Append(seq, elt)[i] = seq[i]
+                /\ Append(seq, elt)[Len(seq)+1] = elt
+PROOF
+  BY SeqDef, LenDef
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+=============================================================================
