@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 
 from .invoke import run_killgroup
-from .locate import resolve
+from .locate import resolve, find_community_lib
 
 
 @dataclass
@@ -71,6 +71,10 @@ def run_summary(tla_path: str, cwd: str, *, tlapm: str | None = None,
                 tlapm_lib: str | None = None, timeout: float = 600) -> Summary:
     """Run ``tlapm --summary`` on ``tla_path`` and return the parsed summary."""
     tlapm, tlapm_lib = resolve(tlapm, tlapm_lib)
-    out, err, _ = run_killgroup(
-        [tlapm, "--summary", "-I", tlapm_lib, tla_path], timeout, cwd)
+    cmd = [tlapm, "--summary", "-I", tlapm_lib]
+    community = find_community_lib()
+    if community:
+        cmd += ["-I", community]
+    cmd.append(tla_path)
+    out, err, _ = run_killgroup(cmd, timeout, cwd)
     return parse_summary(out + err)

@@ -13,11 +13,15 @@ fi
 # The input file's own directory is also added so INSTANCE/EXTENDS of sibling
 # modules (e.g. Paxos -> Consensus) resolves.
 TLAPS_LIB="${TLAPS_LIB:-$HOME/.tlapm/lib/tlapm/stdlib}"
+# Vendored CommunityModules (lib/community/) so EXTENDS SequencesExt / BagsExt /
+# SequencesExtTheorems / ... resolves for the tlaplus/Examples imports.
+COMMUNITY_LIB="${COMMUNITY_LIB:-$REPO_ROOT/lib/community}"
 INPUT_DIR=""
 for arg in "$@"; do
   if [[ -f "$arg" ]]; then INPUT_DIR="$(dirname "$(realpath "$arg")")"; break; fi
 done
 LIB_PATH="$TLAPS_LIB"
+[[ -d "$COMMUNITY_LIB" ]] && LIB_PATH="$LIB_PATH:$COMMUNITY_LIB"
 [[ -n "$INPUT_DIR" ]] && LIB_PATH="$INPUT_DIR:$LIB_PATH"
 exec java -DTLA-Library="$LIB_PATH" \
   -cp "$TLA2TOOLS:$BUILD" DumpSemantics "$@"

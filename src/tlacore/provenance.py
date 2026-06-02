@@ -25,6 +25,13 @@ STDLIB = {
     "FiniteSetTheorems", "FunctionTheorems", "SequenceTheorems",
     "NaturalsInduction", "WellFoundedInduction", "BagsTheorems",
     "CommunityModules",
+    # Vendored CommunityModules (lib/community/) the tlaplus/Examples imports
+    # EXTEND by individual module name. Kept in sync with COMMUNITY_MODULES in
+    # src/dataset/level1/generate.py.
+    "SequencesExt", "SequencesExtTheorems", "FiniteSetsExt", "FunctionsExt",
+    "BagsExt", "Relation", "Graphs", "GraphsExt", "Combinatorics",
+    "DyadicRationals", "Bitwise", "Statistics", "VectorClocks", "IOUtils",
+    "CSV", "SVG", "TLCExt", "Randomization",
 }
 
 

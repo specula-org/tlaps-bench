@@ -18,6 +18,21 @@ _BIN_CANDIDATES = [
 
 _LIB_SUBDIRS = ["lib/tlapm/stdlib", "lib/tlaps", "lib/tlapm", "lib"]
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
+
+
+def find_community_lib() -> Optional[str]:
+    """Return the vendored CommunityModules dir (lib/community/), or None.
+
+    Honors the COMMUNITY_LIB env var, else looks under the repo root. Holds
+    SequencesExt / BagsExt / SequencesExtTheorems / ... which the
+    tlaplus/Examples imports EXTEND. In the Docker image these are folded into
+    the tlapm stdlib instead, so this returning None there is expected/harmless.
+    """
+    cand = os.environ.get("COMMUNITY_LIB") or os.path.join(_REPO_ROOT, "lib", "community")
+    return cand if os.path.isdir(cand) else None
+
 
 def find_tlapm() -> Optional[str]:
     """Return the path to the tlapm binary, or None."""
