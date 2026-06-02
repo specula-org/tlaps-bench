@@ -27,6 +27,16 @@ RUN curl -fsSL -o /tmp/tlapm.tar.gz \
     && rm /tmp/tlapm.tar.gz \
     && rm -f /opt/tlapm/bin/tlapm_lsp
 
+# Vendor CommunityModules into tlapm's stdlib dir so that benchmarks which
+# EXTEND SequencesExt / BagsExt / SequencesExtTheorems / ... resolve via
+# `tlapm -I <stdlib>` — the path both the agent prompt and check_proof use.
+# Pinned to the same tag as scripts/install_deps.sh (lib/community/).
+RUN curl -fsSL -o /tmp/community.tar.gz \
+    https://github.com/tlaplus/CommunityModules/archive/refs/tags/202604221529.tar.gz \
+    && tar -xzf /tmp/community.tar.gz -C /tmp/ \
+    && cp /tmp/CommunityModules-202604221529/modules/*.tla /opt/tlapm/lib/tlapm/stdlib/ \
+    && rm -rf /tmp/community.tar.gz /tmp/CommunityModules-202604221529
+
 # Lock down tlapm: prevent AI from tampering with library files
 # Remove write permission — bench user cannot restore (not owner, no sudo)
 # chattr +i is applied at container start in entrypoint.sh (needs CAP_LINUX_IMMUTABLE)
