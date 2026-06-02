@@ -544,6 +544,24 @@ def get_theorem_statement_lines(lines, thm):
     return result
 
 
+def get_theorem_proof_lines(lines, thm):
+    """Dual of get_theorem_statement_lines: return a theorem's proof body lines.
+
+    For an inline proof (proof on the same line as the declaration, e.g.
+    'LEMMA Foo == x  BY DEF y'), return only the proof tail (['BY DEF y'])
+    rather than the whole declaration line -- otherwise porting the proof into
+    a benchmark re-declares the theorem and produces a malformed module. For a
+    multi-line proof, return lines[proof_start:proof_end+1] verbatim.
+    """
+    if thm.proof_start is None or not thm.has_proof:
+        return []
+    if thm.proof_start == thm.statement_start:
+        line = lines[thm.statement_start]
+        m = re.search(r'\s+(PROOF\s+BY\b.*|BY\b.*)$', line)
+        return [m.group(1)] if m else [line]
+    return lines[thm.proof_start:thm.proof_end + 1]
+
+
 def merge_files(files_by_module, dep_graph, target_module):
     """Merge all dependencies of target_module into a single content string.
 

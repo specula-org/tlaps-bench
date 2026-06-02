@@ -34,6 +34,7 @@ from generate import (
     parse_theorems,
     parse_module_name,
     find_tla_files,
+    get_theorem_proof_lines,
     SOURCE_ROOT,
     BENCHMARK_DIR,
     PROJECT_ROOT,
@@ -267,7 +268,9 @@ def validate_single_benchmark(args_tuple):
 
         for sthm in src_theorems:
             if sthm.name == target_thm_name and sthm.has_proof:
-                proof_lines = src_lines[sthm.proof_start:sthm.proof_end + 1]
+                # Use the proof-extraction helper (handles inline proofs like
+                # 'LEMMA Foo == x  BY DEF y' without re-declaring the theorem).
+                proof_lines = get_theorem_proof_lines(src_lines, sthm)
                 # Trim trailing empty lines and comment-only lines
                 while proof_lines and (not proof_lines[-1].strip() or proof_lines[-1].strip().startswith('(*')):
                     proof_lines.pop()
