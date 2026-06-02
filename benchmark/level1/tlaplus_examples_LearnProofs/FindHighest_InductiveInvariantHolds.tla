@@ -1,0 +1,90 @@
+---------------------------- MODULE FindHighest_InductiveInvariantHolds -----------------------------
+(***************************************************************************)
+(* Defines a very simple algorithm that finds the largest value in a       *)
+(* sequence of Natural numbers. This was created as an exercise in finding *)
+(* & proving type invariants, inductive invariants, and correctness.       *)
+(***************************************************************************)
+
+EXTENDS Sequences, Naturals, Integers, TLAPS
+
+(****************************************************************************
+--algorithm Highest {
+  variables
+    f \in Seq(Nat);
+    h = -1;
+    i = 1;
+  define {
+    max(a, b) == IF a >= b THEN a ELSE b
+  } {
+lb: while (i <= Len(f)) {
+      h := max(h, f[i]);
+      i := i + 1;
+    }
+  }
+}
+****************************************************************************)
+\* BEGIN TRANSLATION (chksum(pcal) = "31f24270" /\ chksum(tla) = "819802c6")
+VARIABLES f, h, i, pc
+
+(* define statement *)
+max(a, b) == IF a >= b THEN a ELSE b
+
+
+vars == << f, h, i, pc >>
+
+Init == (* Global variables *)
+        /\ f \in Seq(Nat)
+        /\ h = -1
+        /\ i = 1
+        /\ pc = "lb"
+
+lb == /\ pc = "lb"
+      /\ IF i <= Len(f)
+            THEN /\ h' = max(h, f[i])
+                 /\ i' = i + 1
+                 /\ pc' = "lb"
+            ELSE /\ pc' = "Done"
+                 /\ UNCHANGED << h, i >>
+      /\ f' = f
+
+(* Allow infinite stuttering to prevent deadlock on termination. *)
+Terminating == pc = "Done" /\ UNCHANGED vars
+
+Next == lb
+           \/ Terminating
+
+Spec == Init /\ [][Next]_vars
+
+Termination == <>(pc = "Done")
+
+\* END TRANSLATION 
+
+\* The type invariant; the proof system likes knowing variables are in Nat.
+\* It's a good idea to check these invariants with the model checker before
+\* trying to prove them. To quote Leslie Lamport, it's very difficult to
+\* prove something that isn't true!
+TypeOK ==
+  /\ f \in Seq(Nat)
+  /\ i \in 1..(Len(f) + 1)
+  /\ i \in Nat
+  /\ h \in Nat \cup {-1}
+
+\* It's useful to prove the type invariant first, so it can be used as an
+\* assumption in further proofs to restrict variable values.
+THEOREM TypeInvariantHolds == Spec => []TypeOK
+\* To prove theorems like Spec => []Invariant, you have to:
+\*  1. Prove Invariant holds in the initial state (usually trivial)
+\*  2. Prove Invariant holds when variables are unchanged (usually trivial)
+\*  3. Prove that assuming Invariant is true, a Next step implies Invariant'
+\* The last one (inductive case) is usually quite difficult. It helps to
+\* never forget you have an extremely powerful assumption: that Invariant is
+\* true!
+  PROOF OMITTED
+
+InductiveInvariant ==
+  \A idx \in 1..(i - 1) : f[idx] <= h
+
+THEOREM InductiveInvariantHolds == Spec => []InductiveInvariant
+PROOF OBVIOUS
+
+=============================================================================
