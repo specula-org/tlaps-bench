@@ -1,0 +1,611 @@
+Benchmark: AtomicBakery/AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+Time: 145s
+Tokens: 431,704 input / 3,174 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and nearby proof structure first.
+
+[CMD] /bin/bash -lc "ls && sed -n '1,260p' AtomicBakeryWithoutSMT_TypeOKInvariant.tla"
+AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+cheating_detection.py
+check_proof.py
+------------ MODULE AtomicBakeryWithoutSMT_TypeOKInvariant ----------------------------
+(***************************************************************************)
+(* The Atomic Bakery algorithm is a version of the bakery algorithm in     *)
+(* which reading and writing of a process's number is an atomic operation. *)
+(* The bakery algorithm originally appeared in:                            *)
+(*                                                                         *)
+(*   Leslie Lamport                                                        *)
+(*   A New Solution of Dijkstra's Concurrent Programming Problem           *)
+(*   Communications of the ACM 17, 8   (August 1974), 453-455              *)
+(*                                                                         *)
+(* This PlusCal version of the Atomic Bakery algorithm is one in which     *)
+(* variables whose initial values are not used are initialized to          *)
+(* arbitrary type-correct values.  It is good for proving correctness but  *)
+(* not for model checking, because it produces an unnecessarily large      *)
+(* number of reachable states.  If the variables were left uninitialized,  *)
+(* the PlusCal translation would initialize them to a particular           *)
+(* unspecified value.  This would complicate the proof because it would    *)
+(* make the type-correctness invariant more complicated, but it would be   *)
+(* eff
+... (truncated) ...
+----------------------------
+
+THEOREM GTAxiom  == \A n, m \in Nat : ~ (n > m /\ m > n)
+  OBVIOUS (*{ by (isabelle "(auto dest: nat_less_trans)") }*)
+
+THEOREM GEQAxiom == \A n, m \in Nat : (n = m) \/ n > m \/ m > n
+  OBVIOUS (*{ by (isabelle "(auto elim: nat_less_cases)") }*)
+
+THEOREM GEQTransitive == \A n, m, q \in Nat : n >= m /\ m >= q => n >= q
+  OBVIOUS (*{ by (isabelle "(auto dest: nat_leq_trans)") }*)
+
+THEOREM Transitivity2 == \A n, m, q \in Nat : n > m /\ m >= q => n > q
+  OBVIOUS (*{ by (isabelle "(auto dest: nat_leq_less_trans)") }*)
+
+THEOREM GEQorLT == \A n, m \in Nat : n >= m <=> ~(m > n)
+  OBVIOUS (*{ by (isabelle "(auto simp: nat_not_less[simplified])") }*)
+
+THEOREM NatGEQZero == \A n \in Nat: (n > 0) <=> (n # 0)
+  OBVIOUS (*{ by (isabelle "(auto simp: nat_gt0_not0)") }*)
+
+THEOREM Plus1 == \A n \in Nat: n+1 \in Nat /\ n+1 # 0
+  OBVIOUS
+
+THEOREM GGIrreflexive == ASSUME NEW i \in P,
+                                NEW j \in P,
+                                i # j,
+                                num[i] \in Nat,
+                                num[j] \in Nat
+                         PROVE  ~ (GG(i, j) /\ GG(j, i))
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+THEOREM InitImpliesTypeOK == 
+  ASSUME Init
+  PROVE  TypeOK
+  PROOF OMITTED
+
+THEOREM TypeOKInvariant ==
+        ASSUME TypeOK,
+               Next
+        PROVE  TypeOK'
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] Next I’ll inspect checker constraints and TLAPS library operators.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' check_proof.py && find /opt/tlapm15/lib/tlaps -maxdepth 1 -type f -printf '%f
+' | sort | head -80"
+#!/usr/bin/env python3
+"""
+Check a single TLAPS benchmark proof for correctness and cheating.
+
+Designed for AI agents to get quick feedback during proof writing.
+
+Usage:
+    python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+
+Output:
+    - Raw tlapm output (preserved verbatim)
+    - Cheating check (compares against main branch)
+    - Summary verdict: PASS / FAIL / CHEATING
+
+Exit codes:
+    0 = PASS
+    1 = FAIL (proof doesn't verify)
+    2 = CHEATING (tampering detected)
+    3 = ERROR (could not run check)
+"""
+
+import os
+import sys
+import re
+import shutil
+import subprocess
+import tempfile
+import argparse
+import glob
+
+from cheating_detection import (
+    detect_proof_omitted, detect_extra_axioms,
+    detect_preamble_modification, detect_empty_proof,
+    detect_zero_total_obligations, detect_dependency_modification,
+    strip_comments,
+)
+
+
+def find_tlapm():
+    """Find tlapm binary."""
+    for candidate in ['/opt/tlapm15/bin/tlapm', '/tmp/tlapm15/bin/tlapm', '/tmp/tlapm/bin/tlapm', shutil.which('tlapm')]:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def find_tlapm_lib(tlapm_path):
+    """Derive lib path from tlapm binary path."""
+    base = os.path.dirname(os.path.dirname(tlapm_path))
+    for sub in ['lib/tlaps', 'lib/tlapm', 'lib']:
+        path = os.path.join(base, sub)
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def get_main_version(filepat
+... (truncated) ...
+=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+
+        for line in tlapm_output.split('\n'):
+            emit(line)
+        tlapm_passed = (tlapm_exit == 0)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- Step 2: Cheating check ---
+    emit()
+    emit("=" * 60)
+    emit("CHEATING CHECK")
+    emit("=" * 60)
+
+    cheating_issues = check_cheating(filepath)
+    real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
+    warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
+
+    # Check for empty PROOF blocks and 0-obligation (independent of git comparison)
+    if tlapm_passed:
+        with open(filepath, 'r') as f:
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '260,560p' check_proof.py && sed -n '1,220p' /opt/tlapm15/lib/tlaps/FunctionTheorems.tla && sed -n '1,160p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+        with open(filepath, 'r') as f:
+            cur_lines = f.read().split('\n')
+        main_content = get_main_version(filepath)
+        if main_content:
+            main_lines = main_content.split('\n')
+            po_line = find_proof_obvious_line(main_lines)
+            if po_line is not None:
+                proof_section = '\n'.join(cur_lines[po_line:])
+                clean = strip_comments(proof_section)
+                for ci in detect_empty_proof(clean):
+                    real_issues.append((po_line + (ci.line or 0), ci.description))
+                for ci in detect_zero_total_obligations(tlapm_output):
+                    real_issues.append((0, ci.description))
+
+    for line_num, desc in warnings:
+        emit(f"  WARNING: {desc}")
+
+    if real_issues:
+        for line_num, desc in real_issues:
+            emit(f"  Line {line_num}: {desc}")
+    else:
+        emit("  No cheating detected.")
+
+    # --- Step 3: Verdict ---
+    emit()
+    emit("=" * 60)
+    emit("VERDICT")
+    emit("=" * 60)
+
+    if real_issues:
+        verdict = "CHEATING"
+        exit_code = 2
+        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+    elif tlapm_passed:
+        verdict = "PASS"
+        exit_code = 0
+        emit(f"  ✅ PASS — all obligations proved")
+    else:
+        verdict = "FAIL"
+        exit_code = 1
+        # Extract obligation summary
+        m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
+        if m:
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.gr
+... (truncated) ...
+sually counterproductive to include        *)
+(* theorem SetExtensionality in a BY clause for the Zenon or Isabelle      *)
+(* backends. Instead, use the pragma IsaWithSetExtensionality to instruct  *)
+(* the Isabelle backend to use the rule of set extensionality.             *)
+(***************************************************************************)
+IsaWithSetExtensionality == TRUE
+           (*{ by (prover:"isabelle"; tactic:"(auto intro: setEqualI)")}*)
+
+THEOREM SetExtensionality == \A S,T : (\A x : x \in S <=> x \in T) => S = T
+OBVIOUS
+
+(***************************************************************************)
+(* The following theorem is needed to deduce NotInSetS \notin SetS from    *)
+(* the definition                                                          *)
+(*                                                                         *)
+(*   NotInSetS == CHOOSE v : v \notin SetS                                 *)
+(***************************************************************************)
+THEOREM NoSetContainsEverything == \A S : \E x : x \notin S
+OBVIOUS (*{by (isabelle "(auto intro: inIrrefl)")}*)
+-----------------------------------------------------------------------------
+
+
+
+(********************************************************************)
+(********************************************************************)
+(********************************************************************)
+
+
+(********************************************************************)
+[EXIT 0]
+
+[AGENT] I’ll try the smallest explicit expansion first to see the failing obligations.
+
+[AGENT] The one-shot expansion is still running, so I’ll let it finish before splitting cases.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+@@
+ THEOREM TypeOKInvariant ==
+         ASSUME TypeOK,
+                Next
+         PROVE  TypeOK'
+-PROOF OBVIOUS
++PROOF
++  <1>1. QED BY PsubsetNat, Plus1 DEF TypeOK, Next, p, p1, p2, p3, p4, p5, p6, p7, p8
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps AtomicBakeryWithoutSMT_TypeOKInvariant.tla"
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_vars_
+
+(* created new ".tlacache/AtomicBakeryWithoutSMT_TypeOKInvariant.tlaps/AtomicBakeryWithoutSMT_TypeOKInvariant.thy" *)
+(* fingerprints written in ".tlacache/AtomicBakeryWithoutSMT_TypeOKInvariant.tlaps/fingerprints" *)
+File "./AtomicBakeryWithoutSMT_TypeOKInvariant.tla", line 240, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT P,
+                  PsubsetNat == P \subseteq Nat,
+                  NEW CONSTANT defaultInitValue,
+                  NEW VARIABLE num,
+                  NEW VARIABLE flag,
+                  NEW VARIABLE pc,
+                  NEW VARIABLE unread,
+                  NEW VARIABLE max,
+                  NEW VARIABLE nxt,
+                  p1(self) ==
+                    /\ pc[self] = "p1"
+                    /\ unread' = [unread EXCEPT !
+                                   [self] = P \ {self}]
+                    /\ max' = [max EXCEPT !
+                                   [self] = 0]
+                    /\ flag' = [flag EXCEPT !
+                                   [self] = TRUE]
+                    /\ pc' = [pc EXCEPT !
+                                   [self] = "p2"]
+                    /\ UNCHANGED <<num, nxt>>,
+                  p2(self) ==
+                    /\ pc[self] = "p2"
+                    /\ IF unread[self] # {}
+                         THEN /\ \E i \in unread[self] :
+                                   /\ unread'
+                                  
+... (truncated) ...
+n P : pc[self] = "Done") /\ UNCHANGED vars),
+                  TypeOK ==
+                    /\ num \in [P -> Nat]
+                    /\ flag \in [P -> BOOLEAN]
+                    /\ unread \in [P -> SUBSET P]
+                    /\ \A i \in P :
+                          pc[i] \in {"p2", "p5", "p6"} => i \notin unread[i]
+                    /\ max \in [P -> Nat]
+                    /\ nxt \in [P -> P]
+                    /\ \A i \in P : pc[i] = "p6" => nxt[i] # i
+                    /\ pc
+                       \in [P ->
+                              {"p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"}],
+                  TypeOK ,
+                  Next ,
+                  PsubsetNat ,
+                  Plus1 
+           PROVE  TypeOK'
+File "./AtomicBakeryWithoutSMT_TypeOKInvariant.tla", line 1, character 1 to line 242, character 77:
+[ERROR]: 1/10 obligations failed.
+There were backend errors processing module `"AtomicBakeryWithoutSMT_TypeOKInvariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The monolithic proof leaves one large obligation, so I’ll split by `Next` action.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+@@
+ THEOREM TypeOKInvariant ==
+         ASSUME TypeOK,
+                Next
+         PROVE  TypeOK'
+ PROOF
+-  <1>1. QED BY PsubsetNat, Plus1 DEF TypeOK, Next, p, p1, p2, p3, p4, p5, p6, p7, p8
++  <1>1. \\A self \\in P : p(self) => TypeOK'
++    PROOF
++      <2>1. TAKE self \\in P
++      <2>2. ASSUME p(self) PROVE TypeOK'
++        PROOF
++          <3>1. CASE p1(self)
++            BY <3>1, PsubsetNat DEF TypeOK, p1
++          <3>2. CASE p2(self)
++            BY <3>2 DEF TypeOK, p2
++          <3>3. CASE p3(self)
++            BY <3>3, Plus1 DEF TypeOK, p3
++          <3>4. CASE p4(self)
++            BY <3>4, PsubsetNat DEF TypeOK, p4
++          <3>5. CASE p5(self)
++            BY <3>5 DEF TypeOK, p5
++          <3>6. CASE p6(self)
++            BY <3>6 DEF TypeOK, p6
++          <3>7. CASE p7(self)
++            BY <3>7 DEF TypeOK, p7
++          <3>8. CASE p8(self)
++            BY <3>8 DEF TypeOK, p8
++          <3>9. QED BY <2>2, <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8 DEF p
++        QED
++    QED
++  <1>2. ((\\A self \\in P : pc[self] = \"Done\") /\\ UNCHANGED vars) => TypeOK'
++    BY DEF TypeOK, vars
++  <1>3. QED BY <1>1, <1>2 DEF Next
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps AtomicBakeryWithoutSMT_TypeOKInvariant.tla"
+Success. Updated the following files:
+M AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+File "./AtomicBakeryWithoutSMT_TypeOKInvariant.tla", line 261, character 23:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in fi
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I hit a proof-structure parse issue; I’ll inspect the edited tail and correct nesting.
+
+[CMD] /bin/bash -lc "nl -ba AtomicBakeryWithoutSMT_TypeOKInvariant.tla | sed -n '225,285p'"
+   225	                                num[j] \in Nat
+   226	                         PROVE  ~ (GG(i, j) /\ GG(j, i))
+   227	  PROOF OMITTED
+   228	
+   229	-----------------------------------------------------------------------------
+   230	THEOREM InitImpliesTypeOK == 
+   231	  ASSUME Init
+   232	  PROVE  TypeOK
+   233	  PROOF OMITTED
+   234	
+   235	THEOREM TypeOKInvariant ==
+   236	        ASSUME TypeOK,
+   237	               Next
+   238	        PROVE  TypeOK'
+   239	PROOF
+   240	  <1>1. \A self \in P : p(self) => TypeOK'
+   241	    PROOF
+   242	      <2>1. TAKE self \in P
+   243	      <2>2. ASSUME p(self) PROVE TypeOK'
+   244	        PROOF
+   245	          <3>1. CASE p1(self)
+   246	            BY <3>1, PsubsetNat DEF TypeOK, p1
+   247	          <3>2. CASE p2(self)
+   248	            BY <3>2 DEF TypeOK, p2
+   249	          <3>3. CASE p3(self)
+   250	            BY <3>3, Plus1 DEF TypeOK, p3
+   251	          <3>4. CASE p4(self)
+   252	            BY <3>4, PsubsetNat DEF TypeOK, p4
+   253	          <3>5. CASE p5(self)
+   254	            BY <3>5 DEF TypeOK, p5
+   255	          <3>6. CASE p6(self)
+   256	            BY <3>6 DEF TypeOK, p6
+   257	          <3>7. CASE p7(self)
+   258	            BY <3>7 DEF TypeOK, p7
+   259	          <3>8. CASE p8(self)
+   260	            BY <3>8 DEF TypeOK, p8
+   261	          <3>9. QED BY <2>2, <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8 DEF p
+   262	        QED
+   263	    QED
+   264	  <1>2. ((\A self \in P : pc[self] = "Done") /\ UNCHANGED vars) => TypeOK'
+   265	    BY DEF TypeOK, vars
+   266	  <1>3. QED BY <1>1, <1>2 DEF Next
+   267	
+   268	=============================================================================
+[EXIT 0]
+
+[AGENT] The parser wants explicit numbered QED steps, so I’ll adjust proof endings.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+@@
+           <3>8. CASE p8(self)
+             BY <3>8 DEF TypeOK, p8
+           <3>9. QED BY <2>2, <3>1, <3>2, <3>3, <3>4, <3>5, <3>6, <3>7, <3>8 DEF p
+-        QED
+-    QED
++      <2>3. QED BY <2>1, <2>2
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps AtomicBakeryWithoutSMT_TypeOKInvariant.tla"
+** Unexpanded symbols: STATE_TypeOK_, STATE_vars_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, ACTION_p_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ACTION_p8_, ACTION_p6_, ACTION_Next_, STATE_TypeOK_, ACTION_p4_, ACTION_p3_, ACTION_p7_, ACTION_p5_, ACTION_p1_, ACTION_p2_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+(* created new ".tlacache/AtomicBakeryWithoutSMT_TypeOKInvariant.tlaps/AtomicBakeryWithoutSMT_TypeOKInvariant.thy" *)
+(* fingerprints written in ".tlacache/AtomicBakeryWithoutSMT_TypeOKInvariant.tlaps/fingerprints" *)
+File "./AtomicBakeryWithoutSMT_TypeOKInvariant.tla", line 1, character 1 to line 267, character 77:
+[INFO]: All 45 obligations proved.
+[EXIT 0]
+
+[AGENT] The split action proof verifies with `tlapm`; now I’ll run the required checker.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py AtomicBakeryWithoutSMT_TypeOKInvariant.tla'
+Checking: AtomicBakeryWithoutSMT_TypeOKInvariant.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/AtomicBakeryWithoutSMT_TypeOKInvariant.tlaps/AtomicBakeryWithoutSMT_TypeOKInvariant.thy" *)
+(* fingerprints written in ".tlacache/AtomicBakeryWithoutSMT_TypeOKInvariant.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_vars_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, ACTION_p_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ACTION_p8_, ACTION_p6_, ACTION_Next_, STATE_TypeOK_, ACTION_p4_, ACTION_p3_, ACTION_p7_, ACTION_p5_, ACTION_p1_, ACTION_p2_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+File "/tmp/tlaps_check_qfb_u8eg/AtomicBakeryWithoutSMT_TypeOKInvariant.tla", line 1, character 1 to line 267, character 77:
+[INFO]: All 45 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_AtomicBakeryWithoutSMT_TypeOKInvariant_r_b7c2vl/AtomicBakeryWithoutSMT_TypeOKInvariant.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `TypeOKInvariant`.
+
+- Replaced the placeholder `PROOF OBVIOUS` with an explicit case split over each process action `p1` through `p8`.
+- Added the stuttering/deadlock `UNCHANGED vars` case.
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps AtomicBakeryWithoutSMT_TypeOKInvariant.tla`.
+- Ran the required checker: `python3 check_proof.py AtomicBakeryWithoutSMT_TypeOKInvariant.tla`.
+- Result: `PASS — all obligations proved`, no cheating detected.

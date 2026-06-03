@@ -1,0 +1,1108 @@
+Benchmark: SimpleMutex/SimpleMutex_Invariance.tla
+Time: 237s
+Tokens: 727,863 input / 10,363 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and local checker, then iteratively patch only the final proof.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' SimpleMutex_Invariance.tla && printf '\\n--- checker ---\\n' && sed -n '1,220p' check_proof.py"
+----------------------------- MODULE SimpleMutex_Invariance -----------------------------
+EXTENDS Integers, TLAPS
+
+(***********
+
+(***************************************************************************)
+(* The following algorithm is an important mutual exclusion protocol.      *)
+(* This protocol is at the heart of many mutual exclusion algorithms.  It  *)
+(* is a two-process protocol that guarantees that both processes cannot    *)
+(* execute statement cs.  (However, they can both deadlock.)               *)
+(***************************************************************************)
+--algorithm Mutex {
+  variable trying = [i \in {0,1} |-> FALSE]
+
+  process (p \in {0,1}) {
+a:   trying[self] := TRUE ;
+b:   await ~trying[1 - self];
+cs:  skip  \* the critical section
+   }
+}
+
+***********)
+
+\* BEGIN TRANSLATION
+VARIABLES trying, pc
+
+vars == << trying, pc >>
+
+ProcSet == ({0,1})
+
+Init == (* Global variables *)
+        /\ trying = [i \in {0,1} |-> FALSE]
+        /\ pc = [self \in ProcSet |-> CASE self \in {0,1} -> "a"]
+
+a(self) == /\ pc[self] = "a"
+           /\ trying' = [trying EXCEPT ![self] = TRUE]
+           /\ pc' = [pc EXCEPT ![self] = "b"]
+
+b(self) == /\ pc[self] = "b"
+           /\ ~trying[1 - self]
+           /\ pc' = [pc EXCEPT ![self] = "cs"]
+           /\ UNCHANGED trying
+
+cs(self) == /\ pc[self] = "cs"
+            /\ TRUE
+            /\ pc' = [pc EXCEPT ![self] = "Done"]
+            /\ UNCHANGED trying
+
+p(self) == a(self) \/ b(self) \/ cs(self)
+
+Next == (\E self \
+... (truncated) ...
+ parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+[EXIT 0]
+
+[AGENT] I’ve got the definitions; now I’ll try a direct case proof for each action.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Invariance.tla
+@@
+ THEOREM Invariance == TypeOK /\\ Inv /\\ Next => TypeOK' /\\ Inv'
+-PROOF OBVIOUS
++PROOF
++  ASSUME asm == TypeOK /\\ Inv /\\ Next
++  PROVE TypeOK' /\\ Inv'
++  <1>1. CASE \\E self \\in {0,1}: p(self)
++    <2>1. PICK self \\in {0,1}: p(self) BY <1>1
++    <2>2. CASE a(self)
++      <3>1. TypeOK'
++        BY asm, <2>1, <2>2 DEF TypeOK, a
++      <3>2. Inv'
++        BY asm, <2>1, <2>2 DEF Inv, TypeOK, a
++      <3>3. QED BY <3>1, <3>2
++    <2>3. CASE b(self)
++      <3>1. TypeOK'
++        BY asm, <2>1, <2>3 DEF TypeOK, b
++      <3>2. Inv'
++        BY asm, <2>1, <2>3 DEF Inv, TypeOK, b
++      <3>3. QED BY <3>1, <3>2
++    <2>4. CASE cs(self)
++      <3>1. TypeOK'
++        BY asm, <2>1, <2>4 DEF TypeOK, cs
++      <3>2. Inv'
++        BY asm, <2>1, <2>4 DEF Inv, TypeOK, cs
++      <3>3. QED BY <3>1, <3>2
++    <2>5. QED BY <2>1, <2>2, <2>3, <2>4 DEF p
++  <1>2. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
++    <2>1. TypeOK'
++      BY asm, <1>2 DEF TypeOK, vars
++    <2>2. Inv'
++      BY asm, <1>2 DEF Inv, vars
++    <2>3. QED BY <2>1, <2>2
++  <1>3. QED BY asm, <1>1, <1>2 DEF Next
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+File "./SimpleMutex_Invariance.tla", line 95, character 38
+Unexpected keyword PROVE
+File "<unknown>":
+Error: Could not parse "./SimpleMutex_Invariance.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first draft hit TLAPS proof-syntax limits, so I’m switching to a sequent-style proof.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Invariance.tla
+@@
+ THEOREM Invariance == TypeOK /\\ Inv /\\ Next => TypeOK' /\\ Inv'
+ PROOF
+-  ASSUME asm == TypeOK /\\ Inv /\\ Next
+-  PROVE TypeOK' /\\ Inv'
+-  <1>1. CASE \\E self \\in {0,1}: p(self)
+-    <2>1. PICK self \\in {0,1}: p(self) BY <1>1
++  <1>1. SUFFICES ASSUME asm == TypeOK /\\ Inv /\\ Next
++                   PROVE TypeOK' /\\ Inv'
++    OBVIOUS
++  <1>2. CASE \\E self \\in {0,1}: p(self)
++    <2>1. PICK self \\in {0,1}: p(self) BY <1>2
+     <2>2. CASE a(self)
+       <3>1. TypeOK'
+         BY asm, <2>1, <2>2 DEF TypeOK, a
+@@
+       <3>2. Inv'
+         BY asm, <2>1, <2>4 DEF Inv, TypeOK, cs
+       <3>3. QED BY <3>1, <3>2
+     <2>5. QED BY <2>1, <2>2, <2>3, <2>4 DEF p
+-  <1>2. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
++  <1>3. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
+     <2>1. TypeOK'
+-      BY asm, <1>2 DEF TypeOK, vars
++      BY asm, <1>3 DEF TypeOK, vars
+     <2>2. Inv'
+-      BY asm, <1>2 DEF Inv, vars
++      BY asm, <1>3 DEF Inv, vars
+     <2>3. QED BY <2>1, <2>2
+-  <1>3. QED BY asm, <1>1, <1>2 DEF Next
++  <1>4. QED BY asm, <1>2, <1>3 DEF Next
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+File "./SimpleMutex_Invariance.tla", line 95, character 28
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "./SimpleMutex_Invariance.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll remove the invalid named assumption and let the sequent assumptions flow through the subproof.
+
+[AGENT] TLAPS is running now; I’m waiting for the obligation results.
+
+[AGENT] The broad obligations are too hard; I’ll inspect exact failures and split the invariant proof more.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('SimpleMutex_Invariance.tla')
+s=p.read_text()
+s=s.replace('SUFFICES ASSUME asm == TypeOK /\\\\ Inv /\\\\ Next\\n                   PROVE TypeOK\\' /\\\\ Inv\\'','SUFFICES ASSUME TypeOK /\\\\ Inv /\\\\ Next\\n                   PROVE TypeOK\\' /\\\\ Inv\\'')
+s=s.replace('asm, ', '')
+s=s.replace('BY asm, ', 'BY ')
+s=s.replace('BY asm,', 'BY')
+p.write_text(s)
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_ProcSet_, STATE_vars_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_cs_, ACTION_a_, ACTION_b_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_ProcSet_
+
+** Unexpanded symbols: CONSTANT_ProcSet_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 123, characters 7-8:
+[ERROR]: Could not prove or check:
+           
+... (truncated) ...
+                         [self] = "b"],
+                  TypeOK ==
+                    /\ trying \in [{0, 1} -> BOOLEAN]
+                    /\ pc \in [{0, 1} -> {"a", "b", "cs", "Done"}],
+                  NEW CONSTANT self \in 
+                  {0, 1},
+                  <2>1 ,
+                  <2>2 
+           PROVE  TypeOK'
+File "./SimpleMutex_Invariance.tla", line 125, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  Next ==
+                    (\E self \in {0, 1} : p(self))
+                    \/ ((\A self \in ProcSet : pc[self] = "Done")
+                        /\ UNCHANGED vars),
+                  <1>2 ,
+                  <1>3 
+           PROVE  TypeOK' /\ Inv'
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 127, character 77:
+[ERROR]: 9/45 obligations failed.
+There were backend errors processing module `"SimpleMutex_Invariance"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The failing goals need explicit function-update facts, so I’ll add small local assertions per case.
+
+[CMD] /bin/bash -lc "nl -ba SimpleMutex_Invariance.tla | sed -n '86,150p'"
+    86	(***************************************************************************)
+    87	(* The following theorem asserts that our invariant implies mutual         *)
+    88	(* exclusion.                                                              *)
+    89	(***************************************************************************)
+    90	THEOREM Mutex == Inv => MutualExclusion
+    91	  PROOF OMITTED
+    92	
+    93	THEOREM Invariance == TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+    94	PROOF
+    95	  <1>1. SUFFICES ASSUME TypeOK /\ Inv /\ Next
+    96	                   PROVE TypeOK' /\ Inv'
+    97	    OBVIOUS
+    98	  <1>2. CASE \E self \in {0,1}: p(self)
+    99	    <2>1. PICK self \in {0,1}: p(self) BY <1>2
+   100	    <2>2. CASE a(self)
+   101	      <3>1. TypeOK'
+   102	        BY <2>1, <2>2 DEF TypeOK, a
+   103	      <3>2. Inv'
+   104	        BY <2>1, <2>2 DEF Inv, TypeOK, a
+   105	      <3>3. QED BY <3>1, <3>2
+   106	    <2>3. CASE b(self)
+   107	      <3>1. TypeOK'
+   108	        BY <2>1, <2>3 DEF TypeOK, b
+   109	      <3>2. Inv'
+   110	        BY <2>1, <2>3 DEF Inv, TypeOK, b
+   111	      <3>3. QED BY <3>1, <3>2
+   112	    <2>4. CASE cs(self)
+   113	      <3>1. TypeOK'
+   114	        BY <2>1, <2>4 DEF TypeOK, cs
+   115	      <3>2. Inv'
+   116	        BY <2>1, <2>4 DEF Inv, TypeOK, cs
+   117	      <3>3. QED BY <3>1, <3>2
+   118	    <2>5. QED BY <2>1, <2>2, <2>3, <2>4 DEF p
+   119	  <1>3. CASE (\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars
+   120	    <2>1. TypeOK'
+   121	      BY <1>3 DEF TypeOK, vars
+   122	    <2>2. Inv'
+   123	      BY <1>3 DEF Inv, vars
+   124	    <2>3. QED BY <2>1, <2>2
+   125	  <1>4. QED BY <1>2, <1>3 DEF Next
+   126	
+   127	=============================================================================
+[EXIT 0]
+
+[AGENT] I’ll quickly inspect the local TLAPS library for function-update lemmas that can discharge these cases.
+
+[CMD] /bin/bash -lc 'rg -n "EXCEPT|Function|function|DOMAIN|BOOLEAN|CASE" /opt/tlapm15/lib/tlaps/*.tla /opt/tlapm15/lib/tlaps/*.tlaps | head -200'
+rg: /opt/tlapm15/lib/tlaps/*.tlaps: No such file or directory (os error 2)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:1:--------------------- MODULE FunctionTheorems_proofs ------------------------
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:4:(*  Proofs of facts about functions.                                       *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:9:EXTENDS Functions, Integers, NaturalsInduction, WellFoundedInduction, TLAPS
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:14:(* Function restriction.                                                   *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:27:(* Range of a function.                                                    *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:42:(* Inverse of a function.                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:145:    <3>1. CASE t = f[b] BY <1>3, <3>1
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:146:    <3>2. CASE t # f[b]
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:252:(* We cannot conclude that a function f is a bijection if its inverse is   *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:533:    <3>2. CASE i = 0  BY <3>1, <3>2, <1>3, Zenon
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:534:    <3>3. CASE i # 0
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:546:    <3>1. CASE c \in Y  BY <3>1, <1>3, <1>7, Zenon
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.
+... (truncated) ...
+m15/lib/tlaps/NaturalsInduction.tla:76:(* function defined by primitive recursion over the naturals.              *)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:90:(* defined function over the natural numbers.                              *)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:106:(* The following theorems show uniqueness of functions recursively defined *)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:126:(* functions defined over intervals of natural numbers.                    *)
+/opt/tlapm15/lib/tlaps/Functions.tla:1:------------------------------ MODULE Functions -----------------------------
+/opt/tlapm15/lib/tlaps/Functions.tla:4:(*  Notions about functions including injection, surjection, and bijection.*)
+/opt/tlapm15/lib/tlaps/Functions.tla:11:(* Restriction of a function to a set (should be a subset of the domain).  *)
+/opt/tlapm15/lib/tlaps/Functions.tla:16:(* Range of a function.                                                    *)
+/opt/tlapm15/lib/tlaps/Functions.tla:17:(* Note: The image of a set under function f can be defined as             *)
+/opt/tlapm15/lib/tlaps/Functions.tla:20:Range(f) == { f[x] : x \in DOMAIN f }
+/opt/tlapm15/lib/tlaps/Functions.tla:24:(* The inverse of a function.                                              *)
+/opt/tlapm15/lib/tlaps/Functions.tla:30:(* A function is injective iff it maps each element in the domain to a     *)
+/opt/tlapm15/lib/tlaps/Functions.tla:33:IsInjective(f) == \A a,b \in DOMAIN f : f[a] = f[b] => a = b
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,90p' /opt/tlapm15/lib/tlaps/FiniteSetTheorems.tla; sed -n '1,90p' /opt/tlapm15/lib/tlaps/SequenceTheorems.tla; rg -n \"Function|Except|Except|EXCEPT|DOMAIN\" /opt/tlapm15/lib/tlaps/*Theorems.tla | head -80"
+------------------------- MODULE FiniteSetTheorems --------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Facts about finite sets and their cardinality.                         *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS FiniteSets, Integers, Functions, WellFoundedInduction
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A set S is finite iff there exists a natural number n such that there   *)
+(* exist a surjection (or a bijection) from 1..n to S.                     *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+LEMMA FS_NatSurjection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsSurjection(1..n,S)
+
+LEMMA FS_NatBijection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsBijection(1..n,S)
+
+
+(*********************************************
+... (truncated) ...
+Theorems.tla:45:  PROVE  /\ [seq EXCEPT ![i] = e] \in Seq(S)
+/opt/tlapm15/lib/tlaps/SequenceTheorems.tla:46:         /\ Len([seq EXCEPT ![i] = e]) = Len(seq)
+/opt/tlapm15/lib/tlaps/SequenceTheorems.tla:47:         /\ \A j \in 1 .. Len(seq) : [seq EXCEPT ![i] = e][j] = IF j=i THEN e ELSE seq[j]
+/opt/tlapm15/lib/tlaps/FunctionTheorems.tla:1:------------------------ MODULE FunctionTheorems ----------------------------
+/opt/tlapm15/lib/tlaps/FunctionTheorems.tla:9:EXTENDS Functions, Integers
+/opt/tlapm15/lib/tlaps/FunctionTheorems.tla:14:(* Function restriction.                                                   *)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems.tla:9:EXTENDS FiniteSets, Integers, Functions, WellFoundedInduction
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:27:  IF n>0 THEN [i \in DOMAIN B |-> n*B[i] ] ELSE EmptyBag 
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:34:SeqToBag(seq) == [ x \in Range(seq) |-> Cardinality({i \in DOMAIN seq: seq[i]=x}) ]
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:65:         /\ B=EmptyBag <=> DOMAIN B ={}
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:66:         /\ DOMAIN EmptyBag ={}
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:81:        /\ n>0 => DOMAIN(Scaling(n, B)) = DOMAIN B
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:110:         /\ DOMAIN(B1 (+) B2) = DOMAIN B1 \cup DOMAIN B2
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:120:         /\ DOMAIN (B1 (-) B2) =
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:121:               {e \in DOMAIN B1 : e \notin DOMAIN B2 \/ B1[e] > B2[e]}
+[EXIT 0]
+
+[AGENT] I’ll try the SMT backend on the expanded subgoals before making the proof larger.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('SimpleMutex_Invariance.tla')
+s=p.read_text()
+for old in [
+'BY <2>1, <2>2 DEF TypeOK, a',
+'BY <2>1, <2>2 DEF Inv, TypeOK, a',
+'BY <2>1, <2>3 DEF TypeOK, b',
+'BY <2>1, <2>3 DEF Inv, TypeOK, b',
+'BY <2>1, <2>4 DEF TypeOK, cs',
+'BY <2>1, <2>4 DEF Inv, TypeOK, cs',
+'BY <1>3 DEF TypeOK, vars',
+'BY <1>3 DEF Inv, vars',
+'BY <1>2, <1>3 DEF Next'
+]:
+    s=s.replace(old, old + ', SMT')
+p.write_text(s)
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 123, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME SMT == TRUE,
+                  NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  vars == <<trying, pc>>,
+                  Inv ==
+                    \A i \in {0, 1} :
+                       /\ pc[i] \in {"b", "cs"} => trying[i]
+                       /\ pc[i] = "cs" => pc[1 - i] # "cs",
+                  <1>3 
+           PROVE  Inv'
+File "./SimpleMutex_Invariance.tla", line 121, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME SMT == TRUE,
+                  NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  vars == <<trying, pc>>,
+                  TypeOK ==
+                    /\ trying \in [{0, 1} -> BOOLEAN]
+                    /\ pc \in [{0, 1} -> {"a", "b", "cs", "Done"}],
+                  <1>3 
+           PROVE  TypeOK'
+File "./SimpleMutex_Invariance.tla", line 116, characters 9-10:
+[ERROR]: Could not pr
+... (truncated) ...
+ = "b"],
+                  TypeOK ==
+                    /\ trying \in [{0, 1} -> BOOLEAN]
+                    /\ pc \in [{0, 1} -> {"a", "b", "cs", "Done"}],
+                  NEW CONSTANT self \in 
+                  {0, 1},
+                  <2>1 ,
+                  <2>2 
+           PROVE  TypeOK'
+File "./SimpleMutex_Invariance.tla", line 125, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME SMT == TRUE,
+                  NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  Next ==
+                    (\E self \in {0, 1} : p(self))
+                    \/ ((\A self \in ProcSet : pc[self] = "Done")
+                        /\ UNCHANGED vars),
+                  <1>2 ,
+                  <1>3 
+           PROVE  TypeOK' /\ Inv'
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 127, character 77:
+[ERROR]: 9/45 obligations failed.
+There were backend errors processing module `"SimpleMutex_Invariance"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The issue is also assumption scoping, not just automation; I’ll test TLAPS’s accepted assumption-label syntax locally.
+
+[CMD] /bin/bash -lc "cat > /tmp/Test.tla <<'EOF'
+---- MODULE Test ----
+EXTENDS TLAPS
+THEOREM Foo == TRUE => TRUE
+PROOF
+  <1>1. SUFFICES ASSUME A:: TRUE PROVE TRUE OBVIOUS
+  <1>2. TRUE BY A
+  <1>3. QED BY <1>2
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/Test.tla || true
+cat > /tmp/Test2.tla <<'EOF'
+---- MODULE Test2 ----
+EXTENDS TLAPS
+THEOREM Foo == TRUE => TRUE
+PROOF
+  <1>1. SUFFICES ASSUME A == TRUE PROVE TRUE OBVIOUS
+  <1>2. TRUE BY A
+  <1>3. QED BY <1>2
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/Test2.tla || true
+cat > /tmp/Test3.tla <<'EOF'
+---- MODULE Test3 ----
+EXTENDS TLAPS
+THEOREM Foo == TRUE => TRUE
+PROOF
+  <1>1. SUFFICES ASSUME TRUE PROVE TRUE OBVIOUS
+  <1>2. TRUE OBVIOUS
+  <1>3. QED BY <1>2
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/Test3.tla || true"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/Test.tla", line 6, character 17:
+Error: Operator "A" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+File "/tmp/Test2.tla", line 5, character 26
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "/tmp/Test2.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Test3.tlaps/Test3.thy" *)
+File "/tmp/Test3.tla", line 1, character 1 to line 8, character 4:
+[INFO]: All 4 obligations proved.
+(* fingerprints written in ".tlacache/Test3.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] I confirmed `SUFFICES` didn’t expose the facts as intended; next I’ll restructure as an explicit ASSUME/PROVE step.
+
+[CMD] /bin/bash -lc "cat > /tmp/Test4.tla <<'EOF'
+---- MODULE Test4 ----
+EXTENDS TLAPS
+THEOREM Foo == TRUE => TRUE
+PROOF
+  <1>1. ASSUME TRUE
+        PROVE TRUE
+    <2>1. TRUE OBVIOUS
+    <2>2. QED BY <2>1
+  <1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/Test4.tla || true"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Test4.tlaps/Test4.thy" *)
+File "/tmp/Test4.tla", line 1, character 1 to line 10, character 4:
+[INFO]: All 5 obligations proved.
+(* fingerprints written in ".tlacache/Test4.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] I’ll replace the outer `SUFFICES` with a real implication proof, then rerun TLAPS.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Invariance.tla
+@@
+ PROOF
+-  <1>1. SUFFICES ASSUME TypeOK /\\ Inv /\\ Next
+-                   PROVE TypeOK' /\\ Inv'
+-    OBVIOUS
+-  <1>2. CASE \\E self \\in {0,1}: p(self)
+-    <2>1. PICK self \\in {0,1}: p(self) BY <1>2
+-    <2>2. CASE a(self)
+-      <3>1. TypeOK'
+-        BY <2>1, <2>2 DEF TypeOK, a, SMT
+-      <3>2. Inv'
+-        BY <2>1, <2>2 DEF Inv, TypeOK, a, SMT
+-      <3>3. QED BY <3>1, <3>2
+-    <2>3. CASE b(self)
+-      <3>1. TypeOK'
+-        BY <2>1, <2>3 DEF TypeOK, b, SMT
+-      <3>2. Inv'
+-        BY <2>1, <2>3 DEF Inv, TypeOK, b, SMT
+-      <3>3. QED BY <3>1, <3>2
+-    <2>4. CASE cs(self)
+-      <3>1. TypeOK'
+-        BY <2>1, <2>4 DEF TypeOK, cs, SMT
+-      <3>2. Inv'
+-        BY <2>1, <2>4 DEF Inv, TypeOK, cs, SMT
+-      <3>3. QED BY <3>1, <3>2
+-    <2>5. QED BY <2>1, <2>2, <2>3, <2>4 DEF p
+-  <1>3. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
+-    <2>1. TypeOK'
+-      BY <1>3 DEF TypeOK, vars, SMT
+-    <2>2. Inv'
+-      BY <1>3 DEF Inv, vars, SMT
+-    <2>3. QED BY <2>1, <2>2
+-  <1>4. QED BY <1>2, <1>3 DEF Next, SMT
++  <1>1. ASSUME TypeOK /\\ Inv /\\ Next
++        PROVE TypeOK' /\\ Inv'
++    <2>1. CASE \\E self \\in {0,1}: p(self)
++      <3>1. PICK self \\in {0,1}: p(self) BY <2>1
++      <3>2. CASE a(self)
++        <4>1. TypeOK'
++          BY <3>1, <3>2 DEF TypeOK, a, SMT
++        <4>2. Inv'
++          BY <3>1, <3>2 DEF Inv, TypeOK, a, SMT
++        <4>3. QED BY <4>1, <4>2
++      <3>3. CASE b(self)
++        <4>1. TypeOK'
++          BY <3>1, <3>3 DEF TypeOK, b, SMT
++        <4>2. Inv'
++          BY <3>1, <3>3 DEF Inv, TypeOK, b, SMT
++        <4>3. QED BY <4>1, <4>2
++      <3>4. CASE cs(self)
++        <4>1. TypeOK'
++          BY <3>1, <3>4 DEF TypeOK, cs, SMT
++        <4>2. Inv'
++          BY <3>1, <3>4 DEF Inv, TypeOK, cs, SMT
++        <4>3. QED BY <4>1, <4>2
++      <3>5. QED BY <3>1, <3>2, <3>3, <3>4 DEF p
++    <2>2. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
++      <3>1. TypeOK'
++        BY <2>2 DEF TypeOK, vars, SMT
++      <3>2. Inv'
++        BY <2>2 DEF Inv, vars, SMT
++      <3>3. QED BY <3>1, <3>2
++    <2>3. QED BY <2>1, <2>2 DEF Next, SMT
++  <1>2. QED BY <1>1
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 122, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME SMT == TRUE,
+                  NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  vars == <<trying, pc>>,
+                  Inv ==
+                    \A i \in {0, 1} :
+                       /\ pc[i] \in {"b", "cs"} => trying[i]
+                       /\ pc[i] = "cs" => pc[1 - i] # "cs",
+                  <2>2 
+           PROVE  Inv'
+File "./SimpleMutex_Invariance.tla", line 120, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME SMT == TRUE,
+                  NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  vars == <<trying, pc>>,
+                  TypeOK ==
+                    /\ trying \in [{0, 1} -> BOOLEAN]
+                    /\ pc \in [{0, 1} -> {"a", "b", "cs", "Done"}],
+                  <2>2 
+           PROVE  TypeOK'
+File "./SimpleMutex_Invariance.tla", line 115, characters 11-12:
+[ERROR]: Could not
+... (truncated) ...
+ = "b"],
+                  TypeOK ==
+                    /\ trying \in [{0, 1} -> BOOLEAN]
+                    /\ pc \in [{0, 1} -> {"a", "b", "cs", "Done"}],
+                  NEW CONSTANT self \in 
+                  {0, 1},
+                  <3>1 ,
+                  <3>2 
+           PROVE  TypeOK'
+File "./SimpleMutex_Invariance.tla", line 124, characters 15-16:
+[ERROR]: Could not prove or check:
+           ASSUME SMT == TRUE,
+                  NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  Next ==
+                    (\E self \in {0, 1} : p(self))
+                    \/ ((\A self \in ProcSet : pc[self] = "Done")
+                        /\ UNCHANGED vars),
+                  <2>1 ,
+                  <2>2 
+           PROVE  TypeOK' /\ Inv'
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 127, character 77:
+[ERROR]: 9/46 obligations failed.
+There were backend errors processing module `"SimpleMutex_Invariance"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll label the theorem assumptions explicitly so `BY` steps can use them.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Invariance.tla
+@@
+   <1>1. ASSUME TypeOK /\\ Inv /\\ Next
+         PROVE TypeOK' /\\ Inv'
+-    <2>1. CASE \\E self \\in {0,1}: p(self)
+-      <3>1. PICK self \\in {0,1}: p(self) BY <2>1
++    <2>1. TypeOK /\\ Inv /\\ Next OBVIOUS
++    <2>2. CASE \\E self \\in {0,1}: p(self)
++      <3>1. PICK self \\in {0,1}: p(self) BY <2>2
+       <3>2. CASE a(self)
+         <4>1. TypeOK'
+-          BY <3>1, <3>2 DEF TypeOK, a, SMT
++          BY <2>1, <3>1, <3>2 DEF TypeOK, a, SMT
+         <4>2. Inv'
+-          BY <3>1, <3>2 DEF Inv, TypeOK, a, SMT
++          BY <2>1, <3>1, <3>2 DEF Inv, TypeOK, a, SMT
+         <4>3. QED BY <4>1, <4>2
+       <3>3. CASE b(self)
+         <4>1. TypeOK'
+-          BY <3>1, <3>3 DEF TypeOK, b, SMT
++          BY <2>1, <3>1, <3>3 DEF TypeOK, b, SMT
+         <4>2. Inv'
+-          BY <3>1, <3>3 DEF Inv, TypeOK, b, SMT
++          BY <2>1, <3>1, <3>3 DEF Inv, TypeOK, b, SMT
+         <4>3. QED BY <4>1, <4>2
+       <3>4. CASE cs(self)
+         <4>1. TypeOK'
+-          BY <3>1, <3>4 DEF TypeOK, cs, SMT
++          BY <2>1, <3>1, <3>4 DEF TypeOK, cs, SMT
+         <4>2. Inv'
+-          BY <3>1, <3>4 DEF Inv, TypeOK, cs, SMT
++          BY <2>1, <3>1, <3>4 DEF Inv, TypeOK, cs, SMT
+         <4>3. QED BY <4>1, <4>2
+       <3>5. QED BY <3>1, <3>2, <3>3, <3>4 DEF p
+-    <2>2. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
++    <2>3. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
+       <3>1. TypeOK'
+-        BY <2>2 DEF TypeOK, vars, SMT
++        BY <2>1, <2>3 DEF TypeOK, vars, SMT
+       <3>2. Inv'
+-        BY <2>2 DEF Inv, vars, SMT
++        BY <2>1, <2>3 DEF Inv, vars, SMT
+       <3>3. QED BY <3>1, <3>2
+-    <2>3. QED BY <2>1, <2>2 DEF Next, SMT
++    <2>4. QED BY <2>1, <2>2, <2>3 DEF Next, SMT
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_ProcSet_, STATE_TypeOK_, STATE_vars_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_, STATE_TypeOK_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 97, characters 33-39:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE trying,
+                  NEW VARIABLE pc
+           PROVE  TypeOK /\ Inv /\ Next
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 128, character 77:
+[ERROR]: 1/56 obligations failed.
+There were backend errors processing module `"SimpleMutex_Invariance"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Most cases now prove; only the assumption-capture step fails, so I’ll use TLAPS’s named-assumption syntax correctly.
+
+[CMD] /bin/bash -lc 'rg -n "ASSUME .*::|ASSUME.*PROVE|HAVE|TAKE|PICK" /opt/tlapm15/lib/tlaps/*_proofs.tla | head -120'
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:189:<1>2. PICK x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:321:<1> TAKE R, S
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:386:  <2>3. PICK s \in S : /\ <<s,z>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:423:<1>1. PICK x \in TT : \A y \in TT : ~(<<y,x>> \in R)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:430:    <3>1. PICK j \in S : /\ <<j,x>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:444:  <2>1. PICK j \in S : /\ <<j,x>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:494:  <2>2. PICK t0 : t0 \in T
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:610:<1>1. PICK x1 \in T1 : \A y1 \in T1 : <<y1,x1>> \notin R1
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:616:<1>2. PICK x2 \in T2 : \A y2 \in T2 : <<y2,x2>> \notin R2
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:707:        <5>1. PICK j \in 1..m : /\ \A i \in 1..j-1 : g(x)[1][i] = g(y)[1][i]
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:308:  <2>1. ASSUME IsPrefix(s,t)  PROVE  \E u \in Seq(S) : t = s \o u
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:313:  <2>2. ASSUME NEW u \in Seq(S), t = s \o u  PROVE  IsPrefix(s,t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:337:    <3>2. PICK u \in Seq(S):  t = s \o u
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:415:<1>1. ASSUME IsPrefix(t,u) PROVE IsPref
+... (truncated) ...
+non
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:285:<1>. PICK g \in Bijection(1..n, S) : TRUE
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:287:<1>2. PICK i,j \in 1 .. n : 
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:291:  <2>1. PICK i,j \in 1 .. n : i # j /\ g[i] = a /\ g[j] = b
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:300:  <2>2. ASSUME NEW t \in T  PROVE \E k \in 1..n-1 : h[k] = t
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:301:    <3>1. PICK s \in S : f[s] = t  BY DEF Surjection
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:302:    <3>2. PICK l \in 1..n : g[l] = s  BY DEF Bijection, Surjection
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:369:<1>1. ASSUME NEW x PROVE IsFiniteSet({x}) /\ Cardinality({x}) = 1
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:398:<1>2. PICK n \in Nat : ExistsBijection(1..n, T) /\ n <= Cardinality(S)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:402:  <2>1. PICK x \in S \ T : TRUE  BY <1>3, Zenon
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:407:  <2>4. PICK m \in Nat : ExistsBijection(1..m, T) /\ m <= Cardinality(S)-1
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:435:<1>5. ASSUME Cardinality(T) = Cardinality(S)  PROVE f \in Injection(S,T)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:437:<1>6. ASSUME f \in Injection(S,T)  PROVE Cardinality(T) = Cardinality(S)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:564:  <2>1. PICK x \in T : TRUE  BY <1>3, FS_EmptySet
+[EXIT 0]
+
+[AGENT] I’ll test whether referencing the enclosing sequent step exposes its assumptions.
+
+[CMD] /bin/bash -lc "cat > /tmp/Test5.tla <<'EOF'
+---- MODULE Test5 ----
+EXTENDS TLAPS
+THEOREM Foo == TRUE => TRUE
+PROOF
+  <1>1. ASSUME TRUE PROVE TRUE
+    <2>1. TRUE BY <1>1
+    <2>2. QED BY <2>1
+  <1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/Test5.tla || true"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/Test5.tlaps/Test5.thy" *)
+File "/tmp/Test5.tla", line 1, character 1 to line 9, character 4:
+[INFO]: All 6 obligations proved.
+(* fingerprints written in ".tlacache/Test5.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] I’ll use the enclosing step label instead of proving the assumptions as a subgoal.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Invariance.tla
+@@
+   <1>1. ASSUME TypeOK /\\ Inv /\\ Next
+         PROVE TypeOK' /\\ Inv'
+-    <2>1. TypeOK /\\ Inv /\\ Next OBVIOUS
+-    <2>2. CASE \\E self \\in {0,1}: p(self)
+-      <3>1. PICK self \\in {0,1}: p(self) BY <2>2
++    <2>1. CASE \\E self \\in {0,1}: p(self)
++      <3>1. PICK self \\in {0,1}: p(self) BY <2>1
+       <3>2. CASE a(self)
+         <4>1. TypeOK'
+-          BY <2>1, <3>1, <3>2 DEF TypeOK, a, SMT
++          BY <1>1, <3>1, <3>2 DEF TypeOK, a, SMT
+         <4>2. Inv'
+-          BY <2>1, <3>1, <3>2 DEF Inv, TypeOK, a, SMT
++          BY <1>1, <3>1, <3>2 DEF Inv, TypeOK, a, SMT
+         <4>3. QED BY <4>1, <4>2
+       <3>3. CASE b(self)
+         <4>1. TypeOK'
+-          BY <2>1, <3>1, <3>3 DEF TypeOK, b, SMT
++          BY <1>1, <3>1, <3>3 DEF TypeOK, b, SMT
+         <4>2. Inv'
+-          BY <2>1, <3>1, <3>3 DEF Inv, TypeOK, b, SMT
++          BY <1>1, <3>1, <3>3 DEF Inv, TypeOK, b, SMT
+         <4>3. QED BY <4>1, <4>2
+       <3>4. CASE cs(self)
+         <4>1. TypeOK'
+-          BY <2>1, <3>1, <3>4 DEF TypeOK, cs, SMT
++          BY <1>1, <3>1, <3>4 DEF TypeOK, cs, SMT
+         <4>2. Inv'
+-          BY <2>1, <3>1, <3>4 DEF Inv, TypeOK, cs, SMT
++          BY <1>1, <3>1, <3>4 DEF Inv, TypeOK, cs, SMT
+         <4>3. QED BY <4>1, <4>2
+       <3>5. QED BY <3>1, <3>2, <3>3, <3>4 DEF p
+-    <2>3. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
++    <2>2. CASE (\\A self \\in ProcSet: pc[self] = \"Done\") /\\ UNCHANGED vars
+       <3>1. TypeOK'
+-        BY <2>1, <2>3 DEF TypeOK, vars, SMT
++        BY <1>1, <2>2 DEF TypeOK, vars, SMT
+       <3>2. Inv'
+-        BY <2>1, <2>3 DEF Inv, vars, SMT
++        BY <1>1, <2>2 DEF Inv, vars, SMT
+       <3>3. QED BY <3>1, <3>2
+-    <2>4. QED BY <2>1, <2>2, <2>3 DEF Next, SMT
++    <2>3. QED BY <1>1, <2>1, <2>2 DEF Next, SMT
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_ProcSet_, STATE_TypeOK_, STATE_vars_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_, STATE_TypeOK_
+
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "./SimpleMutex_Invariance.tla", line 1, character 1 to line 127, character 77:
+[INFO]: All 55 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS proves the file now; I’ll run the required anti-cheat checker to confirm PASS.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py SimpleMutex_Invariance.tla'
+Checking: SimpleMutex_Invariance.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_Invariance.tlaps/SimpleMutex_Invariance.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Invariance.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, STATE_TypeOK_, STATE_vars_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_cs_, ACTION_a_, ACTION_b_
+
+** Unexpanded symbols: ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_, ACTION_p_
+
+** Unexpanded symbols: ACTION_Next_, ACTION_p_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_ProcSet_, ACTION_Next_, STATE_TypeOK_
+
+File "/tmp/tlaps_check_db2m85b2/SimpleMutex_Invariance.tla", line 1, character 1 to line 127, character 77:
+[INFO]: All 55 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SimpleMutex_Invariance_d9a9twts/SimpleMutex_Invariance.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final `Invariance` theorem in `SimpleMutex_Invariance.tla:93`.
+
+**Verification**
+- Ran `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Invariance.tla`
+- Ran `python3 check_proof.py SimpleMutex_Invariance.tla`
+- Result: `PASS — all obligations proved`
+- Checker reported no cheating detected.

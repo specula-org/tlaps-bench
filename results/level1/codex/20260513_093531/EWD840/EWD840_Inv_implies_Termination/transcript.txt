@@ -1,0 +1,465 @@
+Benchmark: EWD840/EWD840_Inv_implies_Termination.tla
+Time: 80s
+Tokens: 236,660 input / 3,104 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and available checks, then iteratively replace only the placeholder proof.
+
+[CMD] /bin/bash -lc "ls && sed -n '1,260p' EWD840_Inv_implies_Termination.tla"
+EWD840_Inv_implies_Termination.tla
+cheating_detection.py
+check_proof.py
+------------------------------- MODULE EWD840_Inv_implies_Termination -------------------------------
+EXTENDS Naturals, TLAPS
+
+CONSTANT N
+ASSUME NAssumption == N \in Nat \ {0}
+
+VARIABLES active, color, tpos, tcolor
+
+Nodes == 0 .. N-1
+Color == {"white", "black"}
+
+TypeOK ==
+  /\ active \in [Nodes -> BOOLEAN]    \* status of nodes (active or passive)
+  /\ color \in [Nodes -> Color]       \* color of nodes
+  /\ tpos \in Nodes                    \* token position
+  /\ tcolor \in Color                  \* token color
+
+(* Initially the token is at node 0, and it is black. There
+   are no constraints on the status and color of the nodes. *)
+Init ==
+  /\ active \in [Nodes -> BOOLEAN]
+  /\ color \in [Nodes -> Color]
+  /\ tpos = 0
+  /\ tcolor = "black"
+
+(* Node 0 may initiate a probe when it has the token and when
+   it is black or the token color is black. It passes
+   a white token to node N-1 and paints itself white. *)
+InitiateProbe ==
+  /\ tpos = 0
+  /\ tcolor = "black" \/ color[0] = "black"
+  /\ tpos' = N-1
+  /\ tcolor' = "white"
+  /\ active' = active
+  /\ color' = [color EXCEPT ![0] = "white"]
+
+(* An inactive node different from 0 that possesses the token
+   may pass it to node i-1 under the following circumstances:
+   - node i is inactive or
+   - node i is colored black or
+   - the token is black.
+   Note that the last two conditions will result in an
+   inconclusive round, since the token will be black.
+   
+... (truncated) ...
+               *)
+(***************************************************************************)
+Liveness ==
+  (\A i \in Nodes : ~ active[i]) ~> terminationDetected
+
+(***************************************************************************)
+(* The following property says that eventually all nodes will terminate    *)
+(* assuming that from some point onwards no messages are sent. It is       *)
+(* undesired, but verified for the fairness condition WF_vars(Next).       *)
+(* This motivates weakening the fairness condition to WF_vars(Controlled). *)
+(***************************************************************************)
+AllNodesTerminateIfNoMessages ==
+  <>[][~ \E i \in Nodes : SendMsg(i)]_vars
+  => <>(\A i \in Nodes : ~ active[i])
+
+(***************************************************************************)
+(* Dijkstra's invariant                                                    *)
+(***************************************************************************)
+Inv == 
+  \/ P0:: \A i \in Nodes : tpos < i => ~ active[i]
+  \/ P1:: \E j \in 0 .. tpos : color[j] = "black"
+  \/ P2:: tcolor = "black"
+
+-----------------------------------------------------------------------------
+
+(* TypeOK is an inductive invariant *)
+LEMMA TypeOK_inv == Spec => []TypeOK
+  PROOF OMITTED
+
+THEOREM Spec => []TerminationDetection
+  PROOF OMITTED
+
+LEMMA Inv_implies_Termination == Inv => TerminationDetection
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] I’ve got the target: a case proof over the three disjuncts of `Inv`. Next I’ll patch the placeholder and test it.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: EWD840_Inv_implies_Termination.tla
+@@
+ LEMMA Inv_implies_Termination == Inv => TerminationDetection
+-PROOF OBVIOUS
++PROOF
++  <1>1. ASSUME Inv, terminationDetected
++        PROVE  \\A i \\in Nodes : ~ active[i]
++    <2>1. tpos = 0 /\\ tcolor = \"white\" /\\ color[0] = \"white\" /\\ ~ active[0]
++      BY DEF terminationDetected
++    <2>2. CASE P0
++      <3>1. \\A i \\in Nodes : ~ active[i]
++      PROOF
++        <4>1. TAKE i \\in Nodes
++        <4>2. CASE i = 0
++          BY <2>1, <4>2
++        <4>3. CASE i # 0
++          BY <2>1, <2>2, <4>1, <4>3 DEF P0, Nodes
++        <4>4. QED
++          BY <4>2, <4>3
++      QED
++    <2>3. CASE P1
++      BY <2>1, <2>3 DEF P1
++    <2>4. CASE P2
++      BY <2>1, <2>4 DEF P2
++    <2>5. QED
++      BY <2>2, <2>3, <2>4 DEF Inv
++  <1>2. QED
++    BY <1>1 DEF TerminationDetection
++
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla"
+File "./EWD840_Inv_implies_Termination.tla", line 154, character 13:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 193, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml",
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first draft hit a proof-structure parse issue. I’ll simplify the case layout to match TLAPS expectations.
+
+[CMD] /bin/bash -lc "nl -ba EWD840_Inv_implies_Termination.tla | sed -n '120,180p'"
+   120	  => <>(\A i \in Nodes : ~ active[i])
+   121	
+   122	(***************************************************************************)
+   123	(* Dijkstra's invariant                                                    *)
+   124	(***************************************************************************)
+   125	Inv == 
+   126	  \/ P0:: \A i \in Nodes : tpos < i => ~ active[i]
+   127	  \/ P1:: \E j \in 0 .. tpos : color[j] = "black"
+   128	  \/ P2:: tcolor = "black"
+   129	
+   130	-----------------------------------------------------------------------------
+   131	
+   132	(* TypeOK is an inductive invariant *)
+   133	LEMMA TypeOK_inv == Spec => []TypeOK
+   134	  PROOF OMITTED
+   135	
+   136	THEOREM Spec => []TerminationDetection
+   137	  PROOF OMITTED
+   138	
+   139	LEMMA Inv_implies_Termination == Inv => TerminationDetection
+   140	PROOF
+   141	  <1>1. ASSUME Inv, terminationDetected
+   142	        PROVE  \A i \in Nodes : ~ active[i]
+   143	    <2>1. tpos = 0 /\ tcolor = "white" /\ color[0] = "white" /\ ~ active[0]
+   144	      BY DEF terminationDetected
+   145	    <2>2. CASE P0
+   146	      <3>1. \A i \in Nodes : ~ active[i]
+   147	      PROOF
+   148	        <4>1. TAKE i \in Nodes
+   149	        <4>2. CASE i = 0
+   150	          BY <2>1, <4>2
+   151	        <4>3. CASE i # 0
+   152	          BY <2>1, <2>2, <4>1, <4>3 DEF P0, Nodes
+   153	        <4>4. QED
+   154	          BY <4>2, <4>3
+   155	      QED
+   156	    <2>3. CASE P1
+   157	      BY <2>1, <2>3 DEF P1
+   158	    <2>4. CASE P2
+   159	      BY <2>1, <2>4 DEF P2
+   160	    <2>5. QED
+   161	      BY <2>2, <2>3, <2>4 DEF Inv
+   162	  <1>2. QED
+   163	    BY <1>1 DEF TerminationDetection
+   164	
+   165	
+   166	=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: EWD840_Inv_implies_Termination.tla
+@@
+   <1>1. ASSUME Inv, terminationDetected
+         PROVE  \\A i \\in Nodes : ~ active[i]
+     <2>1. tpos = 0 /\\ tcolor = \"white\" /\\ color[0] = \"white\" /\\ ~ active[0]
+       BY DEF terminationDetected
+     <2>2. CASE P0
+-      <3>1. \\A i \\in Nodes : ~ active[i]
+-      PROOF
+-        <4>1. TAKE i \\in Nodes
+-        <4>2. CASE i = 0
+-          BY <2>1, <4>2
+-        <4>3. CASE i # 0
+-          BY <2>1, <2>2, <4>1, <4>3 DEF P0, Nodes
+-        <4>4. QED
+-          BY <4>2, <4>3
+-      QED
++      <3>1. SUFFICES ASSUME NEW i \\in Nodes
++                      PROVE  ~ active[i]
++        OBVIOUS
++      <3>2. CASE i = 0
++        BY <2>1, <3>2
++      <3>3. CASE i # 0
++        BY <2>1, <2>2, <3>1, <3>3 DEF P0, Nodes
++      <3>4. QED
++        BY <3>2, <3>3
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./EWD840_Inv_implies_Termination.tla", line 145, characters 16-17:
+Error: Operator "P0" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from P_anon.anon#step in file "p_anon.ml", line 110, characters 18-33
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] `P0`/`P1`/`P2` are disjunct labels, not proof-visible operators here. I’ll expand those formulas directly.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: EWD840_Inv_implies_Termination.tla
+@@
+-    <2>2. CASE P0
++    <2>2. CASE \\A k \\in Nodes : tpos < k => ~ active[k]
+@@
+-        BY <2>1, <2>2, <3>1, <3>3 DEF P0, Nodes
+-      <3>4. QED
++        BY <2>1, <2>2, <3>1, <3>3 DEF Nodes
++      <3>4. QED
+         BY <3>2, <3>3
+-    <2>3. CASE P1
+-      BY <2>1, <2>3 DEF P1
+-    <2>4. CASE P2
+-      BY <2>1, <2>4 DEF P2
++    <2>3. CASE \\E j \\in 0 .. tpos : color[j] = \"black\"
++      BY <2>1, <2>3
++    <2>4. CASE tcolor = \"black\"
++      BY <2>1, <2>4
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Nodes_, STATE_terminationDetected_, STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/EWD840_Inv_implies_Termination.tlaps/EWD840_Inv_implies_Termination.thy" *)
+(* fingerprints written in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+File "./EWD840_Inv_implies_Termination.tla", line 144, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT N,
+                  NAssumption == N \in Nat \ {0},
+                  NEW VARIABLE active,
+                  NEW VARIABLE color,
+                  NEW VARIABLE tpos,
+                  NEW VARIABLE tcolor,
+                  terminationDetected ==
+                    /\ tpos = 0 /\ tcolor = "white"
+                    /\ color[0] = "white" /\ ~active[0]
+           PROVE  tpos = 0 /\ tcolor = "white" /\ color[0] = "white"
+                  /\ ~active[0]
+File "./EWD840_Inv_implies_Termination.tla", line 160, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT N,
+                  NAssumption == N \in Nat \ {0},
+                  NEW VARIABLE active,
+                  NEW VARIABLE color,
+                  NEW VARIABLE tpos,
+                  NEW VARIABLE tcolor,
+                  Inv ==
+                    \/ P0::\A i \in Nodes : tpos < i => ~active[i]
+                    \/ P1::\E j \in 0..tpos : color[j] = "black"
+                    \/ P2::(tcolor = "black"),
+                  <2>2 ,
+                  <2>3 ,
+                  <2>4 
+           PROVE  \A i \in Nodes : ~active[i]
+File "./EWD840_Inv_implies_Termination.tla", line 1, character 1 to line 165, character 77:
+[ERROR]: 2/25 obligations failed.
+There were backend errors processing module `"EWD840_Inv_implies_Termination"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Two obligations need stronger references: the detected assumption and the original invariant disjunction. I’ll make those dependencies explicit.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: EWD840_Inv_implies_Termination.tla
+@@
+     <2>1. tpos = 0 /\\ tcolor = \"white\" /\\ color[0] = \"white\" /\\ ~ active[0]
+-      BY DEF terminationDetected
++      BY <1>1 DEF terminationDetected
+@@
+     <2>5. QED
+-      BY <2>2, <2>3, <2>4 DEF Inv
++      BY <1>1, <2>2, <2>3, <2>4 DEF Inv
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Nodes_, STATE_terminationDetected_
+
+** Unexpanded symbols: STATE_Inv_
+
+(* created new ".tlacache/EWD840_Inv_implies_Termination.tlaps/EWD840_Inv_implies_Termination.thy" *)
+(* fingerprints written in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+File "./EWD840_Inv_implies_Termination.tla", line 1, character 1 to line 165, character 77:
+[INFO]: All 27 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves the module. I’ll run the required checker to confirm the proof is legal.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py EWD840_Inv_implies_Termination.tla'
+Checking: EWD840_Inv_implies_Termination.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/EWD840_Inv_implies_Termination.tlaps/EWD840_Inv_implies_Termination.thy" *)
+(* fingerprints written in ".tlacache/EWD840_Inv_implies_Termination.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_Nodes_, STATE_terminationDetected_, STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_Nodes_, STATE_terminationDetected_
+
+** Unexpanded symbols: STATE_Inv_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+** Unexpanded symbols: CONSTANT_Nodes_
+
+File "/tmp/tlaps_check_g_76m0hh/EWD840_Inv_implies_Termination.tla", line 1, character 1 to line 165, character 77:
+[INFO]: All 27 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_EWD840_Inv_implies_Termination_c7jvn0u5/EWD840_Inv_implies_Termination.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `Inv_implies_Termination`.
+
+- Replaced only the final `PROOF OBVIOUS` in `EWD840_Inv_implies_Termination.tla:140`.
+- Used a structured proof by assuming `Inv` and `terminationDetected`, then splitting on the three disjuncts of `Inv`.
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps EWD840_Inv_implies_Termination.tla`.
+- Ran the required checker: `python3 check_proof.py EWD840_Inv_implies_Termination.tla`.
+- Result: `PASS — all obligations proved`, with no cheating detected.

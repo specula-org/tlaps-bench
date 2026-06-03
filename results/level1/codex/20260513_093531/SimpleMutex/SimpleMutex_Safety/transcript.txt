@@ -1,0 +1,500 @@
+Benchmark: SimpleMutex/SimpleMutex_Safety.tla
+Time: 80s
+Tokens: 288,581 input / 2,548 output
+============================================================
+
+[AGENT] I’ll inspect the module and its proof obligations first, then iterate with TLAPS until the checker passes.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' SimpleMutex_Safety.tla && printf '\\n--- files ---\\n' && rg --files"
+----------------------------- MODULE SimpleMutex_Safety -----------------------------
+EXTENDS Integers, TLAPS
+
+(***********
+
+(***************************************************************************)
+(* The following algorithm is an important mutual exclusion protocol.      *)
+(* This protocol is at the heart of many mutual exclusion algorithms.  It  *)
+(* is a two-process protocol that guarantees that both processes cannot    *)
+(* execute statement cs.  (However, they can both deadlock.)               *)
+(***************************************************************************)
+--algorithm Mutex {
+  variable trying = [i \in {0,1} |-> FALSE]
+
+  process (p \in {0,1}) {
+a:   trying[self] := TRUE ;
+b:   await ~trying[1 - self];
+cs:  skip  \* the critical section
+   }
+}
+
+***********)
+
+\* BEGIN TRANSLATION
+VARIABLES trying, pc
+
+vars == << trying, pc >>
+
+ProcSet == ({0,1})
+
+Init == (* Global variables *)
+        /\ trying = [i \in {0,1} |-> FALSE]
+        /\ pc = [self \in ProcSet |-> CASE self \in {0,1} -> "a"]
+
+a(self) == /\ pc[self] = "a"
+           /\ trying' = [trying EXCEPT ![self] = TRUE]
+           /\ pc' = [pc EXCEPT ![self] = "b"]
+
+b(self) == /\ pc[self] = "b"
+           /\ ~trying[1 - self]
+           /\ pc' = [pc EXCEPT ![self] = "cs"]
+           /\ UNCHANGED trying
+
+cs(self) == /\ pc[self] = "cs"
+            /\ TRUE
+            /\ pc' = [pc EXCEPT ![self] = "Done"]
+            /\ UNCHANGED trying
+
+p(self) == a(self) \/ b(self) \/ cs(self)
+
+Next == (\E self \in {
+... (truncated) ...
+ the initial *)
+(* state.                                                                  *)
+(***************************************************************************)
+THEOREM Initialization == Init => TypeOK /\ Inv
+  PROOF OMITTED
+
+MutualExclusion == ~(pc[0] = "cs" /\ pc[1] = "cs")
+
+(***************************************************************************)
+(* The following theorem asserts that our invariant implies mutual         *)
+(* exclusion.                                                              *)
+(***************************************************************************)
+THEOREM Mutex == Inv => MutualExclusion
+  PROOF OMITTED
+
+THEOREM Invariance == TypeOK /\ Inv /\ Next => TypeOK' /\ Inv'
+  PROOF OMITTED
+
+----------------------------------------------------------------------
+(***************************************************************************)
+(* The following is a trivial consequence of the Invariance theorem, the   *)
+(* definition of [Next]_vars, and the fact that UNCHANGED vars implies     *)
+(* that none of the declared variables changes.                            *)
+(***************************************************************************)
+THEOREM TLAInvariance == TypeOK /\ Inv /\ [Next]_vars => TypeOK' /\ Inv'
+  PROOF OMITTED
+
+THEOREM Safety == Spec => []MutualExclusion
+PROOF OBVIOUS
+
+=============================================================================
+--- files ---
+SimpleMutex_Safety.tla
+cheating_detection.py
+check_proof.py
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; next I’ll check the local verifier constraints and current TLAPS behavior.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' check_proof.py && printf '\\n--- tlapm ---\\n' && /opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Safety.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: TEMPORAL_Spec_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SimpleMutex_Safety.tlaps/SimpleMutex_Safety.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Safety.tlaps/fingerprints" *)
+File "./SimpleMutex_Safety.tla", line 106, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE trying,
+                  NEW VARIABLE pc
+           PROVE  Spec => []MutualExclusion
+File "./SimpleMutex_Safety.tla", line 1, character 1 to line 108, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"SimpleMutex_Safety"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS fails only on the temporal implication, so I’ll inspect the standard temporal proof rules available in `TLAPS.tla`.
+
+[CMD] /bin/bash -lc "rg -n \"INV|Invariant|Temporal|PTL|Induction|Init|Next|\\[\\]\" /opt/tlapm15/lib/tlaps/TLAPS.tla /opt/tlapm15/lib/tlaps/*.tla | head -200"
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:9:EXTENDS Functions, Integers, NaturalsInduction, WellFoundedInduction, TLAPS
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:513:  <2> QED BY <2>1, <2>2, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:762:  <2>. QED  BY Isa, NatInduction, <2>2, <2>3
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:1:--------------------- MODULE WellFoundedInduction_proofs --------------------
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:21:EXTENDS NaturalsInduction, TLAPS
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:176:(* well-founded set.  It generalizes theorem GeneralNatInduction of module *)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:177:(* NaturalsInduction.                                                      *)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:179:THEOREM WFInduction ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:237:  BY <1>2, WFInduction, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:265:    BY WFInduction, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:493:    BY ONLY <2>1, IsWellFoundedOn(R, S), WFInduction, IsaM("auto")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:561:    BY ONLY <1>3, GeneralNatInduction, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:734:  BY <1>1, <1>2, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:1:------------------------ MODULE WellFoundedInduct
+... (truncated) ...
+/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:151:    <3>. QED  BY <3>1, <3>2, NatInduction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:198:    <3>. QED  BY <3>0, <3>1, NatInduction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:247:  <2>. QED  BY <2>1, GeneralNatInduction, Blast
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:304:<1>. QED  BY <1>2, GeneralNatInduction, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:322:<1>. QED  BY <1>1, <1>2, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:343:  BY <1>2, GeneralNatInduction, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:358:  BY <1>2, <1>3, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:407:  BY <1>2, <1>3, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:424:  BY <1>2, <1>3, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:1:------------------------- MODULE NaturalsInduction --------------------------
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:25:THEOREM NatInduction == 
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:32:(* A useful corollary of NatInduction                                      *)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:34:THEOREM DownwardNatInduction == 
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:44:THEOREM GeneralNatInduction ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:53:(* module WellFoundedInduction as a corollary of the fact that the natural *)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '360,475p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+
+
+=============================================================================
+
+The material below is obsolete: the TLA proof rules below are superseded by
+the PTL decision procedure, and their formulation is unsound for the semantics
+of temporal reasoning that TLAPS adopts.
+
+----------------------------------------------------------------------------
+(***************************************************************************)
+(*                           TEMPORAL LOGIC                                *)
+(*                                                                         *)
+(* The following rules are intended to be used when TLAPS handles temporal *)
+(* logic.  They will not work now.  Moreover when temporal reasoning is    *)
+(* implemented, these rules may be changed or omitted, and additional      *)
+(* rules will probably be added.  However, they are included mainly so     *)
+(* their names will be defined, preventing the use of identifiers that are *)
+(* likely to produce name clashes with future versions of this module.     *)
+(***************************************************************************)
+
+
+(***************************************************************************)
+(* The following proof rules (and their names) are from the paper "The     *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleTLA1 == ASSUME STATE P, STATE f,
+      
+... (truncated) ...
+~EM)
+
+
+(***************************************************************************)
+(* The following rule is a special case of the general temporal logic      *)
+(* proof rule STL4 from the paper "The Temporal Logic of Actions".  The    *)
+(* general rule is for arbitrary temporal formulas F and G, but it cannot  *)
+(* yet be handled by TLAPS.                                                *)
+(***************************************************************************)
+THEOREM RuleInvImplication ==
+  ASSUME STATE F, STATE G,
+         F => G
+  PROVE  []F => []G
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following rule is a special case of rule TLA2 from the paper "The   *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleStepSimulation ==
+  ASSUME STATE I, STATE f, STATE g,
+         ACTION M, ACTION N,
+         I /\ I' /\ [M]_f => [N]_g
+  PROVE  []I /\ [][M]_f => [][N]_g
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following may be used to invoke a decision procedure for            *)
+(* propositional temporal logic.                                           *)
+(***************************************************************************)
+PropositionalTemporalLogic == TRUE
+=============================================================================
+[EXIT 0]
+
+[AGENT] I found `RuleINV1` and temporal implication rules, so I’ll replace the placeholder with a structured invariant proof.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Safety.tla
+@@
+ THEOREM Safety == Spec => []MutualExclusion
+-PROOF OBVIOUS
++PROOF
++  <1>1. Init => TypeOK /\\ Inv
++    BY Initialization
++  <1>2. TypeOK /\\ Inv /\\ [Next]_vars => (TypeOK /\\ Inv)'
++    BY TLAInvariance
++  <1>3. TypeOK /\\ Inv /\\ [][Next]_vars => [](TypeOK /\\ Inv)
++    BY <1>2, RuleINV1
++  <1>4. Spec => [](TypeOK /\\ Inv)
++    BY <1>1, <1>3 DEF Spec
++  <1>5. TypeOK /\\ Inv => MutualExclusion
++    BY Mutex
++  <1>6. [](TypeOK /\\ Inv) => []MutualExclusion
++    BY <1>5, RuleInvImplication
++  <1>7. Spec => []MutualExclusion
++    BY <1>4, <1>6
++  <1> QED BY <1>7
+ 
+ =============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Safety.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./SimpleMutex_Safety.tla", line 112, characters 14-21:
+Error: Operator "RuleINV1" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] `RuleINV1` is outside the exported module body in this TLAPS version; I’ll switch to the supported PTL rule path instead.
+
+[CMD] /bin/bash -lc "sed -n '1,130p' /opt/tlapm15/lib/tlaps/TLAPS.tla && sed -n '130,260p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+es Blast to prove what *)
+(* Auto could not prove. (There is currently no way to use Zenon on the   *)
+(* results left over from Auto.)                                          *)
+(**************************************************************************)
+Blast == TRUE (*{ by (prover:"isabelle"; tactic:"blast") }*)
+SlowBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:120) }*)
+SlowerBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:480) }*)
+SlowestBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:960) }*)
+
+AutoBlast == TRUE (*{ by (prover:"isabelle"; tactic:"auto, blast") }*)
+
+
+(**************************************************************************)
+(* Backend pragmas: multi-back-ends                                       *)
+(*                                                                        *)
+(* These pragmas just run a bunch of back-ends one after the other in the *)
+(* hope that one will succeed. This saves time and effort for the user at *)
+(* the expense of computation time.                                       *)
+(**************************************************************************)
+
+(* CVC3 goes first because it's bundled with TLAPS, then the other SMT
+   solvers are unlikely to succeed if CVC3 fails, so we run zenon and
+   Isabelle before them. *)
+AllProvers == TRUE (*{
+    by (prover:"cvc33")
+    by (prover:"zenon")
+    by (prover:"isabelle"; tactic:"auto")
+    by (prover:"spass")
+    by (prover:"smt3")
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '90,115p' /opt/tlapm15/lib/tlaps/TLAPS.tla && sed -n '260,365p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+(**************************************************************************)
+
+Spass == TRUE (*{ by (prover: "spass") }*)
+SpassT(X) == TRUE (*{ by (prover:"spass"; timeout:@) }*)
+
+(**************************************************************************)
+(* Backend pragma: The PTL propositional linear time temporal logic       *)
+(* prover.  It currently is the LS4 backend.                              *)
+(*                                                                        *)
+(* This method translates the negetation of the proof obligation to       *)
+(* Seperated Normal Form (TRP++ format) and checks for unsatisfiability   *)
+(**************************************************************************)
+
+LS4 == TRUE (*{ by (prover: "ls4") }*)
+LS4T(X) == TRUE (*{ by (prover: "ls4"; timeout:@) }*)
+PTL == TRUE (*{ by (prover: "ls4") }*)
+
+(**************************************************************************)
+(* Backend pragma: Zenon with different timeouts (default is 10 seconds)  *)
+(*                                                                        *)
+(**************************************************************************)
+
+Zenon == TRUE (*{ by (prover:"zenon") }*)
+ZenonT(X) == TRUE (*{ by (prover:"zenon"; timeout:@) }*)
+
+(********************************************************************)
+    by (prover:"smt3")
+    by (prover:"yices3")
+    by (prover:"verit")
+    by (prover:"z33")
+    by (prover:"isabelle"; tactic:"force")
+    by (prover:"isabelle"; tact
+... (truncated) ...
+      *)
+(* The pragma LevelComparison allows proofs that change only the levels   *)
+(* of declared operators, or rename declared operators.                   *)
+(**************************************************************************)
+ExpandENABLED == TRUE  (*{ by (prover:"expandenabled") }*)
+ExpandCdot == TRUE  (*{ by (prover:"expandcdot") }*)
+AutoUSE == TRUE  (*{ by (prover:"autouse") }*)
+Lambdify == TRUE  (*{ by (prover:"lambdify") }*)
+ENABLEDaxioms == TRUE  (*{ by (prover:"enabledaxioms") }*)
+ENABLEDrewrites == TRUE  (*{ by (prover:"enabledrewrites") }*)
+ENABLEDrules == TRUE  (*{ by (prover:"enabledrules") }*)
+LevelComparison == TRUE  (*{ by (prover:"levelcomparison") }*)
+
+(* The operators EnabledWrapper and CdotWrapper occur in an intermediate  *)
+(* representation within TLAPM.                                           *)
+EnabledWrapper(Op(_)) == FALSE
+CdotWrapper(Op(_)) == FALSE
+
+(***************************************************************************)
+(* The following may be used in a `BY ONLY ThmName` for unit testing the   *)
+(* triviality checks in TLAPM.                                             *)
+(***************************************************************************)
+Trivial == TRUE  (*{ by (prover:"trivial") }*)
+
+
+=============================================================================
+
+The material below is obsolete: the TLA proof rules below are superseded by
+the PTL decision procedure, and their formulation is unsound for the semantics
+[EXIT 0]
+
+[AGENT] I’ll test whether the bundled PTL backend can discharge these temporal steps directly from the action lemma.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SimpleMutex_Safety.tla
+@@
+   <1>3. TypeOK /\\ Inv /\\ [][Next]_vars => [](TypeOK /\\ Inv)
+-    BY <1>2, RuleINV1
++    BY <1>2, PTL
+@@
+   <1>6. [](TypeOK /\\ Inv) => []MutualExclusion
+-    BY <1>5, RuleInvImplication
++    BY <1>5, PTL
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Safety.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/SimpleMutex_Safety.tlaps/fingerprints" *)
+** Unexpanded symbols: TEMPORAL_Spec_
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_Inv_, STATE_Init_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_vars_, STATE_Inv_
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_Init_, STATE_Inv_
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_Inv_, STATE_MutualExclusion_
+
+** Unexpanded symbols: TEMPORAL_Spec_
+
+(* created new ".tlacache/SimpleMutex_Safety.tlaps/SimpleMutex_Safety.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Safety.tlaps/fingerprints" *)
+File "./SimpleMutex_Safety.tla", line 1, character 1 to line 123, character 77:
+[INFO]: All 20 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS verifies now; I’ll run the benchmark checker to confirm no illegal edits.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py SimpleMutex_Safety.tla'
+Checking: SimpleMutex_Safety.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_Safety.tlaps/SimpleMutex_Safety.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_Safety.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: TEMPORAL_Spec_
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_Inv_, STATE_Init_
+
+** Unexpanded symbols: ACTION_Next_, STATE_TypeOK_, STATE_vars_, STATE_Inv_
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_Init_, STATE_Inv_
+
+** Unexpanded symbols: STATE_TypeOK_, STATE_Inv_, STATE_MutualExclusion_
+
+** Unexpanded symbols: TEMPORAL_Spec_
+
+File "/tmp/tlaps_check_9e82a7ma/SimpleMutex_Safety.tla", line 1, character 1 to line 123, character 77:
+[INFO]: All 20 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SimpleMutex_Safety_sperfsdy/SimpleMutex_Safety.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `Safety` in `SimpleMutex_Safety.tla:106`.
+
+- Replaced `PROOF OBVIOUS` with a structured proof using admitted lemmas `Initialization`, `TLAInvariance`, and `Mutex`.
+- Used the exported `PTL` backend pragma for the temporal invariant and boxed implication steps.
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SimpleMutex_Safety.tla`.
+- Final checker passes: `python3 check_proof.py SimpleMutex_Safety.tla` reports `✅ PASS — all obligations proved`.

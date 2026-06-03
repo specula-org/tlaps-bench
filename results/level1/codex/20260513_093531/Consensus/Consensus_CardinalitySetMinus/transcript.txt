@@ -1,0 +1,1218 @@
+Benchmark: Consensus/Consensus_CardinalitySetMinus.tla
+Time: 260s
+Tokens: 1,140,959 input / 9,344 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and local checker first, then iterate with TLAPS until it passes.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Consensus_CardinalitySetMinus.tla && printf '\\n--- checker ---\\n' && sed -n '1,220p' check_proof.py"
+---- MODULE Consensus_CardinalitySetMinus ----
+EXTENDS Integers, NaturalsInduction, TLAPS
+(* ---- Content from module Sets ---- *)
+  \** NB: Module NaturalsInduction comes from the TLAPS library, usually
+  \** installed in /usr/local/lib/tlaps. Make sure this is in your Toolbox
+  \** search path, see Preferences/TLA+ Preferences.
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+(****************************************************************************)
+(* Finite sets and cardinality are defined in the TLA+ standard module      *)
+(* FiniteSets, but this is not yet natively supported by TLAPS. For the     *)
+(* time being, we use the following axiom for defining set cardinality.     *)
+(****************************************************************************)
+\* Cardinality(S) == CHOOSE n : (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZe
+... (truncated) ...
+ parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+[EXIT 0]
+
+[AGENT] I’ve got the key lemma shape; now I’ll run TLAPS once to see the exact obligations and parser behavior.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Consensus_CardinalitySetMinus.tla'
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Consensus_CardinalitySetMinus.tlaps/Consensus_CardinalitySetMinus.thy" *)
+(* fingerprints written in ".tlacache/Consensus_CardinalitySetMinus.tlaps/fingerprints" *)
+File "./Consensus_CardinalitySetMinus.tla", line 96, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT S,
+                  IsFiniteSet(S) ,
+                  NEW CONSTANT x \in S
+           PROVE  /\ IsFiniteSet(S \ {x})
+                  /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+File "./Consensus_CardinalitySetMinus.tla", line 1, character 1 to line 98, character 40:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Consensus_CardinalitySetMinus"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The direct proof fails as expected. I’m checking exact line context before patching a structured proof.
+
+[CMD] /bin/bash -lc "nl -ba Consensus_CardinalitySetMinus.tla | sed -n '70,115p' && ls -la"
+    70	
+    71	-----------------------------------------------------------------------------
+    72	
+    73	THEOREM IsBijectionInverse ==
+    74	  ASSUME NEW f, NEW S, NEW T, 
+    75	         IsBijection(f, S, T) 
+    76	  PROVE  \E g : IsBijection(g, T, S)
+    77	  PROOF OMITTED
+    78	
+    79	THEOREM IsBijectionTransitive ==
+    80	  ASSUME NEW f1, NEW f2, NEW S, NEW T, NEW U, 
+    81	           IsBijection(f1, S, U),
+    82	           IsBijection(f2, U, T) 
+    83	  PROVE  \E g : IsBijection(g, S, T)
+    84	  PROOF OMITTED
+    85	
+    86	THEOREM IsBijectionCardinality ==
+    87	  \A f, S, T : /\ IsFiniteSet(S)
+    88	               /\ IsFiniteSet(T)
+    89	               => (IsBijection(f, S, T) <=> Cardinality(S) = Cardinality(T))
+    90	
+    91	LEMMA CardinalitySetMinus ==
+    92	      ASSUME NEW S, IsFiniteSet(S),
+    93	             NEW x \in S
+    94	      PROVE /\ IsFiniteSet(S \ {x})
+    95	            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+    96	PROOF OBVIOUS
+    97	
+    98	========================================
+total 60
+drwx------ 4 bench bench  4096 May 13 09:39 .
+drwxrwxrwt 1 root  root   4096 May 13 09:39 ..
+drwxr-xr-x 8 bench bench  4096 May 13 09:38 .git
+drwxr-xr-x 5 bench bench  4096 May 13 09:39 .tlacache
+-rw-rw-r-- 1 bench bench   874 May 13 08:34 Consensus.tla
+-rw-rw-r-- 1 bench bench  3447 May 13 08:34 Consensus_CardinalitySetMinus.tla
+-rw-rw-r-- 1 bench bench  4936 May 13 08:34 Sets.tla
+-rw-rw-r-- 1 bench bench  4537 May 13 08:34 Voting.tla
+-rw-rw-r-- 1 bench bench  7822 May 13 09:30 cheating_detection.py
+-rw-rw-r-- 1 bench bench 10646 May 13 09:30 check_proof.py
+[EXIT 0]
+
+[AGENT] This proof needs a finite-set construction, so I’m reviewing the bundled library operators that TLAPS can use.
+
+[CMD] /bin/bash -lc "rg -n \"Except|Function|DOMAIN|Cardinality|IsFiniteSet|SetMinus|\\\\\\\\\" /opt/tlapm15/lib/tlaps/*.tla Sets.tla Consensus_CardinalitySetMinus.tla | head -n 200"
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:28:         \A n \in Nat : P(n) => P(n+1)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:29:  PROVE  \A n \in Nat : P(n)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:35:  ASSUME NEW P(_), NEW m \in Nat, P(m),
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:36:         \A n \in 1 .. m : P(n) => P(n-1)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:46:                 \A n \in Nat : (\A m \in 0..(n-1) : P(m)) => P(n)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:47:          PROVE  \A n \in Nat : P(n)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:57:  ASSUME NEW P(_), NEW n \in Nat, P(n)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:58:  PROVE  \E m \in Nat : /\ P(m)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:59:                        /\ \A k \in 0 .. m-1 : ~ P(k)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:63:(* the natural numbers is well-defined if for every n \in Nat the          *)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:68:         ASSUME NEW n \in Nat, NEW g, NEW h,
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:69:                \A i \in 0..(n-1) : g[i] = h[i] 
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:71:  PROVE  LET f[n \in Nat] == Def(f, n)
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:72:         IN  f = [n \in Nat |-> Def(f, n)]
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:79:   (f =  CHOOSE g : g = [i \in Nat |-> IF i = 0 THEN f0 ELSE Def(g[i-1], i)])
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:81:     f = [i \in Nat |
+... (truncated) ...
+la:62:                      \A n \in Nat : <<f[n+1], f[n]>> \in RR
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:65:<1>2. \A n \in Nat : <<f[n+1], f[n]>> \in RR \cap (S \X S)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:73:SetLessThan(x, R, S) ==  {y \in S : <<y, x>> \in R}
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:83:                NEW T, T \subseteq S, T # {}
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:84:         PROVE  \E x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:85:<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:88:<1> DEFINE f0 == CHOOSE x \in T : TRUE
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:89:           Def(v, n) == CHOOSE x \in T : <<x, v>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:90:           f[n \in Nat] == IF n = 0 THEN f0 ELSE Def(f[n-1], n)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:96:<1>2. f \in [Nat -> T]
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:97:  <2>1. f0 \in T
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:99:  <2>2. \A v \in T, n \in Nat \ {0} : Def(v, n) \in T
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:103:<1>3. ASSUME NEW n \in Nat 
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:104:      PROVE  <<f[n+1], f[n]>> \in R 
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:108:  <2>. /\ n+1 \in Nat
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,170p' Sets.tla"
+-------------------------------- MODULE Sets --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+  \** NB: Module NaturalsInduction comes from the TLAPS library, usually
+  \** installed in /usr/local/lib/tlaps. Make sure this is in your Toolbox
+  \** search path, see Preferences/TLA+ Preferences.
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+(****************************************************************************)
+(* Finite sets and cardinality are defined in the TLA+ standard module      *)
+(* FiniteSets, but this is not yet natively supported by TLAPS. For the     *)
+(* time being, we use the following axiom for defining set cardinality.     *)
+(****************************************************************************)
+\* Cardinality(S) == CHOOSE n : (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+    
+... (truncated) ...
+S, NEW TT, IsFiniteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM CardinalityUnion ==
+          \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) =>
+                      /\ IsFiniteSet(S \cup T)
+                      /\ IsFiniteSet(S \cap T)
+                      /\ Cardinality(S \cup T) =
+                              Cardinality(S) + Cardinality(T)
+                              - Cardinality(S \cap T)  
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+                       /\ f \in [S -> T]
+                       /\ \A y \in T : \E x \in S : y = f[x]
+                       => /\ IsFiniteSet(T)
+                          /\ Cardinality(T) \leq Cardinality(S)
+PROOF OMITTED
+
+THEOREM ProductFinite ==
+     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+PROOF OMITTED
+
+THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+PROOF OMITTED
+=============================================================================
+[EXIT 0]
+
+[AGENT] I’m going to add an explicit bijection by removing the preimage of `x` and shifting interval indices.
+
+[AGENT] The first structured proof is in place; I’ll run TLAPS and tighten any failed sub-obligations.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Consensus_CardinalitySetMinus.tla'
+File "./Consensus_CardinalitySetMinus.tla", line 113, character 19:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inline
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS rejected the proof syntax around nested QEDs; I’ll inspect that section and simplify the structure.
+
+[CMD] /bin/bash -lc "nl -ba Consensus_CardinalitySetMinus.tla | sed -n '90,170p'"
+    90	
+    91	LEMMA CardinalitySetMinus ==
+    92	      ASSUME NEW S, IsFiniteSet(S),
+    93	             NEW x \in S
+    94	      PROVE /\ IsFiniteSet(S \ {x})
+    95	            /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+    96	PROOF
+    97	  <1>1. PICK n \in Nat, f : IsBijection(f, 1..n, S)
+    98	    BY DEF IsFiniteSet
+    99	  <1>2. PICK k \in 1..n : f[k] = x
+   100	    BY <1>1 DEF IsBijection
+   101	  <1>3. n # 0
+   102	    BY <1>2
+   103	  <1>4. n - 1 \in Nat
+   104	    BY <1>1, <1>3
+   105	  <1>5. DEFINE g == [i \in 1..(n-1) |-> IF i < k THEN f[i] ELSE f[i+1]]
+   106	  <1>6. IsBijection(g, 1..(n-1), S \ {x})
+   107	  PROOF
+   108	    <2>1. g \in [1..(n-1) -> S \ {x}]
+   109	    PROOF
+   110	      <3>1. ASSUME NEW i \in 1..(n-1)
+   111	             PROVE  g[i] \in S \ {x}
+   112	        BY <1>1, <1>2, <1>5 DEF IsBijection
+   113	      <3>2. QED BY <3>1, <1>5
+   114	    QED
+   115	    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
+   116	    PROOF
+   117	      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1), i # j
+   118	             PROVE  g[i] # g[j]
+   119	        BY <1>1, <1>2, <1>5 DEF IsBijection
+   120	      <3>2. QED BY <3>1
+   121	    QED
+   122	    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
+   123	    PROOF
+   124	      <3>1. ASSUME NEW y \in S \ {x}
+   125	             PROVE  \E i \in 1..(n-1) : g[i] = y
+   126	      PROOF
+   127	        <4>1. PICK p \in 1..n : f[p] = y
+   128	          BY <1>1, <3>1 DEF IsBijection
+   129	        <4>2. p # k
+   130	          BY <1>2, <3>1, <4>1
+   131	        <4>3. IF p < k THEN p \in 1..(n-1) /\ g[p] = y
+   132	                         ELSE p-1 \in 1..(n-1) /\ g[p-1] = y
+   133	          BY <1>2, <1>5, <3>1, <4>1, <4>2
+   134	        <4>4. QED BY <4>3
+   135	      QED
+   136	      <3>2. QED BY <3>1
+   137	    QED
+   138	    <2>4. QED BY <2>1, <2>2, <2>3 DEF IsBijection
+   139	  QED
+   140	  <1>7. IsFiniteSet(S \ {x})
+   141	    BY <1>4, <1>6 DEF IsFiniteSet
+   142	  <1>8. Cardinality(S \ {x}) = n - 1
+   143	    BY <1>4, <1>6, <1>7, CardinalityAxiom
+   144	  <1>9. Cardinality(S) = n
+   145	    BY <1>1, CardinalityAxiom
+   146	  <1>10. QED BY <1>7, <1>8, <1>9
+   147	
+   148	========================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '80,120p' /opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla && sed -n '20,50p' /opt/tlapm15/lib/tlaps/NaturalsInduction.tla"
+THEOREM WFMin ==
+         ASSUME NEW R, NEW S, 
+                IsWellFoundedOn(R, S),
+                NEW T, T \subseteq S, T # {}
+         PROVE  \E x \in T : \A y \in T : ~ (<<y, x>> \in R)
+<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+             PROVE  FALSE
+  BY Zenon
+<1> DEFINE f0 == CHOOSE x \in T : TRUE
+           Def(v, n) == CHOOSE x \in T : <<x, v>> \in R
+           f[n \in Nat] == IF n = 0 THEN f0 ELSE Def(f[n-1], n)
+<1>1. NatInductiveDefConclusion(f, f0, Def)
+  <2>1. NatInductiveDefHypothesis(f, f0, Def)
+    BY DEF NatInductiveDefHypothesis
+  <2>. QED
+    BY <2>1, NatInductiveDef   
+<1>2. f \in [Nat -> T]
+  <2>1. f0 \in T
+    OBVIOUS
+  <2>2. \A v \in T, n \in Nat \ {0} : Def(v, n) \in T
+    OBVIOUS
+  <2>. QED
+    BY <1>1, <2>1, <2>2, NatInductiveDefType, Isa
+<1>3. ASSUME NEW n \in Nat 
+      PROVE  <<f[n+1], f[n]>> \in R 
+  (* FIXME: SMT backend raises exception "Index past end of list" 
+  BY <1>1, <1>2 DEF NatInductiveDefConclusion
+  *)
+  <2>. /\ n+1 \in Nat
+       /\ n+1 # 0
+       /\ (n+1)-1 = n
+    OBVIOUS
+  <2>. QED
+    BY <1>1, <1>2, Zenon DEF NatInductiveDefConclusion
+<1>. QED
+  BY <1>2, <1>3, Zenon DEF IsWellFoundedOn
+
+
+THEOREM MinWF ==
+         ASSUME NEW R, NEW S,
+                \A T \in SUBSET S : T # {} => \E x \in T : \A y \in T : ~ (<<y, x>> \in R)
+(* useful to hide the operator definition before using this theorem. That  *)
+(* is, you first define a suitable operator P (not necessarily by that     *)
+(* name), prove the two hypotheses of the theorem, and then hide the       *) 
+(* definition of P when using the theorem.                                 *)
+(***************************************************************************)
+THEOREM NatInduction == 
+  ASSUME NEW P(_),
+         P(0),
+         \A n \in Nat : P(n) => P(n+1)
+  PROVE  \A n \in Nat : P(n)
+
+(***************************************************************************)
+(* A useful corollary of NatInduction                                      *)
+(***************************************************************************)
+THEOREM DownwardNatInduction == 
+  ASSUME NEW P(_), NEW m \in Nat, P(m),
+         \A n \in 1 .. m : P(n) => P(n-1)
+  PROVE  P(0)
+
+(***************************************************************************)
+(* The following theorem expresses a stronger induction principle,         *)
+(* also known as course-of-values induction, where the induction           *)
+(* hypothesis is available for all strictly smaller natural numbers.       *)
+(***************************************************************************)
+THEOREM GeneralNatInduction ==
+          ASSUME NEW P(_),
+                 \A n \in Nat : (\A m \in 0..(n-1) : P(m)) => P(n)
+          PROVE  \A n \in Nat : P(n)
+
+(***************************************************************************)
+(* The following theorem expresses the ``least-number principle'':         *)
+[EXIT 0]
+
+[AGENT] I found TLAPS wants anonymous `QED` steps at each proof level, so I’m fixing that syntax.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('Consensus_CardinalitySetMinus.tla')
+s=p.read_text()
+for old,new in [
+('      <3>2. QED BY <3>1, <1>5','      <3>. QED BY <3>1, <1>5'),
+('      <3>2. QED BY <3>1','      <3>. QED BY <3>1'),
+('        <4>4. QED BY <4>3','        <4>. QED BY <4>3'),
+('      <3>2. QED BY <3>1','      <3>. QED BY <3>1'),
+('    <2>4. QED BY <2>1, <2>2, <2>3 DEF IsBijection','    <2>. QED BY <2>1, <2>2, <2>3 DEF IsBijection'),
+('  <1>10. QED BY <1>7, <1>8, <1>9','  <1>. QED BY <1>7, <1>8, <1>9'),
+]:
+    s=s.replace(old,new)
+p.write_text(s)
+PY
+nl -ba Consensus_CardinalitySetMinus.tla | sed -n '106,148p'"
+   106	  <1>6. IsBijection(g, 1..(n-1), S \ {x})
+   107	  PROOF
+   108	    <2>1. g \in [1..(n-1) -> S \ {x}]
+   109	    PROOF
+   110	      <3>1. ASSUME NEW i \in 1..(n-1)
+   111	             PROVE  g[i] \in S \ {x}
+   112	        BY <1>1, <1>2, <1>5 DEF IsBijection
+   113	      <3>. QED BY <3>1, <1>5
+   114	    QED
+   115	    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
+   116	    PROOF
+   117	      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1), i # j
+   118	             PROVE  g[i] # g[j]
+   119	        BY <1>1, <1>2, <1>5 DEF IsBijection
+   120	      <3>. QED BY <3>1
+   121	    QED
+   122	    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
+   123	    PROOF
+   124	      <3>1. ASSUME NEW y \in S \ {x}
+   125	             PROVE  \E i \in 1..(n-1) : g[i] = y
+   126	      PROOF
+   127	        <4>1. PICK p \in 1..n : f[p] = y
+   128	          BY <1>1, <3>1 DEF IsBijection
+   129	        <4>2. p # k
+   130	          BY <1>2, <3>1, <4>1
+   131	        <4>3. IF p < k THEN p \in 1..(n-1) /\ g[p] = y
+   132	                         ELSE p-1 \in 1..(n-1) /\ g[p-1] = y
+   133	          BY <1>2, <1>5, <3>1, <4>1, <4>2
+   134	        <4>. QED BY <4>3
+   135	      QED
+   136	      <3>. QED BY <3>1
+   137	    QED
+   138	    <2>. QED BY <2>1, <2>2, <2>3 DEF IsBijection
+   139	  QED
+   140	  <1>7. IsFiniteSet(S \ {x})
+   141	    BY <1>4, <1>6 DEF IsFiniteSet
+   142	  <1>8. Cardinality(S \ {x}) = n - 1
+   143	    BY <1>4, <1>6, <1>7, CardinalityAxiom
+   144	  <1>9. Cardinality(S) = n
+   145	    BY <1>1, CardinalityAxiom
+   146	  <1>. QED BY <1>7, <1>8, <1>9
+   147	
+   148	========================================
+[EXIT 0]
+
+[AGENT] Syntax is fixed; now I’ll rerun TLAPS to identify actual proof obligations.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Consensus_CardinalitySetMinus.tla'
+File "./Consensus_CardinalitySetMinus.tla", line 113, character 18:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inline
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS uses step-nested proofs without standalone closing `QED`; I’m converting to that style.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('Consensus_CardinalitySetMinus.tla')
+lines=p.read_text().splitlines()
+out=[]
+for line in lines:
+    if line.strip() in {'PROOF','QED'} and line.startswith(('  ','    ','      ')):
+        continue
+    out.append(line)
+p.write_text('\\n'.join(out)+'\\n')
+PY
+nl -ba Consensus_CardinalitySetMinus.tla | sed -n '96,145p'"
+    96	PROOF
+    97	  <1>1. PICK n \in Nat, f : IsBijection(f, 1..n, S)
+    98	    BY DEF IsFiniteSet
+    99	  <1>2. PICK k \in 1..n : f[k] = x
+   100	    BY <1>1 DEF IsBijection
+   101	  <1>3. n # 0
+   102	    BY <1>2
+   103	  <1>4. n - 1 \in Nat
+   104	    BY <1>1, <1>3
+   105	  <1>5. DEFINE g == [i \in 1..(n-1) |-> IF i < k THEN f[i] ELSE f[i+1]]
+   106	  <1>6. IsBijection(g, 1..(n-1), S \ {x})
+   107	    <2>1. g \in [1..(n-1) -> S \ {x}]
+   108	      <3>1. ASSUME NEW i \in 1..(n-1)
+   109	             PROVE  g[i] \in S \ {x}
+   110	        BY <1>1, <1>2, <1>5 DEF IsBijection
+   111	      <3>. QED BY <3>1, <1>5
+   112	    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
+   113	      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1), i # j
+   114	             PROVE  g[i] # g[j]
+   115	        BY <1>1, <1>2, <1>5 DEF IsBijection
+   116	      <3>. QED BY <3>1
+   117	    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
+   118	      <3>1. ASSUME NEW y \in S \ {x}
+   119	             PROVE  \E i \in 1..(n-1) : g[i] = y
+   120	        <4>1. PICK p \in 1..n : f[p] = y
+   121	          BY <1>1, <3>1 DEF IsBijection
+   122	        <4>2. p # k
+   123	          BY <1>2, <3>1, <4>1
+   124	        <4>3. IF p < k THEN p \in 1..(n-1) /\ g[p] = y
+   125	                         ELSE p-1 \in 1..(n-1) /\ g[p-1] = y
+   126	          BY <1>2, <1>5, <3>1, <4>1, <4>2
+   127	        <4>. QED BY <4>3
+   128	      <3>. QED BY <3>1
+   129	    <2>. QED BY <2>1, <2>2, <2>3 DEF IsBijection
+   130	  <1>7. IsFiniteSet(S \ {x})
+   131	    BY <1>4, <1>6 DEF IsFiniteSet
+   132	  <1>8. Cardinality(S \ {x}) = n - 1
+   133	    BY <1>4, <1>6, <1>7, CardinalityAxiom
+   134	  <1>9. Cardinality(S) = n
+   135	    BY <1>1, CardinalityAxiom
+   136	  <1>. QED BY <1>7, <1>8, <1>9
+   137	
+   138	========================================
+[EXIT 0]
+
+[AGENT] The proof now parses in the usual TLAPS style; rerunning to see backend failures.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Consensus_CardinalitySetMinus.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./Consensus_CardinalitySetMinus.tla", line 110, characters 24-27:
+Error: Operator "<1>5" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The define step label isn’t usable by name, so I’m exposing `g` via `DEF g` instead.
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/, <1>5//g; s/<1>5, //g; s/DEF IsBijection/DEF IsBijection, g/g; s/<3>1, <1>5/<3>1 DEF g/g' Consensus_CardinalitySetMinus.tla
+nl -ba Consensus_CardinalitySetMinus.tla | sed -n '104,136p'"
+   104	    BY <1>1, <1>3
+   105	  <1>5. DEFINE g == [i \in 1..(n-1) |-> IF i < k THEN f[i] ELSE f[i+1]]
+   106	  <1>6. IsBijection(g, 1..(n-1), S \ {x})
+   107	    <2>1. g \in [1..(n-1) -> S \ {x}]
+   108	      <3>1. ASSUME NEW i \in 1..(n-1)
+   109	             PROVE  g[i] \in S \ {x}
+   110	        BY <1>1, <1>2 DEF IsBijection, g
+   111	      <3>. QED BY <3>1
+   112	    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
+   113	      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1), i # j
+   114	             PROVE  g[i] # g[j]
+   115	        BY <1>1, <1>2 DEF IsBijection, g
+   116	      <3>. QED BY <3>1
+   117	    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
+   118	      <3>1. ASSUME NEW y \in S \ {x}
+   119	             PROVE  \E i \in 1..(n-1) : g[i] = y
+   120	        <4>1. PICK p \in 1..n : f[p] = y
+   121	          BY <1>1, <3>1 DEF IsBijection, g
+   122	        <4>2. p # k
+   123	          BY <1>2, <3>1, <4>1
+   124	        <4>3. IF p < k THEN p \in 1..(n-1) /\ g[p] = y
+   125	                         ELSE p-1 \in 1..(n-1) /\ g[p-1] = y
+   126	          BY <1>2, <3>1, <4>1, <4>2
+   127	        <4>. QED BY <4>3
+   128	      <3>. QED BY <3>1
+   129	    <2>. QED BY <2>1, <2>2, <2>3 DEF IsBijection, g
+   130	  <1>7. IsFiniteSet(S \ {x})
+   131	    BY <1>4, <1>6 DEF IsFiniteSet
+   132	  <1>8. Cardinality(S \ {x}) = n - 1
+   133	    BY <1>4, <1>6, <1>7, CardinalityAxiom
+   134	  <1>9. Cardinality(S) = n
+   135	    BY <1>1, CardinalityAxiom
+   136	  <1>. QED BY <1>7, <1>8, <1>9
+[EXIT 0]
+
+[AGENT] I replaced label references with the operator definition; running TLAPS again.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Consensus_CardinalitySetMinus.tla'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./Consensus_CardinalitySetMinus.tla", line 100, character 30:
+Error: Operator "g" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from P_visit.map#usable.usdef in file "p_visit.ml", line 178, characters 21-62
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 188, characters 26-50
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 195, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] One early step accidentally referenced `g` before it exists; I’m removing that stray reference.
+
+[CMD] /bin/bash -lc "sed -i '97,103s/DEF IsBijection, g/DEF IsBijection/' Consensus_CardinalitySetMinus.tla
+nl -ba Consensus_CardinalitySetMinus.tla | sed -n '96,123p'"
+    96	PROOF
+    97	  <1>1. PICK n \in Nat, f : IsBijection(f, 1..n, S)
+    98	    BY DEF IsFiniteSet
+    99	  <1>2. PICK k \in 1..n : f[k] = x
+   100	    BY <1>1 DEF IsBijection
+   101	  <1>3. n # 0
+   102	    BY <1>2
+   103	  <1>4. n - 1 \in Nat
+   104	    BY <1>1, <1>3
+   105	  <1>5. DEFINE g == [i \in 1..(n-1) |-> IF i < k THEN f[i] ELSE f[i+1]]
+   106	  <1>6. IsBijection(g, 1..(n-1), S \ {x})
+   107	    <2>1. g \in [1..(n-1) -> S \ {x}]
+   108	      <3>1. ASSUME NEW i \in 1..(n-1)
+   109	             PROVE  g[i] \in S \ {x}
+   110	        BY <1>1, <1>2 DEF IsBijection, g
+   111	      <3>. QED BY <3>1
+   112	    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
+   113	      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1), i # j
+   114	             PROVE  g[i] # g[j]
+   115	        BY <1>1, <1>2 DEF IsBijection, g
+   116	      <3>. QED BY <3>1
+   117	    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
+   118	      <3>1. ASSUME NEW y \in S \ {x}
+   119	             PROVE  \E i \in 1..(n-1) : g[i] = y
+   120	        <4>1. PICK p \in 1..n : f[p] = y
+   121	          BY <1>1, <3>1 DEF IsBijection, g
+   122	        <4>2. p # k
+   123	          BY <1>2, <3>1, <4>1
+[EXIT 0]
+
+[AGENT] The early reference is cleaned up; rerunning TLAPS for real obligations.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Consensus_CardinalitySetMinus.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/Consensus_CardinalitySetMinus.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+[EXIT 255]
+
+[AGENT] That TLAPS run ended abnormally without diagnostics, so I’ll rerun with the checker to capture the full report.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py Consensus_CardinalitySetMinus.tla --timeout 120'
+Checking: Consensus_CardinalitySetMinus.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Consensus_CardinalitySetMinus.tlaps/Consensus_CardinalitySetMinus.thy" *)
+(* fingerprints written in ".tlacache/Consensus_CardinalitySetMinus.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSe
+... (truncated) ...
+ 1..n,
+                  g == [i \in 1..n - 1 |-> IF i < k THEN f[i] ELSE f[i + 1]],
+                  NEW CONSTANT i \in 
+                  1..n - 1,
+                  NEW CONSTANT j \in 
+                  1..n - 1,
+                  <1>1 ,
+                  <1>2 
+           PROVE  g[i] # g[j]
+File "/tmp/tlaps_check_cm8cjos1/Consensus_CardinalitySetMinus.tla", line 1, character 1 to line 138, character 40:
+[ERROR]: 1/53 obligations failed.
+There were backend errors processing module `"Consensus_CardinalitySetMinus"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ❌ FAIL — 1/53 obligations failed
+
+Result written to: /tmp/codex_bench_Consensus_CardinalitySetMinus_vzjj8svu/Consensus_CardinalitySetMinus.result
+[EXIT 1]
+
+[AGENT] Only the injectivity subcase failed; I’ll split the implication assumption explicitly.
+
+[AGENT] The failed implication is now explicit; I’ll rerun the checker for the next obligation.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py Consensus_CardinalitySetMinus.tla --timeout 120'
+Checking: Consensus_CardinalitySetMinus.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Consensus_CardinalitySetMinus.tlaps/Consensus_CardinalitySetMinus.thy" *)
+(* fingerprints written in ".tlacache/Consensus_CardinalitySetMinus.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSe
+... (truncated) ...
+ 1..n,
+                  g == [i \in 1..n - 1 |-> IF i < k THEN f[i] ELSE f[i + 1]],
+                  NEW CONSTANT i \in 
+                  1..n - 1,
+                  NEW CONSTANT j \in 
+                  1..n - 1,
+                  <1>1 ,
+                  <1>2 
+           PROVE  g[i] # g[j]
+File "/tmp/tlaps_check_imdyqgek/Consensus_CardinalitySetMinus.tla", line 1, character 1 to line 141, character 40:
+[ERROR]: 1/55 obligations failed.
+There were backend errors processing module `"Consensus_CardinalitySetMinus"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ❌ FAIL — 1/55 obligations failed
+
+Result written to: /tmp/codex_bench_Consensus_CardinalitySetMinus_vzjj8svu/Consensus_CardinalitySetMinus.result
+[EXIT 1]
+
+[AGENT] The backend needs the shifted index made explicit; I’ll factor it into a local `r` operator and prove index distinctness.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('Consensus_CardinalitySetMinus.tla')
+s=p.read_text()
+s=s.replace('<1>5. DEFINE g == [i \\\\in 1..(n-1) |-> IF i < k THEN f[i] ELSE f[i+1]]', '<1>5. DEFINE r(i) == IF i < k THEN i ELSE i+1\\n                g == [i \\\\in 1..(n-1) |-> f[r(i)]]')
+s=s.replace('DEF IsBijection, g', 'DEF IsBijection, g, r')
+s=s.replace('''        <4>1. ASSUME i # j
+               PROVE  g[i] # g[j]
+          BY <1>1, <1>2 DEF IsBijection, g, r
+        <4>. QED BY <4>1''', '''        <4>1. ASSUME i # j
+               PROVE  g[i] # g[j]
+          <5>1. /\\\\ r(i) \\\\in 1..n
+                 /\\\\ r(j) \\\\in 1..n
+                 /\\\\ r(i) # r(j)
+            BY <1>2, <4>1 DEF r
+          <5>2. /\\\\ g[i] = f[r(i)]
+                 /\\\\ g[j] = f[r(j)]
+            BY DEF g
+          <5>. QED BY <1>1, <5>1, <5>2 DEF IsBijection
+        <4>. QED BY <4>1''')
+p.write_text(s)
+PY
+nl -ba Consensus_CardinalitySetMinus.tla | sed -n '104,132p'"
+   104	    BY <1>1, <1>3
+   105	  <1>5. DEFINE r(i) == IF i < k THEN i ELSE i+1
+   106	                g == [i \in 1..(n-1) |-> f[r(i)]]
+   107	  <1>6. IsBijection(g, 1..(n-1), S \ {x})
+   108	    <2>1. g \in [1..(n-1) -> S \ {x}]
+   109	      <3>1. ASSUME NEW i \in 1..(n-1)
+   110	             PROVE  g[i] \in S \ {x}
+   111	        BY <1>1, <1>2 DEF IsBijection, g, r
+   112	      <3>. QED BY <3>1
+   113	    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
+   114	      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1)
+   115	             PROVE  (i # j) => (g[i] # g[j])
+   116	        <4>1. ASSUME i # j
+   117	               PROVE  g[i] # g[j]
+   118	          <5>1. /\ r(i) \in 1..n
+   119	                 /\ r(j) \in 1..n
+   120	                 /\ r(i) # r(j)
+   121	            BY <1>2, <4>1 DEF r
+   122	          <5>2. /\ g[i] = f[r(i)]
+   123	                 /\ g[j] = f[r(j)]
+   124	            BY DEF g
+   125	          <5>. QED BY <1>1, <5>1, <5>2 DEF IsBijection
+   126	        <4>. QED BY <4>1
+   127	      <3>. QED BY <3>1
+   128	    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
+   129	      <3>1. ASSUME NEW y \in S \ {x}
+   130	             PROVE  \E i \in 1..(n-1) : g[i] = y
+   131	        <4>1. PICK p \in 1..n : f[p] = y
+   132	          BY <1>1, <3>1 DEF IsBijection, g, r
+[EXIT 0]
+
+[AGENT] The shifted-index helper is in place; I’m checking if TLAPS can prove those arithmetic facts.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py Consensus_CardinalitySetMinus.tla --timeout 120'
+Checking: Consensus_CardinalitySetMinus.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/Consensus_CardinalitySetMinus.tlaps/Consensus_CardinalitySetMinus.thy" *)
+(* fingerprints written in ".tlacache/Consensus_CardinalitySetMinus.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_
+
+** Unexpanded symbols: CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+** Unexpanded symbols: CONSTANT_IsFiniteSet_, CONSTANT_IsBijection_
+
+File "/tmp/tlaps_check_rhmnojyj/Consensus_CardinalitySetMinus.tla", line 1, character 1 to line 149, character 40:
+[INFO]: All 60 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Consensus_CardinalitySetMinus_vzjj8svu/Consensus_CardinalitySetMinus.result
+[EXIT 0]
+
+[AGENT] The checker passes. I’ll do one final quick diff to summarize exactly what changed.
+
+[CMD] /bin/bash -lc "git diff -- Consensus_CardinalitySetMinus.tla | sed -n '1,220p'"
+diff --git a/Consensus_CardinalitySetMinus.tla b/Consensus_CardinalitySetMinus.tla
+index 9909586..f781229 100644
+--- a/Consensus_CardinalitySetMinus.tla
++++ b/Consensus_CardinalitySetMinus.tla
+@@ -93,6 +93,57 @@ LEMMA CardinalitySetMinus ==
+              NEW x \in S
+       PROVE /\ IsFiniteSet(S \ {x})
+             /\ Cardinality(S \ {x}) = Cardinality(S) - 1
+-PROOF OBVIOUS
+-
+-========================================
+\ No newline at end of file
++PROOF
++  <1>1. PICK n \in Nat, f : IsBijection(f, 1..n, S)
++    BY DEF IsFiniteSet
++  <1>2. PICK k \in 1..n : f[k] = x
++    BY <1>1 DEF IsBijection
++  <1>3. n # 0
++    BY <1>2
++  <1>4. n - 1 \in Nat
++    BY <1>1, <1>3
++  <1>5. DEFINE r(i) == IF i < k THEN i ELSE i+1
++                g == [i \in 1..(n-1) |-> f[r(i)]]
++  <1>6. IsBijection(g, 1..(n-1), S \ {x})
++    <2>1. g \in [1..(n-1) -> S \ {x}]
++      <3>1. ASSUME NEW i \in 1..(n-1)
++             PROVE  g[i] \in S \ {x}
++        BY <1>1, <1>2 DEF IsBijection, g, r
++      <3>. QED BY <3>1
++    <2>2. \A i, j \in 1..(n-1) : (i # j) => (g[i] # g[j])
++      <3>1. ASSUME NEW i \in 1..(n-1), NEW j \in 1..(n-1)
++             PROVE  (i # j) => (g[i] # g[j])
++        <4>1. ASSUME i # j
++               PROVE  g[i] # g[j]
++          <5>1. /\ r(i) \in 1..n
++                 /\ r(j) \in 1..n
++                 /\ r(i) # r(j)
++            BY <1>2, <4>1 DEF r
++          <5>2. /\ g[i] = f[r(i)]
++                 /\ g[j] = f[r(j)]
++            BY DEF g
++          <5>. QED BY <1>1, <5>1, <5>2 DEF IsBijection
++        <4>. QED BY <4>1
++      <3>. QED BY <3>1
++    <2>3. \A y \in S \ {x} : \E i \in 1..(n-1) : g[i] = y
++      <3>1. ASSUME NEW y \in S \ {x}
++             PROVE  \E i \in 1..(n-1) : g[i] = y
++        <4>1. PICK p \in 1..n : f[p] = y
++          BY <1>1, <3>1 DEF IsBijection, g, r
++        <4>2. p # k
++          BY <1>2, <3>1, <4>1
++        <4>3. IF p < k THEN p \in 1..(n-1) /\ g[p] = y
++                         ELSE p-1 \in 1..(n-1) /\ g[p-1] = y
++          BY <1>2, <3>1, <4>1, <4>2
++        <4>. QED BY <4>3
++      <3>. QED BY <3>1
++    <2>. QED BY <2>1, <2>2, <2>3 DEF IsBijection, g, r
++  <1>7. IsFiniteSet(S \ {x})
++    BY <1>4, <1>6 DEF IsFiniteSet
++  <1>8. Cardinality(S \ {x}) = n - 1
++    BY <1>4, <1>6, <1>7, CardinalityAxiom
++  <1>9. Cardinality(S) = n
++    BY <1>1, CardinalityAxiom
++  <1>. QED BY <1>7, <1>8, <1>9
++
++========================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `CardinalitySetMinus`.
+
+- Replaced `PROOF OBVIOUS` in `Consensus_CardinalitySetMinus.tla:96` with a structured proof.
+- Constructs a bijection from `1..(n-1)` to `S \ {x}` by skipping the index mapped to `x`.
+- Proves the resulting set is finite and has cardinality `Cardinality(S) - 1`.
+- Verified with `python3 check_proof.py Consensus_CardinalitySetMinus.tla --timeout 120`.
+
+Result: `PASS — all obligations proved`.

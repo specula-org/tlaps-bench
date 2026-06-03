@@ -1,0 +1,556 @@
+Benchmark: ByzantinePaxos/BPConProof_line4176.tla
+Time: 112s
+Tokens: 0 input / 0 output
+============================================================
+
+[AGENT] I’ll inspect the module and local support files first, then build the proof around the exact theorem shape TLAPS needs. After that I’ll iterate with `tlapm` and the provided checker until both pass.
+
+[CMD] /bin/bash -lc "sed -n '260,560p' BPConProof_line4176.tla"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' BPConProof_line4176.tla"
+
+---------------------------- MODULE BPConProof_line4176 ------------------------------
+
+EXTENDS Integers, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+
+AXIOM EmptySetFinite == IsFiniteSet({})
+
+AXIOM SingletonSetFinite == \A e : IsFiniteSet({e})
+
+AXIOM ImageOfFiniteSetFinite == 
+         \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S})
+
+AXIOM SubsetOfFiniteSetFinite == 
+        \A S, T : IsFiniteSet(T) /\ (S \subseteq T) => IsFiniteSet(S)
+
+AXIOM UnionOfFiniteSetsFinite == 
+        \A S, T : IsFiniteSet(T) /\ IsFiniteSet(S)  => IsFiniteSet(S \cup T)
+
+----------------------------------------------------------------------------
+
+CONSTANT Value
+
+Ballot == Nat
+
+-----------------------------------------------------------------------------  
+
+CONSTANTS Acceptor,       
+          FakeAcceptor,   
+          ByzQuorum,     
+
+          WeakQuorum     
+
+ByzAcceptor == Acceptor \cup FakeAcceptor
+
+ASSUME BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {}
+
+ASSUME BQA == 
+          /\ Acceptor \cap FakeAcceptor = {}
+          /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+          /\ \A Q1, Q2 \in ByzQuorum : Q1 \cap Q2 \cap Acceptor # {}
+          /\ \A Q \in WeakQuorum : /\ Q \subseteq ByzAcceptor
+                                   /\ Q \cap Acceptor # {}
+
+ASSUME BQLA == 
+          /\ \E Q \in ByzQuorum : Q \subseteq Acceptor 
+          /\ \E Q \in WeakQuorum : Q \subseteq Acceptor 
+----------------------------------------
+... (truncated) ...
+p 1cmsgs \cup 2amsgs 
+         \cup acceptorMsgsOfType("2b")
+
+MaxBallot(S) ==  
+  IF S = {} THEN -1
+            ELSE CHOOSE mb \in S : \A x \in S : mb  >= x
+
+AXIOM FiniteSetHasMax == 
+        \A S \in SUBSET Int :
+          IsFiniteSet(S) /\ (S # {}) => \E max \in S : \A x \in S : max >= x
+
+1bOr2bMsgs == {m \in bmsgs : m.type \in {"1b", "2b"}}
+
+PmaxBal == [a \in Acceptor |-> 
+              MaxBallot({m.bal : m \in {ma \in 1bOr2bMsgs : 
+                                           ma.acc = a}})]
+
+P == INSTANCE PConProof WITH maxBal <- PmaxBal
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+chosen == {v \in Value : \E BQ \in ByzQuorum, b \in Ballot :
+                           \A a \in BQ : \E m \in msgs : /\ m.type = "2b"
+                                                         /\ m.acc  = a
+                                                         /\ m.bal  = b
+                                                         /\ m.val  = v}
+
+THEOREM chosen \subseteq P!chosen
+
+PROOF OBVIOUS
+
+==============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_BPConProof_line4176_m6tb3dhz
+check_proof_bin
+Consensus.tla
+VoteProof.tla
+PConProof.tla
+BPConProof_line4176.tla
+[EXIT 0]
+
+[AGENT] The target theorem is just `chosen \subseteq P!chosen`, but both sides are defined through local message projections and the `PConProof` instance. I’m reading that instance next so the proof can reduce the two `chosen` definitions cleanly instead of guessing.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' Consensus.tla"
+----------------------------- MODULE Consensus ------------------------------ 
+
+EXTENDS Naturals, FiniteSets, TLAPS
+
+CONSTANT Value  
+
+VARIABLE chosen
+
+vars == << chosen >>
+
+Init == 
+        /\ chosen = {}
+
+Next == /\ chosen = {}
+        /\ \E v \in Value:
+             chosen' = {v}
+
+Spec == Init /\ [][Next]_vars
+
+-----------------------------------------------------------------------------
+
+TypeOK == /\ chosen \subseteq Value
+          /\ IsFiniteSet(chosen) 
+
+Inv == /\ TypeOK
+       /\ Cardinality(chosen) \leq 1
+
+AXIOM EmptySetCardinality == IsFiniteSet({}) /\ Cardinality({}) = 0
+AXIOM SingletonCardinality == 
+          \A e : IsFiniteSet({e}) /\ (Cardinality({e}) = 1)
+
+SingleCardinalityTest == 
+  \A e \in SUBSET {"a", "b", "c"} : IsFiniteSet({e}) /\ (Cardinality({e}) = 1)
+
+LEMMA InductiveInvariance ==
+           Inv /\ [Next]_vars => Inv'
+  PROOF OMITTED
+
+THEOREM Invariance == Spec => []Inv 
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+LiveSpec == Spec /\ WF_vars(Next)
+Success == <>(chosen # {})
+
+ASSUME ValueNonempty == Value # {}
+
+LEMMA EnabledDef ==
+        TypeOK => 
+          ((ENABLED <<Next>>_vars) <=> (chosen = {}))
+  PROOF OMITTED
+
+THEOREM LiveSpec => Success
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM LiveSpecEquals ==
+          LiveSpec <=> Spec /\ ([]<><<Next>>_vars \/ []<>(chosen # {}))
+  PROOF OMITTED
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '260,620p' PConProof.tla"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' VoteProof.tla"
+----------------------------- MODULE VoteProof ------------------------------ 
+
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+-----------------------------------------------------------------------------
+CONSTANT Value,     
+         Acceptor,  
+         Quorum     
+
+ASSUME QA == /\ \A Q \in Quorum : Q \subseteq Acceptor
+             /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}  
+ 
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+Ballot == Nat
+-----------------------------------------------------------------------------
+
+VARIABLES votes, maxBal
+
+VotedFor(a, b, v) == <<b, v>> \in votes[a]
+
+DidNotVoteIn(a, b) == \A v \in Value : ~ VotedFor(a, b, v)
+
+SafeAt(b, v) ==
+  LET SA[bb \in Ballot] ==
+        \/ bb = 0
+        \/ \E Q \in Quorum :
+             /\ \A a \in Q : maxBal[a] \geq bb
+             /\ \E c \in -1..(bb-1) :
+                  /\ (c # -1) => /\ SA[c]
+                                 /\ \A a \in Q :
+                                      \A w \in Value :
+                                         VotedFor(a, c, w) => (w = v)
+                  /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+  IN  SA[b]
+
+vars == << votes, maxBal >>
+
+ProcSet == (Acceptor)
+
+Init == 
+        /\ votes = [a \in Acceptor |-> {}]
+        /\ maxBal = [a \in Acceptor |-> -1]
+
+acceptor(self) == \E b \in Ballot:
+                    \/ /\ b > maxBal[self]
+                       /\ maxBal' = [maxBal EXC
+... (truncated) ...
+ AcceptorNonempty == Acceptor # {}
+
+LEMMA NextDef ==
+  TypeOK => 
+   (Next =  \E self \in Acceptor :
+                 \E b \in Ballot : BallotAction(self, b) )
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM InductiveInvariance == VInv /\ [Next]_vars => VInv'
+  PROOF OMITTED
+
+THEOREM InitImpliesInv == Init => VInv
+  PROOF OMITTED
+
+THEOREM VT2 == Spec => []VInv
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+C == INSTANCE Consensus 
+
+THEOREM VT3 == Spec => C!Spec 
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+ASSUME AcceptorFinite == IsFiniteSet(Acceptor)
+
+ASSUME ValueNonempty == Value # {}
+-----------------------------------------------------------------------------
+
+AXIOM SubsetOfFiniteSetFinite == 
+        \A S, T : IsFiniteSet(T) /\ (S \subseteq T) => IsFiniteSet(S)
+
+AXIOM FiniteSetHasMax == 
+        \A S \in SUBSET Int :
+          IsFiniteSet(S) /\ (S # {}) => \E max \in S : \A x \in S : max >= x
+
+AXIOM IntervalFinite == \A i, j \in Int : IsFiniteSet(i..j)
+-----------------------------------------------------------------------------
+
+THEOREM VT4 == TypeOK /\ VInv2 /\ VInv3  =>
+                \A Q \in Quorum, b \in Ballot :
+                   (\A a \in Q : (maxBal[a] >= b)) => \E v \in Value : SafeAt(b,v)
+
+  PROOF OMITTED
+
+-------------------------------------------------------------------------------
+
+LiveAssumption ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' PConProof.tla"
+---------------------------- MODULE PConProof -------------------------------
+
+EXTENDS Integers, TLAPS
+-----------------------------------------------------------------------------
+
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QA == /\ \A Q \in Quorum : Q \subseteq Acceptor 
+             /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {} 
+                                                                     
+Ballot ==  Nat
+
+ASSUME BallotAssump == (Ballot \cup {-1}) \cap Acceptor = {}
+
+None == CHOOSE v : v \notin Value
+
+Message ==      [type : {"1a"}, bal : Ballot]
+           \cup [type : {"1b"}, acc : Acceptor, bal : Ballot, 
+                 mbal : Ballot \cup {-1}, mval : Value \cup {None}]
+           \cup [type : {"1c"}, bal : Ballot, val : Value]
+           \cup [type : {"2a"}, bal : Ballot, val : Value]
+           \cup [type : {"2b"}, acc : Acceptor, bal : Ballot, val : Value]
+-----------------------------------------------------------------------------
+
+VARIABLES maxBal, maxVBal, maxVVal, msgs
+
+sentMsgs(t, b) == {m \in msgs : (m.type = t) /\ (m.bal = b)}
+
+ShowsSafeAt(Q, b, v) ==
+  LET Q1b == {m \in sentMsgs("1b", b) : m.acc \in Q}
+  IN  /\ \A a \in Q : \E m \in Q1b : m.acc = a
+      /\ \/ \A m \in Q1b : m.mbal = -1
+         \/ \E m1c \in msgs :
+              /\ m1c = [type |-> "1c", bal |-> m1c.bal, val |-> v]
+              /\ \A m \in Q1b : /\ m1c.bal \geq m.mbal
+                                /\ (m1c.bal = m.mbal) => (m.mval = v)
+
+vars == << maxBal, maxVBal, maxVVal, msgs >>
+
+Proc
+... (truncated) ...
+s == [a \in Acceptor |->  
+           {<<m.bal, m.val>> : m \in {mm \in msgs: /\ mm.type = "2b"
+                                                   /\ mm.acc = a }}]
+
+V == INSTANCE VoteProof 
+
+-----------------------------------------------------------------------------
+
+PAccInv == \A a \in Acceptor : 
+             /\ maxBal[a] >= maxVBal[a]
+             /\ \A b \in (maxVBal[a]+1)..(maxBal[a]-1) : V!DidNotVoteIn(a,b)
+             /\ (maxVBal[a] # -1) => V!VotedFor(a, maxVBal[a], maxVVal[a])
+             
+P1bInv == \A m \in msgs :
+             (m.type = "1b") => 
+               /\ (maxBal[m.acc] >= m.bal) /\ (m.bal > m.mbal)
+               /\ \A b \in (m.mbal+1)..(m.bal-1) : V!DidNotVoteIn(m.acc,b)
+
+P1cInv ==  \A m \in msgs : (m.type = "1c") => V!SafeAt(m.bal, m.val)
+
+P2aInv == \A m \in msgs : 
+            (m.type = "2a") => \E m1c \in msgs : /\ m1c.type = "1c"
+                                                 /\ m1c.bal = m.bal 
+                                                 /\ m1c.val = m.val
+
+THEOREM PT1 == TypeOK /\ P1bInv /\ P1cInv =>
+                 \A Q \in Quorum, b \in Ballot, v \in Value :
+                     ShowsSafeAt(Q, b, v) => V!SafeAt(b, v) 
+  PROOF OMITTED
+
+PInv == TypeOK /\ PAccInv /\ P1bInv /\ P1cInv /\ P2aInv  
+
+THEOREM Invariance == Spec => []PInv
+  PROOF OMITTED
+
+THEOREM Implementation == Spec => V!Spec
+  PROOF OMITTED
+
+THEOREM Spec => [](chosen = V!chosen)
+  PROOF OMITTED
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '260,620p' VoteProof.tla"
+LiveAssumption ==
+  \E Q \in Quorum, b \in Ballot :
+     \A self \in Q :
+       /\ WF_vars(BallotAction(self, b))
+       /\ [] [\A c \in Ballot : (c > b) => ~ BallotAction(self, c)]_vars
+     
+LiveSpec == Spec /\ LiveAssumption  
+
+-----------------------------------------------------------------------------
+
+WellFounded(S, LT) == ~ \E f \in [Nat -> S] : 
+                           \A i \in Nat : <<f[i+1], f[i]>> \in LT
+
+ProperSubsetRel(S) == 
+  {r \in (SUBSET S) \X (SUBSET S) : /\ r[1] \subseteq r[2]
+                                    /\ r[1] # r[2] }     
+                                                     
+THEOREM SubsetWellFounded ==
+           \A S : IsFiniteSet(S) => WellFounded(SUBSET S, ProperSubsetRel(S))
+PROOF OMITTED
+
+THEOREM LatticeRule ==  ASSUME NEW S, NEW LT, WellFounded(S, LT),
+                               NEW TEMPORAL P(_), NEW TEMPORAL Q
+                        PROVE  /\ Q \/ (\E i \in S : P(i))
+                               /\ \A i \in S : 
+                                     P(i) ~> (Q \/ \E j \in S : (<<j, i>> \in LT) /\ P(j))
+                               => ((\E i \in S : P(i)) ~> Q)
+PROOF OMITTED
+
+THEOREM AlwaysForall ==
+           ASSUME NEW CONSTANT S, NEW TEMPORAL P(_)
+           PROVE  (\A s \in S : []P(s)) <=> [](\A s \in S : P(s))
+  PROOF OMITTED
+
+LEMMA EventuallyAlwaysForall == 
+        ASSUME NEW CONSTANT S, IsFiniteSet(S),
+               NEW TEMPORAL P(_)
+        PROVE  (\A s \in S : <>[]P(s)) => <>[](\A s \in S : P(s))
+
+PROOF OMITTED
+-----------------------------------------------------------------------------
+
+THEOREM Liveness == LiveSpec => C!LiveSpec
+  PROOF OMITTED
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] The proof obligation is a refinement of the Byzantine quorum witness into the ordinary quorum witness `BQ \cap Acceptor`. I’m going to add a small direct proof that unpacks `chosen`, uses that intersection as the witness for `P!chosen`, and leaves the rest of the module untouched.
+
+[AGENT] The first proof is in place. I’m running TLAPS now to see whether the backend accepts the instantiated definition and the witness steps as written.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_line4176.tla'
+File "./Consensus.tla", line 51, characters 23-26:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./Consensus.tla", line 51, characters 30-33:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+File "./BPConProof_line4176.tla", line 139, characters 12-17:
+Error: Operator "SUBSET" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__P_anon.anon#usable.usdef in file "src/proof/p_anon.ml", line 222, characters 29-49
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__P_anon.anon#usable in file "src/proof/p_anon.ml", line 236, characters 32-74
+Called from Tlapm_lib__P_visit.map#proof in file "src/proof/p_visit.ml", line 26, characters 12-30
+Called from Tlapm_lib__P_anon.anon#step in file "src/proof/p_anon.ml", line 135, characters 12-30
+Called from Tlapm_lib__P_visit.map#steps in file "src/proof/p_visit.ml", line 35, characters 24-40
+Called from Tlapm_lib__P_anon.anon#proof in file "src/proof/p_anon.ml", line 63, characters 27-47
+Called from Tlapm_lib__M_elab.normalize.spin.map_proof in file "src/module/m_elab.ml", line 1142, characters 21-48
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] TLAPS rejected `DEF SUBSET` because `SUBSET` is built-in syntax, not a definable operator. I’m removing that expansion and letting the set-membership form discharge normally.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_line4176.tla'
+File "./BPConProof_line4176.tla", line 139, character 7
+Unexpected <1>2.
+File "<unknown>":
+Error: Could not parse "./BPConProof_line4176.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_line4176.tla'
+File "./Consensus.tla", line 51, characters 23-26:
+[INFO]: Auto-expanding the definition of operator:  Next
+
+File "./Consensus.tla", line 51, characters 30-33:
+[INFO]: Auto-expanding the definition of operator:  vars
+
+(* created new ".tlacache/BPConProof_line4176.tlaps/BPConProof_line4176.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_line4176.tlaps/fingerprints" *)
+File "./BPConProof_line4176.tla", line 157, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ 
+... (truncated) ...
+     IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  P!chosen ==
+                    {v \in Value :
+                       \E Q \in Quorum, b \in P!Ballot :
+                          \A a \in Q :
+                             \E m \in msgs :
+                                /\ m.type = "2b"
+                                /\ m.acc = a
+                                /\ m.bal = b
+                                /\ m.val = v},
+                  NEW CONSTANT v \in chosen,
+                  NEW CONSTANT BQ \in ByzQuorum,
+                  NEW CONSTANT b \in Ballot,
+                  <1>2 ,
+                  <1>4 ,
+                  <1>5 
+           PROVE  v \in P!chosen
+File "./BPConProof_line4176.tla", line 2, character 1 to line 159, character 78:
+[ERROR]: 1/13 obligations failed.
+There were backend errors processing module `"BPConProof_line4176"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[AGENT] The instantiated theorem expands `P!chosen` with `P!Ballot`, while the local witness has `b \in Ballot`. I’m making that conversion explicit and splitting the final membership proof into an existential witness step.
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 4/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 5/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] stream disconnected before completion: response.failed event received

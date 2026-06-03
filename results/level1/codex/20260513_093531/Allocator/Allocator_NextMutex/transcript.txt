@@ -1,0 +1,286 @@
+Benchmark: Allocator/Allocator_NextMutex.tla
+Time: 80s
+Tokens: 134,191 input / 1,355 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and checker, then iteratively prove the final theorem.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Allocator_NextMutex.tla && printf '\\n--- checker ---\\n' && sed -n '1,240p' check_proof.py"
+-------------------------- MODULE Allocator_NextMutex -----------------------------
+
+(***********************************************************************)
+(* Specification of an allocator managing a set of resources:          *)
+(* - Clients can request sets of resources whenever all their previous *)
+(*   requests have been satisfied.                                     *)
+(* - Requests can be partly fulfilled, and resources can be returned   *)
+(*   even before the full request has been satisfied. However, clients *)
+(*   only have an obligation to return resources after they have       *)
+(*   obtained all resources they requested.                            *)
+(*                                                                     *)
+(* The proofs in this module were written before TLAPS's SMT backend   *)
+(* prover was implemented. Much shorter proofs can be obtained using   *)
+(* that backend.                                                       *)
+(***********************************************************************)
+
+\* EXTENDS FiniteSets, TLC
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+---------------------------------------------------------------
+... (truncated) ...
+  if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+        bench_dir = os.path.dirname(filepath)
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            dep_basename = os.path.basename(dep_file)
+            if dep_basename != basename:
+                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+
+        cmd = [tlapm_path, '-I', tlapm_lib, tmp_file]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=args.timeout,
+                cwd=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+[EXIT 0]
+
+[AGENT] The first read was truncated; I’ll zoom in on theorem names and the final placeholder.
+
+[CMD] /bin/bash -lc "grep -n \"THEOREM\\|LEMMA\\|PROOF OBVIOUS\\|PROOF OMITTED\" Allocator_NextMutex.tla && tail -n 160 Allocator_NextMutex.tla"
+127:THEOREM InitTypeInvariant == Init => TypeInvariant
+128:  PROOF OMITTED
+130:THEOREM RequestTypeInvariant ==
+134:  PROOF OMITTED
+136:THEOREM AllocateTypeInvariant ==
+140:  PROOF OMITTED
+142:THEOREM ReturnTypeInvariant ==
+146:  PROOF OMITTED
+148:THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+149:  PROOF OMITTED
+153:THEOREM InitMutex == Init => Mutex
+154:  PROOF OMITTED
+156:THEOREM RequestMutexBis ==
+160:  PROOF OMITTED
+162:THEOREM ReturnMutex ==
+166:  PROOF OMITTED
+168:THEOREM AllocateMutex ==
+172:  PROOF OMITTED
+174:THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+175:PROOF OBVIOUS
+
+CONSTANTS
+  Client,     \* set of all clients
+  Resource    \* set of all resources
+
+\* ASSUME
+\*  IsFiniteSet(Resource)
+
+VARIABLES
+  unsat,       \* set of all outstanding requests per process
+  alloc        \* set of resources allocated to given process
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+-------------------------------------------------------------------------
+
+(* Resource are available iff they have not been allocated. *)
+available == Resource \ (UNION {alloc[c] : c \in Client})
+
+(* Initially, no resources have been requested or allocated. *)
+Init ==
+  /\ unsat = [c \in Client |-> {}]
+  /\ alloc = [c \in Client |-> {}]
+
+(**********************************************************************)
+(* A client c may request a set of resources provided that all of its *)
+(* previous requests have 
+... (truncated) ...
+))
+
+*)
+
+-------------------------------------------------------------------------
+
+THEOREM InitTypeInvariant == Init => TypeInvariant
+  PROOF OMITTED
+
+THEOREM RequestTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Request(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM AllocateTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Allocate(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM ReturnTypeInvariant ==
+  ASSUME NEW c \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Return(c,S) => TypeInvariant'
+  PROOF OMITTED
+
+THEOREM NextTypeInvariant == TypeInvariant /\ Next => TypeInvariant'
+  PROOF OMITTED
+
+-------------------------------------------------------------------------
+
+THEOREM InitMutex == Init => Mutex
+  PROOF OMITTED
+
+THEOREM RequestMutexBis ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  Mutex /\ Request(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM ReturnMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Return(clt,S) => Mutex'
+  PROOF OMITTED
+
+THEOREM AllocateMutex ==
+  ASSUME NEW clt \in Client,
+         NEW S \in SUBSET Resource
+  PROVE  TypeInvariant /\ Mutex /\ Allocate(clt, S) => Mutex'
+  PROOF OMITTED
+
+THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+PROOF OBVIOUS
+
+=========================================================================
+[EXIT 0]
+
+[AGENT] The goal reduces cleanly to the three admitted action lemmas; I’ll patch that case split now.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: Allocator_NextMutex.tla
+@@
+ THEOREM NextMutex == TypeInvariant /\\ Mutex /\\ Next => Mutex'
+-PROOF OBVIOUS
++PROOF
++  <1>1. ASSUME TypeInvariant, Mutex, Next
++        PROVE Mutex'
++    <2>1. PICK clt \\in Client, S \\in SUBSET Resource :
++              Request(clt,S) \\/ Allocate(clt,S) \\/ Return(clt,S)
++      BY <1>1 DEF Next
++    <2>2. CASE Request(clt,S)
++      <3>1. QED BY <1>1, <2>1, <2>2, RequestMutexBis
++    <2>3. CASE Allocate(clt,S)
++      <3>1. QED BY <1>1, <2>1, <2>3, AllocateMutex
++    <2>4. CASE Return(clt,S)
++      <3>1. QED BY <1>1, <2>1, <2>4, ReturnMutex
++    <2>5. QED BY <2>1, <2>2, <2>3, <2>4
++  <1>2. QED BY <1>1
+ 
+ =========================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Allocator_NextMutex.tla"
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 190, character 73:
+[INFO]: All 24 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS accepts the proof. I’ll run the benchmark checker to confirm the edits are legal.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py Allocator_NextMutex.tla'
+Checking: Allocator_NextMutex.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeInvariant_, ACTION_Next_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, ACTION_Return_, ACTION_Allocate_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+** Unexpanded symbols: ACTION_Request_, STATE_TypeInvariant_, ACTION_Next_, ACTION_Return_, ACTION_Allocate_, STATE_Mutex_
+
+File "/tmp/tlaps_check_2czltacy/Allocator_NextMutex.tla", line 1, character 1 to line 190, character 73:
+[INFO]: All 24 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_NextMutex_a7ewb9ey/Allocator_NextMutex.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final `NextMutex` theorem in `Allocator_NextMutex.tla:175`.
+
+- Replaced `PROOF OBVIOUS` with a structured proof that expands `Next`, picks the enabled action, and applies the admitted lemmas:
+  - `RequestMutexBis`
+  - `AllocateMutex`
+  - `ReturnMutex`
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps Allocator_NextMutex.tla`
+- Verified legality with `python3 check_proof.py Allocator_NextMutex.tla`
+
+Result: `PASS — all obligations proved`.

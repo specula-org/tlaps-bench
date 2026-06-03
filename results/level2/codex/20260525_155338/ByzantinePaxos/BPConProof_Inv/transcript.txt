@@ -1,0 +1,4048 @@
+Benchmark: ByzantinePaxos/BPConProof_Inv.tla
+Time: 2935s
+Tokens: 57,141,312 input / 67,072 output
+============================================================
+
+[AGENT] I’ll inspect the module and the local proof context first, then iterate with TLAPS and the provided checker until the target proof is accepted.
+
+[CMD] /bin/bash -lc ls
+BPConProof_Inv.tla
+check_proof_bin
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' BPConProof_Inv.tla"
+
+---------------------------- MODULE BPConProof_Inv ------------------------------
+
+EXTENDS Integers, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+
+AXIOM EmptySetFinite == IsFiniteSet({})
+
+AXIOM SingletonSetFinite == \A e : IsFiniteSet({e})
+
+AXIOM ImageOfFiniteSetFinite == 
+         \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S})
+
+AXIOM SubsetOfFiniteSetFinite == 
+        \A S, T : IsFiniteSet(T) /\ (S \subseteq T) => IsFiniteSet(S)
+
+AXIOM UnionOfFiniteSetsFinite == 
+        \A S, T : IsFiniteSet(T) /\ IsFiniteSet(S)  => IsFiniteSet(S \cup T)
+
+----------------------------------------------------------------------------
+
+CONSTANT Value
+
+Ballot == Nat
+
+None == CHOOSE v : v \notin Value
+-----------------------------------------------------------------------------  
+
+CONSTANTS Acceptor,       
+          FakeAcceptor,   
+          ByzQuorum,     
+
+          WeakQuorum     
+
+ByzAcceptor == Acceptor \cup FakeAcceptor
+
+ASSUME BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {}
+
+ASSUME BQA == 
+          /\ Acceptor \cap FakeAcceptor = {}
+          /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+          /\ \A Q1, Q2 \in ByzQuorum : Q1 \cap Q2 \cap Acceptor # {}
+          /\ \A Q \in WeakQuorum : /\ Q \subseteq ByzAcceptor
+                                   /\ Q \cap Acceptor # {}
+
+ASSUME BQLA == 
+          /\ \E Q \in ByzQuorum : Q \subseteq Acceptor 
+          /\ \E Q \in WeakQuorum : Q \subseteq Acceptor 
+-----------
+... (truncated) ...
+  /\ m2.type = "2av"
+             /\ m1.acc \in Acceptor
+             /\ m1.acc = m2.acc
+             /\ m1.bal = m2.bal
+             => m1 = m2
+
+2avInv2 == \A m \in bmsgs : 
+             /\ m.type = "2av"
+             /\ m.acc \in Acceptor
+             => \E r \in 2avSent[m.acc] : /\ r.val = m.val 
+                                          /\ r.bal >= m.bal
+
+2avInv3 == \A m \in bmsgs : 
+             /\ m.type = "2av"
+             /\ m.acc \in Acceptor
+             => [type |-> "1c", bal |-> m.bal, val |-> m.val] \in msgs
+
+maxBalInv == \A m \in bmsgs :
+               /\ m.type \in {"1b", "2av", "2b"}
+               /\ m.acc \in Acceptor
+               => m.bal =< maxBal[m.acc]
+
+accInv == \A a \in Acceptor :
+            \A r \in 2avSent[a] : 
+              /\ r.bal =< maxBal[a]
+              /\ [type |-> "1c", bal |-> r.bal, val |-> r.val] \in msgs
+
+knowsSentInv == \A a \in Acceptor : knowsSent[a] \subseteq msgsOfType("1b")
+
+Inv == 
+ TypeOK /\ bmsgsFinite /\ 1bInv1 /\ 1bInv2 /\ maxBalInv  /\ 2avInv1 /\ 2avInv2 
+   /\ 2avInv3 /\ accInv /\ knowsSentInv
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+THEOREM Spec => []Inv    
+PROOF OBVIOUS
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg --files'
+check_proof_bin
+Consensus.tla
+VoteProof.tla
+PConProof.tla
+BPConProof_Inv.tla
+[EXIT 0]
+
+[AGENT] The target is an invariant proof over the local `Inv`. I’m going to read the adjacent modules now; their stripped theorem statements may give a reusable proof shape or a theorem I can instantiate.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' Consensus.tla"
+----------------------------- MODULE Consensus ------------------------------ 
+
+EXTENDS Naturals, FiniteSets, TLAPS
+
+CONSTANT Value  
+
+VARIABLE chosen
+
+vars == << chosen >>
+
+Init == 
+        /\ chosen = {}
+
+Next == /\ chosen = {}
+        /\ \E v \in Value:
+             chosen' = {v}
+
+Spec == Init /\ [][Next]_vars
+
+-----------------------------------------------------------------------------
+
+TypeOK == /\ chosen \subseteq Value
+          /\ IsFiniteSet(chosen) 
+
+Inv == /\ TypeOK
+       /\ Cardinality(chosen) \leq 1
+
+AXIOM EmptySetCardinality == IsFiniteSet({}) /\ Cardinality({}) = 0
+AXIOM SingletonCardinality == 
+          \A e : IsFiniteSet({e}) /\ (Cardinality({e}) = 1)
+
+SingleCardinalityTest == 
+  \A e \in SUBSET {"a", "b", "c"} : IsFiniteSet({e}) /\ (Cardinality({e}) = 1)
+
+LEMMA InductiveInvariance ==
+           Inv /\ [Next]_vars => Inv'
+  PROOF OMITTED
+
+THEOREM Invariance == Spec => []Inv 
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+LiveSpec == Spec /\ WF_vars(Next)
+Success == <>(chosen # {})
+
+ASSUME ValueNonempty == Value # {}
+
+LEMMA EnabledDef ==
+        TypeOK => 
+          ((ENABLED <<Next>>_vars) <=> (chosen = {}))
+  PROOF OMITTED
+
+THEOREM LiveSpec => Success
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM LiveSpecEquals ==
+          LiveSpec <=> Spec /\ ([]<><<Next>>_vars \/ []<>(chosen # {}))
+  PROOF OMITTED
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' PConProof.tla"
+---------------------------- MODULE PConProof -------------------------------
+
+EXTENDS Integers, TLAPS
+-----------------------------------------------------------------------------
+
+CONSTANT Value, Acceptor, Quorum
+
+ASSUME QA == /\ \A Q \in Quorum : Q \subseteq Acceptor 
+             /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {} 
+                                                                     
+Ballot ==  Nat
+
+ASSUME BallotAssump == (Ballot \cup {-1}) \cap Acceptor = {}
+
+None == CHOOSE v : v \notin Value
+
+Message ==      [type : {"1a"}, bal : Ballot]
+           \cup [type : {"1b"}, acc : Acceptor, bal : Ballot, 
+                 mbal : Ballot \cup {-1}, mval : Value \cup {None}]
+           \cup [type : {"1c"}, bal : Ballot, val : Value]
+           \cup [type : {"2a"}, bal : Ballot, val : Value]
+           \cup [type : {"2b"}, acc : Acceptor, bal : Ballot, val : Value]
+-----------------------------------------------------------------------------
+
+VARIABLES maxBal, maxVBal, maxVVal, msgs
+
+sentMsgs(t, b) == {m \in msgs : (m.type = t) /\ (m.bal = b)}
+
+ShowsSafeAt(Q, b, v) ==
+  LET Q1b == {m \in sentMsgs("1b", b) : m.acc \in Q}
+  IN  /\ \A a \in Q : \E m \in Q1b : m.acc = a
+      /\ \/ \A m \in Q1b : m.mbal = -1
+         \/ \E m1c \in msgs :
+              /\ m1c = [type |-> "1c", bal |-> m1c.bal, val |-> v]
+              /\ \A m \in Q1b : /\ m1c.bal \geq m.mbal
+                                /\ (m1c.bal = m.mbal) => (m.mval = v)
+
+vars == << maxBal, maxVBal, maxVVal, msgs >>
+
+Proc
+... (truncated) ...
+s == [a \in Acceptor |->  
+           {<<m.bal, m.val>> : m \in {mm \in msgs: /\ mm.type = "2b"
+                                                   /\ mm.acc = a }}]
+
+V == INSTANCE VoteProof 
+
+-----------------------------------------------------------------------------
+
+PAccInv == \A a \in Acceptor : 
+             /\ maxBal[a] >= maxVBal[a]
+             /\ \A b \in (maxVBal[a]+1)..(maxBal[a]-1) : V!DidNotVoteIn(a,b)
+             /\ (maxVBal[a] # -1) => V!VotedFor(a, maxVBal[a], maxVVal[a])
+             
+P1bInv == \A m \in msgs :
+             (m.type = "1b") => 
+               /\ (maxBal[m.acc] >= m.bal) /\ (m.bal > m.mbal)
+               /\ \A b \in (m.mbal+1)..(m.bal-1) : V!DidNotVoteIn(m.acc,b)
+
+P1cInv ==  \A m \in msgs : (m.type = "1c") => V!SafeAt(m.bal, m.val)
+
+P2aInv == \A m \in msgs : 
+            (m.type = "2a") => \E m1c \in msgs : /\ m1c.type = "1c"
+                                                 /\ m1c.bal = m.bal 
+                                                 /\ m1c.val = m.val
+
+THEOREM PT1 == TypeOK /\ P1bInv /\ P1cInv =>
+                 \A Q \in Quorum, b \in Ballot, v \in Value :
+                     ShowsSafeAt(Q, b, v) => V!SafeAt(b, v) 
+  PROOF OMITTED
+
+PInv == TypeOK /\ PAccInv /\ P1bInv /\ P1cInv /\ P2aInv  
+
+THEOREM Invariance == Spec => []PInv
+  PROOF OMITTED
+
+THEOREM Implementation == Spec => V!Spec
+  PROOF OMITTED
+
+THEOREM Spec => [](chosen = V!chosen)
+  PROOF OMITTED
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' VoteProof.tla"
+----------------------------- MODULE VoteProof ------------------------------ 
+
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+-----------------------------------------------------------------------------
+CONSTANT Value,     
+         Acceptor,  
+         Quorum     
+
+ASSUME QA == /\ \A Q \in Quorum : Q \subseteq Acceptor
+             /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}  
+ 
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+Ballot == Nat
+-----------------------------------------------------------------------------
+
+VARIABLES votes, maxBal
+
+VotedFor(a, b, v) == <<b, v>> \in votes[a]
+
+DidNotVoteIn(a, b) == \A v \in Value : ~ VotedFor(a, b, v)
+
+SafeAt(b, v) ==
+  LET SA[bb \in Ballot] ==
+        \/ bb = 0
+        \/ \E Q \in Quorum :
+             /\ \A a \in Q : maxBal[a] \geq bb
+             /\ \E c \in -1..(bb-1) :
+                  /\ (c # -1) => /\ SA[c]
+                                 /\ \A a \in Q :
+                                      \A w \in Value :
+                                         VotedFor(a, c, w) => (w = v)
+                  /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+  IN  SA[b]
+
+vars == << votes, maxBal >>
+
+ProcSet == (Acceptor)
+
+Init == 
+        /\ votes = [a \in Acceptor |-> {}]
+        /\ maxBal = [a \in Acceptor |-> -1]
+
+acceptor(self) == \E b \in Ballot:
+                    \/ /\ b > maxBal[self]
+                       /\ maxBal' = [maxBal EXC
+... (truncated) ...
+ AcceptorNonempty == Acceptor # {}
+
+LEMMA NextDef ==
+  TypeOK => 
+   (Next =  \E self \in Acceptor :
+                 \E b \in Ballot : BallotAction(self, b) )
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM InductiveInvariance == VInv /\ [Next]_vars => VInv'
+  PROOF OMITTED
+
+THEOREM InitImpliesInv == Init => VInv
+  PROOF OMITTED
+
+THEOREM VT2 == Spec => []VInv
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+C == INSTANCE Consensus 
+
+THEOREM VT3 == Spec => C!Spec 
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+ASSUME AcceptorFinite == IsFiniteSet(Acceptor)
+
+ASSUME ValueNonempty == Value # {}
+-----------------------------------------------------------------------------
+
+AXIOM SubsetOfFiniteSetFinite == 
+        \A S, T : IsFiniteSet(T) /\ (S \subseteq T) => IsFiniteSet(S)
+
+AXIOM FiniteSetHasMax == 
+        \A S \in SUBSET Int :
+          IsFiniteSet(S) /\ (S # {}) => \E max \in S : \A x \in S : max >= x
+
+AXIOM IntervalFinite == \A i, j \in Int : IsFiniteSet(i..j)
+-----------------------------------------------------------------------------
+
+THEOREM VT4 == TypeOK /\ VInv2 /\ VInv3  =>
+                \A Q \in Quorum, b \in Ballot :
+                   (\A a \in Q : (maxBal[a] >= b)) => \E v \in Value : SafeAt(b,v)
+
+  PROOF OMITTED
+
+-------------------------------------------------------------------------------
+
+LiveAssumption ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 257, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+                    /\ \A Q \in WeakQuorum :
+                          /\ Q \subseteq ByzAcceptor
+                          /\ Q \cap Acceptor # {},
+                  BQLA ==
+                    /\ \E Q \in ByzQuorum : Q \subseteq Acceptor
+                    /\ \E Q \in WeakQuorum : Q \subseteq Acceptor,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x)
+           PROVE  Spec => []Inv
+File "./BPConProof_Inv.tla", line 2, character 1 to line 262, character 78:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The imported modules are mostly high-level Paxos proofs with omitted proofs, but this theorem is about the local bookkeeping invariant. I’m checking the TLAPS library and then I’ll introduce a focused inductive invariant proof rather than trying to re-prove Paxos safety.
+
+[CMD] /bin/bash -lc 'rg "THEOREM|Induct|Invariant|Temporal" /home/ubuntu/.tlapm/lib/tlapm/stdlib -n'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:18:THEOREM Fun_RestrictProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:30:THEOREM Fun_RangeProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:44:THEOREM Fun_InverseProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:57:THEOREM Fun_IsInj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:62:THEOREM Fun_IsSurj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:67:THEOREM Fun_IsBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:85:THEOREM Fun_InjectionProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:90:THEOREM Fun_SurjectionProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:96:THEOREM Fun_BijectionProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:113:THEOREM Fun_SmallestSurjectionIsBijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:126:THEOREM Fun_InjTransitive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:132:THEOREM Fun_SurjTransitive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:138:THEOREM Fun_BijTransitive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:152:THEOREM Fun_SurjInverse ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:156:THEOREM Fun_InjInverse ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:168:THEOREM Fun_BijInverse ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/
+... (truncated) ...
+rsive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:144:THEOREM SubSeqOfSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:153:THEOREM ConcatAdjacentSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:163:THEOREM SubSeqOfConcat1 ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:168:THEOREM SubSeqOfConcat2 ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:177:THEOREM AppendProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:186:THEOREM AppendIsConcat ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:190:THEOREM HeadTailAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:195:THEOREM AppendInjective ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:199:THEOREM SequenceEmptyOrAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:204:(* Inductive reasoning for sequences                                       *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:207:THEOREM SequencesInductionAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:213:THEOREM SequencesInductionTail ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:224:THEOREM RangeOfSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:228:THEOREM RangeEquality ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:232:THEOREM SeqOfRange ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:237:THEOREM RangeConcatenation ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,240p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+ the goal before running one of the automated *)
+(* tactics. They are often necessary for obligations involving record  *)
+(* or tuple projections. Use the SimplfyAndSolve tactic unless you're  *)
+(* sure you can get away with just Simplification                      *)
+(***********************************************************************)
+SimplifyAndSolve        == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+SlowSimplifyAndSolve    == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:120) }*)
+SlowerSimplifyAndSolve  == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:480) }*)
+SlowestSimplifyAndSolve == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:960) }*)
+
+Simplification == TRUE (*{ by (prover:"isabelle"; tactic:"clarsimp") }*)
+SlowSimplification == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:120) }*)
+SlowerSimplification  == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:480) }*)
+SlowestSimplification == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:960) }*)
+
+(**************************************************************************)
+(* Backend pragma: Isabelle's tableau prover ("blast")                    *)
+(*                                                                        *)
+(* This pragma bypasses Zenon and uses Isabelle's built-in theorem        *)
+(* prover, Blast. It is almost never better than Zenon by itself, but     *)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "find /home/ubuntu/.tlapm/lib/tlapm/stdlib -maxdepth 1 -type f -printf '%f\\n' | sort"
+BagsTheorems_proofs.tla
+BagsTheorems.tla
+Bags.tla
+CommunityModules.jar
+FiniteSets.tla
+FiniteSetTheorems_proofs.tla
+FiniteSetTheorems.tla
+Folds.tla
+Functions.tla
+FunctionTheorems.tla
+NaturalsInduction_proofs.tla
+NaturalsInduction.tla
+RealTime.tla
+SequenceTheorems_proofs.tla
+SequenceTheorems.tla
+TLAPS.tla
+WellFoundedInduction_proofs.tla
+WellFoundedInduction.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '240,520p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+(* prover, Blast. It is almost never better than Zenon by itself, but     *)
+(* becomes very useful in combination with the Auto pragma above. The     *)
+(* AutoBlast pragma first attempts Auto and then uses Blast to prove what *)
+(* Auto could not prove. (There is currently no way to use Zenon on the   *)
+(* results left over from Auto.)                                          *)
+(**************************************************************************)
+Blast == TRUE (*{ by (prover:"isabelle"; tactic:"blast") }*)
+SlowBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:120) }*)
+SlowerBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:480) }*)
+SlowestBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:960) }*)
+
+AutoBlast == TRUE (*{ by (prover:"isabelle"; tactic:"auto, blast") }*)
+
+
+(**************************************************************************)
+(* Backend pragmas: multi-back-ends                                       *)
+(*                                                                        *)
+(* These pragmas just run a bunch of back-ends one after the other in the *)
+(* hope that one will succeed. This saves time and effort for the user at *)
+(* the expense of computation time.                                       *)
+(**************************************************************************)
+
+(* CVC3 goes first because it's bundled with TLAPS, then the other SMT
+   solvers are unlikely to succeed if CVC3 fails, so 
+... (truncated) ...
+~EM)
+
+
+(***************************************************************************)
+(* The following rule is a special case of the general temporal logic      *)
+(* proof rule STL4 from the paper "The Temporal Logic of Actions".  The    *)
+(* general rule is for arbitrary temporal formulas F and G, but it cannot  *)
+(* yet be handled by TLAPS.                                                *)
+(***************************************************************************)
+THEOREM RuleInvImplication ==
+  ASSUME STATE F, STATE G,
+         F => G
+  PROVE  []F => []G
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following rule is a special case of rule TLA2 from the paper "The   *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleStepSimulation ==
+  ASSUME STATE I, STATE f, STATE g,
+         ACTION M, ACTION N,
+         I /\ I' /\ [M]_f => [N]_g
+  PROVE  []I /\ [][M]_f => [][N]_g
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following may be used to invoke a decision procedure for            *)
+(* propositional temporal logic.                                           *)
+(***************************************************************************)
+PropositionalTemporalLogic == TRUE
+=============================================================================
+[EXIT 0]
+
+[AGENT] I’m going to start with the standard invariant split: prove `Init => Inv`, prove `Inv /\ [Next]_vars => Inv'`, then discharge the temporal theorem with `PTL`. The first attempt will deliberately expose all definitions to the backends; if that is too coarse, I’ll split the failed obligation by action and invariant conjunct.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 268, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup FakeAcceptor,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+         
+... (truncated) ...
+       /\ r.bal =< maxBal[a]
+                          /\ [type |-> "1c", bal |-> r.bal, val |-> r.val]
+                             \in msgs,
+                  knowsSentInv ==
+                    \A a \in Acceptor :
+                       knowsSent[a] \subseteq msgsOfType("1b"),
+                  Inv ==
+                    TypeOK /\ bmsgsFinite /\ 1bInv1 /\ 1bInv2 /\ maxBalInv
+                    /\ 2avInv1 /\ 2avInv2 /\ 2avInv3 /\ accInv
+                    /\ knowsSentInv,
+                  EmptySetFinite ,
+                  SingletonSetFinite ,
+                  ImageOfFiniteSetFinite ,
+                  SubsetOfFiniteSetFinite ,
+                  UnionOfFiniteSetsFinite ,
+                  SMTT(20) 
+           PROVE  Init => Inv
+File "./BPConProof_Inv.tla", line 2, character 1 to line 284, character 78:
+[ERROR]: 2/18 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The coarse proof leaves only the two state obligations failing, so the temporal step is fine. I’ll tighten the state proofs next, starting with better expansion and then splitting any remaining cases.
+
+[AGENT] The broad backend search is taking longer than useful. I’m going to stop relying on one large obligation and replace it with smaller, action-specific lemmas so failures point to the exact invariant clause.
+
+[CMD] /bin/bash -lc "pkill -f '/home/ubuntu/.tlapm/bin/tlapm'"
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+Executable "cvc4" not found in this PATH:
+/home/ubuntu/.tlapm/lib/tlapm/backends/bin:/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/bin:/home/ubuntu/.local/bin:/home/ubuntu/.codex/tmp/arg0/codex-arg0Ksio6z:/home/ubuntu/.nvm/versions/node/v20.19.6/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/ubuntu/.nvm/versions/node/v20.19.6/bin:/tmp/codex_bench_BPConProof_Inv_8kps2whq/node_modules/.bin:/tmp/node_modules/.bin:/node_modules/.bin:/home/ubuntu/.nvm/versions/node/v20.19.6/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin:/home/ubuntu/.local/bin:/home/ubuntu/.local/bin:/home/ubuntu/.nvm/versions/node/v20.19.6/bin:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/ubuntu/.vscode-server/cli/servers/Stable-f6cfa2ea2403534de03f069bdf160d06451ed282/server/bin/remote-cli:/home/ubuntu/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+Executable "SPASS" not found in this PATH:
+/home/ubuntu/.tlapm/lib/tlapm/backends/bin:/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/bin:/home/ubuntu/.local/bin:/home/ubuntu/.codex/tmp/arg0/codex-arg0Ksio6z:/home/ubuntu/.nvm/versions/node/v20.19.6/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/ubuntu/.nvm/versions/n
+... (truncated) ...
+ex_bench_BPConProof_Inv_8kps2whq/node_modules/.bin:/tmp/node_modules/.bin:/node_modules/.bin:/home/ubuntu/.nvm/versions/node/v20.19.6/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin:/home/ubuntu/.local/bin:/home/ubuntu/.local/bin:/home/ubuntu/.nvm/versions/node/v20.19.6/bin:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/ubuntu/.vscode-server/cli/servers/Stable-f6cfa2ea2403534de03f069bdf160d06451ed282/server/bin/remote-cli:/home/ubuntu/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+ tlapm ending abnormally with Unix.Unix_error(Unix.EINTR, "select", "")
+Raised by primitive operation at Tlapm_lib__Schedule.run.spin in file "src/backend/schedule.ml", line 149, characters 26-54
+Called from Tlapm_lib__Schedule.run in file "src/backend/schedule.ml", line 183, characters 4-14
+Called from Tlapm_lib.process_obs in file "src/tlapm_lib.ml", line 236, characters 4-42
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "pkill -f check_proof_bin; pkill -f '/home/ubuntu/.tlapm/bin/tlapm'"
+[EXIT -1]
+
+[CMD] /bin/bash -lc 'file check_proof_bin && ./check_proof_bin BPConProof_Inv.tla --level 1'
+[EXIT -1]
+
+[CMD] /bin/bash -lc 'ls /home/ubuntu/.tlapm/lib/tlapm/backends/bin'
+ls4
+ptl_to_trp
+z3
+zenon
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 269, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup FakeAcceptor,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+         
+... (truncated) ...
+        /\ r.bal =< maxBal[a]
+                          /\ [type |-> "1c", bal |-> r.bal, val |-> r.val]
+                             \in msgs,
+                  knowsSentInv ==
+                    \A a \in Acceptor :
+                       knowsSent[a] \subseteq msgsOfType("1b"),
+                  Inv ==
+                    TypeOK /\ bmsgsFinite /\ 1bInv1 /\ 1bInv2 /\ maxBalInv
+                    /\ 2avInv1 /\ 2avInv2 /\ 2avInv3 /\ accInv
+                    /\ knowsSentInv,
+                  EmptySetFinite ,
+                  SingletonSetFinite ,
+                  ImageOfFiniteSetFinite ,
+                  SubsetOfFiniteSetFinite ,
+                  UnionOfFiniteSetsFinite ,
+                  Z3T(20) 
+           PROVE  Init => Inv
+File "./BPConProof_Inv.tla", line 2, character 1 to line 285, character 78:
+[ERROR]: 2/18 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 285, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup FakeAcceptor,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+         
+... (truncated) ...
+                 /\ maxBal = [a \in Acceptor |-> -1]
+                    /\ maxVBal = [a \in Acceptor |-> -1]
+                    /\ maxVVal = [a \in Acceptor |-> None]
+                    /\ 2avSent = [a \in Acceptor |-> {}]
+                    /\ knowsSent = [a \in Acceptor |-> {}]
+                    /\ bmsgs = {},
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  1bOr2bMsgs == {m \in bmsgs : m.type \in {"1b", "2b"}},
+                  bmsgsFinite == IsFiniteSet(1bOr2bMsgs),
+                  EmptySetFinite ,
+                  Z3T(20) 
+           PROVE  Init => bmsgsFinite
+File "./BPConProof_Inv.tla", line 2, character 1 to line 301, character 78:
+[ERROR]: 2/43 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 287, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup FakeAcceptor,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+         
+... (truncated) ...
+l =< maxBal[a]
+                          /\ [type |-> "1c", bal |-> r.bal, val |-> r.val]
+                             \in msgs,
+                  knowsSentInv ==
+                    \A a \in Acceptor :
+                       knowsSent[a] \subseteq msgsOfType("1b"),
+                  Inv ==
+                    TypeOK /\ bmsgsFinite /\ 1bInv1 /\ 1bInv2 /\ maxBalInv
+                    /\ 2avInv1 /\ 2avInv2 /\ 2avInv3 /\ accInv
+                    /\ knowsSentInv,
+                  EmptySetFinite ,
+                  SingletonSetFinite ,
+                  ImageOfFiniteSetFinite ,
+                  SubsetOfFiniteSetFinite ,
+                  UnionOfFiniteSetsFinite ,
+                  Z3T(20) 
+           PROVE  Inv /\ [Next]_vars => Inv'
+File "./BPConProof_Inv.tla", line 2, character 1 to line 303, character 78:
+[ERROR]: 1/45 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] `Init => Inv` now verifies. The remaining proof is the inductive step, so I’m adding named sub-actions for the four acceptor branches and the two non-acceptor branches; that gives TLAPS smaller obligations and lets the uniqueness arguments cite the exact preconditions.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+File "./BPConProof_Inv.tla", line 352, character 18
+Unexpected ,
+File "<unknown>":
+Error: Could not parse "./BPConProof_Inv.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '330,370p'"
+   330	<1>9. Init => 2avInv3
+   331	  BY Z3T(20) DEF Init, 2avInv3
+   332	<1>10. Init => accInv
+   333	  BY Z3T(20) DEF Init, accInv
+   334	<1>11. Init => knowsSentInv
+   335	  BY Z3T(20) DEF Init, knowsSentInv, msgsOfType
+   336	<1> QED
+   337	  BY <1>1, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10, <1>11
+   338	  DEF Inv
+   339	
+   340	LEMMA InvDo1b ==
+   341	  \A self \in Acceptor, b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+   342	PROOF
+   343	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   344	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   345	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   346	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   347	      Do1b, sentMsgs, KnowsSafeAt,
+   348	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   349	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   350	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   351	
+   352	LEMMA InvDo2av ==
+   353	  \A self \in Acceptor, b \in Ballot, m : Inv /\ Do2av(self, b, m) => Inv'
+   354	PROOF
+   355	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   356	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   357	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   358	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   359	      Do2av, sentMsgs, KnowsSafeAt,
+   360	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   361	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   362	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   363	
+   364	LEMMA InvDo2b ==
+   365	  \A self \in Acceptor, b \in Ballot, v : Inv /\ Do2b(self, b, v) => Inv'
+   366	PROOF
+   367	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   368	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   369	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   370	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* loading fingerprints in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 447, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+                    /\ \A Q \in WeakQuorum :
+                          /\ Q \sub
+... (truncated) ...
+                    \cup {[type |-> "1b", 
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  EmptySetFinite ,
+                  SingletonSetFinite ,
+                  ImageOfFiniteSetFinite ,
+                  SubsetOfFiniteSetFinite ,
+                  UnionOfFiniteSetsFinite ,
+                  BQA ,
+                  Z3T(20) 
+           PROVE  \A self \in Acceptor :
+                     \A b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+File "./BPConProof_Inv.tla", line 2, character 1 to line 462, character 78:
+[ERROR]: 9/116 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '338,455p'"
+   338	  DEF Inv
+   339	
+   340	LEMMA InvDo1b ==
+   341	  \A self \in Acceptor : \A b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+   342	PROOF
+   343	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   344	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   345	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   346	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   347	      Do1b, sentMsgs, KnowsSafeAt,
+   348	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   349	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   350	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   351	
+   352	LEMMA InvDo2av ==
+   353	  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+   354	PROOF
+   355	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   356	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   357	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   358	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   359	      Do2av, sentMsgs, KnowsSafeAt,
+   360	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   361	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   362	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   363	
+   364	LEMMA InvDo2b ==
+   365	  \A self \in Acceptor : \A b \in Ballot : \A v : Inv /\ Do2b(self, b, v) => Inv'
+   366	PROOF
+   3
+... (truncated) ...
+maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   419	      DoFake, sentMsgs, KnowsSafeAt,
+   420	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   421	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   422	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   423	
+   424	LEMMA InvAcceptor ==
+   425	  \A self \in Acceptor : Inv /\ acceptor(self) => Inv'
+   426	PROOF
+   427	  BY InvDo1b, InvDo2av, InvDo2b, InvDoLearn1b, Z3T(20)
+   428	  DEF acceptor, Do1b, Do2av, Do2b, DoLearn1b
+   429	
+   430	LEMMA InvLeader ==
+   431	  \A self \in Ballot : Inv /\ leader(self) => Inv'
+   432	PROOF
+   433	  BY InvDoLeader1a, InvDoLeader1c, Z3T(20)
+   434	  DEF leader, DoLeader1a, DoLeader1c
+   435	
+   436	LEMMA InvFake ==
+   437	  \A self \in FakeAcceptor : Inv /\ facceptor(self) => Inv'
+   438	PROOF
+   439	  BY InvDoFake, Z3T(20)
+   440	  DEF facceptor, DoFake
+   441	
+   442	LEMMA InvNext == Inv /\ [Next]_vars => Inv'
+   443	PROOF
+   444	<1>1. Inv /\ Next => Inv'
+   445	  BY InvAcceptor, InvLeader, InvFake DEF Next
+   446	<1>2. Inv /\ UNCHANGED vars => Inv'
+   447	  BY Z3T(20)
+   448	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   449	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   450	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   451	      1bRestrict, Quorum, sentMsgs, KnowsSafeAt, vars
+   452	<1> QED
+   453	  BY <1>1, <1>2 DEF vars
+   454	
+   455	THEOREM Spec => []Inv
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* loading fingerprints in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 458, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+                    /\ \A Q \in WeakQuorum :
+                          /\ Q \sub
+... (truncated) ...
+                    \cup {[type |-> "1b", 
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  EmptySetFinite ,
+                  SingletonSetFinite ,
+                  ImageOfFiniteSetFinite ,
+                  SubsetOfFiniteSetFinite ,
+                  UnionOfFiniteSetsFinite ,
+                  BQA ,
+                  Z3T(20) 
+           PROVE  \A self \in Acceptor :
+                     \A b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+File "./BPConProof_Inv.tla", line 2, character 1 to line 473, character 78:
+[ERROR]: 9/119 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line'"
+File "./BPConProof_Inv.tla", line 458, characters 3-4:
+File "./BPConProof_Inv.tla", line 438, characters 3-4:
+File "./BPConProof_Inv.tla", line 426, characters 3-4:
+File "./BPConProof_Inv.tla", line 414, characters 3-4:
+File "./BPConProof_Inv.tla", line 402, characters 3-4:
+File "./BPConProof_Inv.tla", line 390, characters 3-4:
+File "./BPConProof_Inv.tla", line 378, characters 3-4:
+File "./BPConProof_Inv.tla", line 366, characters 3-4:
+File "./BPConProof_Inv.tla", line 354, characters 3-4:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 473, character 78:
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '342,465p'"
+   342	    /\ maxBal' = maxBal
+   343	    /\ maxVBal' = maxVBal
+   344	    /\ maxVVal' = maxVVal
+   345	    /\ 2avSent' = 2avSent
+   346	    /\ knowsSent' = knowsSent
+   347	    /\ bmsgs' = bmsgs
+   348	PROOF
+   349	  BY Z3T(20) DEF vars
+   350	
+   351	LEMMA InvDo1b ==
+   352	  \A self \in Acceptor : \A b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+   353	PROOF
+   354	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   355	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   356	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   357	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   358	      Do1b, sentMsgs, KnowsSafeAt,
+   359	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   360	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   361	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   362	
+   363	LEMMA InvDo2av ==
+   364	  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+   365	PROOF
+   366	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   367	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Z3T(20)
+   368	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   369	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   370	      Do2av, sentMsgs, KnowsSafeAt,
+   371	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   372	      1bRestrict, Quorum, BMessage, 1aMessage, 1
+... (truncated) ...
+nv2,
+   429	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   430	      DoFake, sentMsgs, KnowsSafeAt,
+   431	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   432	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   433	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   434	
+   435	LEMMA InvAcceptor ==
+   436	  \A self \in Acceptor : Inv /\ acceptor(self) => Inv'
+   437	PROOF
+   438	  BY InvDo1b, InvDo2av, InvDo2b, InvDoLearn1b, Z3T(20)
+   439	  DEF acceptor, Do1b, Do2av, Do2b, DoLearn1b
+   440	
+   441	LEMMA InvLeader ==
+   442	  \A self \in Ballot : Inv /\ leader(self) => Inv'
+   443	PROOF
+   444	  BY InvDoLeader1a, InvDoLeader1c, Z3T(20)
+   445	  DEF leader, DoLeader1a, DoLeader1c
+   446	
+   447	LEMMA InvFake ==
+   448	  \A self \in FakeAcceptor : Inv /\ facceptor(self) => Inv'
+   449	PROOF
+   450	  BY InvDoFake, Z3T(20)
+   451	  DEF facceptor, DoFake
+   452	
+   453	LEMMA InvNext == Inv /\ [Next]_vars => Inv'
+   454	PROOF
+   455	<1>1. Inv /\ Next => Inv'
+   456	  BY InvAcceptor, InvLeader, InvFake DEF Next
+   457	<1>2. Inv /\ UNCHANGED vars => Inv'
+   458	  BY VarsUnchanged, Z3T(20)
+   459	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   460	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   461	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   462	      1bRestrict, Quorum, sentMsgs, KnowsSafeAt, vars
+   463	<1> QED
+   464	  BY <1>1, <1>2 DEF vars
+   465
+[EXIT 0]
+
+[AGENT] The split shows the remaining obligations are all per-action preservation facts and one stutter fact. They are mostly set/record simplification, so I’m switching those obligations from Z3 to Isabelle’s `force` backend before going into hand proofs.
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/BQA, Z3T\\(20\\)/BQA, SlowForce/g; s/InvDoLearn1b, Z3T\\(20\\)/InvDoLearn1b, SlowForce/g; s/InvDoLeader1c, Z3T\\(20\\)/InvDoLeader1c, SlowForce/g; s/InvDoFake, Z3T\\(20\\)/InvDoFake, SlowForce/g; s/VarsUnchanged, Z3T\\(20\\)/VarsUnchanged, SlowForce/g' BPConProof_Inv.tla"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '351,464p'"
+   351	LEMMA InvDo1b ==
+   352	  \A self \in Acceptor : \A b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+   353	PROOF
+   354	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   355	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, SlowForce
+   356	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   357	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   358	      Do1b, sentMsgs, KnowsSafeAt,
+   359	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   360	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   361	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   362	
+   363	LEMMA InvDo2av ==
+   364	  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+   365	PROOF
+   366	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   367	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, SlowForce
+   368	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   369	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   370	      Do2av, sentMsgs, KnowsSafeAt,
+   371	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   372	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   373	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   374	
+   375	LEMMA InvDo2b ==
+   376	  \A self \in Acceptor : \A b \in Ballot : \A v : Inv /\ Do2b(self, b, v) => Inv'
+   377	PROOF
+   378	  BY EmptySetFinit
+... (truncated) ...
+nv2,
+   429	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   430	      DoFake, sentMsgs, KnowsSafeAt,
+   431	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   432	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   433	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   434	
+   435	LEMMA InvAcceptor ==
+   436	  \A self \in Acceptor : Inv /\ acceptor(self) => Inv'
+   437	PROOF
+   438	  BY InvDo1b, InvDo2av, InvDo2b, InvDoLearn1b, SlowForce
+   439	  DEF acceptor, Do1b, Do2av, Do2b, DoLearn1b
+   440	
+   441	LEMMA InvLeader ==
+   442	  \A self \in Ballot : Inv /\ leader(self) => Inv'
+   443	PROOF
+   444	  BY InvDoLeader1a, InvDoLeader1c, SlowForce
+   445	  DEF leader, DoLeader1a, DoLeader1c
+   446	
+   447	LEMMA InvFake ==
+   448	  \A self \in FakeAcceptor : Inv /\ facceptor(self) => Inv'
+   449	PROOF
+   450	  BY InvDoFake, SlowForce
+   451	  DEF facceptor, DoFake
+   452	
+   453	LEMMA InvNext == Inv /\ [Next]_vars => Inv'
+   454	PROOF
+   455	<1>1. Inv /\ Next => Inv'
+   456	  BY InvAcceptor, InvLeader, InvFake DEF Next
+   457	<1>2. Inv /\ UNCHANGED vars => Inv'
+   458	  BY VarsUnchanged, SlowForce
+   459	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   460	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   461	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   462	      1bRestrict, Quorum, sentMsgs, KnowsSafeAt, vars
+   463	<1> QED
+   464	  BY <1>1, <1>2 DEF vars
+[EXIT 0]
+
+[CMD] /bin/bash -lc "pkill -f '/home/ubuntu/.tlapm/bin/tlapm'"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+[EXIT -1]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 444, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 438, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 426, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 414, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 402, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 390, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 378, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 366, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 354, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 473, character 78:
+[ERROR]: 9/119 obligations failed.
+[EXIT 0]
+
+[AGENT] The automatic backends now prove the stutter case, but each real action still needs guidance. I’m adding reusable facts for the two recurring proof obligations: finite preservation when `bmsgs` grows by one item, and monotonicity of the derived `msgs` set when `bmsgs` and `knowsSent` grow.
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 471, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 429, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 417, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 405, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 393, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 381, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 374, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 367, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 500, character 78:
+[ERROR]: 11/133 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '355,480p'"
+   355	             \subseteq 1bOr2bMsgs \cup {x}
+   356	  BY Z3T(20) DEF 1bOr2bMsgs
+   357	<1>2. \A x : bmsgsFinite => IsFiniteSet(1bOr2bMsgs \cup {x})
+   358	  BY SingletonSetFinite, UnionOfFiniteSetsFinite DEF bmsgsFinite
+   359	<1> QED
+   360	  BY <1>1, <1>2, SubsetOfFiniteSetFinite
+   361	
+   362	LEMMA KnowsSafeAtMono ==
+   363	  \A ac \in Acceptor : \A b \in Ballot : \A v \in Value :
+   364	    knowsSent[ac] \subseteq knowsSent'[ac] =>
+   365	      (KnowsSafeAt(ac, b, v) => KnowsSafeAt(ac, b, v)')
+   366	PROOF
+   367	  BY Force DEF KnowsSafeAt
+   368	
+   369	LEMMA MsgsMono ==
+   370	  /\ bmsgs \subseteq bmsgs'
+   371	  /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+   372	  => msgs \subseteq msgs'
+   373	PROOF
+   374	  BY KnowsSafeAtMono, Force
+   375	  DEF msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   376	      1bRestrict, Quorum, sentMsgs, KnowsSafeAt, Ballot
+   377	
+   378	LEMMA InvDo1b ==
+   379	  \A self \in Acceptor : \A b \in Ballot : Inv /\ Do1b(self, b) => Inv'
+   380	PROOF
+   381	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   382	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Force
+   383	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   384	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   385	      Do1b, sentMsgs, KnowsSafeAt,
+   386	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   387	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMes
+... (truncated) ...
+pe, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   447	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   448	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   449	
+   450	LEMMA InvDoFake ==
+   451	  \A self \in FakeAcceptor : \A m : Inv /\ DoFake(self, m) => Inv'
+   452	PROOF
+   453	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   454	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA, Force
+   455	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   456	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   457	      DoFake, sentMsgs, KnowsSafeAt,
+   458	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   459	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   460	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   461	
+   462	LEMMA InvAcceptor ==
+   463	  \A self \in Acceptor : Inv /\ acceptor(self) => Inv'
+   464	PROOF
+   465	  BY InvDo1b, InvDo2av, InvDo2b, InvDoLearn1b, Force
+   466	  DEF acceptor, Do1b, Do2av, Do2b, DoLearn1b
+   467	
+   468	LEMMA InvLeader ==
+   469	  \A self \in Ballot : Inv /\ leader(self) => Inv'
+   470	PROOF
+   471	  BY InvDoLeader1a, InvDoLeader1c, Force
+   472	  DEF leader, DoLeader1a, DoLeader1c
+   473	
+   474	LEMMA InvFake ==
+   475	  \A self \in FakeAcceptor : Inv /\ facceptor(self) => Inv'
+   476	PROOF
+   477	  BY InvDoFake, Force
+   478	  DEF facceptor, DoFake
+   479	
+   480	LEMMA InvNext == Inv /\ [Next]_vars => Inv'
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 471, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 429, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 417, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 405, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 393, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 381, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 374, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 500, character 78:
+[ERROR]: 10/133 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 490, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 460, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 448, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 436, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 424, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 412, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 400, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 393, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 389, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 385, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 381, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 377, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 519, character 78:
+[ERROR]: 14/148 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 490, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 460, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 448, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 436, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 424, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 412, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 400, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 393, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 389, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 385, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 381, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 377, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 519, character 78:
+[ERROR]: 14/148 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+(* loading fingerprints in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+(* created new ".tlacache/BPConProof_Inv.tlaps/BPConProof_Inv.thy" *)
+(* fingerprints written in ".tlacache/BPConProof_Inv.tlaps/fingerprints" *)
+File "./BPConProof_Inv.tla", line 490, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+                    /\ \A Q \in WeakQuorum :
+                          /\ Q \sub
+... (truncated) ...
+
+                  BQLA ==
+                    /\ \E Q \in ByzQuorum : Q \subseteq Acceptor
+                    /\ \E Q \in WeakQuorum : Q \subseteq Acceptor,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  msgsOfType(t) == {m \in bmsgs : m.type = t},
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  Force 
+           PROVE  msgsOfType("1a") \subseteq msgsOfType("1a")'
+File "./BPConProof_Inv.tla", line 2, character 1 to line 519, character 78:
+[ERROR]: 14/148 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "sed -n '369,396p' BPConProof_Inv.tla"
+LEMMA MsgsMono ==
+  /\ bmsgs \subseteq bmsgs'
+  /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+  => msgs \subseteq msgs'
+PROOF
+<1>1. ASSUME /\ bmsgs \subseteq bmsgs'
+              /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+       PROVE  msgsOfType("1a") \subseteq msgsOfType("1a")'
+  BY Force DEF msgsOfType
+<1>2. ASSUME /\ bmsgs \subseteq bmsgs'
+              /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+       PROVE  acceptorMsgsOfType("2b") \subseteq acceptorMsgsOfType("2b")'
+  BY Force DEF acceptorMsgsOfType, msgsOfType
+<1>3. ASSUME /\ bmsgs \subseteq bmsgs'
+              /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+       PROVE  1bmsgs \subseteq 1bmsgs'
+  BY Force DEF 1bmsgs, acceptorMsgsOfType, msgsOfType, 1bRestrict
+<1>4. ASSUME /\ bmsgs \subseteq bmsgs'
+              /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+       PROVE  1cmsgs \subseteq 1cmsgs'
+  BY KnowsSafeAtMono, Force DEF 1cmsgs, msgsOfType
+<1>5. ASSUME /\ bmsgs \subseteq bmsgs'
+              /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+       PROVE  2amsgs \subseteq 2amsgs'
+  BY Force DEF 2amsgs, acceptorMsgsOfType, msgsOfType, Quorum
+<1> QED
+  BY <1>1, <1>2, <1>3, <1>4, <1>5, Force DEF msgs
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 491, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 479, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 467, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 455, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 443, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 431, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 419, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 407, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 526, character 78:
+[ERROR]: 9/152 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 511, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 498, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 485, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 459, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 446, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 433, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 420, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 546, character 78:
+[ERROR]: 9/170 obligations failed.
+[EXIT 0]
+
+[AGENT] The generic facts are now verified. I’m splitting the first acceptor branch (`Do1b`) into the individual invariant conjuncts so TLAPS can prove each preservation fact with the exact action assumptions in scope.
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 534, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 515, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 502, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 489, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 476, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 442, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 440, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 438, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 436, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 434, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 432, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 430, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 428, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 426, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 422, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 563, character 78:
+[ERROR]: 18/197 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '414,545p'"
+   414	  BY MsgsOfTypeMono, AcceptorMsgsOfTypeMono, OneBMsgsMono, OneCMsgsMono,
+   415	     TwoAMsgsMono, Z3T(20) DEF msgs
+   416	
+   417	LEMMA InvDo1b ==
+   418	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   419	  PROVE  Inv /\ Do1b(self, b) => Inv'
+   420	PROOF
+   421	<1>1. ASSUME Inv, Do1b(self, b) PROVE TypeOK'
+   422	  BY BQA, Force
+   423	  DEF Inv, TypeOK, Do1b, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   424	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   425	<1>2. ASSUME Inv, Do1b(self, b) PROVE bmsgsFinite'
+   426	  BY AddBmsgFinite DEF Inv, bmsgsFinite, Do1b
+   427	<1>3. ASSUME Inv, Do1b(self, b) PROVE 1bInv1'
+   428	  BY MsgsMono, Force DEF Inv, 1bInv1, accInv, Do1b
+   429	<1>4. ASSUME Inv, Do1b(self, b) PROVE 1bInv2'
+   430	  BY Force DEF Inv, 1bInv2, maxBalInv, Do1b
+   431	<1>5. ASSUME Inv, Do1b(self, b) PROVE maxBalInv'
+   432	  BY Force DEF Inv, maxBalInv, Do1b
+   433	<1>6. ASSUME Inv, Do1b(self, b) PROVE 2avInv1'
+   434	  BY Force DEF Inv, 2avInv1, Do1b
+   435	<1>7. ASSUME Inv, Do1b(self, b) PROVE 2avInv2'
+   436	  BY MsgsMono, Force DEF Inv, 2avInv2, Do1b
+   437	<1>8. ASSUME Inv, Do1b(self, b) PROVE 2avInv3'
+   438	  BY MsgsMono, Force DEF Inv, 2avInv3, Do1b
+   439	<1>9. ASSUME Inv, Do1b(self, b) PROVE accInv'
+   440	  BY MsgsMono, Force DEF Inv, accInv, Do1b
+   441	<1>10. ASSUME Inv, Do1b(self, b) PROVE knowsSentInv'
+   442	  BY MsgsMono, Force DEF Inv, knowsSentInv, Do1b
+   443	<1> QED
+   444	  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, 
+... (truncated) ...
+essage, 1aMessage, 1bMessage, 1cMessage,
+   510	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   511	
+   512	LEMMA InvDoFake ==
+   513	  \A self \in FakeAcceptor : \A m : Inv /\ DoFake(self, m) => Inv'
+   514	PROOF
+   515	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   516	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA,
+   517	     AddBmsgFinite, MsgsMono, Force
+   518	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   519	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   520	      DoFake, sentMsgs, KnowsSafeAt,
+   521	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   522	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   523	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   524	
+   525	LEMMA InvAcceptor ==
+   526	  \A self \in Acceptor : Inv /\ acceptor(self) => Inv'
+   527	PROOF
+   528	  BY InvDo1b, InvDo2av, InvDo2b, InvDoLearn1b, Force
+   529	  DEF acceptor, Do1b, Do2av, Do2b, DoLearn1b
+   530	
+   531	LEMMA InvLeader ==
+   532	  \A self \in Ballot : Inv /\ leader(self) => Inv'
+   533	PROOF
+   534	  BY InvDoLeader1a, InvDoLeader1c, Force
+   535	  DEF leader, DoLeader1a, DoLeader1c
+   536	
+   537	LEMMA InvFake ==
+   538	  \A self \in FakeAcceptor : Inv /\ facceptor(self) => Inv'
+   539	PROOF
+   540	  BY InvDoFake, Force
+   541	  DEF facceptor, DoFake
+   542	
+   543	LEMMA InvNext == Inv /\ [Next]_vars => Inv'
+   544	PROOF
+   545	<1>1. Inv /\ Next => Inv'
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | sed -n '/line 421/,/line 425/p'"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg -A80 -B5 'line 421|line 422'"
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  AddBmsgFinite 
+           PROVE  bmsgsFinite'
+File "./BPConProof_Inv.tla", line 422, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup FakeAcceptor,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A 
+... (truncated) ...
+               BMessage ==
+                    1aMessage \cup 1bMessage \cup 1cMessage \cup 2avMessage
+                    \cup 2bMessage,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVVal,
+                  NEW VARIABLE 2avSent,
+                  NEW VARIABLE knowsSent,
+                  NEW VARIABLE bmsgs,
+                  FiniteSetHasMax ==
+                    \A S \in SUBSET Int :
+                       IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  TypeOK ==
+                    /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+                    /\ 2avSent
+                       \in [Acceptor -> SUBSET [val : Value, bal : Ballot]]
+                    /\ maxVBal \in [Acceptor -> Ballot \cup {-1}]
+                    /\ maxVVal \in [Acceptor -> Value \cup {None}]
+                    /\ knowsSent \in [Acceptor -> SUBSET 1bMessage]
+                    /\ bmsgs \subseteq BMessage,
+                  Inv ==
+                    TypeOK /\ bmsgsFinite /\ 1bInv1 /\ 1bInv2 /\ maxBalInv
+                    /\ 2avInv1 /\ 2avInv2 /\ 2avInv3 /\ accInv
+                    /\ knowsSentInv,
+                  Do1b(self, b) ==
+                    /\ b > maxBal[self]
+                    /\ sentMsgs("1a", b) # {}
+                    /\ maxBal' = [maxBal EXCEPT !
+                                   [self] = b]
+                    /\ bmsgs'
+                       = bmsgs
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg -A140 -B10 'line 422'"
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  AddBmsgFinite 
+           PROVE  bmsgsFinite'
+File "./BPConProof_Inv.tla", line 422, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup Fake
+... (truncated) ...
+     /\ sentMsgs("1a", b) # {}
+                    /\ maxBal' = [maxBal EXCEPT !
+                                   [self] = b]
+                    /\ bmsgs'
+                       = bmsgs
+                         \cup {[type |-> "1b", 
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  BQA ,
+                  Force 
+           PROVE  TypeOK'
+File "./BPConProof_Inv.tla", line 2, character 1 to line 563, character 78:
+[ERROR]: 18/197 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 537, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 531, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 518, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 505, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 492, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 479, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 466, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 444, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 442, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 440, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 438, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 436, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 434, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 432, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 430, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 428, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 424, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 566, character 78:
+[ERROR]: 18/199 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg -A100 -B10 'line 424'"
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  AddBmsgFinite 
+           PROVE  bmsgsFinite'
+File "./BPConProof_Inv.tla", line 424, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cup Fake
+... (truncated) ...
+Inv1 /\ 2avInv2 /\ 2avInv3 /\ accInv
+                    /\ knowsSentInv,
+                  Do1b(self, b) ==
+                    /\ b > maxBal[self]
+                    /\ sentMsgs("1a", b) # {}
+                    /\ maxBal' = [maxBal EXCEPT !
+                                   [self] = b]
+                    /\ bmsgs'
+                       = bmsgs
+                         \cup {[type |-> "1b", 
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  BQA ,
+                  Force 
+           PROVE  TypeOK'
+File "./BPConProof_Inv.tla", line 2, character 1 to line 566, character 78:
+[ERROR]: 18/199 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 537, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 531, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 518, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 505, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 492, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 479, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 466, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 444, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 442, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 440, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 438, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 436, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 434, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 432, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 430, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 428, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 424, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 566, character 78:
+[ERROR]: 18/200 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 549, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 504, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 491, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 478, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 456, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 454, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 452, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 448, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 446, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 444, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 442, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 440, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 436, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 578, character 78:
+[ERROR]: 18/207 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '428,460p'"
+   428	
+   429	LEMMA InvDo1b ==
+   430	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   431	  PROVE  Inv /\ Do1b(self, b) => Inv'
+   432	PROOF
+   433	<1>1. ASSUME Inv, Do1b(self, b)
+   434	       PROVE  Inv'
+   435	  <2>1. TypeOK'
+   436	    BY BQA, Z3T(20)
+   437	    DEF Inv, TypeOK, Do1b, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   438	        2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   439	  <2>2. bmsgsFinite'
+   440	    BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, Do1b
+   441	  <2>3. 1bInv1'
+   442	    BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b
+   443	  <2>4. 1bInv2'
+   444	    BY Z3T(20) DEF Inv, 1bInv2, maxBalInv, Do1b
+   445	  <2>5. maxBalInv'
+   446	    BY Z3T(20) DEF Inv, maxBalInv, Do1b
+   447	  <2>6. 2avInv1'
+   448	    BY Z3T(20) DEF Inv, 2avInv1, Do1b
+   449	  <2>7. 2avInv2'
+   450	    BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b
+   451	  <2>8. 2avInv3'
+   452	    BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b
+   453	  <2>9. accInv'
+   454	    BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, accInv, Do1b
+   455	  <2>10. knowsSentInv'
+   456	    BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, knowsSentInv, Do1b
+   457	  <2> QED
+   458	    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6, <2>7, <2>8, <2>9, <2>10
+   459	    DEF Inv
+   460	<1> QED BY <1>1
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 562, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 504, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 491, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 478, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 469, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 467, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 461, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 459, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 457, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 455, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 447, characters 7-8:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 445, characters 7-8:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 443, characters 7-8:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 7-8:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 439, characters 7-8:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 437, characters 7-8:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 591, character 78:
+[ERROR]: 23/228 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '429,480p' BPConProof_Inv.tla"
+LEMMA InvDo1b ==
+  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+  PROVE  Inv /\ Do1b(self, b) => Inv'
+PROOF
+<1>1. Inv /\ Do1b(self, b) => TypeOK'
+  PROOF
+  <2>1. Inv /\ Do1b(self, b) => maxBal' \in [Acceptor -> Ballot \cup {-1}]
+    BY Z3T(20) DEF Inv, TypeOK, Do1b
+  <2>2. Inv /\ Do1b(self, b) => 2avSent' \in [Acceptor -> SUBSET [val : Value, bal : Ballot]]
+    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+  <2>3. Inv /\ Do1b(self, b) => maxVBal' \in [Acceptor -> Ballot \cup {-1}]
+    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+  <2>4. Inv /\ Do1b(self, b) => maxVVal' \in [Acceptor -> Value \cup {None}]
+    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK, None
+  <2>5. Inv /\ Do1b(self, b) => knowsSent' \in [Acceptor -> SUBSET 1bMessage]
+    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK, 1bMessage, ByzAcceptor
+  <2>6. Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+    BY BQA, Z3T(20)
+    DEF Inv, TypeOK, Do1b, BMessage, 1aMessage, 1bMessage, 1cMessage,
+        2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+  <2> QED
+    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6 DEF TypeOK
+<1>2. Inv /\ Do1b(self, b) => bmsgsFinite'
+  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, Do1b
+<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b
+<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+  BY Z3T(20) DEF Inv, 1bInv2, maxBalInv, Do1b
+<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+  BY Z3T(20) DEF Inv, maxBalInv, Do1b
+<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+  BY Z3T(20) DEF Inv, 2avInv1, Do1b
+<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b
+<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b
+<1>9. Inv /\ Do1b(self, b) => accInv'
+  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, accInv, Do1b
+<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, knowsSentInv, Do1b
+<1> QED
+  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10
+  DEF Inv
+
+LEMMA InvDo2av ==
+  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+PROOF
+  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA,
+     AddBmsgFinite, MsgsMono, Force
+  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 560, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 554, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 541, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 515, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 502, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 489, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 476, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 468, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 466, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 458, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 456, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 452, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 446, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 589, character 78:
+[ERROR]: 14/226 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '432,475p'"
+   432	PROOF
+   433	<1>1. Inv /\ Do1b(self, b) => TypeOK'
+   434	  PROOF
+   435	  <2>1. Inv /\ Do1b(self, b) => maxBal' \in [Acceptor -> Ballot \cup {-1}]
+   436	    BY Z3T(20) DEF Inv, TypeOK, Do1b
+   437	  <2>2. Inv /\ Do1b(self, b) => 2avSent' \in [Acceptor -> SUBSET [val : Value, bal : Ballot]]
+   438	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+   439	  <2>3. Inv /\ Do1b(self, b) => maxVBal' \in [Acceptor -> Ballot \cup {-1}]
+   440	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+   441	  <2>4. Inv /\ Do1b(self, b) => maxVVal' \in [Acceptor -> Value \cup {None}]
+   442	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK, None
+   443	  <2>5. Inv /\ Do1b(self, b) => knowsSent' \in [Acceptor -> SUBSET 1bMessage]
+   444	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK, 1bMessage, ByzAcceptor
+   445	  <2>6. Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+   446	    BY BQA, Z3T(20)
+   447	    DEF Inv, TypeOK, Do1b, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   448	        2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   449	  <2> QED
+   450	    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>6 DEF TypeOK
+   451	<1>2. Inv /\ Do1b(self, b) => bmsgsFinite'
+   452	  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, Do1b
+   453	<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+   454	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b
+   455	<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+   456	  BY Z3T(20) DEF Inv, 1bInv2, maxBalInv, Do1b
+   457	<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+   458	  BY Z3T(20) DEF Inv, maxBalInv, Do1b
+   459	<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+   460	  BY Z3T(20) DEF Inv, 2avInv1, Do1b
+   461	<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+   462	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b
+   463	<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+   464	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b
+   465	<1>9. Inv /\ Do1b(self, b) => accInv'
+   466	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, accInv, Do1b
+   467	<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+   468	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, knowsSentInv, Do1b
+   469	<1> QED
+   470	  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10
+   471	  DEF Inv
+   472	
+   473	LEMMA InvDo2av ==
+   474	  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+   475	PROOF
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 560, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 554, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 541, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 515, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 502, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 489, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 476, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 466, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 458, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 456, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 446, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 589, character 78:
+[ERROR]: 12/229 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg -A160 -B10 'line 446'"
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  SimpleArithmetic ,
+                  Z3T(20) 
+           PROVE  Inv /\ Do1b(self, b) => 1bInv2'
+File "./BPConProof_Inv.tla", line 446, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  Ballot == Nat,
+                  None == CHOOSE v : v \notin Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  ByzAcceptor == Acceptor \cu
+... (truncated) ...
+         /\ maxBal' = [maxBal EXCEPT !
+                                   [self] = b]
+                    /\ bmsgs'
+                       = bmsgs
+                         \cup {[type |-> "1b", 
+                                bal |-> b, 
+                                acc |-> self, 
+                                m2av |-> 2avSent[self],
+                                mbal |-> maxVBal[self],
+                                mval |-> maxVVal[self]]}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  NEW CONSTANT self \in Acceptor,
+                  NEW CONSTANT b \in Ballot,
+                  BQA ,
+                  Force 
+           PROVE  Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+File "./BPConProof_Inv.tla", line 2, character 1 to line 589, character 78:
+[ERROR]: 12/229 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 566, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 560, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 547, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 534, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 521, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 508, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 495, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 482, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 464, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 462, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 452, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 449, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 595, character 78:
+[ERROR]: 13/233 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '438,475p'"
+   438	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+   439	  <2>3. Inv /\ Do1b(self, b) => maxVBal' \in [Acceptor -> Ballot \cup {-1}]
+   440	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+   441	  <2>4. Inv /\ Do1b(self, b) => maxVVal' \in [Acceptor -> Value \cup {None}]
+   442	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK, None
+   443	  <2>5. Inv /\ Do1b(self, b) => knowsSent' \in [Acceptor -> SUBSET 1bMessage]
+   444	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK, 1bMessage, ByzAcceptor
+   445	  <2>6. Inv /\ Do1b(self, b) =>
+   446	          [type |-> "1b", bal |-> b, acc |-> self,
+   447	           m2av |-> 2avSent[self],
+   448	           mbal |-> maxVBal[self], mval |-> maxVVal[self]] \in 1bMessage
+   449	    BY BQA, Z3T(20)
+   450	    DEF Inv, TypeOK, 1bMessage, ByzAcceptor, Ballot, None
+   451	  <2>7. Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+   452	    BY <2>6, BQA, Force
+   453	    DEF Inv, TypeOK, Do1b, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   454	        2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   455	  <2> QED
+   456	    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>7 DEF TypeOK
+   457	<1>2. Inv /\ Do1b(self, b) => bmsgsFinite'
+   458	  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, 1bOr2bMsgs, Do1b
+   459	<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+   460	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b
+   461	<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+   462	  BY SimpleArithmetic, Force DEF Inv, 1bInv2, maxBalInv, Do1b
+   463	<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+   464	  BY SimpleArithmetic, Force DEF Inv, maxBalInv, Do1b
+   465	<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+   466	  BY Z3T(20) DEF Inv, 2avInv1, Do1b
+   467	<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+   468	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b
+   469	<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+   470	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b
+   471	<1>9. Inv /\ Do1b(self, b) => accInv'
+   472	  BY Do1bFacts, MsgsMono, SimpleArithmetic, Force DEF Inv, accInv, Do1b
+   473	<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+   474	  BY Do1bFacts, MsgsOfTypeMono, Z3T(20) DEF Inv, knowsSentInv, Do1b
+   475	<1> QED
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR|Executable'"
+File "./BPConProof_Inv.tla", line 566, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 560, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 547, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 534, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 521, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 508, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 495, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 482, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 464, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 462, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 452, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 449, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 595, character 78:
+[ERROR]: 13/233 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 567, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 561, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 548, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 535, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 522, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 509, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 496, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 483, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 473, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 596, character 78:
+[ERROR]: 13/233 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 567, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 561, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 548, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 535, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 522, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 509, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 496, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 483, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 473, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 596, character 78:
+[ERROR]: 13/233 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR|Executable'"
+File "./BPConProof_Inv.tla", line 567, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 561, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 548, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 535, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 522, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 509, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 496, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 483, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 473, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 453, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 596, character 78:
+[ERROR]: 13/233 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 575, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 504, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 491, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 481, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 473, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 471, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 461, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 458, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 604, character 78:
+[ERROR]: 13/244 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '450,485p'"
+   450	  <2>7. Inv => maxVVal[self] \in Value \cup {None}
+   451	    BY Z3T(20) DEF Inv, TypeOK
+   452	  <2>8. Inv => 2avSent[self] \in SUBSET [val : Value, bal : Ballot]
+   453	    BY Z3T(20) DEF Inv, TypeOK
+   454	  <2>9. self \in ByzAcceptor
+   455	    BY Z3T(20) DEF ByzAcceptor
+   456	  <2>10. Inv /\ Do1b(self, b) =>
+   457	          New1bMsg(self, b) \in 1bMessage
+   458	    BY <2>6, <2>7, <2>8, <2>9, SMTT(20)
+   459	    DEF Inv, TypeOK, New1bMsg, 1bMessage, ByzAcceptor, Ballot, None
+   460	  <2>11. Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+   461	    BY <2>10, BQA, Force
+   462	    DEF Inv, TypeOK, Do1b, New1bMsg, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   463	        2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   464	  <2> QED
+   465	    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>11 DEF TypeOK
+   466	<1>2. Inv /\ Do1b(self, b) => bmsgsFinite'
+   467	  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, 1bOr2bMsgs, Do1b, New1bMsg
+   468	<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+   469	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b, New1bMsg
+   470	<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+   471	  BY SimpleArithmetic, SMTT(20) DEF Inv, 1bInv2, maxBalInv, Do1b, New1bMsg
+   472	<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+   473	  BY SimpleArithmetic, SMTT(20) DEF Inv, maxBalInv, Do1b, New1bMsg
+   474	<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+   475	  BY Z3T(20) DEF Inv, 2avInv1, Do1b, New1bMsg
+   476	<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+   477	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b, New1bMsg
+   478	<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+   479	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b, New1bMsg
+   480	<1>9. Inv /\ Do1b(self, b) => accInv'
+   481	  BY Do1bFacts, MsgsMono, SimpleArithmetic, SMTT(20) DEF Inv, accInv, Do1b, New1bMsg
+   482	<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+   483	  BY Do1bFacts, MsgsOfTypeMono, Z3T(20) DEF Inv, knowsSentInv, Do1b, New1bMsg
+   484	<1> QED
+   485	  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 586, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 580, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 567, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 554, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 541, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 515, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 502, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 492, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 482, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 615, character 78:
+[ERROR]: 13/247 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '428,445p'"
+   428	    /\ knowsSent' = knowsSent
+   429	PROOF
+   430	  BY Z3T(20) DEF Do1b, New1bMsg
+   431	
+   432	LEMMA New1bMsgType ==
+   433	  ASSUME NEW self, NEW b
+   434	  PROVE  /\ b \in Ballot
+   435	         /\ maxVBal[self] \in Ballot \cup {-1}
+   436	         /\ maxVVal[self] \in Value \cup {None}
+   437	         /\ 2avSent[self] \in SUBSET [val : Value, bal : Ballot]
+   438	         /\ self \in ByzAcceptor
+   439	         => New1bMsg(self, b) \in 1bMessage
+   440	PROOF
+   441	  BY Z3T(20) DEF New1bMsg, 1bMessage
+   442	
+   443	LEMMA InvDo1b ==
+   444	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   445	  PROVE  Inv /\ Do1b(self, b) => Inv'
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 586, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 580, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 567, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 554, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 541, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 515, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 502, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 492, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 482, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 615, character 78:
+[ERROR]: 13/247 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 586, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 580, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 567, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 554, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 541, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 515, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 502, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 492, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 482, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 472, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 615, character 78:
+[ERROR]: 13/247 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'RecTest|File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 590, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 584, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 571, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 558, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 545, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 532, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 519, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 506, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 496, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 488, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 486, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 476, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 619, character 78:
+[ERROR]: 13/249 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 590, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 584, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 571, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 558, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 545, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 532, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 519, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 506, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 496, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 488, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 486, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 476, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 441, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 619, character 78:
+[ERROR]: 13/249 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 441, characters 6-14:
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla'
+File "./BPConProof_Inv.tla", line 441, characters 6-14:
+Error: Operator "Rec1bTest" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__P_anon.anon#usable in file "src/proof/p_anon.ml", line 234, characters 20-70
+Called from Tlapm_lib__P_visit.map#proof in file "src/proof/p_visit.ml", line 26, characters 12-30
+Called from Tlapm_lib__M_elab.normalize.spin.map_proof in file "src/module/m_elab.ml", line 1142, characters 21-48
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '420,455p'"
+   420	LEMMA Do1bFacts ==
+   421	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   422	  PROVE Do1b(self, b) =>
+   423	    /\ bmsgs \subseteq bmsgs'
+   424	    /\ \A ac \in Acceptor : knowsSent[ac] \subseteq knowsSent'[ac]
+   425	    /\ maxVBal' = maxVBal
+   426	    /\ maxVVal' = maxVVal
+   427	    /\ 2avSent' = 2avSent
+   428	    /\ knowsSent' = knowsSent
+   429	PROOF
+   430	  BY Z3T(20) DEF Do1b, New1bMsg
+   431	
+   432	LEMMA New1bMsgType ==
+   433	  \A self, b :
+   434	    (/\ b \in Ballot
+   435	     /\ maxVBal[self] \in Ballot \cup {-1}
+   436	     /\ maxVVal[self] \in Value \cup {None}
+   437	     /\ 2avSent[self] \in SUBSET [val : Value, bal : Ballot]
+   438	     /\ self \in ByzAcceptor)
+   439	    => New1bMsg(self, b) \in 1bMessage
+   440	PROOF
+   441	  BY Rec1bTest, Z3T(20) DEF New1bMsg
+   442	
+   443	LEMMA RecTest == \A b \in Ballot : [type |-> "1a", bal |-> b] \in 1aMessage
+   444	PROOF
+   445	  BY Z3T(20) DEF 1aMessage
+   446	
+   447	LEMMA Rec1bTest ==
+   448	  \A b \in Ballot :
+   449	  \A mb \in Ballot \cup {-1} :
+   450	  \A mv \in Value \cup {None} :
+   451	  \A S \in SUBSET [val : Value, bal : Ballot] :
+   452	  \A a \in ByzAcceptor :
+   453	    [type |-> "1b", bal |-> b, mbal |-> mb, mval |-> mv,
+   454	     m2av |-> S, acc |-> a] \in 1bMessage
+   455	PROOF
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 595, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 582, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 507, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 487, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 445, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 13/252 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 595, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 582, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 507, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 487, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 445, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 13/252 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 595, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 582, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 507, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 487, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 445, characters 3-9:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 13/251 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 595, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 582, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 507, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 487, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 445, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 13/252 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg -A120 -B5 'line 445'"
+                  NEW CONSTANT b \in Ballot,
+                  <2>10 ,
+                  BQA ,
+                  Force 
+           PROVE  Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+File "./BPConProof_Inv.tla", line 445, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+                    /\ \A Q \in WeakQuorum :
+                          /\ Q \subseteq ByzAcceptor
+                
+... (truncated) ...
+                      IsFiniteSet(S) /\ S # {}
+                       => (\E max \in S : \A x \in S : max >= x),
+                  IsaM("auto") 
+           PROVE  \A b \in Ballot :
+                     \A mb \in Ballot \cup {-1} :
+                        \A mv \in Value \cup {None} :
+                           \A S \in SUBSET [val : Value, bal : Ballot] :
+                              \A a \in ByzAcceptor :
+                                 [type |-> "1b", 
+                                  bal |-> b, 
+                                  mbal |-> mb, 
+                                  mval |-> mv, 
+                                  m2av |-> S, 
+                                  acc |-> a]
+                                 \in 1bMessage
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 13/252 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR|Zenon'"
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 595, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 582, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 507, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 487, characters 5-6:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 12/252 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '480,510p'"
+   480	  <2>9. self \in ByzAcceptor
+   481	    BY Z3T(20) DEF ByzAcceptor
+   482	  <2>10. Inv /\ Do1b(self, b) =>
+   483	          New1bMsg(self, b) \in 1bMessage
+   484	    BY <2>6, <2>7, <2>8, <2>9, New1bMsgType, Z3T(20)
+   485	    DEF Inv, TypeOK, New1bMsg, 1bMessage, ByzAcceptor, Ballot, None
+   486	  <2>11. Inv /\ Do1b(self, b) => bmsgs' \subseteq BMessage
+   487	    BY <2>10, BQA, Force
+   488	    DEF Inv, TypeOK, Do1b, New1bMsg, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   489	        2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   490	  <2> QED
+   491	    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>11 DEF TypeOK
+   492	<1>2. Inv /\ Do1b(self, b) => bmsgsFinite'
+   493	  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, 1bOr2bMsgs, Do1b, New1bMsg
+   494	<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+   495	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b, New1bMsg
+   496	<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+   497	  BY SimpleArithmetic, SMTT(20) DEF Inv, 1bInv2, maxBalInv, Do1b, New1bMsg
+   498	<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+   499	  BY SimpleArithmetic, SMTT(20) DEF Inv, maxBalInv, Do1b, New1bMsg
+   500	<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+   501	  BY Z3T(20) DEF Inv, 2avInv1, Do1b, New1bMsg
+   502	<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+   503	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b, New1bMsg
+   504	<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+   505	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b, New1bMsg
+   506	<1>9. Inv /\ Do1b(self, b) => accInv'
+   507	  BY Do1bFacts, MsgsMono, SimpleArithmetic, SMTT(20) DEF Inv, accInv, Do1b, New1bMsg
+   508	<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+   509	  BY Do1bFacts, MsgsOfTypeMono, Z3T(20) DEF Inv, knowsSentInv, Do1b, New1bMsg
+   510	<1> QED
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR|Zenon'"
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 595, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 582, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 569, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 556, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 517, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 507, characters 3-4:
+[ERROR]: Could not prove or check:
+                  ZenonT(20) 
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+                  ZenonT(20) 
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+                  ZenonT(20) 
+File "./BPConProof_Inv.tla", line 2, character 1 to line 630, character 78:
+[ERROR]: 11/252 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 621, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 615, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 602, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 589, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 576, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 550, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 537, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 526, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 518, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 474, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 650, character 78:
+[ERROR]: 12/261 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '450,535p'"
+   450	     /\ maxVBal[self] \in Ballot \cup {-1}
+   451	     /\ maxVVal[self] \in Value \cup {None}
+   452	     /\ 2avSent[self] \in SUBSET [val : Value, bal : Ballot]
+   453	     /\ self \in ByzAcceptor)
+   454	    => New1bMsg(self, b) \in 1bMessage
+   455	PROOF
+   456	  BY Rec1bTest, Z3T(20) DEF New1bMsg
+   457	
+   458	LEMMA Do1bMaxBalMono ==
+   459	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   460	  PROVE Inv /\ Do1b(self, b) =>
+   461	          \A a \in Acceptor : maxBal'[a] >= maxBal[a]
+   462	PROOF
+   463	  BY SimpleArithmetic, Z3T(20) DEF Inv, TypeOK, Do1b, New1bMsg
+   464	
+   465	LEMMA Do1bNoOldSame ==
+   466	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   467	  PROVE Inv /\ Do1b(self, b) =>
+   468	          \A m \in bmsgs :
+   469	            /\ m.type = "1b"
+   470	            /\ m.acc = self
+   471	            /\ m.bal = b
+   472	            => FALSE
+   473	PROOF
+   474	  BY SimpleArithmetic, Z3T(20) DEF Inv, maxBalInv, Do1b, New1bMsg
+   475	
+   476	LEMMA InvDo1b ==
+   477	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   478	  PROVE  Inv /\ Do1b(self, b) => Inv'
+   479	PROOF
+   480	<1>1. Inv /\ Do1b(self, b) => TypeOK'
+   481	  PROOF
+   482	  <2>1. Inv /\ Do1b(self, b) => maxBal' \in [Acceptor -> Ballot \cup {-1}]
+   483	    BY Z3T(20) DEF Inv, TypeOK, Do1b, New1bMsg
+   484	  <2>2. Inv /\ Do1b(self, b) => 2avSent' \in [Acceptor -> SUBSET [val : Value, bal : Ballot]]
+   485	    BY Do1bFacts, Z3T(20) DEF Inv, TypeOK
+   486	  <2>3. Inv /\ Do1b(self, b) =
+... (truncated) ...
+llot, None
+   508	  <2> QED
+   509	    BY <2>1, <2>2, <2>3, <2>4, <2>5, <2>11 DEF TypeOK
+   510	<1>2. Inv /\ Do1b(self, b) => bmsgsFinite'
+   511	  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, 1bOr2bMsgs, Do1b, New1bMsg
+   512	<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+   513	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b, New1bMsg
+   514	<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+   515	  BY Do1bNoOldSame, SimpleArithmetic, Z3T(20)
+   516	  DEF Inv, 1bInv2, maxBalInv, Do1b, New1bMsg
+   517	<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+   518	  BY Do1bMaxBalMono, SimpleArithmetic, Z3T(20) DEF Inv, maxBalInv, Do1b, New1bMsg
+   519	<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+   520	  BY Z3T(20) DEF Inv, 2avInv1, Do1b, New1bMsg
+   521	<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+   522	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b, New1bMsg
+   523	<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+   524	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b, New1bMsg
+   525	<1>9. Inv /\ Do1b(self, b) => accInv'
+   526	  BY Do1bFacts, Do1bMaxBalMono, MsgsMono, SimpleArithmetic, Z3T(20)
+   527	  DEF Inv, accInv, Do1b, New1bMsg
+   528	<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+   529	  BY Do1bFacts, MsgsOfTypeMono, Z3T(20) DEF Inv, knowsSentInv, Do1b, New1bMsg
+   530	<1> QED
+   531	  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10
+   532	  DEF Inv
+   533	
+   534	LEMMA InvDo2av ==
+   535	  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 621, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 615, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 602, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 589, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 576, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 550, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 537, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 526, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 518, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 474, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 650, character 78:
+[ERROR]: 12/261 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 621, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 615, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 602, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 589, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 576, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 550, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 537, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 526, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 518, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 474, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 650, character 78:
+[ERROR]: 12/261 obligations failed.
+[EXIT 0]
+
+[AGENT] The remaining `Do1b` failures are all about reasoning through function `EXCEPT` updates and the strict ballot increase. I’m adding small EXCEPT facts so the arithmetic obligations can refer to the updated value explicitly.
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 631, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 625, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 612, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 599, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 586, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 573, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 560, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 547, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 536, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 473, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 455, characters 3-9:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 3-9:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 660, character 78:
+[ERROR]: 14/267 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '444,458p'"
+   444	PROOF
+   445	  BY Zenon DEF 1bMessage
+   446	
+   447	LEMMA ExceptSame ==
+   448	  \A f, x, y : [f EXCEPT ![x] = y][x] = y
+   449	PROOF
+   450	  OBVIOUS
+   451	
+   452	LEMMA ExceptOther ==
+   453	  \A f, x, y, z : z # x => [f EXCEPT ![x] = y][z] = f[z]
+   454	PROOF
+   455	  OBVIOUS
+   456	
+   457	LEMMA New1bMsgType ==
+   458	  \A self, b :
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 631, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 625, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 612, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 599, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 586, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 573, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 560, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 547, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 536, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 528, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 484, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 473, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 455, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 660, character 78:
+[ERROR]: 14/269 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "EXCEPT|Except" /home/ubuntu/.tlapm/lib/tlapm/stdlib -n'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:601:(* For an AC operator, folding an EXCEPT construction can be reduced to  *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:604:THEOREM FoldFunctionOnSetACExcept ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:612:  PROVE  FoldFunctionOnSet(op, base, [fun EXCEPT ![i] = y], indices) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:663:THEOREM FoldFunctionACExcept ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:671:  PROVE  FoldFunction(op, base, [fun EXCEPT ![i] = y]) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:732:(* Reduce the sum of an EXCEPT to the sum of the original function.      *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:734:THEOREM SumFunctionOnSetExcept ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:738:  PROVE  SumFunctionOnSet([fun EXCEPT ![i] = y], indices) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:827:THEOREM SumFunctionExcept ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:830:  PROVE  SumFunction([fun EXCEPT ![i] = y]) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:50:THEOREM ExceptSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:52:  PROVE  /\ [seq EXCEPT ![i] = e] \in Seq(S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:53:         /\ Len([seq EXCEPT ![i] = e]) = Len(seq)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:54:         /\ \A j \in 1 .. Len(seq) : [seq EXCEPT ![i] = e][j] = IF j=i THEN e ELSE seq[j]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:43:THEOREM ExceptSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:45:  PROVE  /\ [seq EXCEPT ![i] = e] \in Seq(S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:46:         /\ Len([seq EXCEPT ![i] = e]) = Len(seq)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:47:         /\ \A j \in 1 .. Len(seq) : [seq EXCEPT ![i] = e][j] = IF j=i THEN e ELSE seq[j]
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'ExceptEval|File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 626, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 620, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 607, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 594, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 581, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 568, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 555, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 542, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 531, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 523, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 479, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 468, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 450, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 655, character 78:
+[ERROR]: 13/263 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 621, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 615, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 602, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 589, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 576, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 550, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 537, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 526, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 518, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 474, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 650, character 78:
+[ERROR]: 12/261 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,140p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla && sed -n '1,120p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla"
+------------------------------ MODULE Functions -----------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Notions about functions including injection, surjection, and bijection.*)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS Integers, Folds
+
+(***************************************************************************)
+(* Restriction of a function to a set (should be a subset of the domain).  *)
+(***************************************************************************)
+Restrict(f,S) == [ x \in S |-> f[x] ]
+
+(***************************************************************************)
+(* Restriction of a function to the subset of its domain satisfying a      *)
+(* test predicate.                                                         *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*   (LET f == (0 :> "a" @@ 1 :> "b" @@ 2 :> "c")                          *)
+(*    IN  RestrictDomain(f, LAMBDA x : x \in {0,2}))                       *)
+(*   = (0 :> "a" @@ 2 :> "c")                                              *)
+(******************************
+... (truncated) ...
+ PROVE  /\ F \in [S -> T]
+         /\ \A a,b \in S : F[a] = F[b] => a = b
+
+THEOREM Fun_SurjectionProperties ==
+  ASSUME NEW S, NEW T, NEW F \in Surjection(S,T)
+  PROVE  /\ F \in [S -> T]
+         /\ \A t \in T : \E s \in S : F[s] = t
+         /\ Range(F) = T
+
+THEOREM Fun_BijectionProperties ==
+  ASSUME NEW S, NEW T, NEW F \in Bijection(S,T)
+  PROVE  /\ F \in [S -> T]
+         /\ F \in Injection(S,T)
+         /\ F \in Surjection(S,T)
+         /\ \A a,b \in S : F[a] = F[b] => a = b
+         /\ \A t \in T : \E s \in S : F[s] = t
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A surjection in [S -> T] such that there is no surjection from any      *)
+(* subset of S to T is a bijection.                                        *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_SmallestSurjectionIsBijection ==
+  ASSUME NEW S, NEW T, NEW f \in Surjection(S,T),
+         \A U \in SUBSET S : U # S => Surjection(U,T) = {}
+  PROVE  f \in Bijection(S,T)
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "EXCEPT !|except" /home/ubuntu/.tlapm/lib/tlapm -n | head -100'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:240:(* (Note that there cannot be a surjection to {} except if S is empty.)    *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:612:  PROVE  FoldFunctionOnSet(op, base, [fun EXCEPT ![i] = y], indices) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:671:  PROVE  FoldFunction(op, base, [fun EXCEPT ![i] = y]) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:738:  PROVE  SumFunctionOnSet([fun EXCEPT ![i] = y], indices) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:830:  PROVE  SumFunction([fun EXCEPT ![i] = y]) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:45:  PROVE  /\ [seq EXCEPT ![i] = e] \in Seq(S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:46:         /\ Len([seq EXCEPT ![i] = e]) = Len(seq)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:47:         /\ \A j \in 1 .. Len(seq) : [seq EXCEPT ![i] = e][j] = IF j=i THEN e ELSE seq[j]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:52:  PROVE  /\ [seq EXCEPT ![i] = e] \in Seq(S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:53:         /\ Len([seq EXCEPT ![i] = e]) = Len(seq)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:54:         /\ \A j \in 1 .. Len(seq) : [seq EXCEPT ![i] = e][j] = IF j=i THEN e ELSE seq[j]
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/NEWS:630:* ML antiquotation "try" provides variants of exception handling
+... (truncated) ...
+buntu/.tlapm/lib/tlapm/backends/Isabelle/src/Doc/Corec/Corec.thy:841:@{command corec} and @{command corecursive}, except that it adds an optional
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:10:definition match_exception_entry :: "jvm_prog \<Rightarrow> cname \<Rightarrow> p_count \<Rightarrow> exception_entry \<Rightarrow> bool" where
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:11:  "match_exception_entry G cn pc ee == 
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:16:primrec match_exception_table :: "jvm_prog \<Rightarrow> cname \<Rightarrow> p_count \<Rightarrow> exception_table
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:19:  "match_exception_table G cn pc []     = None"
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:20:| "match_exception_table G cn pc (e#es) = (if match_exception_entry G cn pc e
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:22:                                           else match_exception_table G cn pc es)"
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:25:  ex_table_of :: "jvm_method \<Rightarrow> exception_table"
+/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/src/HOL/MicroJava/JVM/JVMExceptions.thy:38:       (case match_exception_table G (cname_of hp xc) pc
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'Except.*Domain|File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 633, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 627, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 614, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 588, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 575, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 562, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 549, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 538, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 530, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 486, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 475, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 662, character 78:
+[ERROR]: 12/265 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 635, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 629, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 616, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 603, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 590, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 577, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 564, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 551, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 540, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 532, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 487, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 475, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 664, character 78:
+[ERROR]: 12/269 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg -A120 -B5 'line 475|line 487'"
+                  NEW CONSTANT b \in Ballot,
+                  Do1bMaxBalMono ,
+                  SimpleArithmetic ,
+                  Z3T(20) 
+           PROVE  Inv /\ Do1b(self, b) => maxBalInv'
+File "./BPConProof_Inv.tla", line 487, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME EmptySetFinite == IsFiniteSet({}),
+                  SingletonSetFinite == \A e : IsFiniteSet({e}),
+                  ImageOfFiniteSetFinite ==
+                    \A S, f : IsFiniteSet(S) => IsFiniteSet({f[x] : x \in S}),
+                  SubsetOfFiniteSetFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ S \subseteq T => IsFiniteSet(S),
+                  UnionOfFiniteSetsFinite ==
+                    \A S, T :
+                       IsFiniteSet(T) /\ IsFiniteSet(S)
+                       => IsFiniteSet(S \cup T),
+                  NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT FakeAcceptor,
+                  NEW CONSTANT ByzQuorum,
+                  NEW CONSTANT WeakQuorum,
+                  BallotAssump == (Ballot \cup {-1}) \cap ByzAcceptor = {},
+                  BQA ==
+                    /\ Acceptor \cap FakeAcceptor = {}
+                    /\ \A Q \in ByzQuorum : Q \subseteq ByzAcceptor
+                    /\ \A Q1, Q2 \in ByzQuorum :
+                          Q1 \cap Q2 \cap Acceptor # {}
+                    /\ \A Q \in WeakQuorum :
+                          /\ Q \subseteq ByzAcceptor
+       
+... (truncated) ...
+                   acc |-> self],
+                  Do1b(self, b) ==
+                    /\ b > maxBal[self]
+                    /\ sentMsgs("1a", b) # {}
+                    /\ maxBal' = [maxBal EXCEPT !
+                                   [self] = b]
+                    /\ bmsgs' = bmsgs \cup {New1bMsg(self, b)}
+                    /\ UNCHANGED <<maxVBal, maxVVal, 2avSent, knowsSent>>,
+                  ExceptSameInDomain ,
+                  ExceptOtherInDomain ,
+                  SimpleArithmetic ,
+                  SimplifyAndSolve 
+           PROVE  \A self \in Acceptor :
+                     \A b \in Ballot :
+                        Inv /\ Do1b(self, b)
+                        => (\A a \in Acceptor : (maxBal')[a] >= maxBal[a])
+File "./BPConProof_Inv.tla", line 2, character 1 to line 664, character 78:
+[ERROR]: 12/269 obligations failed.
+There were backend errors processing module `"BPConProof_Inv"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 647, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 641, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 628, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 615, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 602, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 589, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 576, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 552, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 544, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 486, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 676, character 78:
+[ERROR]: 12/276 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '476,505p'"
+   476	        /\ Inv
+   477	        /\ Do1b(self, b)
+   478	        /\ a = self
+   479	        => maxBal'[a] >= maxBal[a]
+   480	  BY ExceptSameInDomain, SimpleArithmetic, Z3T(20) DEF Inv, TypeOK, Do1b, New1bMsg
+   481	<1>2. \A self \in Acceptor : \A b \in Ballot : \A a \in Acceptor :
+   482	        /\ Inv
+   483	        /\ Do1b(self, b)
+   484	        /\ a # self
+   485	        => maxBal'[a] >= maxBal[a]
+   486	  BY ExceptOtherInDomain, SimpleArithmetic, Z3T(20) DEF Inv, TypeOK, Do1b, New1bMsg
+   487	<1> QED
+   488	  BY <1>1, <1>2, Z3T(20)
+   489	
+   490	LEMMA Do1bNoOldSame ==
+   491	  \A self \in Acceptor : \A b \in Ballot :
+   492	        Inv /\ Do1b(self, b) =>
+   493	          \A m \in bmsgs :
+   494	            /\ m.type = "1b"
+   495	            /\ m.acc = self
+   496	            /\ m.bal = b
+   497	            => FALSE
+   498	PROOF
+   499	  BY ExceptSameInDomain, ExceptOtherInDomain, SimpleArithmetic, SimplifyAndSolve
+   500	  DEF Inv, maxBalInv, Do1b, New1bMsg
+   501	
+   502	LEMMA InvDo1b ==
+   503	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   504	  PROVE  Inv /\ Do1b(self, b) => Inv'
+   505	PROOF
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 646, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 640, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 627, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 614, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 601, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 588, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 575, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 562, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 551, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 543, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 499, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 486, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 675, character 78:
+[ERROR]: 12/274 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 658, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 652, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 639, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 626, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 613, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 600, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 587, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 574, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 555, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 510, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 687, character 78:
+[ERROR]: 12/279 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '486,515p'"
+   486	<1>2. \A self \in Acceptor : \A b \in Ballot : \A a \in Acceptor :
+   487	        /\ Inv
+   488	        /\ Do1b(self, b)
+   489	        /\ a # self
+   490	        => maxBal'[a] = maxBal[a]
+   491	  BY ExceptOtherInDomain, Z3T(20) DEF Inv, TypeOK, Do1b, New1bMsg
+   492	<1>3. \A self \in Acceptor : \A b \in Ballot : \A a \in Acceptor :
+   493	        /\ Inv
+   494	        /\ Do1b(self, b)
+   495	        /\ a # self
+   496	        => maxBal'[a] >= maxBal[a]
+   497	  BY <1>2, SimpleArithmetic
+   498	<1> QED
+   499	  BY <1>1, <1>3, Z3T(20)
+   500	
+   501	LEMMA Do1bNoOldSame ==
+   502	  \A self \in Acceptor : \A b \in Ballot :
+   503	        Inv /\ Do1b(self, b) =>
+   504	          \A m \in bmsgs :
+   505	            (/\ m.type = "1b"
+   506	             /\ m.acc = self
+   507	             /\ m.bal = b)
+   508	            => FALSE
+   509	PROOF
+   510	  BY IntGtLeContradiction, SimpleArithmetic, Z3T(20)
+   511	  DEF Inv, TypeOK, maxBalInv, Do1b, New1bMsg
+   512	
+   513	LEMMA InvDo1b ==
+   514	  ASSUME NEW self \in Acceptor, NEW b \in Ballot
+   515	  PROVE  Inv /\ Do1b(self, b) => Inv'
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 658, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 652, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 639, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 626, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 613, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 600, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 587, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 574, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 555, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 687, character 78:
+[ERROR]: 11/280 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 658, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 652, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 639, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 626, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 613, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 600, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 587, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 574, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 555, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 497, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 687, character 78:
+[ERROR]: 11/280 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '490,502p'"
+   490	        => maxBal'[a] = maxBal[a]
+   491	  BY ExceptOtherInDomain, Z3T(20) DEF Inv, TypeOK, Do1b, New1bMsg
+   492	<1>3. \A self \in Acceptor : \A b \in Ballot : \A a \in Acceptor :
+   493	        (/\ Inv
+   494	         /\ Do1b(self, b)
+   495	         /\ a # self)
+   496	        => maxBal'[a] >= maxBal[a]
+   497	  BY <1>2, SimpleArithmetic, Z3T(20)
+   498	<1> QED
+   499	  BY <1>1, <1>3, Z3T(20)
+   500	
+   501	LEMMA Do1bNoOldSame ==
+   502	  \A self \in Acceptor : \A b \in Ballot :
+[EXIT 0]
+
+[CMD] /bin/bash -lc "/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib BPConProof_Inv.tla 2>&1 | rg 'File \"\\./BPConProof_Inv.tla\", line|obligations failed|ERROR'"
+File "./BPConProof_Inv.tla", line 658, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 652, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 639, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 626, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 613, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 600, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 587, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 574, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 563, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 555, characters 3-4:
+[ERROR]: Could not prove or check:
+File "./BPConProof_Inv.tla", line 2, character 1 to line 687, character 78:
+[ERROR]: 10/280 obligations failed.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba BPConProof_Inv.tla | sed -n '548,665p'"
+   548	  BY AddBmsgFinite, Z3T(20) DEF Inv, bmsgsFinite, 1bOr2bMsgs, Do1b, New1bMsg
+   549	<1>3. Inv /\ Do1b(self, b) => 1bInv1'
+   550	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 1bInv1, accInv, Do1b, New1bMsg
+   551	<1>4. Inv /\ Do1b(self, b) => 1bInv2'
+   552	  BY Do1bNoOldSame, SimpleArithmetic, Z3T(20)
+   553	  DEF Inv, 1bInv2, maxBalInv, Do1b, New1bMsg
+   554	<1>5. Inv /\ Do1b(self, b) => maxBalInv'
+   555	  BY Do1bMaxBalMono, SimpleArithmetic, Z3T(20) DEF Inv, maxBalInv, Do1b, New1bMsg
+   556	<1>6. Inv /\ Do1b(self, b) => 2avInv1'
+   557	  BY Z3T(20) DEF Inv, 2avInv1, Do1b, New1bMsg
+   558	<1>7. Inv /\ Do1b(self, b) => 2avInv2'
+   559	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv2, Do1b, New1bMsg
+   560	<1>8. Inv /\ Do1b(self, b) => 2avInv3'
+   561	  BY Do1bFacts, MsgsMono, Z3T(20) DEF Inv, 2avInv3, Do1b, New1bMsg
+   562	<1>9. Inv /\ Do1b(self, b) => accInv'
+   563	  BY Do1bFacts, Do1bMaxBalMono, MsgsMono, SimpleArithmetic, Z3T(20)
+   564	  DEF Inv, accInv, Do1b, New1bMsg
+   565	<1>10. Inv /\ Do1b(self, b) => knowsSentInv'
+   566	  BY Do1bFacts, MsgsOfTypeMono, Z3T(20) DEF Inv, knowsSentInv, Do1b, New1bMsg
+   567	<1> QED
+   568	  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6, <1>7, <1>8, <1>9, <1>10
+   569	  DEF Inv
+   570	
+   571	LEMMA InvDo2av ==
+   572	  \A self \in Acceptor : \A b \in Ballot : \A m : Inv /\ Do2av(self, b, m) => Inv'
+   573	PROOF
+   574	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   575	     SubsetOfFiniteSetFinite, UnionOfFiniteSets
+... (truncated) ...
+gs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   633	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   634	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   635	
+   636	LEMMA InvDoFake ==
+   637	  \A self \in FakeAcceptor : \A m : Inv /\ DoFake(self, m) => Inv'
+   638	PROOF
+   639	  BY EmptySetFinite, SingletonSetFinite, ImageOfFiniteSetFinite,
+   640	     SubsetOfFiniteSetFinite, UnionOfFiniteSetsFinite, BQA,
+   641	     AddBmsgFinite, MsgsMono, Force
+   642	  DEF Inv, TypeOK, bmsgsFinite, 1bOr2bMsgs, 1bInv1, 1bInv2,
+   643	      maxBalInv, 2avInv1, 2avInv2, 2avInv3, accInv, knowsSentInv,
+   644	      DoFake, sentMsgs, KnowsSafeAt,
+   645	      msgs, msgsOfType, acceptorMsgsOfType, 1bmsgs, 1cmsgs, 2amsgs,
+   646	      1bRestrict, Quorum, BMessage, 1aMessage, 1bMessage, 1cMessage,
+   647	      2avMessage, 2bMessage, ByzAcceptor, Ballot, None
+   648	
+   649	LEMMA InvAcceptor ==
+   650	  \A self \in Acceptor : Inv /\ acceptor(self) => Inv'
+   651	PROOF
+   652	  BY InvDo1b, InvDo2av, InvDo2b, InvDoLearn1b, Force
+   653	  DEF acceptor, Do1b, New1bMsg, Do2av, Do2b, DoLearn1b
+   654	
+   655	LEMMA InvLeader ==
+   656	  \A self \in Ballot : Inv /\ leader(self) => Inv'
+   657	PROOF
+   658	  BY InvDoLeader1a, InvDoLeader1c, Force
+   659	  DEF leader, DoLeader1a, DoLeader1c
+   660	
+   661	LEMMA InvFake ==
+   662	  \A self \in FakeAcceptor : Inv /\ facceptor(self) => Inv'
+   663	PROOF
+   664	  BY InvDoFake, Force
+   665	  DEF facceptor, DoFake
+[EXIT 0]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[AGENT] Ready. What would you like me to work on in `/tmp/codex_bench_BPConProof_Inv_8kps2whq`?

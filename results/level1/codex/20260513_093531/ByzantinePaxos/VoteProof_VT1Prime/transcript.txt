@@ -1,0 +1,2540 @@
+Benchmark: ByzantinePaxos/VoteProof_VT1Prime.tla
+Time: 577s
+Tokens: 3,382,106 input / 22,777 output
+============================================================
+
+[AGENT] I’ll inspect the module and local checker, then iteratively patch only the final proof.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' VoteProof_VT1Prime.tla && printf '\\n--- checker ---\\n' && sed -n '1,240p' check_proof.py"
+----------------------------- MODULE VoteProof_VT1Prime ------------------------------ 
+(***************************************************************************)
+(* This is a high-level consensus algorithm in which a set of processes    *)
+(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+(* all voted for the same value in the same ballot.                        *)
+(*                                                                         *)
+(* Ballots are not executed in order.  Different acceptors may be          *)
+(* concurrently performing actions for different ballots.                  *)
+(***************************************************************************)
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+\* THEOREM SMT == TRUE (*{ by (smt) }*)
+-----------------------------------------------------------------------------
+CONSTANT Value,     \* As in module Consensus, the set of choosable values.
+         Acceptor,  \* The set of all acceptors.
+         Quorum     \* The set of all quorums.
+ 
+(***************************************************************************)
+(* The following assumption asserts that a quorum is a set of acceptors,   *)
+(* and the fundamental assumption we make about quorums: any tw
+... (truncated) ...
+  if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+        bench_dir = os.path.dirname(filepath)
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            dep_basename = os.path.basename(dep_file)
+            if dep_basename != basename:
+                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+
+        cmd = [tlapm_path, '-I', tlapm_lib, tmp_file]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=args.timeout,
+                cwd=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+[EXIT 0]
+
+[AGENT] I found the file is larger than the initial output; now I’ll focus on the theorem tail and nearby lemmas.
+
+[CMD] /bin/bash -lc 'tail -n 220 VoteProof_VT1Prime.tla'
+                                     \A w \in Value : VotedFor(p, b, w) => (w = v)
+                               /\ SafeAt(b, v)
+                            /\ votes' = [votes EXCEPT ![self] = votes[self] \cup {<<b, v>>}]
+                            /\ maxBal' = [maxBal EXCEPT ![self] = b]
+
+
+Next == (\E self \in Acceptor: acceptor(self))
+
+Spec == Init /\ [][Next]_vars
+
+\* END TRANSLATION
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* To reason about a recursively-defined operator, one must prove a        *)
+(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+(* for b \in Ballot and v \in Value.  This is not automatically true for a *)
+(* recursive definition.  For example, from the recursive definition       *)
+(*                                                                         *)
+(*   Silly[n \in Nat] == CHOOSE v : v # Silly[n]                           *)
+(*                                                                         *)
+(* we cannot deduce that                                                   *)
+(*                                                                         *)
+(*   Silly[42] = CHOOSE v : v # Silly[42]                                  *)
+(*                                                                         *)
+(* (From that, w
+... (truncated) ...
+
+(***************************************************************************)
+LEMMA VT0 == /\ TypeOK
+             /\ VInv1
+             /\ VInv2
+             => \A v, w \in Value, b, c \in Ballot : 
+                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+  PROOF OMITTED
+
+THEOREM VT1 == /\ TypeOK 
+               /\ VInv1
+               /\ VInv2
+               => \A v, w : 
+                    (v \in chosen) /\ (w \in chosen) => (v = w)
+  PROOF OMITTED
+
+THEOREM SafeAtPropPrime ==
+  \A b \in Ballot, v \in Value :
+    SafeAt(b, v)' =
+      \/ b = 0
+      \/ \E Q \in Quorum :
+           /\ \A a \in Q : maxBal'[a] \geq b
+           /\ \E c \in -1..(b-1) :
+                /\ (c # -1) => /\ SafeAt(c, v)'
+                               /\ \A a \in Q :
+                                    \A w \in Value :
+                                        VotedFor(a, c, w)' => (w = v)
+                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)'
+PROOF OMITTED
+
+LEMMA VT0Prime ==
+             /\ TypeOK'
+             /\ VInv1'
+             /\ VInv2'
+             => \A v, w \in Value, b, c \in Ballot : 
+                   (b > c) /\ SafeAt(b, v)' /\ ChosenIn(c, w)' => (v = w)
+  PROOF OMITTED
+
+THEOREM VT1Prime == 
+               /\ TypeOK' 
+               /\ VInv1'
+               /\ VInv2'
+               => \A v, w : 
+                    (v \in chosen') /\ (w \in chosen') => (v = w)
+PROOF OBVIOUS
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] The target mirrors `VT1`; I’ll inspect definitions around `chosen` and theorem line numbers for a minimal primed proof.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_VT1Prime.tla | sed -n '1,240p' && printf '\\n--- tail with nums ---\\n' && nl -ba VoteProof_VT1Prime.tla | tail -n 120"
+     1	----------------------------- MODULE VoteProof_VT1Prime ------------------------------ 
+     2	(***************************************************************************)
+     3	(* This is a high-level consensus algorithm in which a set of processes    *)
+     4	(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+     5	(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+     6	(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+     7	(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+     8	(* all voted for the same value in the same ballot.                        *)
+     9	(*                                                                         *)
+    10	(* Ballots are not executed in order.  Different acceptors may be          *)
+    11	(* concurrently performing actions for different ballots.                  *)
+    12	(***************************************************************************)
+    13	EXTENDS Integers , FiniteSets, TLC, TLAPS
+    14	
+    15	\* THEOREM SMT == TRUE (*{ by (smt) }*)
+    16	-----------------------------------------------------------------------------
+    17	CONSTANT Value,     \* As in module Consensus, the set of choosable values.
+    18	         Acceptor,  \* The set of all acceptors.
+    19	         Quorum     \* The set of all quorums.
+    20	 
+    21	(***********************************************************************
+... (truncated) ...
+PROOF OMITTED
+   424	
+   425	THEOREM VT1 == /\ TypeOK 
+   426	               /\ VInv1
+   427	               /\ VInv2
+   428	               => \A v, w : 
+   429	                    (v \in chosen) /\ (w \in chosen) => (v = w)
+   430	  PROOF OMITTED
+   431	
+   432	THEOREM SafeAtPropPrime ==
+   433	  \A b \in Ballot, v \in Value :
+   434	    SafeAt(b, v)' =
+   435	      \/ b = 0
+   436	      \/ \E Q \in Quorum :
+   437	           /\ \A a \in Q : maxBal'[a] \geq b
+   438	           /\ \E c \in -1..(b-1) :
+   439	                /\ (c # -1) => /\ SafeAt(c, v)'
+   440	                               /\ \A a \in Q :
+   441	                                    \A w \in Value :
+   442	                                        VotedFor(a, c, w)' => (w = v)
+   443	                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)'
+   444	PROOF OMITTED
+   445	
+   446	LEMMA VT0Prime ==
+   447	             /\ TypeOK'
+   448	             /\ VInv1'
+   449	             /\ VInv2'
+   450	             => \A v, w \in Value, b, c \in Ballot : 
+   451	                   (b > c) /\ SafeAt(b, v)' /\ ChosenIn(c, w)' => (v = w)
+   452	  PROOF OMITTED
+   453	
+   454	THEOREM VT1Prime == 
+   455	               /\ TypeOK' 
+   456	               /\ VInv1'
+   457	               /\ VInv2'
+   458	               => \A v, w : 
+   459	                    (v \in chosen') /\ (w \in chosen') => (v = w)
+   460	PROOF OBVIOUS
+   461	
+   462	===============================================================================
+[EXIT 0]
+
+[AGENT] The proof needs a ballot-order split, so I’ll pull the voting definitions before editing.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_VT1Prime.tla | sed -n '80,170p'"
+    80	  define {
+    81	   (************************************************************************)
+    82	   (* We now define the operator SafeAt so SafeAt(b, v) is function of the *)
+    83	   (* state that equals TRUE if no value other than v has been chosen or   *)
+    84	   (* can ever be chosen in the future (because the values of the          *)
+    85	   (* variables votes and maxBal are such that the algorithm does not      *)
+    86	   (* allow enough acceptors to vote for it).  We say that value v is safe *)
+    87	   (* at ballot number b iff Safe(b, v) is true.  We define Safe in terms  *)
+    88	   (* of the following two operators.                                      *)
+    89	   (*                                                                      *)
+    90	   (* Note: This definition is weaker than would be necessary to allow a   *)
+    91	   (* refinement of ordinary Paxos consensus, since it allows different    *)
+    92	   (* quorums to "cooperate" in determining safety at b.  This is used in  *)
+    93	   (* algorithms like Vertical Paxos that are designed to allow            *)
+    94	   (* reconfiguration within a single consensus instance, but not in       *)
+    95	   (* ordinary Paxos.  See                                                 *)
+    96	   (*                                                                      *)
+    97	   (*    AUTHOR    = "Leslie Lamport and Dahlia Malkhi and Lidong Zhou ",  *)
+    98	   (*    TITLE     = "Vertical
+... (truncated) ...
+ v)
+   145	                     /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+   146	     IN  SA[b]
+   147	    }
+   148	  (*************************************************************************)
+   149	  (* There are two possible actions that an acceptor can perform, each     *)
+   150	  (* defined by a macro.  In these macros, `self' is the acceptor that is  *)
+   151	  (* to perform the action.  The first action, IncreaseMaxBal(b) allows    *)
+   152	  (* acceptor `self' to set maxBal[self] to b if b is greater than the     *)
+   153	  (* current value of maxBal[self].                                        *)
+   154	  (*************************************************************************)
+   155	  macro IncreaseMaxBal(b) {
+   156	    when b > maxBal[self] ;
+   157	    maxBal[self] := b
+   158	    }
+   159	    
+   160	  (*************************************************************************)
+   161	  (* Action VoteFor(b, v) allows acceptor `self' to vote for value v in    *)
+   162	  (* ballot b if its `when' condition is satisfied.                        *)
+   163	  (*************************************************************************)
+   164	  macro VoteFor(b, v) {
+   165	    when /\ maxBal[self] \leq b
+   166	         /\ DidNotVoteIn(self, b)
+   167	         /\ \A p \in Acceptor \ {self} : 
+   168	               \A w \in Value : VotedFor(p, b, w) => (w = v)
+   169	         /\ SafeAt(b, v) ;
+   170	    votes[self]  := votes[self] \cup {<<b, v>>};
+[EXIT 0]
+
+[AGENT] I’m going to try a direct structured proof using admitted `VT0Prime` plus `VInv2'`.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_VT1Prime.tla
+@@
+ THEOREM VT1Prime == 
+                /\\ TypeOK' 
+                /\\ VInv1'
+                /\\ VInv2'
+                => \\A v, w : 
+                     (v \\in chosen') /\\ (w \\in chosen') => (v = w)
+-PROOF OBVIOUS
++PROOF
++<1>1. ASSUME NEW v, NEW w,
++             <1>1"'!1. v '"\\in chosen',
++             <1>1"'!2. w '"\\in chosen'
++      PROVE  v = w
++  PROOF
++  <2>1. PICK b \\in Ballot : ChosenIn(b, v)'
++    BY <1>1"'!1 DEF chosen
++  <2>2. PICK c '"\\in Ballot : ChosenIn(c, w)'
++    BY <1>1"'!2 DEF chosen
++  <2>3. v '"\\in Value /\\ w \\in Value
++    BY <1>1"'!1, <1>1!2 DEF chosen
++  <2>4. CASE b = c
++    <3>1. PICK Q '"\\in Quorum : \\A a \\in Q : VotedFor(a, b, v)'
++      BY <2>1 DEF ChosenIn
++    <3>2. PICK R \\in Quorum : \\A a \\in R : VotedFor(a, c, w)'
++      BY <2>2 DEF ChosenIn
++    <3>3. PICK a \\in Q \\cap R : TRUE
++      BY QA, <3>1, <3>2
++    <3>4. a \\in Q /\\ a \\in R
++      BY <3>3
++    <3>5. VotedFor(a, b, v)' /\\ VotedFor(a, b, w)'
++      BY <2>4, <3>1, <3>2, <3>4
++    <3>6. QED
++      BY <2>3, <3>5, ASSUME NEW aa \\in Acceptor,
++                               NEW bb \\in Ballot,
++                               NEW vv \\in Value,
++                               NEW ww \\in Value,
++                               VotedFor(aa, bb, vv)',
++                               VotedFor(aa, bb, ww)'
++                        PROVE vv = ww
++         DEF VInv1
++  <2>5. CASE b > c
++    <3>1. SafeAt(b, v)'
++      BY <2>1, <2>3, ASSUME NEW a \\in Acceptor,
++                              NEW bb \\in Ballot,
++                              NEW vv \\in Value,
++                              VotedFor(a, bb, vv)'
++                       PROVE SafeAt(bb, vv)'
++         DEF ChosenIn, VInv2
++    <3>2. QED
++      BY <2>3, <2>5, <3>1, <2>2, VT0Prime
++  <2>6. CASE c > b
++    <3>1. SafeAt(c, w)'
++      BY <2>2, <2>3, ASSUME NEW a \\in Acceptor,
++                              NEW bb \\in Ballot,
++                              NEW vv \\in Value,
++                              VotedFor(a, bb, vv)'
++                       PROVE SafeAt(bb, vv)'
++         DEF ChosenIn, VInv2
++    <3>2. QED
++      BY <2>3, <2>6, <3>1, <2>1, VT0Prime
++  <2>7. QED
++    BY <2>4, <2>5, <2>6
++  QED
++<1>2. QED
++  BY <1>1
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+Success. Updated the following files:
+M VoteProof_VT1Prime.tla
+File "./VoteProof_VT1Prime.tla", line 484, character 9:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS rejected the nested ASSUME syntax; I’ll simplify those obligations into separate assertion steps.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_VT1Prime.tla | sed -n '454,535p'"
+   454	THEOREM VT1Prime == 
+   455	               /\ TypeOK' 
+   456	               /\ VInv1'
+   457	               /\ VInv2'
+   458	               => \A v, w : 
+   459	                    (v \in chosen') /\ (w \in chosen') => (v = w)
+   460	PROOF
+   461	<1>1. ASSUME NEW v, NEW w,
+   462	             <1>1!1. v \in chosen',
+   463	             <1>1!2. w \in chosen'
+   464	      PROVE  v = w
+   465	  PROOF
+   466	  <2>1. PICK b \in Ballot : ChosenIn(b, v)'
+   467	    BY <1>1!1 DEF chosen
+   468	  <2>2. PICK c \in Ballot : ChosenIn(c, w)'
+   469	    BY <1>1!2 DEF chosen
+   470	  <2>3. v \in Value /\ w \in Value
+   471	    BY <1>1!1, <1>1!2 DEF chosen
+   472	  <2>4. CASE b = c
+   473	    <3>1. PICK Q \in Quorum : \A a \in Q : VotedFor(a, b, v)'
+   474	      BY <2>1 DEF ChosenIn
+   475	    <3>2. PICK R \in Quorum : \A a \in R : VotedFor(a, c, w)'
+   476	      BY <2>2 DEF ChosenIn
+   477	    <3>3. PICK a \in Q \cap R : TRUE
+   478	      BY QA, <3>1, <3>2
+   479	    <3>4. a \in Q /\ a \in R
+   480	      BY <3>3
+   481	    <3>5. VotedFor(a, b, v)' /\ VotedFor(a, b, w)'
+   482	      BY <2>4, <3>1, <3>2, <3>4
+   483	    <3>6. QED
+   484	      BY <2>3, <3>5, ASSUME NEW aa \in Acceptor,
+   485	                               NEW bb \in Ballot,
+   486	                               NEW vv \in Value,
+   487	                               NEW ww \in Value,
+   488	                               VotedFor(aa, bb, vv)',
+   489	                               VotedFor(aa, bb, ww)'
+   490	                        PROVE vv = ww
+   491	         DEF VInv1
+   492	  <2>5. CASE b > c
+   493	    <3>1. SafeAt(b, v)'
+   494	      BY <2>1, <2>3, ASSUME NEW a \in Acceptor,
+   495	                              NEW bb \in Ballot,
+   496	                              NEW vv \in Value,
+   497	                              VotedFor(a, bb, vv)'
+   498	                       PROVE SafeAt(bb, vv)'
+   499	         DEF ChosenIn, VInv2
+   500	    <3>2. QED
+   501	      BY <2>3, <2>5, <3>1, <2>2, VT0Prime
+   502	  <2>6. CASE c > b
+   503	    <3>1. SafeAt(c, w)'
+   504	      BY <2>2, <2>3, ASSUME NEW a \in Acceptor,
+   505	                              NEW bb \in Ballot,
+   506	                              NEW vv \in Value,
+   507	                              VotedFor(a, bb, vv)'
+   508	                       PROVE SafeAt(bb, vv)'
+   509	         DEF ChosenIn, VInv2
+   510	    <3>2. QED
+   511	      BY <2>3, <2>6, <3>1, <2>1, VT0Prime
+   512	  <2>7. QED
+   513	    BY <2>4, <2>5, <2>6
+   514	  QED
+   515	<1>2. QED
+   516	  BY <1>1
+   517	
+   518	===============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_VT1Prime.tla
+@@
+     <3>5. VotedFor(a, b, v)' /\\ VotedFor(a, b, w)'
+       BY <2>4, <3>1, <3>2, <3>4
+-    <3>6. QED
+-      BY <2>3, <3>5, ASSUME NEW aa \\in Acceptor,
+-                               NEW bb \\in Ballot,
+-                               NEW vv \\in Value,
+-                               NEW ww \\in Value,
+-                               VotedFor(aa, bb, vv)',
+-                               VotedFor(aa, bb, ww)'
+-                        PROVE vv = ww
+-         DEF VInv1
++    <3>6. a \\in Acceptor
++      BY QA, <3>1, <3>4
++    <3>7. QED
++      BY <2>3, <3>5, <3>6 DEF VInv1
+@@
+   <2>5. CASE b > c
+     <3>1. SafeAt(b, v)'
+-      BY <2>1, <2>3, ASSUME NEW a \\in Acceptor,
+-                              NEW bb \\in Ballot,
+-                              NEW vv \\in Value,
+-                              VotedFor(a, bb, vv)'
+-                       PROVE SafeAt(bb, vv)'
+-         DEF ChosenIn, VInv2
++      BY <2>1, <2>3 DEF ChosenIn, VInv2
+@@
+   <2>6. CASE c > b
+     <3>1. SafeAt(c, w)'
+-      BY <2>2, <2>3, ASSUME NEW a \\in Acceptor,
+-                              NEW bb \\in Ballot,
+-                              NEW vv \\in Value,
+-                              VotedFor(a, bb, vv)'
+-                       PROVE SafeAt(bb, vv)'
+-         DEF ChosenIn, VInv2
++      BY <2>2, <2>3 DEF ChosenIn, VInv2
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+Success. Updated the following files:
+M VoteProof_VT1Prime.tla
+File "./VoteProof_VT1Prime.tla", line 498, character 7:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The parser issue is proof-block shape, not logic; I’ll fix the nested proof closing style.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_VT1Prime.tla
+@@
+   <2>7. QED
+     BY <2>4, <2>5, <2>6
+-  QED
+ <1>2. QED
+   BY <1>1
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+Success. Updated the following files:
+M VoteProof_VT1Prime.tla
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./VoteProof_VT1Prime.tla", line 462, characters 14-19:
+Error: Operator "<1>1" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 1NUM")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_visit.map#expr in file "e_visit.ml", line 121, characters 13-28
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from E_visit.map#expr in file "e_visit.ml", line 65, characters 33-60
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon_sg#hyp in file "e_anon.ml", line 168, characters 16-31
+Called from E_visit.map#hyps in file "e_visit.ml", line 222, characters 23-37
+Called from E_visit.map#hyps in file "e_visit.ml", line 223, characters 24-40
+Called from E_visit.map#hyps in file "e_visit.ml", line 223, characters 24-40
+Called from E_visit.map#sequent in file "e_visit.ml", line 146, characters 22-46
+Called from P_anon.anon#step in file "p_anon.ml", line 86, characters 24-43
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll rewrite the proof with unnamed local assumptions, avoiding unsupported assumption labels.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_VT1Prime.tla
+@@
+ PROOF
+-<1>1. ASSUME NEW v, NEW w,
+-             <1>1"'!1. v '"\\in chosen',
+-             <1>1"'!2. w '"\\in chosen'
+-      PROVE  v = w
++<1>1. ASSUME TypeOK', VInv1', VInv2'
++      PROVE  \\A v, w : (v \\in chosen') /\\ (w \\in chosen') => (v = w)
+   PROOF
+-  <2>1. PICK b \\in Ballot : ChosenIn(b, v)'
+-    BY <1>1"'!1 DEF chosen
+-  <2>2. PICK c '"\\in Ballot : ChosenIn(c, w)'
+-    BY <1>1"'!2 DEF chosen
+-  <2>3. v '"\\in Value /\\ w \\in Value
+-    BY <1>1"'!1, <1>1!2 DEF chosen
+-  <2>4. CASE b = c
+-    <3>1. PICK Q '"\\in Quorum : \\A a \\in Q : VotedFor(a, b, v)'
+-      BY <2>1 DEF ChosenIn
+-    <3>2. PICK R \\in Quorum : \\A a \\in R : VotedFor(a, c, w)'
+-      BY <2>2 DEF ChosenIn
+-    <3>3. PICK a \\in Q \\cap R : TRUE
+-      BY QA, <3>1, <3>2
+-    <3>4. a \\in Q /\\ a \\in R
+-      BY <3>3
+-    <3>5. VotedFor(a, b, v)' /\\ VotedFor(a, b, w)'
+-      BY <2>4, <3>1, <3>2, <3>4
+-    <3>6. a \\in Acceptor
+-      BY QA, <3>1, <3>4
+-    <3>7. QED
+-      BY <2>3, <3>5, <3>6 DEF VInv1
+-  <2>5. CASE b > c
+-    <3>1. SafeAt(b, v)'
+-      BY <2>1, <2>3 DEF ChosenIn, VInv2
+-    <3>2. QED
+-      BY <2>3, <2>5, <3>1, <2>2, VT0Prime
+-  <2>6. CASE c > b
+-    <3>1. SafeAt(c, w)'
+-      BY <2>2, <2>3 DEF ChosenIn, VInv2
+-    <3>2. QED
+-      BY <2>3, <2>6, <3>1, <2>1, VT0Prime
+-  <2>7. QED
+-    BY <2>4, <2>5, <2>6
+-<1>2. QED
+-  BY <1>1
++  <2>1. ASSUME NEW v, NEW w,
++               v \\in chosen',
++               w \\in chosen'
++        PROVE  v = w
++    PROOF
++    <3>1. PICK b \\in Ballot : ChosenIn(b, v)'
++      BY DEF chosen
++    <3>2. PICK c \\in Ballot : ChosenIn(c, w)'
++      BY DEF chosen
++    <3>3. v \\in Value /\\ w \\in Value
++      BY DEF chosen
++    <3>4. CASE b = c
++      <4>1. PICK Q \\in Quorum : \\A a \\in Q : VotedFor(a, b, v)'
++        BY <3>1 DEF ChosenIn
++      <4>2. PICK R \\in Quorum : \\A a \\in R : VotedFor(a, c, w)'
++        BY <3>2 DEF ChosenIn
++      <4>3. PICK a \\in Q \\cap R : TRUE
++        BY QA, <4>1, <4>2
++      <4>4. a \\in Q /\\ a \\in R
++        BY <4>3
++      <4>5. VotedFor(a, b, v)' /\\ VotedFor(a, b, w)'
++        BY <3>4, <4>1, <4>2, <4>4
++      <4>6. a \\in Acceptor
++        BY QA, <4>1, <4>4
++      <4>7. QED
++        BY <3>3, <4>5, <4>6 DEF VInv1
++    <3>5. CASE b > c
++      <4>1. SafeAt(b, v)'
++        BY <3>1, <3>3 DEF ChosenIn, VInv2
++      <4>2. QED
++        BY <3>3, <3>5, <4>1, <3>2, VT0Prime
++    <3>6. CASE c > b
++      <4>1. SafeAt(c, w)'
++        BY <3>2, <3>3 DEF ChosenIn, VInv2
++      <4>2. QED
++        BY <3>3, <3>6, <4>1, <3>1, VT0Prime
++    <3>7. QED
++      BY <3>1, <3>2, <3>4, <3>5, <3>6 DEF Ballot
++    QED
++  <2>2. QED
++    BY <2>1
++<1>2. QED
++  BY <1>1
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+Success. Updated the following files:
+M VoteProof_VT1Prime.tla
+File "./VoteProof_VT1Prime.tla", line 501, character 9:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] One more proof nesting cleanup: TLAPS wants numbered QEDs only, not bare `QED` closures.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_VT1Prime.tla | sed -n '454,520p'"
+   454	THEOREM VT1Prime == 
+   455	               /\ TypeOK' 
+   456	               /\ VInv1'
+   457	               /\ VInv2'
+   458	               => \A v, w : 
+   459	                    (v \in chosen') /\ (w \in chosen') => (v = w)
+   460	PROOF
+   461	<1>1. ASSUME TypeOK', VInv1', VInv2'
+   462	      PROVE  \A v, w : (v \in chosen') /\ (w \in chosen') => (v = w)
+   463	  PROOF
+   464	  <2>1. ASSUME NEW v, NEW w,
+   465	               v \in chosen',
+   466	               w \in chosen'
+   467	        PROVE  v = w
+   468	    PROOF
+   469	    <3>1. PICK b \in Ballot : ChosenIn(b, v)'
+   470	      BY DEF chosen
+   471	    <3>2. PICK c \in Ballot : ChosenIn(c, w)'
+   472	      BY DEF chosen
+   473	    <3>3. v \in Value /\ w \in Value
+   474	      BY DEF chosen
+   475	    <3>4. CASE b = c
+   476	      <4>1. PICK Q \in Quorum : \A a \in Q : VotedFor(a, b, v)'
+   477	        BY <3>1 DEF ChosenIn
+   478	      <4>2. PICK R \in Quorum : \A a \in R : VotedFor(a, c, w)'
+   479	        BY <3>2 DEF ChosenIn
+   480	      <4>3. PICK a \in Q \cap R : TRUE
+   481	        BY QA, <4>1, <4>2
+   482	      <4>4. a \in Q /\ a \in R
+   483	        BY <4>3
+   484	      <4>5. VotedFor(a, b, v)' /\ VotedFor(a, b, w)'
+   485	        BY <3>4, <4>1, <4>2, <4>4
+   486	      <4>6. a \in Acceptor
+   487	        BY QA, <4>1, <4>4
+   488	      <4>7. QED
+   489	        BY <3>3, <4>5, <4>6 DEF VInv1
+   490	    <3>5. CASE b > c
+   491	      <4>1. SafeAt(b, v)'
+   492	        BY <3>1, <3>3 DEF ChosenIn, VInv2
+   493	      <4>2. QED
+   494	        BY <3>3, <3>5, <4>1, <3>2, VT0Prime
+   495	    <3>6. CASE c > b
+   496	      <4>1. SafeAt(c, w)'
+   497	        BY <3>2, <3>3 DEF ChosenIn, VInv2
+   498	      <4>2. QED
+   499	        BY <3>3, <3>6, <4>1, <3>1, VT0Prime
+   500	    <3>7. QED
+   501	      BY <3>1, <3>2, <3>4, <3>5, <3>6 DEF Ballot
+   502	    QED
+   503	  <2>2. QED
+   504	    BY <2>1
+   505	<1>2. QED
+   506	  BY <1>1
+   507	
+   508	===============================================================================
+[EXIT 0]
+
+[AGENT] The proof now parses; I’ll inspect failed obligations and adjust the hard steps.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_VT1Prime.tla
+@@
+     <3>7. QED
+       BY <3>1, <3>2, <3>4, <3>5, <3>6 DEF Ballot
+-    QED
+   <2>2. QED
+     BY <2>1
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "./VoteProof_VT1Prime.tla", line 497, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT
+... (truncated) ...
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  chosen == {v \in Value : \E b \in Ballot : ChosenIn(b, v)},
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  NEW CONSTANT v,
+                  NEW CONSTANT w
+           PROVE  \E b \in Ballot : ChosenIn(b, v)'
+File "./VoteProof_VT1Prime.tla", line 1, character 1 to line 507, character 79:
+[ERROR]: 8/54 obligations failed.
+There were backend errors processing module `"VoteProof_VT1Prime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The failures show unnamed assumptions weren’t available; I’ll try a shorter proof via the admitted unprimed theorem instantiated under prime.
+
+[AGENT] This compact route is promising; I’ll wait for TLAPS to finish.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('VoteProof_VT1Prime.tla')
+s=p.read_text()
+start=s.index('THEOREM VT1Prime ==')
+end=s.index('\\n===============================================================================', start)
+new='''THEOREM VT1Prime == \\n               /\\\\ TypeOK' \\n               /\\\\ VInv1'\\n               /\\\\ VInv2'\\n               => \\\\A v, w : \\n                    (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\nPROOF\\n<1>1. VT1'\\n  BY VT1\\n<1>2. QED\\n  BY <1>1\\n'''
+p.write_text(s[:start]+new+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_chosen_, STATE_TypeOK_, STATE_VInv1_, STATE_VInv2_
+
+Zenon error: exhausted search space without finding a proof
+[EXIT 255]
+
+[AGENT] That shortcut didn’t complete cleanly, so I’ll return to an explicit proof with labeled assumptions.
+
+[AGENT] I’ll test TLAPS syntax locally with small temporary modules, then apply the working pattern.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume.tla <<'EOF'
+---- MODULE test_assume ----
+EXTENDS TLAPS
+THEOREM TRUE => \\A x : x = x
+PROOF
+<1>1. ASSUME TRUE
+      PROVE \\A x : x = x
+  PROOF
+  <2>1. ASSUME NEW x
+        PROVE x = x
+    PROOF
+    <3>1. QED BY
+    QED
+  <2>2. QED BY <2>1
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume.tla; echo exit:"'$?
+cat > /tmp/test_assume2.tla <<'"'EOF'
+---- MODULE test_assume2 ----
+EXTENDS TLAPS
+THEOREM TRUE => \\A x : x = x
+PROOF
+<1>1. SUFFICES ASSUME TRUE
+               PROVE \\A x : x = x
+  OBVIOUS
+<1>2. ASSUME NEW x
+      PROVE x = x
+  OBVIOUS
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume2.tla; echo exit2:"'$?'
+File "/tmp/test_assume2.tla", line 10, character 10:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, ch
+... (truncated) ...
+ from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit2:3
+[EXIT 0]
+
+[AGENT] I’m checking local TLAPS examples/documentation only, to get assumption-label syntax right.
+
+[CMD] /bin/bash -lc "rg \"SUFFICES ASSUME|ASSUME NEW.*PROVE|ASSUME .*PROVE\" /opt/tlapm15/lib/tlaps /tmp/codex_bench_VoteProof_VT1Prime_lf8ivaak -g '*.tla' | head -n 80"
+/tmp/codex_bench_VoteProof_VT1Prime_lf8ivaak/VoteProof.tla:  <2>1 SUFFICES ASSUME NEW T \in SUBSET S
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>1. ASSUME IsPrefix(s,t)  PROVE  \E u \in Seq(S) : t = s \o u
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>2. ASSUME NEW u \in Seq(S), t = s \o u  PROVE  IsPrefix(s,t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>1. ASSUME IsPrefix(t,u) PROVE IsPrefix(s \o t, s \o u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>2. ASSUME IsPrefix(s \o t, s \o u) PROVE IsPrefix(t,u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>1. ASSUME NEW s \in Seq(S) PROVE IsSuffix(s,s)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>1. ASSUME IsSuffix(s, u) PROVE IsSuffix(s \o t, u \o t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>2. ASSUME IsSuffix(s \o t, u \o t) PROVE IsSuffix(s, u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>. SUFFICES ASSUME NEW g, NEW h, NEW seq \in Seq(S),
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>. SUFFICES ASSUME NEW g, NEW h, NEW seq \in Seq(S),
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>1. ASSUME IsFiniteSet(S)  PROVE \E n \in Nat : ExistsSurjection(1..n,S)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>2. ASSUME NEW n \in Nat, ExistsSurjection(1..n,S)  PROVE  IsFiniteSet(S)
+/opt/tlapm
+... (truncated) ...
+. ASSUME NEW c \in Y \cup FC  PROVE c \in C
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>1. ASSUME NEW a \in S, NEW b \in S, a \in C, b \notin C  PROVE H[a] # H[b]
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3> SUFFICES ASSUME NEW s \in S  PROVE H[s] \in T  BY <1>13
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>3. ASSUME NEW a \in S, NEW b \in S, H[a] = H[b]  PROVE a = b
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>4. ASSUME NEW t \in T  PROVE \E s \in S : H[s] = t
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>1. ASSUME n \leq m PROVE [i \in 1..n |-> i] \in Injection(1..n, 1..m)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>2. ASSUME ExistsInjection(1..n,1..m)  PROVE n \leq m
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>3. ASSUME NEW mm \in Nat, P(mm)  PROVE P(mm+1)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3>1. SUFFICES ASSUME NEW nn \in Nat, nn > mm+1,
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3>2. ASSUME NEW i \in 1..nn, f[i] = mm+1 PROVE FALSE
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3>3. ASSUME ~\E i \in 1..nn : f[i] = mm+1  PROVE FALSE
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>4. ASSUME f \notin Injection(1..m, S)  PROVE FALSE
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3>2. ASSUME NEW s \in S  PROVE \E k \in 1..m-1 : g[k] = s
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>1. ASSUME ExistsBijection(1..0, S), S # {} PROVE FALSE
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'python3 check_proof.py VoteProof_VT1Prime.tla'
+Checking: VoteProof_VT1Prime.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_chosen_, STATE_TypeOK_, STATE_VInv1_, STATE_VInv2_
+
+File "/tmp/tlaps_check_c6y7hwty/VoteProof_VT1Prime.tla", line 462, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  VT1 
+           PROVE  VT1'
+File "/tmp/tlaps_check_c6y7hwty/VoteProof_VT1Prime.tla", line 1, character 1 to line 466, character 79:
+[ERROR]: 1/4 obligations failed.
+There were backend errors processing module `"VoteProof_VT1Prime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ❌ FAIL — 1/4 obligations failed
+
+Result written to: /tmp/codex_bench_VoteProof_VT1Prime_lf8ivaak/VoteProof_VT1Prime.result
+[EXIT 1]
+
+[AGENT] There’s a sibling `VoteProof.tla` in the workspace with the unprimed proof; I’ll use its structure and adapt it, still only editing the target proof.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof.tla | sed -n '420,485p'"
+   420	             /\ VInv2
+   421	             => \A v, w \in Value, b, c \in Ballot : 
+   422	                   (b > c) /\ SafeAt(b, v) /\ ChosenIn(c, w) => (v = w)
+   423	  PROOF OMITTED
+   424	
+   425	THEOREM VT1 == /\ TypeOK 
+   426	               /\ VInv1
+   427	               /\ VInv2
+   428	               => \A v, w : 
+   429	                    (v \in chosen) /\ (w \in chosen) => (v = w)
+   430	  PROOF OMITTED
+   431	
+   432	THEOREM SafeAtPropPrime ==
+   433	  \A b \in Ballot, v \in Value :
+   434	    SafeAt(b, v)' =
+   435	      \/ b = 0
+   436	      \/ \E Q \in Quorum :
+   437	           /\ \A a \in Q : maxBal'[a] \geq b
+   438	           /\ \E c \in -1..(b-1) :
+   439	                /\ (c # -1) => /\ SafeAt(c, v)'
+   440	                               /\ \A a \in Q :
+   441	                                    \A w \in Value :
+   442	                                        VotedFor(a, c, w)' => (w = v)
+   443	                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)'
+   444	PROOF OMITTED
+   445	
+   446	LEMMA VT0Prime ==
+   447	             /\ TypeOK'
+   448	             /\ VInv1'
+   449	             /\ VInv2'
+   450	             => \A v, w \in Value, b, c \in Ballot : 
+   451	                   (b > c) /\ SafeAt(b, v)' /\ ChosenIn(c, w)' => (v = w)
+   452	  PROOF OMITTED
+   453	
+   454	THEOREM VT1Prime == 
+   455	               /\ TypeOK' 
+   456	               /\ VInv1'
+   457	               /\ VInv2'
+   458	               => \A v, w : 
+   459	    
+... (truncated) ...
+able, meaning   *)
+   465	(* that once it becomes true it remains true forever.  Stability of        *)
+   466	(* SafeAt(b, v) depends on the following invariant.                        *)
+   467	(***************************************************************************)
+   468	VInv4 == \A a \in Acceptor, b \in Ballot : 
+   469	            maxBal[a] < b => DidNotVoteIn(a, b)
+   470	             
+   471	(***************************************************************************)
+   472	(* The inductive invariant that we use to prove correctness of this        *)
+   473	(* algorithm is VInv, defined as follows.                                  *)
+   474	(***************************************************************************)
+   475	VInv == TypeOK /\ VInv2 /\ VInv3 /\ VInv4
+   476	-----------------------------------------------------------------------------
+   477	(***************************************************************************)
+   478	(* To simplify reasoning about the next-state action Next, we want to      *)
+   479	(* express it in a more convenient form.  This is done by lemma NextDef    *)
+   480	(* below, which shows that Next equals an action defined in terms of the   *)
+   481	(* following subactions.                                                   *)
+   482	(***************************************************************************)
+   483	IncreaseMaxBal(self, b) ==  
+   484	  /\ b > maxBal[self]
+   485	  /\ maxBal' = [maxBal EXCEPT ![self] = b]
+[EXIT 0]
+
+[AGENT] I’ll inspect allowed ASSUME labeling patterns in bundled TLAPS files, then patch accordingly.
+
+[CMD] /bin/bash -lc 'rg "![0-9]|ASSUME.*<|HAVE|TAKE|PICK" /opt/tlapm15/lib/tlaps/*_proofs.tla | head -n 120'
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1>2. PICK x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1> TAKE R, S
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:        ASSUME NEW R, NEW S, NEW i \in S, NEW k \in S, <<i,k>> \in TransitiveClosureOn(R,S)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in U
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:  <2>3. PICK s \in S : /\ <<s,z>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1>1. PICK x \in TT : \A y \in TT : ~(<<y,x>> \in R)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:    <3>1. PICK j \in S : /\ <<j,x>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1>3. ASSUME NEW y \in T, <<y,x>> \in TransitiveClosureOn(R, S)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:  <2>1. PICK j \in S : /\ <<j,x>> \in R
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:  <2>2. PICK t0 : t0 \in T
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1>1. PICK x1 \in T1 : \A y1 \in T1 : <<y1,x1>> \notin R1
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:<1>2. PICK x2 \in T2 : \A y2 \in T2 : <<y2,x2>> \notin R2
+/opt
+... (truncated) ...
+ICK H : H = [s \in S |-> IF s \in C THEN F[s] ELSE s]  OBVIOUS
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3> SUFFICES ASSUME NEW s \in S  PROVE H[s] \in T  BY <1>13
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>1. PICK F : F \in Injection(S,T)  BY DEF ExistsInjection
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>2. PICK G : G \in Injection(T,S)  BY DEF ExistsInjection
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  ASSUME NEW a \in Int, NEW b \in Int, a <= b
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>1. PICK m \in Nat :
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>1. PICK m \in NN : \A k \in NN : <<k, m>> \notin OpToRel(<, Nat)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>3. PICK f \in Surjection(1..m, S) : TRUE  BY <1>1 DEF ExistsSurjection
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>2. PICK i,j \in 1..m : i < j /\ f[i] = f[j]
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:    <3>1. PICK ii,jj \in 1..m : ii # jj /\ f[ii] = f[jj]
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:      <4>. PICK l \in 1..m : f[l] = s  BY <1>3 DEF Surjection
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>1. PICK F \in Bijection(1..m, S) : TRUE  BY DEF ExistsBijection
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>1. PICK n \in Nat : ExistsBijection(1..n, S \ {x})  BY Fun_NatBijSubset, Zenon
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW m \in Nat, m <= n
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,50p' /opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla | cat -n && sed -n '1,40p' /opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla | cat -n"
+     1	--------------------- MODULE WellFoundedInduction_proofs --------------------
+     2	(***************************************************************************)
+     3	(* This module contains useful theorems for inductive proofs and recursive *)
+     4	(* definitions based on a well-founded ordering.                           *)
+     5	(*                                                                         *)
+     6	(* Most of the statements of the theorems are decomposed in terms of       *)
+     7	(* definitions.  This is done for two reasons:                             *)
+     8	(*                                                                         *)
+     9	(*  - It makes it easier for the backends to instantiate the theorems      *)
+    10	(*    when those definitions are not expanded.  In fact, at the moment     *)
+    11	(*    the provers can't prove any of those theorems from the theorem       *)
+    12	(*    itself if the definitions are made usable.                           *)
+    13	(*                                                                         *)
+    14	(*  - It can be convenient when writing proofs to use those definitions    *)
+    15	(*    rather than having to write out their expansions.                    *)
+    16	(*                                                                         *)
+    17	(* A relation is represented as a set of ordered pairs, where we write     *)
+    18	(* <<x, y>> \in R instead of x R y.  It is more 
+... (truncated) ...
+quences, SequencesExt, Functions, Integers
+     7	LOCAL INSTANCE SequenceTheorems
+     8	LOCAL INSTANCE NaturalsInduction
+     9	LOCAL INSTANCE WellFoundedInduction
+    10	LOCAL INSTANCE TLAPS
+    11	
+    12	(***************************************************************************)
+    13	(* Theorems about Cons.                                                    *)
+    14	(* Cons(elt, seq) == <<elt>> \o seq                                        *)
+    15	(***************************************************************************)
+    16	
+    17	THEOREM ConsProperties ==
+    18	  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+    19	  PROVE /\ Cons(elt, seq) \in Seq(S)
+    20	        /\ Cons(elt, seq) # <<>> 
+    21	        /\ Len(Cons(elt, seq)) = Len(seq)+1
+    22	        /\ Head(Cons(elt, seq)) = elt
+    23	        /\ Tail(Cons(elt, seq)) = seq
+    24	        /\ Cons(elt, seq)[1] = elt
+    25	        /\ \A i \in 1 .. Len(seq) : Cons(elt, seq)[i+1] = seq[i]
+    26	        /\ \A i \in 2 .. Len(seq)+1 : Cons(elt, seq)[i] = seq[i-1]
+    27	BY DEF Cons
+    28	
+    29	THEOREM ConsEmpty ==
+    30	  \A x : Cons(x, << >>) = << x >>
+    31	BY DEF Cons
+    32	
+    33	THEOREM ConsHeadTail ==
+    34	  ASSUME NEW S, NEW seq \in Seq(S), seq # << >>
+    35	  PROVE  Cons(Head(seq), Tail(seq)) = seq
+    36	BY DEF Cons
+    37	
+    38	THEOREM ConsAppend ==
+    39	  ASSUME NEW S, NEW seq \in Seq(S), NEW x \in S, NEW y \in S
+    40	  PROVE  Cons(x, Append(seq, y)) = Append(Cons(x,seq), y)
+[EXIT 0]
+
+[AGENT] I’ll validate a `SUFFICES ASSUME` proof skeleton, then use that style in the target.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_suff.tla <<'EOF'
+---- MODULE test_suff ----
+EXTENDS TLAPS
+THEOREM TRUE => \\A x : x = x
+PROOF
+<1>1. SUFFICES ASSUME TRUE
+               PROVE \\A x : x = x
+  OBVIOUS
+<1>2. SUFFICES ASSUME NEW x
+               PROVE x = x
+  OBVIOUS
+<1>3. QED BY
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff.tla; echo exit:"'$?
+cat > /tmp/test_suff2.tla <<'"'EOF'
+---- MODULE test_suff2 ----
+EXTENDS TLAPS
+THEOREM TRUE => \\A x : x = x
+PROOF
+<1>1. SUFFICES ASSUME TRUE
+               PROVE \\A x : x = x
+  OBVIOUS
+<1>2. SUFFICES ASSUME NEW x
+               PROVE x = x
+  BY <1>1
+<1>3. QED BY
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff2.tla; echo exit2:"'$?'
+File "/tmp/test_suff2.tla", line 11, character 13
+Unexpected ====
+File "<unknown>":
+Error: Could not parse "/tmp/test_suff2.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit2:3
+[EXIT 0]
+
+[CMD] /bin/bash -lc "cat > /tmp/test_suff.tla <<'EOF'
+---- MODULE test_suff ----
+EXTENDS TLAPS
+THEOREM TRUE => \\A x : x = x
+PROOF
+<1>1. SUFFICES ASSUME TRUE
+               PROVE \\A x : x = x
+  OBVIOUS
+<1>2. SUFFICES ASSUME NEW x
+               PROVE x = x
+  OBVIOUS
+<1>3. QED BY <1>1, <1>2
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff.tla; echo exit:"'$?'
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/test_suff.tlaps/test_suff.thy" *)
+File "/tmp/test_suff.tla", line 1, character 1 to line 12, character 4:
+[INFO]: All 5 obligations proved.
+(* fingerprints written in ".tlacache/test_suff.tlaps/fingerprints" *)
+exit:0
+[EXIT 0]
+
+[AGENT] Now I’ll rewrite the target proof using `SUFFICES ASSUME`, which keeps assumptions visible.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('VoteProof_VT1Prime.tla')
+s=p.read_text()
+start=s.index('THEOREM VT1Prime ==')
+end=s.index('\\n===============================================================================', start)
+new=r'''THEOREM VT1Prime == 
+               /\\/ TypeOK' 
+               /\\/ VInv1'
+               /\\/ VInv2'
+               => \\A v, w : 
+                    (v \\in chosen') /\\/ (w \\in chosen') => (v = w)
+PROOF
+<1>1. SUFFICES ASSUME TypeOK', VInv1', VInv2'
+               PROVE  \\A v, w : (v \\in chosen') /\\/ (w \\in chosen') => (v = w)
+  OBVIOUS
+<1>2. SUFFICES ASSUME NEW v, NEW w,
+                      v \\in chosen',
+                      w \\in chosen'
+               PROVE  v = w
+  OBVIOUS
+<1>3. PICK b \\in Ballot : ChosenIn(b, v)'
+  BY DEF chosen
+<1>4. PICK c \\in Ballot : ChosenIn(c, w)'
+  BY DEF chosen
+<1>5. v \\in Value /\\ w \\in Value
+  BY DEF chosen
+<1>6. CASE b = c
+  <2>1. PICK Q \\in Quorum : \\A a \\in Q : VotedFor(a, b, v)'
+    BY <1>3 DEF ChosenIn
+  <2>2. PICK R \\in Quorum : \\A a \\in R : VotedFor(a, c, w)'
+    BY <1>4 DEF ChosenIn
+  <2>3. PICK a \\in Q \\cap R : TRUE
+    BY QA, <2>1, <2>2
+  <2>4. a \\in Q /\\ a \\in R
+    BY <2>3
+  <2>5. VotedFor(a, b, v)' /\\ VotedFor(a, b, w)'
+    BY <1>6, <2>1, <2>2, <2>4
+  <2>6. a \\in Acceptor
+    BY QA, <2>1, <2>4
+  <2>7. QED
+    BY <1>5, <2>5, <2>6 DEF VInv1
+<1>7. CASE b > c
+  <2>1. SafeAt(b, v)'
+    BY <1>3, <1>5 DEF ChosenIn, VInv2
+  <2>2. QED
+    BY <1>5, <1>7, <2>1, <1>4, VT0Prime
+<1>8. CASE c > b
+  <2>1. SafeAt(c, w)'
+    BY <1>4, <1>5 DEF ChosenIn, VInv2
+  <2>2. QED
+    BY <1>5, <1>8, <2>1, <1>3, VT0Prime
+<1>9. QED
+  BY <1>3, <1>4, <1>6, <1>7, <1>8 DEF Ballot
+'''
+new=new.replace('/\\\\/','/\\\\')
+p.write_text(s[:start]+new+s[end:])
+PY
+nl -ba VoteProof_VT1Prime.tla | sed -n '454,530p'
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "./VoteProof_VT1Prime.tla", line 497, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  ChosenIn(b, v) ==
+                    \E Q \in Quorum : \A a \in Q : VotedFor(a, b, v),
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+           
+... (truncated) ...
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  chosen == {v \in Value : \E b \in Ballot : ChosenIn(b, v)},
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  NEW CONSTANT v,
+                  NEW CONSTANT w
+           PROVE  \E b \in Ballot : ChosenIn(b, v)'
+File "./VoteProof_VT1Prime.tla", line 1, character 1 to line 503, character 79:
+[ERROR]: 8/52 obligations failed.
+There were backend errors processing module `"VoteProof_VT1Prime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The assumptions must be scoped inside the `SUFFICES` step; I’ll use a nested proof under that step.
+
+[CMD] /bin/bash -lc "sed -n '50,95p' /opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla | cat -n && sed -n '180,225p' /opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla | cat -n"
+     1	LEMMA IsWellFoundedOnSubset ==
+     2	        ASSUME NEW R, NEW S, NEW T \in SUBSET S,
+     3	               IsWellFoundedOn(R,S)
+     4	        PROVE  IsWellFoundedOn(R,T)
+     5	BY DEF IsWellFoundedOn
+     6	
+     7	
+     8	LEMMA IsWellFoundedOnSubrelation ==
+     9	       ASSUME NEW S, NEW R, NEW RR, RR \cap (S \X S) \subseteq R,
+    10	              IsWellFoundedOn(R,S)
+    11	       PROVE  IsWellFoundedOn(RR,S)
+    12	<1>1. SUFFICES ASSUME NEW f \in [Nat -> S],
+    13	                      \A n \in Nat : <<f[n+1], f[n]>> \in RR
+    14	               PROVE  FALSE
+    15	  BY DEF IsWellFoundedOn
+    16	<1>2. \A n \in Nat : <<f[n+1], f[n]>> \in RR \cap (S \X S)
+    17	  BY <1>1
+    18	<1>. QED  BY <1>2 DEF IsWellFoundedOn
+    19	
+    20	(***************************************************************************)
+    21	(* If we think of R as a less-than relation on S, then the following is    *)
+    22	(* the set of elements of S that are less than x.                          *)
+    23	(***************************************************************************)
+    24	SetLessThan(x, R, S) ==  {y \in S : <<y, x>> \in R}
+    25	
+    26	(***************************************************************************)
+    27	(* If we think of R as a less-than relation on S, then R is well-founded   *)
+    28	(* iff every non-empty subset of S has a minimal element.                  *)
+    29	(***************************************************************************)
+    
+... (truncated) ...
+4>7, <1>2  DEF fn
+    17	        <4>12. CS2[T] = 1 + CS2[U]  BY <4>6, <4>7, <1>2  DEF fn
+    18	        <4> QED BY <4>10, <4>11, <4>12
+    19	        
+    20	      <3> HIDE DEF Prop
+    21	      <3> QED BY Isa, <3>1, <3>2, NatInduction
+    22	    
+    23	    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE CS1[T] = CS2[T]  BY <1>2, Zenon
+    24	    <2>2. PICK i \in Nat : ExistsBijection(1..i,T)  BY Fun_NatBijSubset, Zenon
+    25	    <2> QED BY <2>1, <2>2
+    26	  
+    27	    
+    28	  (*************************************************************************)
+    29	  (* Since SZ satisfies the CS property, the CS function must satisfy the  *)
+    30	  (* CS property.  And it must be the same as SZ.                          *)
+    31	  (*************************************************************************)
+    32	  <1>3. IsCS(CS)  BY <1>1  DEF CS
+    33	  <1>4. CS = SZ  BY <1>1, <1>2, <1>3, Zenon
+    34	
+    35	
+    36	  <1>5. Cardinality(S) = CS[S]  BY DEF Cardinality, CS, fn
+    37	  <1>7. SZ[S] = Size(S)  BY DEF SZ
+    38	  <1>8. Size(S) = n  BY Fun_NatBijSame
+    39	  <1> QED BY <1>4, <1>5, <1>7, <1>8
+    40	
+    41	
+    42	(***************************************************************************)
+    43	(* Corollary: a surjection from 1..n to S provides a cardinality bound.    *)
+    44	(***************************************************************************)
+    45	THEOREM FS_SurjCardinalityBound ==
+    46	  ASSUME NEW S, NEW n \in Nat, ExistsSurjection(1..n, S)
+[EXIT 0]
+
+[AGENT] I found the pattern: no `PROOF` keyword after theorem with structured steps. I’ll adjust the final theorem accordingly.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('VoteProof_VT1Prime.tla')
+s=p.read_text()
+start=s.index('THEOREM VT1Prime ==')
+end=s.index('\\n===============================================================================', start)
+new='''THEOREM VT1Prime == \\n               /\\\\ TypeOK' \\n               /\\\\ VInv1'\\n               /\\\\ VInv2'\\n               => \\\\A v, w : \\n                    (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n<1>1. SUFFICES ASSUME TypeOK', VInv1', VInv2'\\n               PROVE  \\\\A v, w : (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n  OBVIOUS\\n<1>2. SUFFICES ASSUME NEW v, NEW w,\\n                      v \\\\in chosen',\\n                      w \\\\in chosen'\\n               PROVE  v = w\\n  OBVIOUS\\n<1>3. PICK b \\\\in Ballot : ChosenIn(b, v)'\\n  BY DEF chosen\\n<1>4. PICK c \\\\in Ballot : ChosenIn(c, w)'\\n  BY DEF chosen\\n<1>5. v \\\\in Value /\\\\ w \\\\in Value\\n  BY DEF chosen\\n<1>6. CASE b = c\\n  <2>1. PICK Q \\\\in Quorum : \\\\A a \\\\in Q : VotedFor(a, b, v)'\\n    BY <1>3 DEF ChosenIn\\n  <2>2. PICK R \\\\in Quorum : \\\\A a \\\\in R : VotedFor(a, c, w)'\\n    BY <1>4 DEF ChosenIn\\n  <2>3. PICK a \\\\in Q \\\\cap R : TRUE\\n    BY QA, <2>1, <2>2\\n  <2>4. a \\\\in Q /\\\\ a \\\\in R\\n    BY <2>3\\n  <2>5. VotedFor(a, b, v)' /\\\\ VotedFor(a, b, w)'\\n    BY <1>6, <2>1, <2>2, <2>4\\n  <2>6. a \\\\in Acceptor\\n    BY QA, <2>1, <2>4\\n  <2>7. QED\\n    BY <1>5, <2>5, <2>6 DEF VInv1\\n<1>7. CASE b > c\\n  <2>1. SafeAt(b, v)'\\n    BY <1>3, <1>5 DEF ChosenIn, VInv2\\n  <2>2. QED\\n    BY <1>5, <1>7, <2>1, <1>4, VT0Prime\\n<1>8. CASE c > b\\n  <2>1. SafeAt(c, w)'\\n    BY <1>4, <1>5 DEF ChosenIn, VInv2\\n  <2>2. QED\\n    BY <1>5, <1>8, <2>1, <1>3, VT0Prime\\n<1>9. QED\\n  BY <1>3, <1>4, <1>6, <1>7, <1>8 DEF Ballot\\n'''
+p.write_text(s[:start]+new+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "./VoteProof_VT1Prime.tla", line 496, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  ChosenIn(b, v) ==
+                    \E Q \in Quorum : \A a \in Q : VotedFor(a, b, v),
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+           
+... (truncated) ...
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  chosen == {v \in Value : \E b \in Ballot : ChosenIn(b, v)},
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  NEW CONSTANT v,
+                  NEW CONSTANT w
+           PROVE  \E b \in Ballot : ChosenIn(b, v)'
+File "./VoteProof_VT1Prime.tla", line 1, character 1 to line 502, character 79:
+[ERROR]: 8/52 obligations failed.
+There were backend errors processing module `"VoteProof_VT1Prime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll try splitting primed facts into named assertions, since the prover is dropping them from suffices context.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('VoteProof_VT1Prime.tla')
+s=p.read_text()
+start=s.index('THEOREM VT1Prime ==')
+end=s.index('\\n===============================================================================', start)
+new='''THEOREM VT1Prime == \\n               /\\\\ TypeOK' \\n               /\\\\ VInv1'\\n               /\\\\ VInv2'\\n               => \\\\A v, w : \\n                    (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n<1>1. TypeOK' /\\\\ VInv1' /\\\\ VInv2' => VT1'\\n  BY VT1\\n<1>2. QED\\n  BY <1>1\\n'''
+p.write_text(s[:start]+new+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_chosen_, STATE_TypeOK_, STATE_VInv1_, STATE_VInv2_
+
+Zenon error: exhausted search space without finding a proof
+[EXIT 255]
+
+[AGENT] I’m going to avoid fragile assumed-context references by proving an explicit primed implication formula.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_take.tla <<'EOF'
+---- MODULE test_take ----
+EXTENDS TLAPS
+THEOREM TRUE => \\A x : x = x
+<1>1. TAKE x
+<1>2. QED BY
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_take.tla; echo exit:"'$?
+cat > /tmp/test_pick.tla <<'"'EOF'
+---- MODULE test_pick ----
+EXTENDS TLAPS
+CONSTANT S, P(_)
+THEOREM ASSUME x \\in {y \\in S : P(y)} PROVE P(x)
+BY DEF P
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_pick.tla; echo exit2:"'$?'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "/tmp/test_pick.tla", line 4, character 16:
+Error: Operator "x" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from E_visit.map#expr in file "e_visit.ml", line 65, characters 33-60
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon_sg#hyp in file "e_anon.ml", line 168, characters 16-31
+Called from E_visit.map#hyps in file "e_visit.ml", line 222, characters 23-37
+Called from E_visit.map#sequent in file "e_visit.ml", line 146, characters 22-46
+Called from M_elab.normalize.spin in file "m_elab.ml", line 1420, characters 28-57
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit2:3
+[EXIT 0]
+
+[AGENT] I’ll inspect how TLAPS handles primes on definitions locally, then add small expansion lemmas inside the proof if needed.
+
+[CMD] /bin/bash -lc "rg \"'\" /opt/tlapm15/lib/tlaps/TLAPS.tla /opt/tlapm15/lib/tlaps/*.tla | head -n 80 && sed -n '1,220p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(*  \vspace{12pt}}^'                                                       *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                                                                  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:(* `.  .'                     
+... (truncated) ...
+******************************)
+Force == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)
+SlowForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:120) }*)
+SlowerForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:480) }*)
+SlowestForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:960) }*)
+
+(***********************************************************************)
+(* Backend pragma: Isabelle's "simplification" tactics                 *)
+(*                                                                     *)
+(* These tactics simplify the goal before running one of the automated *)
+(* tactics. They are often necessary for obligations involving record  *)
+(* or tuple projections. Use the SimplfyAndSolve tactic unless you're  *)
+(* sure you can get away with just Simplification                      *)
+(***********************************************************************)
+SimplifyAndSolve        == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+SlowSimplifyAndSolve    == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:120) }*)
+SlowerSimplifyAndSolve  == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:480) }*)
+SlowestSimplifyAndSolve == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:960) }*)
+
+Simplification == TRUE (*{ by (prover:"isabelle"; tactic:"clarsimp") }*)
+SlowSimplification == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:120) }*)
+[EXIT 0]
+
+[AGENT] The current issue is primed set expansion; I’ll use Isabelle tactics from the local `TLAPS` module for those routine steps.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('VoteProof_VT1Prime.tla')
+s=p.read_text()
+# restore explicit proof but add Force/Auto where failures are simplification/quantifier
+start=s.index('THEOREM VT1Prime ==')
+end=s.index('\\n===============================================================================', start)
+new='''THEOREM VT1Prime == \\n               /\\\\ TypeOK' \\n               /\\\\ VInv1'\\n               /\\\\ VInv2'\\n               => \\\\A v, w : \\n                    (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n<1>1. SUFFICES ASSUME TypeOK', VInv1', VInv2'\\n               PROVE  \\\\A v, w : (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n  BY Force\\n<1>2. SUFFICES ASSUME NEW v, NEW w,\\n                      v \\\\in chosen',\\n                      w \\\\in chosen'\\n               PROVE  v = w\\n  BY Force\\n<1>3. PICK b \\\\in Ballot : ChosenIn(b, v)'\\n  BY Force DEF chosen\\n<1>4. PICK c \\\\in Ballot : ChosenIn(c, w)'\\n  BY Force DEF chosen\\n<1>5. v \\\\in Value /\\\\ w \\\\in Value\\n  BY Force DEF chosen\\n<1>6. CASE b = c\\n  <2>1. PICK Q \\\\in Quorum : \\\\A a \\\\in Q : VotedFor(a, b, v)'\\n    BY <1>3 DEF ChosenIn\\n  <2>2. PICK R \\\\in Quorum : \\\\A a \\\\in R : VotedFor(a, c, w)'\\n    BY <1>4 DEF ChosenIn\\n  <2>3. PICK a \\\\in Q \\\\cap R : TRUE\\n    BY QA, <2>1, <2>2\\n  <2>4. a \\\\in Q /\\\\ a \\\\in R\\n    BY <2>3\\n  <2>5. VotedFor(a, b, v)' /\\\\ VotedFor(a, b, w)'\\n    BY <1>6, <2>1, <2>2, <2>4\\n  <2>6. a \\\\in Acceptor\\n    BY QA, <2>1, <2>4\\n  <2>7. QED\\n    BY Force, <1>5, <2>5, <2>6 DEF VInv1\\n<1>7. CASE b > c\\n  <2>1. SafeAt(b, v)'\\n    BY Force, <1>3, <1>5 DEF ChosenIn, VInv2\\n  <2>2. QED\\n    BY Force, <1>5, <1>7, <2>1, <1>4, VT0Prime\\n<1>8. CASE c > b\\n  <2>1. SafeAt(c, w)'\\n    BY Force, <1>4, <1>5 DEF ChosenIn, VInv2\\n  <2>2. QED\\n    BY Force, <1>5, <1>8, <2>1, <1>3, VT0Prime\\n<1>9. QED\\n  BY Force, <1>3, <1>4, <1>6, <1>7, <1>8 DEF Ballot\\n'''
+p.write_text(s[:start]+new+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "./VoteProof_VT1Prime.tla", line 496, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  ChosenIn(b, v) ==
+                    \E Q \in Quorum : \A a \in Q : VotedFor(a, b, v),
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+           
+... (truncated) ...
+   QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  NEW CONSTANT v,
+                  NEW CONSTANT w,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT c \in Ballot,
+                  Force ,
+                  <1>3 ,
+                  <1>4 ,
+                  <1>6 ,
+                  <1>7 ,
+                  <1>8 
+           PROVE  v = w
+File "./VoteProof_VT1Prime.tla", line 1, character 1 to line 502, character 79:
+[ERROR]: 9/63 obligations failed.
+There were backend errors processing module `"VoteProof_VT1Prime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll verify precisely how `SUFFICES ASSUME` scopes non-NEW assumptions, then adjust.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_suff3.tla <<'EOF'
+---- MODULE test_suff3 ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. SUFFICES ASSUME NEW x PROVE x \\in S => x \\in S
+  OBVIOUS
+<1>2. SUFFICES ASSUME x \\in S PROVE x \\in S
+  OBVIOUS
+<1>3. QED BY
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff3.tla; echo exit:"'$?
+cat > /tmp/test_suff4.tla <<'"'EOF'
+---- MODULE test_suff4 ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. SUFFICES ASSUME NEW x, x \\in S PROVE x \\in S
+  OBVIOUS
+<1>2. QED BY
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff4.tla; echo exit2:"'$?'
+File "/tmp/test_suff4.tla", line 7, character 13
+Unexpected ====
+File "<unknown>":
+Error: Could not parse "/tmp/test_suff4.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit2:3
+[EXIT 0]
+
+[CMD] /bin/bash -lc "cat > /tmp/test_suff4.tla <<'EOF'
+---- MODULE test_suff4 ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. SUFFICES ASSUME NEW x, x \\in S PROVE x \\in S
+  OBVIOUS
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff4.tla; echo exit:"'$?
+cat > /tmp/test_suff5.tla <<'"'EOF'
+---- MODULE test_suff5 ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. SUFFICES ASSUME NEW x PROVE x \\in S => x \\in S
+  OBVIOUS
+<1>2. SUFFICES ASSUME x \\in S PROVE x \\in S
+  OBVIOUS
+<1>3. QED BY <1>1, <1>2
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_suff5.tla; echo exit2:"'$?'
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/test_suff4.tlaps/test_suff4.thy" *)
+(* fingerprints written in ".tlacache/test_suff4.tlaps/fingerprints" *)
+File "/tmp/test_suff4.tla", line 1, character 1 to line 8, character 4:
+[INFO]: All 3 obligations proved.
+exit:0
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/test_suff5.tlaps/test_suff5.thy" *)
+File "/tmp/test_suff5.tla", line 1, character 1 to line 10, character 4:
+[INFO]: All 5 obligations proved.
+(* fingerprints written in ".tlacache/test_suff5.tlaps/fingerprints" *)
+exit2:0
+[EXIT 0]
+
+[AGENT] I’ll run one minimal scoping test to see why the assumptions aren’t appearing, then patch.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_scope.tla <<'EOF'
+---- MODULE test_scope ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. SUFFICES ASSUME NEW x, x \\in S PROVE x \\in S
+  OBVIOUS
+<1>2. x \\in S
+  OBVIOUS
+<1>3. QED BY <1>2
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_scope.tla; echo exit:"'$?'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/test_scope.tlaps/test_scope.thy" *)
+(* fingerprints written in ".tlacache/test_scope.tlaps/fingerprints" *)
+File "/tmp/test_scope.tla", line 8, characters 3-9:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT S,
+                  NEW CONSTANT x
+           PROVE  x \in S
+File "/tmp/test_scope.tla", line 1, character 1 to line 10, character 4:
+[ERROR]: 1/4 obligations failed.
+There were backend errors processing module `"test_scope"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit:3
+[EXIT 0]
+
+[AGENT] I found `SUFFICES` only introduces NEW constants globally; I’ll switch to nested `ASSUME ... PROVE` with proper numbered QEDs.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume_nested.tla <<'EOF'
+---- MODULE test_assume_nested ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, x \\in S
+      PROVE x \\in S
+  <2>1. x \\in S
+    OBVIOUS
+  <2>2. QED BY <2>1
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_nested.tla; echo exit:"'$?
+cat > /tmp/test_assume_nested2.tla <<'"'EOF'
+---- MODULE test_assume_nested2 ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM TRUE => \\A x : x \\in S => x \\in S
+<1>1. ASSUME TRUE
+      PROVE \\A x : x \\in S => x \\in S
+  <2>1. ASSUME NEW x, x \\in S
+        PROVE x \\in S
+    <3>1. x \\in S
+      OBVIOUS
+    <3>2. QED BY <3>1
+  <2>2. QED BY <2>1
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_nested2.tla; echo exit2:"'$?'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/test_assume_nested.tlaps/test_assume_nested.thy" *)
+(* fingerprints written in ".tlacache/test_assume_nested.tlaps/fingerprints" *)
+File "/tmp/test_assume_nested.tla", line 8, characters 5-11:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT S,
+                  NEW CONSTANT x
+           PROVE  x \in S
+File "/tmp/test_assume_nested.tla", line 1, character 1 to line 11, character 4:
+[ERROR]: 1/5 obligations failed.
+There were backend errors processing module `"test_assume_nested"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit:3
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/test_assume_nested2.tlaps/test_assume_nested2.thy" *)
+(* fingerprints written in ".tlacache/test_assume_nested2.tlaps/fingerprints" *)
+File "/tmp/test_assume_nested2.tla", line 10, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT S,
+                  NEW CONSTANT x
+           PROVE  x \in S
+File "/tmp/test_assume_nested2.tla", line 1, character 1 to line 14, character 4:
+[ERROR]: 1/7 obligations failed.
+There were backend errors processing module `"test_assume_nested2"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit2:3
+[EXIT 0]
+
+[AGENT] The parser accepts `ASSUME`, but assumptions don’t scope into substeps; I’ll prove each implication directly in the `BY` line instead.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume_by.tla <<'EOF'
+---- MODULE test_assume_by ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, x \\in S
+      PROVE x \\in S
+  BY
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_by.tla; echo exit:"'$?'
+File "/tmp/test_assume_by.tla", line 7, character 5
+Unexpected <1>2.
+File "<unknown>":
+Error: Could not parse "/tmp/test_assume_by.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit:3
+[EXIT 0]
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume_by.tla <<'EOF'
+---- MODULE test_assume_by ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, x \\in S
+      PROVE x \\in S
+  OBVIOUS
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_by.tla; echo exit:"'$?'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/test_assume_by.tlaps/test_assume_by.thy" *)
+(* fingerprints written in ".tlacache/test_assume_by.tlaps/fingerprints" *)
+File "/tmp/test_assume_by.tla", line 7, characters 3-9:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT S,
+                  NEW CONSTANT x
+           PROVE  x \in S
+File "/tmp/test_assume_by.tla", line 1, character 1 to line 9, character 4:
+[ERROR]: 1/3 obligations failed.
+There were backend errors processing module `"test_assume_by"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit:3
+[EXIT 0]
+
+[AGENT] I’ll inspect exact sequent assumption syntax examples with non-NEW hypotheses.
+
+[CMD] /bin/bash -lc 'rg "ASSUME [''^'"\\n]*,["'^'"\\n]*PROVE|ASSUME ["'^'"\\n]*\\n.*PROVE\" /opt/tlapm15/lib/tlaps/*_proofs.tla | head -n 120"
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "ASSUME .* PROVE" /opt/tlapm15/lib/tlaps/*_proofs.tla | head -n 120'
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>1. ASSUME IsPrefix(s,t)  PROVE  \E u \in Seq(S) : t = s \o u
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:  <2>2. ASSUME NEW u \in Seq(S), t = s \o u  PROVE  IsPrefix(s,t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>1. ASSUME IsPrefix(t,u) PROVE IsPrefix(s \o t, s \o u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>2. ASSUME IsPrefix(s \o t, s \o u) PROVE IsPrefix(t,u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>1. ASSUME NEW s \in Seq(S) PROVE IsSuffix(s,s)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>1. ASSUME IsSuffix(s, u) PROVE IsSuffix(s \o t, u \o t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:<1>2. ASSUME IsSuffix(s \o t, u \o t) PROVE IsSuffix(s, u)
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:(* Intentionally not written as an ASSUME ... PROVE such that the conjuncts *)
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:<1>1. ASSUME IsInjective(st)  PROVE IsInjective(s)
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:<1>2. ASSUME IsInjective(st)  PROVE IsInjective(t)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>2. SUFFICES ASSUME f \notin Injection(S,T) PROVE FALSE
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:  <2>2. ASSUME NEW t \in T PROVE \E u \in U : g[u] = t
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>3. ASSUME NEW s \in S  PROVE \E t \in T : g[t] = s
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proof
+... (truncated) ...
+s] \in Bijection(1..1, S)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>20. ASSUME NEW t \in S \cup {x}  PROVE \E i \in 1..m+1 : G[i] = t
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:<1>30. ASSUME NEW i \in 1..m+1, NEW j \in 1..m+1, G[i] = G[j]  PROVE i = j
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>1. ASSUME IsFiniteSet(S)  PROVE \E n \in Nat : ExistsSurjection(1..n,S)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>2. ASSUME NEW n \in Nat, ExistsSurjection(1..n,S)  PROVE  IsFiniteSet(S)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE SZ[T] = fn(SZ,T)  BY Zenon DEF SZ
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE CS1[T] = CS2[T]  BY <1>2, Zenon
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:  <2>2. ASSUME NEW t \in T  PROVE \E k \in 1..n-1 : h[k] = t
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>1. ASSUME NEW x PROVE IsFiniteSet({x}) /\ Cardinality({x}) = 1
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>5. ASSUME Cardinality(T) = Cardinality(S)  PROVE f \in Injection(S,T)
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:<1>6. ASSUME f \in Injection(S,T)  PROVE Cardinality(T) = Cardinality(S)
+[EXIT 0]
+
+[AGENT] I’ll test exact one-line `ASSUME ... PROVE` syntax; then apply it to keep hypotheses in scope.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume_oneline.tla <<'EOF'
+---- MODULE test_assume_oneline ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, x \\in S PROVE x \\in S
+  OBVIOUS
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_oneline.tla; echo exit:"'$?'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/test_assume_oneline.tlaps/test_assume_oneline.thy" *)
+(* fingerprints written in ".tlacache/test_assume_oneline.tlaps/fingerprints" *)
+File "/tmp/test_assume_oneline.tla", line 6, characters 3-9:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT S,
+                  NEW CONSTANT x
+           PROVE  x \in S
+File "/tmp/test_assume_oneline.tla", line 1, character 1 to line 8, character 4:
+[ERROR]: 1/3 obligations failed.
+There were backend errors processing module `"test_assume_oneline"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit:3
+[EXIT 0]
+
+[AGENT] I’ll try named hypothesis syntax for sequents; that should preserve non-declaration assumptions.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume_named.tla <<'EOF'
+---- MODULE test_assume_named ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, H == x \\in S PROVE x \\in S
+  BY H
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_named.tla; echo exit:"'$?
+cat > /tmp/test_assume_named2.tla <<'"'EOF'
+---- MODULE test_assume_named2 ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, H == x \\in S PROVE x \\in S
+  OBVIOUS
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_named2.tla; echo exit2:"'$?'
+File "/tmp/test_assume_named2.tla", line 5, character 22
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "/tmp/test_assume_named2.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+exit2:3
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '735,770p' /opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla | cat -n"
+     1	(*************************************************************************)
+     2	(* n \leq m means Injection exists.  This part is easy.                  *)
+     3	(*************************************************************************)
+     4	<1>1. ASSUME n \leq m PROVE [i \in 1..n |-> i] \in Injection(1..n, 1..m)
+     5	  BY <1>1 DEF Injection, IsInjective
+     6	
+     7	(*************************************************************************)
+     8	(* Injection exists means n \leq m.  This part is harder.                *)
+     9	(*************************************************************************)
+    10	<1>2. ASSUME ExistsInjection(1..n,1..m)  PROVE n \leq m
+    11	  <2>. DEFINE P(mm) == \A nn \in Nat : nn > mm => Injection(1..nn, 1..mm) = {}
+    12	  <2>1. SUFFICES \A mm \in Nat : P(mm)  BY <1>2 DEF ExistsInjection
+    13	  <2>2. P(0)  BY DEF Injection
+    14	  <2>3. ASSUME NEW mm \in Nat, P(mm)  PROVE P(mm+1)
+    15	    <3>1. SUFFICES ASSUME NEW nn \in Nat, nn > mm+1,
+    16	                          NEW f \in Injection(1..nn, 1..mm+1)
+    17	                   PROVE  FALSE
+    18	      OBVIOUS
+    19	    <3>2. ASSUME NEW i \in 1..nn, f[i] = mm+1 PROVE FALSE
+    20	      <4>. DEFINE g == [j \in 1..nn-1 |-> IF j<i THEN f[j] ELSE f[j+1]]
+    21	      <4>1. nn-1 \in Nat /\ nn-1 > mm  BY <3>1
+    22	      <4>2. g \in Injection(1..nn-1, 1..mm)  BY <3>2 DEF Injection, IsInjective
+    23	      <4>. QED  BY <4>1, <4>2, P(mm), Zenon DEF Injection
+    24	    <3>3. ASSUME ~\E i \in 1..nn : f[i] = mm+1  PROVE FALSE
+    25	      <4>. f \in Injection(1..nn, 1..mm)  BY <3>3 DEF Injection
+    26	      <4>. QED  BY <3>1, P(mm)
+    27	    <3>. QED  BY <3>2, <3>3
+    28	  <2>. QED  BY Isa, NatInduction, <2>2, <2>3
+    29	
+    30	<1> QED BY <1>1, <1>2 DEF ExistsInjection
+    31	
+    32	
+    33	
+    34	
+    35	
+    36
+[EXIT 0]
+
+[AGENT] I found the trick: an `ASSUME` step’s hypotheses are referenced by the step label itself. I’ll patch using that.
+
+[CMD] /bin/bash -lc "cat > /tmp/test_assume_self.tla <<'EOF'
+---- MODULE test_assume_self ----
+EXTENDS TLAPS
+CONSTANT S
+THEOREM \\A x : x \\in S => x \\in S
+<1>1. ASSUME NEW x, x \\in S PROVE x \\in S
+  BY <1>1
+<1>2. QED BY <1>1
+====
+EOF
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps /tmp/test_assume_self.tla; echo exit:"'$?'
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/test_assume_self.tlaps/test_assume_self.thy" *)
+(* fingerprints written in ".tlacache/test_assume_self.tlaps/fingerprints" *)
+File "/tmp/test_assume_self.tla", line 1, character 1 to line 8, character 4:
+[INFO]: All 4 obligations proved.
+exit:0
+[EXIT 0]
+
+[AGENT] Great, I’ll make the proof reference its assumption steps explicitly.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('VoteProof_VT1Prime.tla')
+s=p.read_text()
+start=s.index('THEOREM VT1Prime ==')
+end=s.index('\\n===============================================================================', start)
+new='''THEOREM VT1Prime == \\n               /\\\\ TypeOK' \\n               /\\\\ VInv1'\\n               /\\\\ VInv2'\\n               => \\\\A v, w : \\n                    (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n<1>1. ASSUME TypeOK', VInv1', VInv2'\\n      PROVE  \\\\A v, w : (v \\\\in chosen') /\\\\ (w \\\\in chosen') => (v = w)\\n  <2>1. ASSUME NEW v, NEW w,\\n                v \\\\in chosen',\\n                w \\\\in chosen'\\n        PROVE  v = w\\n    <3>1. PICK b \\\\in Ballot : ChosenIn(b, v)'\\n      BY <2>1 DEF chosen\\n    <3>2. PICK c \\\\in Ballot : ChosenIn(c, w)'\\n      BY <2>1 DEF chosen\\n    <3>3. v \\\\in Value /\\\\ w \\\\in Value\\n      BY <2>1 DEF chosen\\n    <3>4. CASE b = c\\n      <4>1. PICK Q \\\\in Quorum : \\\\A a \\\\in Q : VotedFor(a, b, v)'\\n        BY <3>1 DEF ChosenIn\\n      <4>2. PICK R \\\\in Quorum : \\\\A a \\\\in R : VotedFor(a, c, w)'\\n        BY <3>2 DEF ChosenIn\\n      <4>3. PICK a \\\\in Q \\\\cap R : TRUE\\n        BY QA, <4>1, <4>2\\n      <4>4. a \\\\in Q /\\\\ a \\\\in R\\n        BY <4>3\\n      <4>5. VotedFor(a, b, v)' /\\\\ VotedFor(a, b, w)'\\n        BY <3>4, <4>1, <4>2, <4>4\\n      <4>6. a \\\\in Acceptor\\n        BY QA, <4>1, <4>4\\n      <4>7. QED\\n        BY <1>1, <3>3, <4>5, <4>6 DEF VInv1\\n    <3>5. CASE b > c\\n      <4>1. SafeAt(b, v)'\\n        BY <1>1, <3>1, <3>3 DEF ChosenIn, VInv2\\n      <4>2. QED\\n        BY <1>1, <3>3, <3>5, <4>1, <3>2, VT0Prime\\n    <3>6. CASE c > b\\n      <4>1. SafeAt(c, w)'\\n        BY <1>1, <3>2, <3>3 DEF ChosenIn, VInv2\\n      <4>2. QED\\n        BY <1>1, <3>3, <3>6, <4>1, <3>1, VT0Prime\\n    <3>7. QED\\n      BY <3>1, <3>2, <3>4, <3>5, <3>6 DEF Ballot\\n  <2>2. QED\\n    BY <2>1\\n<1>2. QED\\n  BY <1>1\\n'''
+p.write_text(s[:start]+new+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "./VoteProof_VT1Prime.tla", line 494, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                
+... (truncated) ...
+ARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  ChosenIn(b, v) ==
+                    \E Q \in Quorum : \A a \in Q : VotedFor(a, b, v),
+                  SimpleNatInduction ==
+                    \A f :
+                       (/\ f[0]
+                        /\ \A n \in Nat : f[n] => f[n + 1])
+                       => (\A n \in Nat : f[n]),
+                  VInv2 ==
+                    \A a \in Acceptor, b \in Ballot, v \in Value :
+                       VotedFor(a, b, v) => SafeAt(b, v),
+                  NEW CONSTANT v,
+                  NEW CONSTANT w,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT c \in Ballot,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>3 
+           PROVE  SafeAt(b, v)'
+File "./VoteProof_VT1Prime.tla", line 1, character 1 to line 504, character 79:
+[ERROR]: 2/62 obligations failed.
+There were backend errors processing module `"VoteProof_VT1Prime"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Only the “chosen implies safe” steps remain; I’ll prove them by extracting a quorum and an acceptor explicitly.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_VT1Prime.tla
+@@
+     <3>5. CASE b > c
+-      <4>1. SafeAt(b, v)'
+-        BY <1>1, <3>1, <3>3 DEF ChosenIn, VInv2
+-      <4>2. QED
+-        BY <1>1, <3>3, <3>5, <4>1, <3>2, VT0Prime
++      <4>1. PICK Q \\in Quorum : \\A a \\in Q : VotedFor(a, b, v)'
++        BY <3>1 DEF ChosenIn
++      <4>2. PICK a \\in Q : TRUE
++        BY <4>1, QuorumNonEmpty
++      <4>3. a \\in Acceptor
++        BY QA, <4>1, <4>2
++      <4>4. VotedFor(a, b, v)'
++        BY <4>1, <4>2
++      <4>5. SafeAt(b, v)'
++        BY <1>1, <3>3, <4>3, <4>4 DEF VInv2
++      <4>6. QED
++        BY <1>1, <3>3, <3>5, <4>5, <3>2, VT0Prime
+     <3>6. CASE c > b
+-      <4>1. SafeAt(c, w)'
+-        BY <1>1, <3>2, <3>3 DEF ChosenIn, VInv2
+-      <4>2. QED
+-        BY <1>1, <3>3, <3>6, <4>1, <3>1, VT0Prime
++      <4>1. PICK Q \\in Quorum : \\A a \\in Q : VotedFor(a, c, w)'
++        BY <3>2 DEF ChosenIn
++      <4>2. PICK a \\in Q : TRUE
++        BY <4>1, QuorumNonEmpty
++      <4>3. a \\in Acceptor
++        BY QA, <4>1, <4>2
++      <4>4. VotedFor(a, c, w)'
++        BY <4>1, <4>2
++      <4>5. SafeAt(c, w)'
++        BY <1>1, <3>3, <4>3, <4>4 DEF VInv2
++      <4>6. QED
++        BY <1>1, <3>3, <3>6, <4>5, <3>1, VT0Prime
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla"
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "./VoteProof_VT1Prime.tla", line 1, character 1 to line 520, character 79:
+[INFO]: All 88 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS verifies now; I’ll run the required checker for legality and final PASS.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py VoteProof_VT1Prime.tla'
+Checking: VoteProof_VT1Prime.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_VT1Prime.tlaps/VoteProof_VT1Prime.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_VT1Prime.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+File "/tmp/tlaps_check_j38dkjcn/VoteProof_VT1Prime.tla", line 1, character 1 to line 520, character 79:
+[INFO]: All 88 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_VoteProof_VT1Prime_lf8ivaak/VoteProof_VT1Prime.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `VT1Prime` in `VoteProof_VT1Prime.tla:454`.
+
+- Replaced the failing `PROOF OBVIOUS` with a structured proof using `VT0Prime`, `VInv1'`, `VInv2'`, quorum intersection, and ballot-order case analysis.
+- Did not modify theorem statements, definitions, omitted proofs, or module declarations.
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_VT1Prime.tla`.
+- Ran `python3 check_proof.py VoteProof_VT1Prime.tla`: PASS, all 88 obligations proved, no cheating detected.

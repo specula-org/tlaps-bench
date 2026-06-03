@@ -1,0 +1,312 @@
+Benchmark: SimpleMutex/SimpleMutex_line140.tla
+Time: 100s
+Tokens: 519,943 input / 3,981 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and the local proof-check tooling first, then build the proof in small TLAPS-verifiable steps.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' SimpleMutex_line140.tla"
+----------------------------- MODULE SimpleMutex_line140 -----------------------------
+EXTENDS Integers, TLAPS
+
+VARIABLES trying, pc
+
+vars == << trying, pc >>
+
+ProcSet == ({0,1})
+
+a(self) == /\ pc[self] = "a"
+           /\ trying' = [trying EXCEPT ![self] = TRUE]
+           /\ pc' = [pc EXCEPT ![self] = "b"]
+
+b(self) == /\ pc[self] = "b"
+           /\ ~trying[1 - self]
+           /\ pc' = [pc EXCEPT ![self] = "cs"]
+           /\ UNCHANGED trying
+
+cs(self) == /\ pc[self] = "cs"
+            /\ TRUE
+            /\ pc' = [pc EXCEPT ![self] = "Done"]
+            /\ UNCHANGED trying
+
+p(self) == a(self) \/ b(self) \/ cs(self)
+
+Next == (\E self \in {0,1}: p(self))
+           \/ 
+              ((\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars)
+
+TypeOK ==
+  /\ trying \in [{0,1} -> BOOLEAN]
+  /\ pc \in [{0,1} -> {"a", "b", "cs", "Done"}]
+
+Inv == \A i \in {0,1} :
+          /\ pc[i] \in {"b", "cs"} => trying[i]
+          /\ pc[i] = "cs" => pc[1-i] # "cs"
+
+THEOREM
+  ASSUME TypeOK, Inv, Next
+  PROVE  TypeOK' /\ Inv'
+PROOF OBVIOUS
+----------------------------------------------------------------------
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'ls -la'
+total 8028
+drwx------ 1 ubuntu ubuntu      84 May 26 03:59 .
+drwxrwxrwt 1 root   root    104100 May 26 03:59 ..
+-rwxr-xr-x 1 ubuntu ubuntu 7473264 May 23 03:25 check_proof_bin
+drwxrwxr-x 1 ubuntu ubuntu     144 May 26 03:59 .git
+-rw-rw-r-- 1 ubuntu ubuntu    1191 May 25 12:50 SimpleMutex_line140.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg -n "THEOREM|LEMMA|PROOF|EXTENDS|INSTANCE|ASSUME|ASSUMPTION|CONSTANT|VARIABLE" -S .'
+./SimpleMutex_line140.tla:2:EXTENDS Integers, TLAPS
+./SimpleMutex_line140.tla:4:VARIABLES trying, pc
+./SimpleMutex_line140.tla:38:THEOREM
+./SimpleMutex_line140.tla:39:  ASSUME TypeOK, Inv, Next
+./SimpleMutex_line140.tla:41:PROOF OBVIOUS
+[EXIT 0]
+
+[AGENT] The module is very small: two processes over `pc` and `trying`, with the target preservation theorem under assumptions `TypeOK`, `Inv`, and `Next`. I’m going to try a direct proof split on the disjuncts of `Next`, then refine only where TLAPS needs more help.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib SimpleMutex_line140.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/SimpleMutex_line140.tlaps/SimpleMutex_line140.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_line140.tlaps/fingerprints" *)
+File "./SimpleMutex_line140.tla", line 41, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW VARIABLE trying,
+                  NEW VARIABLE pc,
+                  TypeOK ,
+                  Inv ,
+                  Next 
+           PROVE  TypeOK' /\ Inv'
+File "./SimpleMutex_line140.tla", line 1, character 1 to line 44, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"SimpleMutex_line140"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The bare obligation fails exactly as expected. I’m going to add a small structured proof above the theorem: first prove each action preserves the postcondition, then let the theorem consume `Next` as an existential-or-stutter split.
+
+[CMD] /bin/bash -lc "find /home/ubuntu/.tlapm/lib/tlapm/stdlib -maxdepth 2 -type f | sort | sed -n '1,120p'"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Bags.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/CommunityModules.jar
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSets.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Folds.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/RealTime.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"BY SMT|USE DEF|PICK|SUFFICES|CASE\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla | sed -n '1,160p'"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:40:  <2>1. PICK Q \in Seq(S) : \A s \in S : \E i \in 1..Len(Q) : Q[i] = s
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:48:  <2>1. PICK M \in [1..n -> S] : \A t \in S : \E s \in 1..n : M[s] = t
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:122:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:135:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:141:        <4>4. PICK t \in T : t = CHOOSE x : x \in T  BY <4>2
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:153:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE SZ[T] = fn(SZ,T)  BY Zenon DEF SZ
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:154:    <2>2. PICK i \in Nat : ExistsBijection(1..i,T) BY Fun_NatBijSubset
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:177:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:189:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:194:        <4>7. PICK t \in T : t = CHOOSE x : x \in T  BY <4>6
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:205:    <2> SUF
+... (truncated) ...
+lib/NaturalsInduction_proofs.tla:286:<1>. USE DEF PRDef
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:300:<1>1. SUFFICES \A n \in Nat : f[n] \in S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:313:<1>. USE DEF NatInductiveDefConclusion
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:314:<1> SUFFICES \A n \in Nat : f[n] \in S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:337:<1>1. SUFFICES \A n \in Nat : f[n] = g[n]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:351:<1>. USE DEF NatInductiveDefConclusion
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:352:<1>1. SUFFICES \A n \in Nat : f[n] = g[n]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:386:<1>. USE DEF PRDef
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:398:<1>. USE DEF FiniteNatInductiveDefConclusion
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:400:<1>1. SUFFICES \A i \in Nat : P(i)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:415:<1>. USE DEF FiniteNatInductiveDefConclusion
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:417:<1>1. SUFFICES \A i \in Nat : P(i)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:111:  <2>1. CASE m>0 /\ n>0
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:115:  <2>2. CASE m=0
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:117:  <2>3. CASE n=0
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"LEMMA [A-Za-z0-9_]+ ==|THEOREM [A-Za-z0-9_]+ ==\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla | sed -n '1,80p'"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:19:LEMMA TwoExpLemma ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:35:LEMMA FS_NatSurjection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:55:LEMMA FS_NatBijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:70:LEMMA FS_CountingElements ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:227:THEOREM FS_SurjCardinalityBound ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:241:THEOREM FS_CardinalityType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:256:THEOREM FS_Bijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:264:THEOREM FS_SameCardinalityBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:279:THEOREM FS_SurjSameCardinalityImpliesInj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:333:THEOREM FS_EmptySet ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:353:THEOREM FS_AddElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:364:THEOREM FS_RemoveElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:382:THEOREM FS_Singleton ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:405:THEOREM FS_Subset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:440:THEOREM FS_Surjection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Fini
+... (truncated) ...
+b/WellFoundedInduction_proofs.tla:171:THEOREM WFInduction ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:210:THEOREM WFDefOnUnique ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:231:LEMMA WFInductiveDefLemma ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:308:LEMMA TransitiveClosureThm ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:319:LEMMA TransitiveClosureMinimal ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:333:LEMMA TCTCTC ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:340:LEMMA TCRTC ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:346:LEMMA RTCTC ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:352:LEMMA TransitiveClosureChopLast ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:402:THEOREM TransitiveClosureWF ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:448:THEOREM WFInductiveDef ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:472:THEOREM WFInductiveDefType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:514:THEOREM NatLessThanWellFounded == IsWellFoundedOn(OpToRel(<,Nat), Nat)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:561:THEOREM PreImageWellFounded ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:587:THEOREM WFLexPairOrdering ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '19,45p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla"
+LEMMA TwoExpLemma ==
+  ASSUME NEW n \in Nat
+  PROVE  /\ 2^0 = 1
+         /\ 2^(n+1) = 2^n + 2^n
+PROOF OMITTED
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A set S is finite iff there exists a natural number n such that there   *)
+(* exist a surjection (or a bijection) from 1..n to S.                     *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+LEMMA FS_NatSurjection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsSurjection(1..n,S)
+
+<1>1. ASSUME IsFiniteSet(S)  PROVE \E n \in Nat : ExistsSurjection(1..n,S)
+  <2>1. PICK Q \in Seq(S) : \A s \in S : \E i \in 1..Len(Q) : Q[i] = s
+    BY <1>1 DEF IsFiniteSet
+  <2>2. /\ Len(Q) \in Nat
+        /\ Q \in Surjection(1..Len(Q),S)
+    BY <2>1 DEF Surjection
+  <2> QED BY <2>2 DEF ExistsSurjection
+[EXIT 0]
+
+[AGENT] I’m going to introduce action-preservation lemmas for `a`, `b`, `cs`, plus a stutter lemma. The target theorem will then only need to split `Next` into “some process acted” versus the all-done stutter step.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib SimpleMutex_line140.tla'
+(* loading fingerprints in ".tlacache/SimpleMutex_line140.tlaps/fingerprints" *)
+(* created new ".tlacache/SimpleMutex_line140.tlaps/SimpleMutex_line140.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_line140.tlaps/fingerprints" *)
+File "./SimpleMutex_line140.tla", line 1, character 1 to line 74, character 77:
+[INFO]: All 21 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS accepts the proof now: all generated obligations are proved. I’m running the requested checker next because it also enforces the “no illegal changes” constraints.
+
+[CMD] /bin/bash -lc './check_proof_bin SimpleMutex_line140.tla --level 2'
+Checking: SimpleMutex_line140.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/SimpleMutex_line140.tlaps/SimpleMutex_line140.thy" *)
+(* fingerprints written in ".tlacache/SimpleMutex_line140.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_1w0olycp/SimpleMutex_line140.tla", line 1, character 1 to line 74, character 77:
+[INFO]: All 21 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SimpleMutex_line140_9x4_qjou/SimpleMutex_line140.result
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git diff -- SimpleMutex_line140.tla'
+diff --git a/SimpleMutex_line140.tla b/SimpleMutex_line140.tla
+index c4149ca..49e67d1 100644
+--- a/SimpleMutex_line140.tla
++++ b/SimpleMutex_line140.tla
+@@ -35,10 +35,40 @@ Inv == \A i \in {0,1} :
+           /\ pc[i] \in {"b", "cs"} => trying[i]
+           /\ pc[i] = "cs" => pc[1-i] # "cs"
+ 
++LEMMA AStepOK ==
++  ASSUME TypeOK, Inv, NEW self \in {0,1}, a(self)
++  PROVE  TypeOK' /\ Inv'
++PROOF
++  BY SMT DEF TypeOK, Inv, a
++
++LEMMA BStepOK ==
++  ASSUME TypeOK, Inv, NEW self \in {0,1}, b(self)
++  PROVE  TypeOK' /\ Inv'
++PROOF
++  BY SMT DEF TypeOK, Inv, b
++
++LEMMA CSStepOK ==
++  ASSUME TypeOK, Inv, NEW self \in {0,1}, cs(self)
++  PROVE  TypeOK' /\ Inv'
++PROOF
++  BY SMT DEF TypeOK, Inv, cs
++
++LEMMA StutterOK ==
++  ASSUME TypeOK, Inv, UNCHANGED vars
++  PROVE  TypeOK' /\ Inv'
++PROOF
++  BY SMT DEF TypeOK, Inv, vars
++
+ THEOREM
+   ASSUME TypeOK, Inv, Next
+   PROVE  TypeOK' /\ Inv'
+-PROOF OBVIOUS
++PROOF
++  <1>1. CASE \E self \in {0,1} : p(self)
++    <2>1. PICK self \in {0,1} : p(self) BY <1>1
++    <2>2. QED BY <2>1, AStepOK, BStepOK, CSStepOK DEF p
++  <1>2. CASE (\A self \in ProcSet : pc[self] = "Done") /\ UNCHANGED vars
++    BY <1>2, StutterOK DEF ProcSet
++  <1>3. QED BY <1>1, <1>2 DEF Next
+ ----------------------------------------------------------------------
+ 
+ =============================================================================
+[EXIT 0]
+
+[AGENT] Implemented the TLAPS proof in [SimpleMutex_line140.tla](/tmp/codex_bench_SimpleMutex_line140_9x4_qjou/SimpleMutex_line140.tla:37).
+
+I added helper lemmas for each action (`a`, `b`, `cs`) and the stutter case, then replaced `PROOF OBVIOUS` with a split over the two `Next` branches.
+
+Verification passed:
+
+```text
+./check_proof_bin SimpleMutex_line140.tla --level 2
+PASS — all obligations proved
+```

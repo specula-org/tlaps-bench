@@ -1,0 +1,1789 @@
+Benchmark: Paxos/PaxosHistVar_Consistent.tla
+Time: 414s
+Tokens: 2,496,518 input / 19,016 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file structure and the failing theorem, then iterate with TLAPS until the checker passes.
+
+[CMD] /bin/bash -lc "ls && sed -n '1,260p' PaxosHistVar_Consistent.tla"
+Consensus.tla
+PaxosHistVar_Consistent.tla
+cheating_detection.py
+check_proof.py
+------------------------------- MODULE PaxosHistVar_Consistent --------------------------
+(*
+Basic Paxos verified using only history variables.
+
+See https://github.com/sachand/HistVar/blob/master/Basic%20Paxos/PaxosUs.tla
+*)
+EXTENDS Integers, TLAPS, NaturalsInduction
+
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}
+
+Ballots == Nat
+
+VARIABLES sent
+
+vars == <<sent>>
+
+Send(m) == sent' = sent \cup {m}
+
+None == CHOOSE v : v \notin Values
+
+Init == sent = {}
+
+(***************************************************************************)
+(* Phase 1a: A leader selects a ballot number b and sends a 1a message     *)
+(* with ballot b to a majority of acceptors.  It can do this only if it    *)
+(* has not already sent a 1a message for ballot b.                         *)
+(***************************************************************************)
+Phase1a(b) == Send([type |-> "1a", bal |-> b])
+              
+(***************************************************************************)
+(* Phase 1b: If an acceptor receives a 1a message with ballot b greater    *)
+(* than that of any 1a message to which it has already responded, then it  *)
+(* responds to the request with a promise not to accept any more proposals *)
+(* for ballots numbered less than b and with the highest-numbered ballot   *)
+(* 
+... (truncated) ...
+          /\ m2.val  = m.val
+
+Inv == TypeOK /\ MsgInv
+
+(***************************************************************************)
+(* The following two lemmas are simple consequences of the definitions.    *)
+(***************************************************************************)
+LEMMA VotedInv == 
+        MsgInv /\ TypeOK => 
+            \A a \in Acceptors, v \in Values, b \in Ballots :
+                VotedForIn(a, v, b) => SafeAt(v, b)
+  PROOF OMITTED
+
+LEMMA VotedOnce == 
+        MsgInv =>  \A a1, a2 \in Acceptors, b \in Ballots, v1, v2 \in Values :
+                       VotedForIn(a1, v1, b) /\ VotedForIn(a2, v2, b) => (v1 = v2)
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+(***************************************************************************)
+(* The following lemma shows that (the invariant implies that) the         *)
+(* predicate SafeAt(v, b) is stable, meaning that once it becomes true, it *)
+(* remains true throughout the rest of the excecution.                     *)
+(***************************************************************************)
+LEMMA SafeAtStable == Inv /\ Next => 
+                          \A v \in Values, b \in Ballots:
+                                  SafeAt(v, b) => SafeAt(v, b)'
+  PROOF OMITTED
+
+THEOREM Invariant == Spec => []Inv
+  PROOF OMITTED
+
+THEOREM Consistent == Spec => []Consistency
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] I see the final theorem depends on the admitted invariant theorem; next I’ll test the current failure and inspect checker constraints.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: TEMPORAL_Spec_, CONSTANT_Consistency_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 182, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent
+           PROVE  Spec => []Consistency
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 184, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The temporal part is simple; the work is proving `Inv => Consistency` from the admitted Paxos lemmas. I’ll add that local proof now.
+
+[AGENT] I added a structured proof; now I’ll run TLAPS to find the first proof obligation that needs strengthening.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+File "./PaxosHistVar_Consistent.tla", line 200, character 42
+Unexpected keyword BY
+File "<unknown>":
+Error: Could not parse "./PaxosHistVar_Consistent.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS rejected syntax around a `PICK ... BY`; I’ll adjust those into nested proofs so the parser accepts them.
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Consistent.tla | sed -n '190,210p'"
+   190	          <3>1. PICK b1 \in Ballots : ChosenIn(v1, b1)
+   191	            BY H1 DEF Chosen
+   192	          <3>2. PICK b2 \in Ballots : ChosenIn(v2, b2)
+   193	            BY H2 DEF Chosen
+   194	          <3>3. CASE b1 = b2
+   195	            PROOF
+   196	              <4>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+   197	                BY <3>1 DEF ChosenIn
+   198	              <4>2. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   199	                BY <3>2 DEF ChosenIn
+   200	              <4>3. PICK a \in Q1 \cap Q2
+   201	                BY <4>1, <4>2, QuorumAssumption
+   202	              <4>4. VotedForIn(a, v1, b1) /\ VotedForIn(a, v2, b1)
+   203	                BY <3>3, <4>1, <4>2, <4>3
+   204	              <4>5. QED BY <4>4, VotedOnce DEF Inv
+   205	            QED
+   206	          <3>4. CASE b1 < b2
+   207	            PROOF
+   208	              <4>1. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   209	                BY <3>2 DEF ChosenIn
+   210	              <4>2. Q2 # {}
+[EXIT 0]
+
+[AGENT] The parser issue was bare set picking; I’ve made those witness picks explicit and will rerun TLAPS.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+File "./PaxosHistVar_Consistent.tla", line 204, character 27:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The proof parser wants hierarchical subproofs to close with numbered `QED` steps, so I’ll normalize the CASE proof blocks.
+
+[CMD] /bin/bash -lc "rg \"CASE .*\\n\\s*PROOF\" /opt/tlapm15/lib/tlaps -n | head -20 || true && rg \"QED BY\" /opt/tlapm15/lib/tlaps -n | head -20 || true"
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:44:  <2> QED BY <2>2 DEF ExistsSurjection
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:49:<1> QED BY <1>1, <1>2
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:126:        <4> QED BY <4>4, <4>5
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:148:      <3> QED BY Isa, <3>1, <3>2, NatInduction
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:152:    <2> QED BY <2>1, <2>2
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:180:        <4> QED BY <4>3, <4>4, <1>2
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:197:        <4> QED BY <4>10, <4>11, <4>12
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:200:      <3> QED BY Isa, <3>1, <3>2, NatInduction
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:204:    <2> QED BY <2>1, <2>2
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:218:  <1> QED BY <1>4, <1>5, <1>7, <1>8
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:150:      <4>. QED BY <4>1, <4>2
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:151:    <3>3. QED BY <3>1, <3>2
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:152:  <2>3. QED BY <2>1, <2>2, Fun_IsSurj
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:153:<1>. QED BY <1>4, <1>5
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:475:  <2> QED BY DEF NatInductiveDefHypothesis, f
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:511:    <3> QED BY <3>1, <3>2, <1>1
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:513:  <2> QED BY <2>1, <2>2, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:543:      <4> QED BY <4>1, <4>2, <1>9
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:544:    <3> QED BY <3>2, <3>3
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:551:      <4> QED BY <4>1, <4>3, <1>7
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '110,135p' /opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla && sed -n '535,548p' /opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla"
+    (***********************************************************************)
+    <2> DEFINE
+      Prop(i) == \A T \in SUBSET S : ExistsBijection(1..i,T) => SZ[T] = fn(SZ,T)
+
+    <2>1. \A i \in Nat : Prop(i)
+      <3>1. Prop(0)
+        (*******************************************************************)
+        (* Base step.                                                      *)
+        (*******************************************************************)
+        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+                       PROVE  SZ[T] = fn(SZ,T)
+              OBVIOUS
+        <4>2. Size(T) = 0  BY <4>1, Fun_NatBijSame
+        <4>3. T = {}  BY <4>1, Fun_NatBijEmpty
+        <4>4. SZ[T] = 0  BY <4>2  DEF SZ
+        <4>5. fn(SZ,T) = 0  BY <4>3  DEF fn
+        <4> QED BY <4>4, <4>5
+        
+      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+        (*******************************************************************)
+        (* Inductive step.                                                 *)
+        (*******************************************************************)
+        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+                      PROVE  SZ[T] = fn(SZ,T)
+          OBVIOUS
+        <4>1. ~ExistsBijection(1..0,T)  BY Fun_NatBijSame, Z3
+      (* old proof fails:
+      <4>1. PICK s \in Ci[i-1] : F[s] = c  BY <3>1, <3>3, <1>5, SMT
+      *)
+      <4>0. PICK j \in Nat : i = j+1
+        BY <3>3
+      <4>1. PICK s \in Ci[j] : F[s] = c
+        BY <4>0, <3>1, <1>5, Zenon
+      <4>2. s \in C  BY <3>3, <1>7
+      <4> QED BY <4>1, <4>2, <1>9
+    <3> QED BY <3>2, <3>3
+  <2>2. ASSUME NEW c \in Y \cup FC  PROVE c \in C
+    <3>1. CASE c \in Y  BY <3>1, <1>3, <1>7, Zenon
+    <3>2. CASE c \in FC
+      <4>1. PICK s \in C : F[s] = c  BY <3>2, <1>9
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '548,565p' /opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla"
+      <4>1. PICK s \in C : F[s] = c  BY <3>2, <1>9
+      <4>2. PICK i \in Nat : s \in Ci[i]  BY <4>1, <1>7
+      <4>3. F[s] \in Ci[i+1]  BY <4>2, <1>4
+      <4> QED BY <4>1, <4>3, <1>7
+    <3> QED BY <3>1, <3>2
+  <2> QED BY <2>1, <2>2
+  
+(*************************************************************************)
+(* S \ C is the same as T \ FC.                                          *)
+(*************************************************************************)
+<1>12. S \ C = T \ FC  BY <1>2, <1>11
+
+(*************************************************************************)
+(* Pick H as F on C and the identity on S \ C.  Since F (restricted to   *)
+(* C) is a bijection from C to FC and S \ C = T \ FC, this makes H a     *)
+(* bijection from S to T.                                                *)
+(*************************************************************************)
+<1>13. PICK H : H = [s \in S |-> IF s \in C THEN F[s] ELSE s]  OBVIOUS
+[EXIT 0]
+
+[AGENT] The library examples show `QED` steps are unnumbered at their proof level; I’ll update mine to match that style.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('PaxosHistVar_Consistent.tla')
+s=p.read_text()
+import re
+s=re.sub(r'(<\\d+>)\\d+\\. QED', r'\\1 QED', s)
+p.write_text(s)
+PY
+nl -ba PaxosHistVar_Consistent.tla | sed -n '194,285p'"
+   194	          <3>3. CASE b1 = b2
+   195	            PROOF
+   196	              <4>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+   197	                BY <3>1 DEF ChosenIn
+   198	              <4>2. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   199	                BY <3>2 DEF ChosenIn
+   200	              <4>3. PICK a \in Q1 \cap Q2 : TRUE
+   201	                BY <4>1, <4>2, QuorumAssumption
+   202	              <4>4. VotedForIn(a, v1, b1) /\ VotedForIn(a, v2, b1)
+   203	                BY <3>3, <4>1, <4>2, <4>3
+   204	              <4> QED BY <4>4, VotedOnce DEF Inv
+   205	            QED
+   206	          <3>4. CASE b1 < b2
+   207	            PROOF
+   208	              <4>1. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   209	                BY <3>2 DEF ChosenIn
+   210	              <4>2. Q2 # {}
+   211	                BY <4>1, QuorumAssumption
+   212	              <4>3. PICK a2 \in Q2 : TRUE
+   213	                BY <4>2
+   214	              <4>4. VotedForIn(a2, v2, b2)
+   215	                BY <4>1, <4>3
+   216	              <4>5. SafeAt(v2, b2)
+   217	                BY <4>4, VotedInv DEF Inv
+   218	              <4>6. b1 \in 0..(b2-1)
+   219	                BY <3>1, <3>2, <3>4 DEF Ballots
+   220	              <4>7. PICK Q \in Quorums :
+   221	                        \A a \in Q : VotedForIn(a, v2, b1) \/ WontVoteIn(a, b1)
+   222	                BY <4>5, <4>6 DEF SafeAt
+   223	              <4>8. PICK Q1 \in Quorums : \A a 
+... (truncated) ...
+>2. Q1 # {}
+   238	                BY <4>1, QuorumAssumption
+   239	              <4>3. PICK a1 \in Q1 : TRUE
+   240	                BY <4>2
+   241	              <4>4. VotedForIn(a1, v1, b1)
+   242	                BY <4>1, <4>3
+   243	              <4>5. SafeAt(v1, b1)
+   244	                BY <4>4, VotedInv DEF Inv
+   245	              <4>6. b2 \in 0..(b1-1)
+   246	                BY <3>1, <3>2, <3>5 DEF Ballots
+   247	              <4>7. PICK Q \in Quorums :
+   248	                        \A a \in Q : VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   249	                BY <4>5, <4>6 DEF SafeAt
+   250	              <4>8. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   251	                BY <3>2 DEF ChosenIn
+   252	              <4>9. PICK a \in Q \cap Q2 : TRUE
+   253	                BY <4>7, <4>8, QuorumAssumption
+   254	              <4>10. VotedForIn(a, v2, b2)
+   255	                BY <4>8, <4>9
+   256	              <4>11. VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   257	                BY <4>7, <4>9
+   258	              <4> QED BY <4>10, <4>11, VotedOnce DEF Inv, WontVoteIn
+   259	            QED
+   260	          <3> QED BY <3>3, <3>4, <3>5, <3>1, <3>2 DEF Ballots
+   261	        QED
+   262	      <2> QED BY <2>1, <2>2 DEF Consistency
+   263	    QED
+   264	  <1>2. Spec => []Inv BY Invariant
+   265	  <1>3. []Inv => []Consistency BY <1>1
+   266	  <1> QED BY <1>2, <1>3
+   267	
+   268	=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+File "./PaxosHistVar_Consistent.tla", line 204, character 25:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The CASE syntax in these TLAPS examples uses indented substeps without literal `PROOF`/`QED`; I’ll rewrite those blocks accordingly.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+File "./PaxosHistVar_Consistent.tla", line 254, character 21:
+Error: Unexpected end of (sub)proof at level 2 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(<|>).(fun) in file "pco.ml", line 389, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The parser is now past the CASE blocks but not the surrounding assumption proof; I’ll inspect that closing structure and simplify it.
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Consistent.tla | sed -n '180,270p'"
+   180	
+   181	THEOREM Consistent == Spec => []Consistency
+   182	PROOF
+   183	  <1>1. Inv => Consistency
+   184	    PROOF
+   185	      <2>1. TAKE v1 \in Values, v2 \in Values
+   186	      <2>2. ASSUME NEW H1, Chosen(v1),
+   187	                    NEW H2, Chosen(v2)
+   188	             PROVE v1 = v2
+   189	        PROOF
+   190	          <3>1. PICK b1 \in Ballots : ChosenIn(v1, b1)
+   191	            BY H1 DEF Chosen
+   192	          <3>2. PICK b2 \in Ballots : ChosenIn(v2, b2)
+   193	            BY H2 DEF Chosen
+   194	          <3>3. CASE b1 = b2
+   195	              <4>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+   196	                BY <3>1 DEF ChosenIn
+   197	              <4>2. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   198	                BY <3>2 DEF ChosenIn
+   199	              <4>3. PICK a \in Q1 \cap Q2 : TRUE
+   200	                BY <4>1, <4>2, QuorumAssumption
+   201	              <4>4. VotedForIn(a, v1, b1) /\ VotedForIn(a, v2, b1)
+   202	                BY <3>3, <4>1, <4>2, <4>3
+   203	              <4> QED BY <4>4, VotedOnce DEF Inv
+   204	          <3>4. CASE b1 < b2
+   205	              <4>1. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   206	                BY <3>2 DEF ChosenIn
+   207	              <4>2. Q2 # {}
+   208	                BY <4>1, QuorumAssumption
+   209	              <4>3. PICK a2 \in Q2 : TRUE
+   210	                BY <4>2
+   211	              <4>4. VotedForIn(a2, v2, b2)
+   212	           
+... (truncated) ...
+   232	              <4>2. Q1 # {}
+   233	                BY <4>1, QuorumAssumption
+   234	              <4>3. PICK a1 \in Q1 : TRUE
+   235	                BY <4>2
+   236	              <4>4. VotedForIn(a1, v1, b1)
+   237	                BY <4>1, <4>3
+   238	              <4>5. SafeAt(v1, b1)
+   239	                BY <4>4, VotedInv DEF Inv
+   240	              <4>6. b2 \in 0..(b1-1)
+   241	                BY <3>1, <3>2, <3>5 DEF Ballots
+   242	              <4>7. PICK Q \in Quorums :
+   243	                        \A a \in Q : VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   244	                BY <4>5, <4>6 DEF SafeAt
+   245	              <4>8. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   246	                BY <3>2 DEF ChosenIn
+   247	              <4>9. PICK a \in Q \cap Q2 : TRUE
+   248	                BY <4>7, <4>8, QuorumAssumption
+   249	              <4>10. VotedForIn(a, v2, b2)
+   250	                BY <4>8, <4>9
+   251	              <4>11. VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   252	                BY <4>7, <4>9
+   253	              <4> QED BY <4>10, <4>11, VotedOnce DEF Inv, WontVoteIn
+   254	          <3> QED BY <3>3, <3>4, <3>5, <3>1, <3>2 DEF Ballots
+   255	        QED
+   256	      <2> QED BY <2>1, <2>2 DEF Consistency
+   257	    QED
+   258	  <1>2. Spec => []Inv BY Invariant
+   259	  <1>3. []Inv => []Consistency BY <1>1
+   260	  <1> QED BY <1>2, <1>3
+   261	
+   262	=============================================================================
+[EXIT 0]
+
+[AGENT] I’ll switch to TLAPS’s implicit hierarchical proof style, which avoids the parser nesting issue.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+ tlapm ending abnormally with Failure("Proof.Gen.set_defn/doit")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", line 63, characters 38-54
+Called from P_gen.set_defn.doit in file "p_gen.ml", li
+... (truncated) ...
+, line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate.visit in file "m_gen.ml", line 91, characters 22-34
+Called from M_gen.generate in file "m_gen.ml", line 94, characters 13-33
+Called from M_elab.normalize in file "m_elab.ml", line 1478, characters 29-51
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS hit an internal expansion issue, likely from broad `DEF` expansion. I’ll make the invariant assumption explicit and reduce expansions.
+
+[AGENT] I made `Inv` explicit and stopped expanding it repeatedly; now I’ll rerun TLAPS for concrete failed obligations.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+** Unexpanded symbols: TEMPORAL_Spec_, CONSTANT_Consistency_
+
+** Unexpanded symbols: STATE_Inv_, CONSTANT_Consistency_
+
+** Unexpanded symbols: CONSTANT_Chosen_
+
+** Unexpanded symbols: STATE_TypeOK_, CONSTANT_MsgInv_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Chosen_, CONSTANT_Consistency_
+
+** Unexpanded symbols: CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_V
+... (truncated) ...
+ors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  Inv == TypeOK /\ MsgInv,
+                  NEW CONSTANT InvHyp
+           PROVE  InvHyp
+File "./PaxosHistVar_Consistent.tla", line 187, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  Inv == TypeOK /\ MsgInv,
+                  NEW CONSTANT InvHyp,
+                  InvHyp 
+           PROVE  MsgInv /\ TypeOK
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 263, character 77:
+[ERROR]: 13/119 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Several failures come from treating labels as constants; I’ll remove those pseudo-labels and use the assumptions directly.
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /opt/tlapm15/lib/tlaps/TLAPS.tla | rg -n \"PTL|INV|BOX|Temporal|LTL|[]\" -C 2 || true && sed -n '180,230p' PaxosHistVar_Consistent.tla"
+rg: regex parse error:
+    (?:PTL|INV|BOX|Temporal|LTL|[])
+                                ^^
+error: unclosed character class
+
+THEOREM Consistent == Spec => []Consistency
+PROOF
+  <1>1. Inv => Consistency
+      <2>1. ASSUME NEW InvHyp, Inv
+             PROVE Consistency
+      <3>1. MsgInv /\ TypeOK
+        BY InvHyp DEF Inv
+      <3>2. TAKE v1 \in Values, v2 \in Values
+      <3>3. ASSUME NEW H1, Chosen(v1),
+                    NEW H2, Chosen(v2)
+             PROVE v1 = v2
+          <4>1. PICK b1 \in Ballots : ChosenIn(v1, b1)
+            BY H1 DEF Chosen
+          <4>2. PICK b2 \in Ballots : ChosenIn(v2, b2)
+            BY H2 DEF Chosen
+          <4>3. CASE b1 = b2
+              <5>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+                BY <4>1 DEF ChosenIn
+              <5>2. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+                BY <4>2 DEF ChosenIn
+              <5>3. PICK a \in Q1 \cap Q2 : TRUE
+                BY <5>1, <5>2, QuorumAssumption
+              <5>4. VotedForIn(a, v1, b1) /\ VotedForIn(a, v2, b1)
+                BY <4>3, <5>1, <5>2, <5>3
+              <5> QED BY <3>1, <5>4, VotedOnce
+          <4>4. CASE b1 < b2
+              <5>1. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+                BY <4>2 DEF ChosenIn
+              <5>2. Q2 # {}
+                BY <5>1, QuorumAssumption
+              <5>3. PICK a2 \in Q2 : TRUE
+                BY <5>2
+              <5>4. VotedForIn(a2, v2, b2)
+                BY <5>1, <5>3
+              <5>5. SafeAt(v2, b2)
+                BY <3>1, <5>4, VotedInv
+              <5>6. b1 \in 0..(b2-1)
+                BY <4>1, <4>2, <4>4 DEF Ballots
+              <5>7. PICK Q \in Quorums :
+                        \A a \in Q : VotedForIn(a, v2, b1) \/ WontVoteIn(a, b1)
+                BY <5>5, <5>6 DEF SafeAt
+              <5>8. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+                BY <4>1 DEF ChosenIn
+              <5>9. PICK a \in Q \cap Q1 : TRUE
+                BY <5>7, <5>8, QuorumAssumption
+              <5>10. VotedForIn(a, v1, b1)
+                BY <5>8, <5>9
+              <5>11. VotedForIn(a, v2, b1) \/ WontVoteIn(a, b1)
+                BY <5>7, <5>9
+              <5> QED BY <3>1, <5>10, <5>11, VotedOnce DEF WontVoteIn
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '230,270p' PaxosHistVar_Consistent.tla && rg \"INV|PTL|LTL|STL|Leads|WF|Temporal|Box|Necess\" /opt/tlapm15/lib/tlaps/TLAPS.tla /opt/tlapm15/lib/tlaps/*.tla -n | head -100"
+              <5> QED BY <3>1, <5>10, <5>11, VotedOnce DEF WontVoteIn
+          <4>5. CASE b2 < b1
+              <5>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+                BY <4>1 DEF ChosenIn
+              <5>2. Q1 # {}
+                BY <5>1, QuorumAssumption
+              <5>3. PICK a1 \in Q1 : TRUE
+                BY <5>2
+              <5>4. VotedForIn(a1, v1, b1)
+                BY <5>1, <5>3
+              <5>5. SafeAt(v1, b1)
+                BY <3>1, <5>4, VotedInv
+              <5>6. b2 \in 0..(b1-1)
+                BY <4>1, <4>2, <4>5 DEF Ballots
+              <5>7. PICK Q \in Quorums :
+                        \A a \in Q : VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+                BY <5>5, <5>6 DEF SafeAt
+              <5>8. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+                BY <4>2 DEF ChosenIn
+              <5>9. PICK a \in Q \cap Q2 : TRUE
+                BY <5>7, <5>8, QuorumAssumption
+              <5>10. VotedForIn(a, v2, b2)
+                BY <5>8, <5>9
+              <5>11. VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+                BY <5>7, <5>9
+              <5> QED BY <3>1, <5>10, <5>11, VotedOnce DEF WontVoteIn
+          <4> QED BY <4>3, <4>4, <4>5, <4>1, <4>2 DEF Ballots
+      <3> QED BY <3>2, <3>3 DEF Consistency
+      <2> QED BY <2>1
+  <1>2. Spec => []Inv BY Invariant
+  <1>3. []Inv => []Consistency BY <1>1
+  <1> QED BY <1>2, <1>3
+
+=============================================================================
+/o
+... (truncated) ...
+ps/WellFoundedInduction.tla:225:THEOREM TransitiveClosureWF ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:229:THEOREM WFInductiveDef ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:232:                 WFDefOn(R, S, Def),
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:234:          PROVE  WFInductiveDefines(f, S, Def)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:237:(* Theorem WFInductiveDef allows us to conclude that a recursively defined *)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:241:THEOREM WFInductiveDefType == 
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:245:                 WFDefOn(R, S, Def),
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:246:                 WFInductiveDefines(f, S, Def),
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:289:THEOREM WFLexPairOrdering ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla:308:THEOREM WFLexProductOrdering ==
+/opt/tlapm15/lib/tlaps/TLAPS.tla:96:(* Backend pragma: The PTL propositional linear time temporal logic       *)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:105:PTL == TRUE (*{ by (prover: "ls4") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:365:the PTL decision procedure, and their formulation is unsound for the semantics
+/opt/tlapm15/lib/tlaps/TLAPS.tla:383:(* Temporal Logic of Actions".                                             *)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:394:THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+/opt/tlapm15/lib/tlaps/TLAPS.tla:398:THEOREM RuleINV2 == ASSUME STATE I, STATE f, ACTION N
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '80,120p' /opt/tlapm15/lib/tlaps/TLAPS.tla && sed -n '360,420p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+(**************************************************************************)
+
+Z3 == TRUE (*{ by (prover: "z33") }*)
+Z3T(X) == TRUE (*{ by (prover:"z33"; timeout:@) }*)
+
+(**************************************************************************)
+(* Backend pragma: SPASS superposition prover                             *)
+(*                                                                        *)
+(* This method translates the proof obligation to the DFG format language *)
+(* supported by the ATP SPASS. The translation is based on the SMT one.   *)
+(**************************************************************************)
+
+Spass == TRUE (*{ by (prover: "spass") }*)
+SpassT(X) == TRUE (*{ by (prover:"spass"; timeout:@) }*)
+
+(**************************************************************************)
+(* Backend pragma: The PTL propositional linear time temporal logic       *)
+(* prover.  It currently is the LS4 backend.                              *)
+(*                                                                        *)
+(* This method translates the negetation of the proof obligation to       *)
+(* Seperated Normal Form (TRP++ format) and checks for unsatisfiability   *)
+(**************************************************************************)
+
+LS4 == TRUE (*{ by (prover: "ls4") }*)
+LS4T(X) == TRUE (*{ by (prover: "ls4"; timeout:@) }*)
+PTL == TRUE (*{ by (prover: "ls4") }*)
+
+(**************************************************************************)
+(* Backend pragma
+... (truncated) ...
+             PROVE  []P /\ [][A]_f => []Q /\ [][B]_g
+
+THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+                           I /\ [N]_F => I'
+                    PROVE  I /\ [][N]_F => []I
+
+THEOREM RuleINV2 == ASSUME STATE I, STATE f, ACTION N
+                    PROVE  []I => ([][N]_f <=> [][N /\ I /\ I']_f)
+
+THEOREM RuleWF1 == ASSUME STATE P, STATE Q, STATE f, ACTION N, ACTION A,
+                          P /\ [N]_f => (P' \/ Q'),
+                          P /\ <<N /\ A>>_f => Q',
+                          P => ENABLED <<A>>_f
+                   PROVE  [][N]_f /\ WF_f(A) => (P ~> Q)
+
+THEOREM RuleSF1 == ASSUME STATE P, STATE Q, STATE f,
+                          ACTION N, ACTION A, TEMPORAL F,
+                          P /\ [N]_f => (P' \/ Q'),
+                          P /\ <<N /\ A>>_f => Q',
+                          []P /\ [][N]_f /\ []F => <> ENABLED <<A>>_f
+                   PROVE  [][N]_f /\ SF_f(A) /\ []F => (P ~> Q)
+
+(***************************************************************************)
+(* The rules WF2 and SF2 in "The Temporal Logic of Actions" are obtained   *)
+(* from the following two rules by the following substitutions: `.         *)
+(*                                                                         *)
+(*          ___        ___         _______________                         *)
+(*      M <- M ,   g <- g ,  EM <- ENABLED <<M>>_g       .'                *)
+(***************************************************************************)
+[EXIT 0]
+
+[AGENT] I’ll replace the named assumptions with direct assumptions and use `PTL` for the final temporal lifting.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeOK_, CONSTANT_MsgInv_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 240, characters 17-18:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in
+... (truncated) ...
+     NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  <3>2 
+           PROVE  Consistency
+File "./PaxosHistVar_Consistent.tla", line 187, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  Inv == TypeOK /\ MsgInv
+           PROVE  MsgInv /\ TypeOK
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 262, character 77:
+[ERROR]: 9/117 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The assumption scopes weren’t being recognized after simplification. I’ll rewrite the local implication using `SUFFICES`, matching standard TLAPS scoping patterns.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: PaxosHistVar_Consistent.tla
+@@
+   <1>1. Inv => Consistency
+-      <2>1. ASSUME Inv
+-             PROVE Consistency
+-      <3>1. MsgInv /\\ TypeOK
+-        BY DEF Inv
+-      <3>2. TAKE v1 \\in Values, v2 \\in Values
+-      <3>3. ASSUME Chosen(v1), Chosen(v2)
+-             PROVE v1 = v2
++      <2>1. SUFFICES ASSUME Inv
++                       PROVE Consistency
++        OBVIOUS
++      <2>2. MsgInv /\\ TypeOK
++        BY DEF Inv
++      <2>3. SUFFICES ASSUME NEW v1 \\in Values, NEW v2 \\in Values,
++                              Chosen(v1), Chosen(v2)
++                       PROVE v1 = v2
++        BY DEF Consistency
+           <4>1. PICK b1 \\in Ballots : ChosenIn(v1, b1)
+             BY DEF Chosen
+           <4>2. PICK b2 \\in Ballots : ChosenIn(v2, b2)
+             BY DEF Chosen
+@@
+-              <5> QED BY <3>1, <5>4, VotedOnce
++              <5> QED BY <2>2, <5>4, VotedOnce
+@@
+-                BY <3>1, <5>4, VotedInv
++                BY <2>2, <5>4, VotedInv
+@@
+-              <5> QED BY <3>1, <5>10, <5>11, VotedOnce DEF WontVoteIn
++              <5> QED BY <2>2, <5>10, <5>11, VotedOnce DEF WontVoteIn
+@@
+-                BY <3>1, <5>4, VotedInv
++                BY <2>2, <5>4, VotedInv
+@@
+-              <5> QED BY <3>1, <5>10, <5>11, VotedOnce DEF WontVoteIn
++              <5> QED BY <2>2, <5>10, <5>11, VotedOnce DEF WontVoteIn
+@@
+-      <3> QED BY <3>2, <3>3 DEF Consistency
+-      <2> QED BY <2>1
++      <2> QED BY <2>3
+*** End Patch
+PATCH
+nl -ba PaxosHistVar_Consistent.tla | sed -n '181,266p'"
+Success. Updated the following files:
+M PaxosHistVar_Consistent.tla
+   181	THEOREM Consistent == Spec => []Consistency
+   182	PROOF
+   183	  <1>1. Inv => Consistency
+   184	      <2>1. SUFFICES ASSUME Inv
+   185	                       PROVE Consistency
+   186	        OBVIOUS
+   187	      <2>2. MsgInv /\ TypeOK
+   188	        BY DEF Inv
+   189	      <2>3. SUFFICES ASSUME NEW v1 \in Values, NEW v2 \in Values,
+   190	                              Chosen(v1), Chosen(v2)
+   191	                       PROVE v1 = v2
+   192	        BY DEF Consistency
+   193	          <4>1. PICK b1 \in Ballots : ChosenIn(v1, b1)
+   194	            BY DEF Chosen
+   195	          <4>2. PICK b2 \in Ballots : ChosenIn(v2, b2)
+   196	            BY DEF Chosen
+   197	          <4>3. CASE b1 = b2
+   198	              <5>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+   199	                BY <4>1 DEF ChosenIn
+   200	              <5>2. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   201	                BY <4>2 DEF ChosenIn
+   202	              <5>3. PICK a \in Q1 \cap Q2 : TRUE
+   203	                BY <5>1, <5>2, QuorumAssumption
+   204	              <5>4. VotedForIn(a, v1, b1) /\ VotedForIn(a, v2, b1)
+   205	                BY <4>3, <5>1, <5>2, <5>3
+   206	              <5> QED BY <2>2, <5>4, VotedOnce
+   207	          <4>4. CASE b1 < b2
+   208	              <5>1. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   209	                BY <4>2 DEF ChosenIn
+   210	       
+... (truncated) ...
+v1, b1)
+   234	                BY <4>1 DEF ChosenIn
+   235	              <5>2. Q1 # {}
+   236	                BY <5>1, QuorumAssumption
+   237	              <5>3. PICK a1 \in Q1 : TRUE
+   238	                BY <5>2
+   239	              <5>4. VotedForIn(a1, v1, b1)
+   240	                BY <5>1, <5>3
+   241	              <5>5. SafeAt(v1, b1)
+   242	                BY <2>2, <5>4, VotedInv
+   243	              <5>6. b2 \in 0..(b1-1)
+   244	                BY <4>1, <4>2, <4>5 DEF Ballots
+   245	              <5>7. PICK Q \in Quorums :
+   246	                        \A a \in Q : VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   247	                BY <5>5, <5>6 DEF SafeAt
+   248	              <5>8. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   249	                BY <4>2 DEF ChosenIn
+   250	              <5>9. PICK a \in Q \cap Q2 : TRUE
+   251	                BY <5>7, <5>8, QuorumAssumption
+   252	              <5>10. VotedForIn(a, v2, b2)
+   253	                BY <5>8, <5>9
+   254	              <5>11. VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   255	                BY <5>7, <5>9
+   256	              <5> QED BY <2>2, <5>10, <5>11, VotedOnce DEF WontVoteIn
+   257	          <4> QED BY <4>3, <4>4, <4>5, <4>1, <4>2 DEF Ballots
+   258	      <2> QED BY <2>3
+   259	  <1>2. Spec => []Inv BY Invariant
+   260	  <1>3. []Inv => []Consistency BY <1>1, PTL
+   261	  <1> QED BY <1>2, <1>3
+   262	
+   263	=============================================================================
+[EXIT 0]
+
+[AGENT] I noticed the new suffices subproof was indented at the wrong level; I’ll fix numbering so those steps belong to the suffices proof.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('PaxosHistVar_Consistent.tla')
+s=p.read_text()
+start=s.index('THEOREM Consistent ==')
+end=s.index('\\n=============================================================================', start)
+proof=r'''THEOREM Consistent == Spec => []Consistency
+PROOF
+  <1>1. Inv => Consistency
+    <2>1. SUFFICES ASSUME Inv
+                     PROVE Consistency
+      OBVIOUS
+    <2>2. MsgInv /\\ TypeOK
+      BY DEF Inv
+    <2>3. SUFFICES ASSUME NEW v1 \\in Values, NEW v2 \\in Values,
+                            Chosen(v1), Chosen(v2)
+                     PROVE v1 = v2
+      BY DEF Consistency
+    <2>4. PICK b1 \\in Ballots : ChosenIn(v1, b1)
+      BY DEF Chosen
+    <2>5. PICK b2 \\in Ballots : ChosenIn(v2, b2)
+      BY DEF Chosen
+    <2>6. CASE b1 = b2
+      <3>1. PICK Q1 \\in Quorums : \\A a \\in Q1 : VotedForIn(a, v1, b1)
+        BY <2>4 DEF ChosenIn
+      <3>2. PICK Q2 \\in Quorums : \\A a \\in Q2 : VotedForIn(a, v2, b2)
+        BY <2>5 DEF ChosenIn
+      <3>3. PICK a \\in Q1 \\cap Q2 : TRUE
+        BY <3>1, <3>2, QuorumAssumption
+      <3>4. VotedForIn(a, v1, b1) /\\ VotedForIn(a, v2, b1)
+        BY <2>6, <3>1, <3>2, <3>3
+      <3> QED BY <2>2, <3>4, VotedOnce
+    <2>7. CASE b1 < b2
+      <3>1. PICK Q2 \\in Quorums : \\A a \\in Q2 : VotedForIn(a, v2, b2)
+        BY <2>5 DEF ChosenIn
+      <3>2. Q2 # {}
+        BY <3>1, QuorumAssumption
+      <3>3. PICK a2 \\in Q2 : TRUE
+        BY <3>2
+      <3>4. VotedForIn(a2, v2, b2)
+        BY <3>1, <3>3
+      <3>5. SafeAt(v2, b2)
+        BY <2>2, <3>4, VotedInv
+      <3>6. b1 \\in 0..(b2-1)
+        BY <2>4, <2>5, <2>7 DEF Ballots
+      <3>7. PICK Q \\in Quorums :
+                \\A a \\in Q : VotedForIn(a, v2, b1) \\/ WontVoteIn(a, b1)
+        BY <3>5, <3>6 DEF SafeAt
+      <3>8. PICK Q1 \\in Quorums : \\A a \\in Q1 : VotedForIn(a, v1, b1)
+        BY <2>4 DEF ChosenIn
+      <3>9. PICK a \\in Q \\cap Q1 : TRUE
+        BY <3>7, <3>8, QuorumAssumption
+      <3>10. VotedForIn(a, v1, b1)
+        BY <3>8, <3>9
+      <3>11. VotedForIn(a, v2, b1) \\/ WontVoteIn(a, b1)
+        BY <3>7, <3>9
+      <3> QED BY <2>2, <3>10, <3>11, VotedOnce DEF WontVoteIn
+    <2>8. CASE b2 < b1
+      <3>1. PICK Q1 \\in Quorums : \\A a \\in Q1 : VotedForIn(a, v1, b1)
+        BY <2>4 DEF ChosenIn
+      <3>2. Q1 # {}
+        BY <3>1, QuorumAssumption
+      <3>3. PICK a1 \\in Q1 : TRUE
+        BY <3>2
+      <3>4. VotedForIn(a1, v1, b1)
+        BY <3>1, <3>3
+      <3>5. SafeAt(v1, b1)
+        BY <2>2, <3>4, VotedInv
+      <3>6. b2 \\in 0..(b1-1)
+        BY <2>4, <2>5, <2>8 DEF Ballots
+      <3>7. PICK Q \\in Quorums :
+                \\A a \\in Q : VotedForIn(a, v1, b2) \\/ WontVoteIn(a, b2)
+        BY <3>5, <3>6 DEF SafeAt
+      <3>8. PICK Q2 \\in Quorums : \\A a \\in Q2 : VotedForIn(a, v2, b2)
+        BY <2>5 DEF ChosenIn
+      <3>9. PICK a \\in Q \\cap Q2 : TRUE
+        BY <3>7, <3>8, QuorumAssumption
+      <3>10. VotedForIn(a, v2, b2)
+        BY <3>8, <3>9
+      <3>11. VotedForIn(a, v1, b2) \\/ WontVoteIn(a, b2)
+        BY <3>7, <3>9
+      <3> QED BY <2>2, <3>10, <3>11, VotedOnce DEF WontVoteIn
+    <2> QED BY <2>6, <2>7, <2>8, <2>4, <2>5 DEF Ballots
+  <1>2. Spec => []Inv BY Invariant
+  <1>3. []Inv => []Consistency BY <1>1, PTL
+  <1> QED BY <1>2, <1>3
+'''
+p.write_text(s[:start]+proof+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Chosen_
+
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 242, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT v1 \in Values,
+                  NEW CONSTANT v2 \in Values,
+                  NEW CONSTANT b1 \in Ballots,
+                  NEW CONSTANT b2 \in Ballots,
+                  NEW CONSTANT Q1 \in Quorums,
+                  NEW 
+... (truncated) ...
+in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  Chosen(v) == \E b \in Ballots : ChosenIn(v, b),
+                  NEW CONSTANT v1 \in Values,
+                  NEW CONSTANT v2 \in Values
+           PROVE  \E b1 \in Ballots : ChosenIn(v1, b1)
+File "./PaxosHistVar_Consistent.tla", line 188, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  Inv == TypeOK /\ MsgInv
+           PROVE  MsgInv /\ TypeOK
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 262, character 77:
+[ERROR]: 8/112 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The `SUFFICES` shape isn’t carrying assumptions as expected in this version; I’ll use direct implication substeps instead.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('PaxosHistVar_Consistent.tla')
+s=p.read_text()
+s=s.replace('  <1>1. Inv => Consistency\\n    <2>1. SUFFICES ASSUME Inv\\n                     PROVE Consistency\\n      OBVIOUS\\n    <2>2. MsgInv /\\\\ TypeOK\\n      BY DEF Inv\\n    <2>3. SUFFICES ASSUME NEW v1 \\\\in Values, NEW v2 \\\\in Values,\\n                            Chosen(v1), Chosen(v2)\\n                     PROVE v1 = v2\\n      BY DEF Consistency\\n    <2>4. PICK b1 \\\\in Ballots : ChosenIn(v1, b1)\\n', '  <1>1. ASSUME Inv\\n         PROVE Consistency\\n    <2>1. MsgInv /\\\\ TypeOK\\n      BY DEF Inv\\n    <2>2. TAKE v1 \\\\in Values, v2 \\\\in Values\\n    <2>3. ASSUME Chosen(v1), Chosen(v2)\\n           PROVE v1 = v2\\n    <2>4. PICK b1 \\\\in Ballots : ChosenIn(v1, b1)\\n')
+s=s.replace('<2>2, <3>4', '<2>1, <3>4')
+s=s.replace('<2>2, <3>10', '<2>1, <3>10')
+s=s.replace('<2>4, <2>5', '<2>4, <2>5')
+s=s.replace('  <1>2. Spec => []Inv BY Invariant\\n  <1>3. []Inv => []Consistency BY <1>1, PTL\\n  <1> QED BY <1>2, <1>3', '  <1>2. Spec => []Inv BY Invariant\\n  <1>3. []Inv => []Consistency BY <1>1, PTL\\n  <1> QED BY <1>2, <1>3')
+p.write_text(s)
+PY
+nl -ba PaxosHistVar_Consistent.tla | sed -n '181,265p'"
+   181	THEOREM Consistent == Spec => []Consistency
+   182	PROOF
+   183	  <1>1. ASSUME Inv
+   184	         PROVE Consistency
+   185	    <2>1. MsgInv /\ TypeOK
+   186	      BY DEF Inv
+   187	    <2>2. TAKE v1 \in Values, v2 \in Values
+   188	    <2>3. ASSUME Chosen(v1), Chosen(v2)
+   189	           PROVE v1 = v2
+   190	    <2>4. PICK b1 \in Ballots : ChosenIn(v1, b1)
+   191	      BY DEF Chosen
+   192	    <2>5. PICK b2 \in Ballots : ChosenIn(v2, b2)
+   193	      BY DEF Chosen
+   194	    <2>6. CASE b1 = b2
+   195	      <3>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+   196	        BY <2>4 DEF ChosenIn
+   197	      <3>2. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   198	        BY <2>5 DEF ChosenIn
+   199	      <3>3. PICK a \in Q1 \cap Q2 : TRUE
+   200	        BY <3>1, <3>2, QuorumAssumption
+   201	      <3>4. VotedForIn(a, v1, b1) /\ VotedForIn(a, v2, b1)
+   202	        BY <2>6, <3>1, <3>2, <3>3
+   203	      <3> QED BY <2>1, <3>4, VotedOnce
+   204	    <2>7. CASE b1 < b2
+   205	      <3>1. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   206	        BY <2>5 DEF ChosenIn
+   207	      <3>2. Q2 # {}
+   208	        BY <3>1, QuorumAssumption
+   209	      <3>3. PICK a2 \in Q2 : TRUE
+   210	        BY <3>2
+   211	      <3>4. VotedForIn(a2, v2, b2)
+   212	        BY <3>1, <3>3
+   213	      <3>5. SafeAt(v2, b2)
+   214	        BY <2>1, <3>4, VotedInv
+   215	      <3>6. b1 \in 0..(b2-1)
+   216	        BY <2>4, <2>5, <2>7 DEF Ballots
+   217	      <3>
+... (truncated) ...
+ \/ WontVoteIn(a, b1)
+   227	        BY <3>7, <3>9
+   228	      <3> QED BY <2>1, <3>10, <3>11, VotedOnce DEF WontVoteIn
+   229	    <2>8. CASE b2 < b1
+   230	      <3>1. PICK Q1 \in Quorums : \A a \in Q1 : VotedForIn(a, v1, b1)
+   231	        BY <2>4 DEF ChosenIn
+   232	      <3>2. Q1 # {}
+   233	        BY <3>1, QuorumAssumption
+   234	      <3>3. PICK a1 \in Q1 : TRUE
+   235	        BY <3>2
+   236	      <3>4. VotedForIn(a1, v1, b1)
+   237	        BY <3>1, <3>3
+   238	      <3>5. SafeAt(v1, b1)
+   239	        BY <2>1, <3>4, VotedInv
+   240	      <3>6. b2 \in 0..(b1-1)
+   241	        BY <2>4, <2>5, <2>8 DEF Ballots
+   242	      <3>7. PICK Q \in Quorums :
+   243	                \A a \in Q : VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   244	        BY <3>5, <3>6 DEF SafeAt
+   245	      <3>8. PICK Q2 \in Quorums : \A a \in Q2 : VotedForIn(a, v2, b2)
+   246	        BY <2>5 DEF ChosenIn
+   247	      <3>9. PICK a \in Q \cap Q2 : TRUE
+   248	        BY <3>7, <3>8, QuorumAssumption
+   249	      <3>10. VotedForIn(a, v2, b2)
+   250	        BY <3>8, <3>9
+   251	      <3>11. VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   252	        BY <3>7, <3>9
+   253	      <3> QED BY <2>1, <3>10, <3>11, VotedOnce DEF WontVoteIn
+   254	    <2> QED BY <2>6, <2>7, <2>8, <2>4, <2>5 DEF Ballots
+   255	  <1>2. Spec => []Inv BY Invariant
+   256	  <1>3. []Inv => []Consistency BY <1>1, PTL
+   257	  <1> QED BY <1>2, <1>3
+   258	
+   259	=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla'
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Chosen_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Chosen_, CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Chosen_, CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Chosen_, CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 239, characters 9-10:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTA
+... (truncated) ...
+      NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  <2>2 
+           PROVE  Consistency
+File "./PaxosHistVar_Consistent.tla", line 186, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  Inv == TypeOK /\ MsgInv
+           PROVE  MsgInv /\ TypeOK
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 259, character 77:
+[ERROR]: 9/112 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The proof obligations show unnamed assumptions aren’t entering context. I’ll check local TLAPS examples for assumed formulas and mirror that exact style.
+
+[CMD] /bin/bash -lc "rg \"ASSUME .*PROVE\" /opt/tlapm15/lib/tlaps/*_proofs.tla -n | head -80 && rg \"ASSUME NEW .*[,].*\\\\(\" /opt/tlapm15/lib/tlaps/*_proofs.tla -n | head -80"
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:102:(* Intentionally not written as an ASSUME ... PROVE such that the conjuncts *)
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:345:<1>1. ASSUME IsInjective(st)  PROVE IsInjective(s)
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:347:<1>2. ASSUME IsInjective(st)  PROVE IsInjective(t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:308:  <2>1. ASSUME IsPrefix(s,t)  PROVE  \E u \in Seq(S) : t = s \o u
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:313:  <2>2. ASSUME NEW u \in Seq(S), t = s \o u  PROVE  IsPrefix(s,t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:415:<1>1. ASSUME IsPrefix(t,u) PROVE IsPrefix(s \o t, s \o u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:419:<1>2. ASSUME IsPrefix(s \o t, s \o u) PROVE IsPrefix(t,u)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:609:<1>1. ASSUME NEW s \in Seq(S) PROVE IsSuffix(s,s)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:632:<1>1. ASSUME IsSuffix(s, u) PROVE IsSuffix(s \o t, u \o t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:636:<1>2. ASSUME IsSuffix(s \o t, u \o t) PROVE IsSuffix(s, u)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:134:<1>2. SUFFICES ASSUME f \notin Injection(S,T) PROVE FALSE
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:144:  <2>2. ASSUME NEW t \in T PROVE \E u \in U : g[u] = t
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:208:<1>3. ASSUME NEW s \in S  PROVE \E t \in T : g[
+... (truncated) ...
+Seq(S),
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:160:  ASSUME NEW S, NEW seq \in Seq(S), NEW e \in S
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:166:  ASSUME NEW S, NEW seq \in Seq(S), IsInjective(seq), seq # << >>
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:185:  ASSUME NEW S,  NEW P(_),
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:194:<1>2. ASSUME NEW n \in Nat,  Q(n) 
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:196:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:211:  ASSUME NEW S, NEW seq \in Seq(S)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:221:  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S), Reverse(s) = Reverse(t)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:231:  ASSUME NEW S, NEW seq \in Seq(S), Reverse(seq) = <<>>
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:236:  ASSUME NEW S, NEW s1 \in Seq(S), NEW s2 \in Seq(S)
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:241:  ASSUME NEW S, NEW seq \in Seq(S), NEW e \in S
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:246:  ASSUME NEW S, NEW seq \in Seq(S), NEW e \in S
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:254:  ASSUME NEW S, NEW seq \in Seq(S),
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:260:  ASSUME NEW S, NEW seq \in Seq(S),
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:266:  ASSUME NEW S, NEW seq \in Seq(S), seq # << >>
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '338,352p' /opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla && sed -n '560,585p' /opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla"
+BY DEF IsInjective
+
+LEMMA ConcatInjectiveSeq ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S)
+  PROVE  IsInjective(s \o t) <=> 
+         IsInjective(s) /\ IsInjective(t) /\ Range(s) \cap Range(t) = {}
+<1>. DEFINE st == s \o t
+<1>1. ASSUME IsInjective(st)  PROVE IsInjective(s)
+  BY <1>1 DEF IsInjective
+<1>2. ASSUME IsInjective(st)  PROVE IsInjective(t)
+  <2>1. SUFFICES ASSUME NEW i \in DOMAIN t, NEW j \in DOMAIN t, t[i] = t[j]
+                 PROVE  i = j
+    BY DEF IsInjective
+  <2>2. /\ i + Len(s) \in DOMAIN st
+        /\ j + Len(s) \in DOMAIN st
+(*************************************************************************)
+(* Pick H as F on C and the identity on S \ C.  Since F (restricted to   *)
+(* C) is a bijection from C to FC and S \ C = T \ FC, this makes H a     *)
+(* bijection from S to T.                                                *)
+(*************************************************************************)
+<1>13. PICK H : H = [s \in S |-> IF s \in C THEN F[s] ELSE s]  OBVIOUS
+<1>14. H \in Bijection(S,T)
+  (***********************************************************************)
+  (* A useful lemma.  If a \in C and b \notin C, then H[a] # H[b].       *)
+  (***********************************************************************)
+  <2>1. ASSUME NEW a \in S, NEW b \in S, a \in C, b \notin C  PROVE H[a] # H[b]
+    <3>1. H[a] \in FC  BY <2>1, <1>1, <1>9, <1>13
+    <3>2. H[b] \in T \ FC  BY <2>1, <1>12, <1>13
+    <3> QED BY <3>1, <3>2
+      
+  <2>2. H \in [S -> T]
+    <3> SUFFICES ASSUME NEW s \in S  PROVE H[s] \in T  BY <1>13
+    <3>1. CASE s \in C  BY <3>1, <1>1, <1>10, <1>13
+    <3>2. CASE s \notin C  BY <3>2, <1>12, <1>13
+    <3> QED BY <3>1, <3>2
+      
+  <2>3. ASSUME NEW a \in S, NEW b \in S, H[a] = H[b]  PROVE a = b
+    <3> H[a] = H[b]  BY <2>3
+    <3>1. CASE a \in C /\ b \in C  BY <3>1, <1>1, <1>13
+    <3>2. CASE a \in C /\ b \notin C  BY <3>2, <2>1  (* impossible by lemma *)
+    <3>3. CASE a \notin C /\ b \in C  BY <3>3, <2>1  (* impossible by lemma *)
+[EXIT 0]
+
+[AGENT] I found the scoping issue: substeps proving an `ASSUME ... PROVE` step must be one level deeper. I’ll relevel that proof and add the needed assumption references.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('PaxosHistVar_Consistent.tla')
+s=p.read_text()
+start=s.index('THEOREM Consistent ==')
+end=s.index('\\n=============================================================================', start)
+proof=r'''THEOREM Consistent == Spec => []Consistency
+PROOF
+  <1>1. ASSUME Inv
+         PROVE Consistency
+    <2>1. MsgInv /\\ TypeOK
+      BY <1>1 DEF Inv
+    <2>2. TAKE v1 \\in Values, v2 \\in Values
+    <2>3. ASSUME Chosen(v1), Chosen(v2)
+           PROVE v1 = v2
+      <3>1. PICK b1 \\in Ballots : ChosenIn(v1, b1)
+        BY <2>3 DEF Chosen
+      <3>2. PICK b2 \\in Ballots : ChosenIn(v2, b2)
+        BY <2>3 DEF Chosen
+      <3>3. CASE b1 = b2
+        <4>1. PICK Q1 \\in Quorums : \\A a \\in Q1 : VotedForIn(a, v1, b1)
+          BY <3>1 DEF ChosenIn
+        <4>2. PICK Q2 \\in Quorums : \\A a \\in Q2 : VotedForIn(a, v2, b2)
+          BY <3>2 DEF ChosenIn
+        <4>3. PICK a \\in Q1 \\cap Q2 : TRUE
+          BY <4>1, <4>2, QuorumAssumption
+        <4>4. VotedForIn(a, v1, b1) /\\ VotedForIn(a, v2, b1)
+          BY <3>3, <4>1, <4>2, <4>3
+        <4> QED BY <2>1, <4>1, <4>2, <4>3, <4>4, VotedOnce, QuorumAssumption
+      <3>4. CASE b1 < b2
+        <4>1. PICK Q2 \\in Quorums : \\A a \\in Q2 : VotedForIn(a, v2, b2)
+          BY <3>2 DEF ChosenIn
+        <4>2. Q2 # {}
+          BY <4>1, QuorumAssumption
+        <4>3. PICK a2 \\in Q2 : TRUE
+          BY <4>2
+        <4>4. VotedForIn(a2, v2, b2)
+          BY <4>1, <4>3
+        <4>5. SafeAt(v2, b2)
+          BY <2>1, <4>1, <4>3, <4>4, VotedInv, QuorumAssumption
+        <4>6. b1 \\in 0..(b2-1)
+          BY <3>1, <3>2, <3>4 DEF Ballots
+        <4>7. PICK Q \\in Quorums :
+                  \\A a \\in Q : VotedForIn(a, v2, b1) \\/ WontVoteIn(a, b1)
+          BY <4>5, <4>6 DEF SafeAt
+        <4>8. PICK Q1 \\in Quorums : \\A a \\in Q1 : VotedForIn(a, v1, b1)
+          BY <3>1 DEF ChosenIn
+        <4>9. PICK a \\in Q \\cap Q1 : TRUE
+          BY <4>7, <4>8, QuorumAssumption
+        <4>10. VotedForIn(a, v1, b1)
+          BY <4>8, <4>9
+        <4>11. VotedForIn(a, v2, b1) \\/ WontVoteIn(a, b1)
+          BY <4>7, <4>9
+        <4> QED BY <2>1, <4>7, <4>8, <4>9, <4>10, <4>11, VotedOnce, QuorumAssumption DEF WontVoteIn
+      <3>5. CASE b2 < b1
+        <4>1. PICK Q1 \\in Quorums : \\A a \\in Q1 : VotedForIn(a, v1, b1)
+          BY <3>1 DEF ChosenIn
+        <4>2. Q1 # {}
+          BY <4>1, QuorumAssumption
+        <4>3. PICK a1 \\in Q1 : TRUE
+          BY <4>2
+        <4>4. VotedForIn(a1, v1, b1)
+          BY <4>1, <4>3
+        <4>5. SafeAt(v1, b1)
+          BY <2>1, <4>1, <4>3, <4>4, VotedInv, QuorumAssumption
+        <4>6. b2 \\in 0..(b1-1)
+          BY <3>1, <3>2, <3>5 DEF Ballots
+        <4>7. PICK Q \\in Quorums :
+                  \\A a \\in Q : VotedForIn(a, v1, b2) \\/ WontVoteIn(a, b2)
+          BY <4>5, <4>6 DEF SafeAt
+        <4>8. PICK Q2 \\in Quorums : \\A a \\in Q2 : VotedForIn(a, v2, b2)
+          BY <3>2 DEF ChosenIn
+        <4>9. PICK a \\in Q \\cap Q2 : TRUE
+          BY <4>7, <4>8, QuorumAssumption
+        <4>10. VotedForIn(a, v2, b2)
+          BY <4>8, <4>9
+        <4>11. VotedForIn(a, v1, b2) \\/ WontVoteIn(a, b2)
+          BY <4>7, <4>9
+        <4> QED BY <2>1, <4>7, <4>8, <4>9, <4>10, <4>11, VotedOnce, QuorumAssumption DEF WontVoteIn
+      <3> QED BY <3>3, <3>4, <3>5, <3>1, <3>2 DEF Ballots
+    <2> QED BY <2>2, <2>3 DEF Consistency
+  <1>2. Spec => []Inv BY Invariant
+  <1>3. []Inv => []Consistency BY <1>1, PTL
+  <1> QED BY <1>2, <1>3
+'''
+p.write_text(s[:start]+proof+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_TypeOK_, CONSTANT_MsgInv_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_MsgInv_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_MsgInv_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 187, characters 5-43:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  <2>2 
+           PROVE  Consistency
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 260, character 77:
+[ERROR]: 1/136 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Only the final universal-introduction step remains; I’ll strengthen that closing justification.
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Consistent.tla | sed -n '181,194p'"
+   181	THEOREM Consistent == Spec => []Consistency
+   182	PROOF
+   183	  <1>1. ASSUME Inv
+   184	         PROVE Consistency
+   185	    <2>1. MsgInv /\ TypeOK
+   186	      BY <1>1 DEF Inv
+   187	    <2>2. TAKE v1 \in Values, v2 \in Values
+   188	    <2>3. ASSUME Chosen(v1), Chosen(v2)
+   189	           PROVE v1 = v2
+   190	      <3>1. PICK b1 \in Ballots : ChosenIn(v1, b1)
+   191	        BY <2>3 DEF Chosen
+   192	      <3>2. PICK b2 \in Ballots : ChosenIn(v2, b2)
+   193	        BY <2>3 DEF Chosen
+   194	      <3>3. CASE b1 = b2
+[EXIT 0]
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: PaxosHistVar_Consistent.tla
+@@
+-    <2> QED BY <2>2, <2>3 DEF Consistency
++    <2> QED BY <2>2, <2>3, Zenon DEF Consistency
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 187, characters 5-43:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  <2>2 
+           PROVE  Consistency
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 260, character 77:
+[ERROR]: 1/137 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The last failure is the `TAKE` universal-introduction step itself; I’ll replace it with the library’s `SUFFICES ASSUME NEW ...` pattern.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('PaxosHistVar_Consistent.tla')
+s=p.read_text()
+s=s.replace('    <2>2. TAKE v1 \\\\in Values, v2 \\\\in Values\\n    <2>3. ASSUME Chosen(v1), Chosen(v2)\\n           PROVE v1 = v2\\n      <3>1. PICK b1', '    <2>2. SUFFICES ASSUME NEW v1 \\\\in Values, NEW v2 \\\\in Values\\n                     PROVE Chosen(v1) /\\\\ Chosen(v2) => v1 = v2\\n      BY Zenon DEF Consistency\\n    <2>3. ASSUME Chosen(v1), Chosen(v2)\\n           PROVE v1 = v2\\n      <3>1. PICK b1')
+s=s.replace('    <2> QED BY <2>2, <2>3, Zenon DEF Consistency', '    <2> QED BY <2>2')
+p.write_text(s)
+PY
+nl -ba PaxosHistVar_Consistent.tla | sed -n '183,195p'
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Chosen_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 257, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT v1 \in Values,
+                  NEW CONSTANT v2 \in Values,
+                  <2>2 
+           PROVE  Chosen(v1) /\ Chosen(v2) => v1 = v2
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 262, character 77:
+[ERROR]: 1/135 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Consistent"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The suffices step now created the remaining implication obligation; I’ll close it directly with the proven subcase result.
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Consistent.tla | sed -n '248,262p'"
+   248	          BY <3>2 DEF ChosenIn
+   249	        <4>9. PICK a \in Q \cap Q2 : TRUE
+   250	          BY <4>7, <4>8, QuorumAssumption
+   251	        <4>10. VotedForIn(a, v2, b2)
+   252	          BY <4>8, <4>9
+   253	        <4>11. VotedForIn(a, v1, b2) \/ WontVoteIn(a, b2)
+   254	          BY <4>7, <4>9
+   255	        <4> QED BY <2>1, <4>7, <4>8, <4>9, <4>10, <4>11, VotedOnce, QuorumAssumption DEF WontVoteIn
+   256	      <3> QED BY <3>3, <3>4, <3>5, <3>1, <3>2 DEF Ballots
+   257	    <2> QED BY <2>2
+   258	  <1>2. Spec => []Inv BY Invariant
+   259	  <1>3. []Inv => []Consistency BY <1>1, PTL
+   260	  <1> QED BY <1>2, <1>3
+   261	
+   262	=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: PaxosHistVar_Consistent.tla
+@@
+-    <2> QED BY <2>2
++    <2> QED BY <2>2, <2>3
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla"
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "./PaxosHistVar_Consistent.tla", line 1, character 1 to line 262, character 77:
+[INFO]: All 136 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves all obligations. I’ll run the provided checker to verify the edit constraints and final PASS.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py PaxosHistVar_Consistent.tla'
+Checking: PaxosHistVar_Consistent.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/NaturalsInduction.tlaps/NaturalsInduction.thy" *)
+(* fingerprints written in ".tlacache/NaturalsInduction.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Consistent.tlaps/PaxosHistVar_Consistent.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Consistent.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/NaturalsInduction.tla", line 1, character 1 to line 151, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: TEMPORAL_Spec_, CONSTANT_Consistency_
+
+** Unexpanded symbols: CONSTANT_Chosen_
+
+** Unexpanded symbols: STATE_TypeOK_, CONSTANT_MsgInv_
+
+** Unexpanded symbols: CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CO
+... (truncated) ...
+otedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_MsgInv_, STATE_TypeOK_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, STATE_TypeOK_, CONSTANT_MsgInv_, CONSTANT_SafeAt_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_ChosenIn_
+
+** Unexpanded symbols: CONSTANT_WontVoteIn_, CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_WontVoteIn_, CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: CONSTANT_WontVoteIn_, CONSTANT_Ballots_, CONSTANT_VotedForIn_
+
+** Unexpanded symbols: TEMPORAL_Spec_
+
+File "/tmp/tlaps_check_e7jb6mdh/PaxosHistVar_Consistent.tla", line 1, character 1 to line 262, character 77:
+[INFO]: All 136 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_PaxosHistVar_Consistent_92tbu9k6/PaxosHistVar_Consistent.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final theorem in `PaxosHistVar_Consistent.tla:181`.
+
+- Replaced `PROOF OBVIOUS` with a structured proof of `Spec => []Consistency`.
+- Proved `Inv => Consistency` using the admitted lemmas `VotedInv`, `VotedOnce`, and quorum intersection.
+- Lifted the state implication temporally using `Invariant` and `PTL`.
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps PaxosHistVar_Consistent.tla`.
+- Final checker result: `✅ PASS — all obligations proved` via `python3 check_proof.py PaxosHistVar_Consistent.tla`.

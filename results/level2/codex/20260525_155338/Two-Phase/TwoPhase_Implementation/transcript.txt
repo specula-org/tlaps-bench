@@ -1,0 +1,472 @@
+Benchmark: Two-Phase/TwoPhase_Implementation.tla
+Time: 122s
+Tokens: 821,213 input / 5,430 output
+============================================================
+
+[AGENT] I’ll inspect the module and the local proof-check setup first, then iterate against TLAPS and the provided checker. I’ll keep edits confined to `TwoPhase_Implementation.tla` and won’t touch stripped dependency files.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' TwoPhase_Implementation.tla"
+---------------------- MODULE TwoPhase_Implementation -----------------------
+
+EXTENDS Naturals, TLAPS
+
+CONSTANT XInit(_), XAct(_, _, _)
+
+VARIABLE p, c, x
+
+Init == /\ p = 0
+        /\ c = 0
+        /\ XInit(x)
+
+ProducerStep == /\ p = c
+                /\ XAct(0, x, x')
+                /\ p' = (p + 1) % 2
+                /\ c' = c
+
+ConsumerStep == /\ p # c
+                /\ XAct(1, x, x')
+                /\ c' = (c + 1) % 2
+                /\ p' = p
+
+Next == ProducerStep \/ ConsumerStep
+
+Spec == Init /\ [][Next]_<<p, c, x>>
+
+vBar == (p + c) % 2
+
+A == INSTANCE Alternate WITH v <- vBar
+
+THEOREM Implementation == Spec => A!Spec
+PROOF OBVIOUS
+==============================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'ls -la && ls -la /home/ubuntu/.tlapm/lib/tlapm/stdlib | head'
+total 8032
+drwx------ 1 ubuntu ubuntu     118 May 26 04:06 .
+drwxrwxrwt 1 root   root    104172 May 26 04:06 ..
+-rw-rw-r-- 1 ubuntu ubuntu     326 May 25 12:50 Alternate.tla
+-rwxr-xr-x 1 ubuntu ubuntu 7473264 May 23 03:25 check_proof_bin
+drwxrwxr-x 1 ubuntu ubuntu     144 May 26 04:06 .git
+-rw-rw-r-- 1 ubuntu ubuntu     711 May 25 12:50 TwoPhase_Implementation.tla
+total 412
+drwxr-xr-x 1 ubuntu ubuntu    706 May 24 09:16 .
+drwxr-xr-x 1 ubuntu ubuntu    120 Apr 14 16:04 ..
+-rw-r--r-- 1 ubuntu ubuntu  13796 Apr 14 16:04 BagsTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   9417 Apr 14 16:04 BagsTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   7554 Apr 14 16:04 Bags.tla
+-rw-r--r-- 1 ubuntu ubuntu 110320 Apr 14 16:04 CommunityModules.jar
+-rw-r--r-- 1 ubuntu ubuntu   1302 Apr 14 16:04 FiniteSets.tla
+-rw-r--r-- 1 ubuntu ubuntu  42189 Apr 14 16:04 FiniteSetTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  19668 Apr 14 16:04 FiniteSetTheorems.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_TwoPhase_Implementation_9y6c2q0k
+check_proof_bin
+Alternate.tla
+TwoPhase_Implementation.tla
+[EXIT 0]
+
+[AGENT] The implementation module is small: it composes a two-bit producer/consumer control with an `Alternate` instance whose variable is `vBar = (p+c)%2`. I’m reading the instantiated spec next so the proof can target the exact obligations TLAPS expands.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Alternate.tla"
+------------------------------ MODULE Alternate -----------------------------
+
+EXTENDS Naturals
+VARIABLE v, x
+CONSTANT XInit(_), XAct(_, _, _)
+
+Init == v = 0 /\ XInit(x)
+Next == v' = (v + 1) % 2 /\ XAct(v, x, x')
+
+Spec == Init /\ [][Next]_<<v,x>>
+
+============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib TwoPhase_Implementation.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+File "./TwoPhase_Implementation.tla", line 32, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT XInit
+                  (_),
+                  NEW CONSTANT XAct(_, _, _),
+                  NEW VARIABLE p,
+                  NEW VARIABLE c,
+                  NEW VARIABLE x
+           PROVE  Spec => A!Spec
+File "./TwoPhase_Implementation.tla", line 1, character 1 to line 33, character 62:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"TwoPhase_Implementation"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] A direct proof fails because the instantiated `Alternate` action needs a control-state invariant: `p` and `c` stay in `{0,1}`. I’m going to add a small invariant and prove the temporal implication through that, with arithmetic split into action lemmas so the temporal part stays simple.
+
+[CMD] /bin/bash -lc 'rg -n "PROOF|SUFFICES|PICK|HAVE|TAKE|QED|<1>" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:103:<1>1. ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S), NEW v \in Seq(S),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:107:    BY <1>1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:113:    <3>. QED  BY <1>1, <3>1, <3>2
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:114:  <2>. QED  BY <2>1, <2>2
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:115:<1>2. ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S), NEW v \in Seq(S),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:119:    BY <1>2
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:121:    BY <1>2, <2>1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:122:  <2>. QED  BY <2>1, <2>2
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:123:<1>. QED  BY <1>1, <1>2, ConcatEqualIffEmpty
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:253:<1>. DEFINE front == [i \in 1 .. Len(seq)-1 |-> seq[i]]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:255:<1>1. /\ front \in Seq(S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:259:<1>2. Len(seq) = Len(Append(front, last))
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:261:<1>3. ASSUME NEW i \in 1 .. Len(seq) 
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:264:<1>4. seq = Append(front, last)
+/home/ubuntu/.tlapm
+... (truncated) ...
+ NEW y \in [1..m+1 -> S],
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:674:          <6>2. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:680:          <6>2. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:682:        <5>3. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:684:      <4>3. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:687:      <4> SUFFICES ASSUME NEW x \in [1..m+1 -> S], NEW y \in [1..m+1 -> S],
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:693:        <5>1. PICK j \in 1..m : /\ \A i \in 1..j-1 : g(x)[1][i] = g(y)[1][i]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:701:        <5> QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:711:        <5> QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:713:      <4> QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:715:    <3>3. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:717:  <2>. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:719:<1>3. \A m \in Nat : P(m)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:720:  BY <1>1, <1>2, NatInduction, Isa
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:721:<1>4. QED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:722:  BY <1>3
+[EXIT 0]
+
+[CMD] /bin/bash -lc "find . -maxdepth 3 -type f -name '*.tla' -print"
+./TwoPhase_Implementation.tla
+./Alternate.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"MODULE PTL|THEOREM|\\[\\]\\[|WF_|Invariant|INV|Spec =>|\\[\\]\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:25:THEOREM NatInduction ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:34:THEOREM DownwardNatInduction ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:44:THEOREM GeneralNatInduction ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:56:THEOREM SmallestNatural ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:66:THEOREM RecursiveFcnOfNat ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:83:THEOREM NatInductiveDef ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:92:THEOREM RecursiveFcnOfNatType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:98:THEOREM NatInductiveDefType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:109:THEOREM RecursiveFcnOfNatUnique ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:118:THEOREM NatInductiveUnique ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:134:THEOREM FiniteNatInductiveDef ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:139:THEOREM FiniteNatInductiveDefType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:145:THEOREM FiniteNatInductiveUnique ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:159:THEOREM FactorialDefConclusion == NatInductiveDefConclusion(factorial, 1, LAMBDA v,n : n*v)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:165:THEOREM FactorialDef == \A n \in Nat : factorial[n] = IF n = 0 THE
+... (truncated) ...
+ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:437:                   PROVE  [][N]_f /\ SF_f(A) /\ []F => []<><<M>>_g \/ <>[](~EM)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:446:THEOREM RuleInvImplication ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:449:  PROVE  []F => []G
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:456:THEOREM RuleStepSimulation ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:460:  PROVE  []I /\ [][M]_f => [][N]_g
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:71:THEOREM WFMin ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:78:THEOREM MinWF ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:116:THEOREM WFInduction ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:147:THEOREM WFDefOnUnique ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:225:THEOREM TransitiveClosureWF ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:229:THEOREM WFInductiveDef ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:241:THEOREM WFInductiveDefType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:263:THEOREM NatLessThanWellFounded == IsWellFoundedOn(OpToRel(<,Nat), Nat)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:273:THEOREM PreImageWellFounded ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:289:THEOREM WFLexPairOrdering ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction.tla:308:THEOREM WFLexProductOrdering ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '360,470p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+
+
+=============================================================================
+
+The material below is obsolete: the TLA proof rules below are superseded by
+the PTL decision procedure, and their formulation is unsound for the semantics
+of temporal reasoning that TLAPS adopts.
+
+----------------------------------------------------------------------------
+(***************************************************************************)
+(*                           TEMPORAL LOGIC                                *)
+(*                                                                         *)
+(* The following rules are intended to be used when TLAPS handles temporal *)
+(* logic.  They will not work now.  Moreover when temporal reasoning is    *)
+(* implemented, these rules may be changed or omitted, and additional      *)
+(* rules will probably be added.  However, they are included mainly so     *)
+(* their names will be defined, preventing the use of identifiers that are *)
+(* likely to produce name clashes with future versions of this module.     *)
+(***************************************************************************)
+
+
+(***************************************************************************)
+(* The following proof rules (and their names) are from the paper "The     *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleTLA1 == ASSUME STATE P, STATE f,
+      
+... (truncated) ...
+~EM)
+
+
+(***************************************************************************)
+(* The following rule is a special case of the general temporal logic      *)
+(* proof rule STL4 from the paper "The Temporal Logic of Actions".  The    *)
+(* general rule is for arbitrary temporal formulas F and G, but it cannot  *)
+(* yet be handled by TLAPS.                                                *)
+(***************************************************************************)
+THEOREM RuleInvImplication ==
+  ASSUME STATE F, STATE G,
+         F => G
+  PROVE  []F => []G
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following rule is a special case of rule TLA2 from the paper "The   *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleStepSimulation ==
+  ASSUME STATE I, STATE f, STATE g,
+         ACTION M, ACTION N,
+         I /\ I' /\ [M]_f => [N]_g
+  PROVE  []I /\ [][M]_f => [][N]_g
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following may be used to invoke a decision procedure for            *)
+(* propositional temporal logic.                                           *)
+(***************************************************************************)
+PropositionalTemporalLogic == TRUE
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,140p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+"ls4") }*)
+LS4T(X) == TRUE (*{ by (prover: "ls4"; timeout:@) }*)
+PTL == TRUE (*{ by (prover: "ls4") }*)
+
+(**************************************************************************)
+(* Backend pragma: Zenon with different timeouts (default is 10 seconds)  *)
+(*                                                                        *)
+(**************************************************************************)
+
+Zenon == TRUE (*{ by (prover:"zenon") }*)
+ZenonT(X) == TRUE (*{ by (prover:"zenon"; timeout:@) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle with different timeouts and tactics     *)
+(*  (default is 30 seconds/auto)                                    *)
+(********************************************************************)
+
+Isa == TRUE (*{ by (prover:"isabelle") }*)
+IsaT(X) ==  TRUE (*{ by (prover:"isabelle"; timeout:@) }*)
+IsaM(X) ==  TRUE (*{ by (prover:"isabelle"; tactic:@) }*)
+IsaMT(X,Y) ==  TRUE (*{ by (prover:"isabelle"; tactic:@; timeout:@) }*)
+
+(***************************************************************************)
+(* The following theorem expresses the (useful implication of the) law of  *)
+(* set extensionality, which can be written as                             *)
+(*                                                                         *)
+(*    THEOREM  \A S, T : (S = T) <=> (\A x : (x \in S) <=> (x \in T))      *)
+(*                                                                         *)
+[EXIT 0]
+
+[AGENT] I’m adding only proof scaffolding above the theorem: a bit-state invariant, initial/preservation lemmas, and a one-step simulation lemma from implementation steps to the instantiated `Alternate` step. Then the theorem proof can be mostly temporal composition.
+
+[AGENT] The first proof draft is in place. I’m running TLAPS now; failures here will tell us whether the issue is temporal-rule instantiation or the modulo arithmetic obligations.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib TwoPhase_Implementation.tla'
+File "./TwoPhase_Implementation.tla", line 44, characters 30-37:
+Error: Operator "RuleINV1" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__P_anon.anon#usable in file "src/proof/p_anon.ml", line 234, characters 20-70
+Called from Tlapm_lib__P_visit.map#proof in file "src/proof/p_visit.ml", line 26, characters 12-30
+Called from Tlapm_lib__M_elab.normalize.spin.map_proof in file "src/module/m_elab.ml", line 1142, characters 21-48
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] `RuleINV1` and `RuleStepSimulation` are documented in the standard file but not actually exported by this TLAPS module, so I’m switching the temporal parts to the built-in `PTL` prover and keeping the state/action lemmas as premises.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib TwoPhase_Implementation.tla'
+(* loading fingerprints in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+File "./TwoPhase_Implementation.tla", line 1, character 1 to line 79, character 62:
+[INFO]: All 28 obligations proved.
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] TLAPS proves all generated obligations now. I’m running the benchmark checker next to confirm the added scaffolding is legal under the task constraints.
+
+[CMD] /bin/bash -lc './check_proof_bin TwoPhase_Implementation.tla --level 2'
+Checking: TwoPhase_Implementation.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_8uyrtnru/TwoPhase_Implementation.tla", line 1, character 1 to line 79, character 62:
+[INFO]: All 28 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_TwoPhase_Implementation_9y6c2q0k/TwoPhase_Implementation.result
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba TwoPhase_Implementation.tla | sed -n '1,120p'"
+     1	---------------------- MODULE TwoPhase_Implementation -----------------------
+     2	
+     3	EXTENDS Naturals, TLAPS
+     4	
+     5	CONSTANT XInit(_), XAct(_, _, _)
+     6	
+     7	VARIABLE p, c, x
+     8	
+     9	Init == /\ p = 0
+    10	        /\ c = 0
+    11	        /\ XInit(x)
+    12	
+    13	ProducerStep == /\ p = c
+    14	                /\ XAct(0, x, x')
+    15	                /\ p' = (p + 1) % 2
+    16	                /\ c' = c
+    17	
+    18	ConsumerStep == /\ p # c
+    19	                /\ XAct(1, x, x')
+    20	                /\ c' = (c + 1) % 2
+    21	                /\ p' = p
+    22	
+    23	Next == ProducerStep \/ ConsumerStep
+    24	
+    25	Spec == Init /\ [][Next]_<<p, c, x>>
+    26	
+    27	vBar == (p + c) % 2
+    28	
+    29	A == INSTANCE Alternate WITH v <- vBar
+    30	
+    31	IndInv == /\ p \in 0..1
+    32	          /\ c \in 0..1
+    33	
+    34	LEMMA InitIndInv == Init => IndInv
+    35	PROOF
+    36	  BY DEF Init, IndInv
+    37	
+    38	LEMMA NextIndInv == IndInv /\ [Next]_<<p, c, x>> => IndInv'
+    39	PROOF
+    40	  BY SMT DEF IndInv, Next, ProducerStep, ConsumerStep
+    41	
+    42	LEMMA SpecIndInv == Spec => []IndInv
+    43	PROOF
+    44	  BY InitIndInv, NextIndInv, PTL DEF Spec
+    45	
+    46	LEMMA InitImpliesAInit == Init => A!Init
+    47	PROOF
+    48	  BY SMT DEF Init, A!Init, vBar
+    49	
+    50	LEMMA ProducerStepImpliesANext == IndInv /\ ProducerStep => A!Next
+    51	PROOF
+    52	  BY SMT DEF IndInv, ProducerStep, A!Next, vBar
+    53	
+    54	LEMMA ConsumerStepImpliesANext == IndInv /\ ConsumerStep => A!Next
+    55	PROOF
+    56	  BY SMT DEF IndInv, ConsumerStep, A!Next, vBar
+    57	
+    58	LEMMA NextImpliesANext == IndInv /\ Next => A!Next
+    59	PROOF
+    60	  BY ProducerStepImpliesANext, ConsumerStepImpliesANext DEF Next
+    61	
+    62	LEMMA StutterImpliesAStutter ==
+    63	  <<p, c, x>>' = <<p, c, x>> => <<vBar, x>>' = <<vBar, x>>
+    64	PROOF
+    65	  BY SMT DEF vBar
+    66	
+    67	LEMMA StepSimulation ==
+    68	  IndInv /\ IndInv' /\ [Next]_<<p, c, x>> => [A!Next]_<<vBar, x>>
+    69	PROOF
+    70	  BY NextImpliesANext, StutterImpliesAStutter
+    71	
+    72	LEMMA SpecImpliesANext == Spec => [][A!Next]_<<vBar, x>>
+    73	PROOF
+    74	  BY SpecIndInv, StepSimulation, PTL DEF Spec
+    75	
+    76	THEOREM Implementation == Spec => A!Spec
+    77	PROOF
+    78	  BY InitImpliesAInit, SpecImpliesANext DEF Spec, A!Spec
+    79	==============================================================
+[EXIT 0]
+
+[AGENT] Implemented the TLAPS proof in [TwoPhase_Implementation.tla](/tmp/codex_bench_TwoPhase_Implementation_9y6c2q0k/TwoPhase_Implementation.tla:31).
+
+Added an inductive control-state invariant `IndInv`, action simulation lemmas for producer/consumer/stutter steps, and a final temporal proof using `PTL`.
+
+Verification passed:
+
+```text
+/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib TwoPhase_Implementation.tla
+[INFO]: All 28 obligations proved.
+
+./check_proof_bin TwoPhase_Implementation.tla --level 2
+PASS — all obligations proved
+```

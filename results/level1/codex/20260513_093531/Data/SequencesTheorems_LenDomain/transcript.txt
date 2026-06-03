@@ -1,0 +1,444 @@
+Benchmark: Data/SequencesTheorems_LenDomain.tla
+Time: 55s
+Tokens: 204,327 input / 1,341 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and local checker, then iteratively patch only the final proof.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' SequencesTheorems_LenDomain.tla && printf '\\n--- checker ---\\n' && sed -n '1,220p' check_proof.py"
+-------------------------- MODULE SequencesTheorems_LenDomain -------------------------
+(***************************************************************************)
+(* The proofs in this module were essentially written before TLAPS's SMT   *)
+(* backend prover was implemented. That backend usually allows for much    *)
+(* shorter proofs.                                                         *)
+(***************************************************************************)
+EXTENDS Integers, Sequences, TLAPS
+
+AXIOM SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+AXIOM LenDef == \A S : \A seq \in Seq(S) :
+                     /\ Len(seq) \in Nat 
+                     /\ DOMAIN seq = 1..Len(seq)
+
+THEOREM LenAxiom == 
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+  PROOF OMITTED
+
+THEOREM LenDomain == \A S :
+                       \A s \in Seq(S) :
+                         \A n \in Nat : DOMAIN s = 1..n => n = Len(s)
+PROOF OBVIOUS
+
+=============================================================================
+--- checker ---
+#!/usr/bin/env python3
+"""
+Check a single TLAPS benchmark proof for correctness and cheating.
+
+Designed for AI agents to get quick feedback during proof writing.
+
+Usage:
+    python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+
+Output:
+    - Raw tlapm output (preserved verbatim)
+    - Cheating check (compares against main branch)
+    - Summary 
+... (truncated) ...
+ parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '220,520p' check_proof.py"
+        # Copy dependency files from the same directory
+        bench_dir = os.path.dirname(filepath)
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            dep_basename = os.path.basename(dep_file)
+            if dep_basename != basename:
+                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+
+        cmd = [tlapm_path, '-I', tlapm_lib, tmp_file]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=args.timeout,
+                cwd=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+
+        for line in tlapm_output.split('\n'):
+            emit(line)
+        tlapm_passed = (tlapm_exit == 0)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- Step 2: Cheating check ---
+    emit()
+    emit("=" * 60)
+    emit("CHEATING CHECK")
+    emit("=" * 60)
+
+    cheating_issues = check_cheating(filepath)
+    real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
+    warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
+
+    # Check for empty PROOF blocks and 0-obligation (independent of git comparison)
+    if tlapm_passed:
+      
+... (truncated) ...
+      for ci in detect_empty_proof(clean):
+                    real_issues.append((po_line + (ci.line or 0), ci.description))
+                for ci in detect_zero_total_obligations(tlapm_output):
+                    real_issues.append((0, ci.description))
+
+    for line_num, desc in warnings:
+        emit(f"  WARNING: {desc}")
+
+    if real_issues:
+        for line_num, desc in real_issues:
+            emit(f"  Line {line_num}: {desc}")
+    else:
+        emit("  No cheating detected.")
+
+    # --- Step 3: Verdict ---
+    emit()
+    emit("=" * 60)
+    emit("VERDICT")
+    emit("=" * 60)
+
+    if real_issues:
+        verdict = "CHEATING"
+        exit_code = 2
+        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+    elif tlapm_passed:
+        verdict = "PASS"
+        exit_code = 0
+        emit(f"  ✅ PASS — all obligations proved")
+    else:
+        verdict = "FAIL"
+        exit_code = 1
+        # Extract obligation summary
+        m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
+        if m:
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
+        elif "TIMEOUT" in tlapm_output:
+            emit(f"  ❌ FAIL — timeout after {args.timeout}s")
+        else:
+            emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+
+    # Write result file
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(output_lines) + '\n')
+    emit(f"\nResult written to: {output_path}")
+
+    sys.exit(exit_code)
+
+
+if __name__ == '__main__':
+    main()
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; now checking sequence/integer library facts TLAPS can use.
+
+[CMD] /bin/bash -lc "grep -R \"THEOREM\\|LEMMA\\|Len\\|DOMAIN\\|Seq\" -n /opt/tlapm15/lib/tlaps/Sequences.tla /opt/tlapm15/lib/tlaps/Integers.tla /opt/tlapm15/lib/tlaps/Naturals.tla 2>/dev/null | head -200"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "ls /opt/tlapm15/lib/tlaps | head -100 && find /opt/tlapm15/lib/tlaps -maxdepth 2 -type f | sed 's#"'^#/##'"' | head -200"
+Bags.tla
+BagsTheorems.tla
+BagsTheorems_proofs.tla
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+FunctionTheorems.tla
+FunctionTheorems_proofs.tla
+Functions.tla
+Isabelle
+Isabelle2011-1
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+RealTime.tla
+SequenceTheorems.tla
+SequenceTheorems_proofs.tla
+SequencesExt.tla
+SequencesExtTheorems.tla
+SequencesExtTheorems_proofs.tla
+TLA+
+TLAPS.tla
+WellFoundedInduction.tla
+WellFoundedInduction_proofs.tla
+bin
+emacs
+heaps
+un-inst
+zenon.v
+zenon_coqbool.v
+zenon_equiv.v
+zenon_focal.v
+zenon_induct.v
+//opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla
+//opt/tlapm15/lib/tlaps/zenon_focal.v
+//opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla
+//opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla
+//opt/tlapm15/lib/tlaps/zenon_induct.v
+//opt/tlapm15/lib/tlaps/SequenceTheorems.tla
+//opt/tlapm15/lib/tlaps/un-inst
+//opt/tlapm15/lib/tlaps/FiniteSetTheorems.tla
+//opt/tlapm15/lib/tlaps/RealTime.tla
+//opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla
+//opt/tlapm15/lib/tlaps/TLA+/README.html
+//opt/tlapm15/lib/tlaps/TLA+/Tuples.thy
+//opt/tlapm15/lib/tlaps/TLA+/Zenon.thy
+//opt/tlapm15/lib/tlaps/TLA+/Functions.thy
+//opt/tlapm15/lib/tlaps/TLA+/FixedPoints.thy
+//opt/tlapm15/lib/tlaps/TLA+/Peano.thy
+//opt/tlapm15/lib/tlaps/TLA+/ROOT.ML
+//opt/tlapm15/lib/tlaps/TLA+/Strings.thy
+//opt/tlapm15/lib/tlaps/TLA+/NatDivision.thy
+//opt/tlapm15/lib/tlaps/TLA+/simplifier_setup.ML
+//opt/tlapm15/lib/tlaps/TLA+/SetTheory.thy
+//opt/tlapm15/lib/tlaps/TLA+/CaseExpressio
+... (truncated) ...
+/tlapm15/lib/tlaps/TLA+/Constant.thy
+//opt/tlapm15/lib/tlaps/TLA+/PredicateLogic.thy
+//opt/tlapm15/lib/tlaps/TLA+/Makefile
+//opt/tlapm15/lib/tlaps/TLA+/NatArith.thy
+//opt/tlapm15/lib/tlaps/TLA+/Integers.thy
+//opt/tlapm15/lib/tlaps/TLA+/NatOrderings.thy
+//opt/tlapm15/lib/tlaps/SequencesExt.tla
+//opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla
+//opt/tlapm15/lib/tlaps/WellFoundedInduction.tla
+//opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla
+//opt/tlapm15/lib/tlaps/Bags.tla
+//opt/tlapm15/lib/tlaps/zenon.v
+//opt/tlapm15/lib/tlaps/TLAPS.tla
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/CONTRIBUTORS
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/ANNOUNCE
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/NEWS
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/build
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/README.TLAPS
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/COPYRIGHT
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/README
+//opt/tlapm15/lib/tlaps/Isabelle2011-1/Isabelle
+//opt/tlapm15/lib/tlaps/Functions.tla
+//opt/tlapm15/lib/tlaps/zenon_coqbool.v
+//opt/tlapm15/lib/tlaps/zenon_equiv.v
+//opt/tlapm15/lib/tlaps/FunctionTheorems.tla
+//opt/tlapm15/lib/tlaps/bin/translate
+//opt/tlapm15/lib/tlaps/bin/z3
+//opt/tlapm15/lib/tlaps/bin/zenon
+//opt/tlapm15/lib/tlaps/bin/ls4
+//opt/tlapm15/lib/tlaps/bin/ptl_to_trp
+//opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla
+//opt/tlapm15/lib/tlaps/FiniteSets.tla
+//opt/tlapm15/lib/tlaps/NaturalsInduction.tla
+//opt/tlapm15/lib/tlaps/BagsTheorems.tla
+//opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /opt/tlapm15/lib/tlaps/SequenceTheorems.tla && printf '\\n--- proofs head ---\\n' && sed -n '1,220p' /opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla"
+-------------------------- MODULE SequenceTheorems --------------------------
+(***************************************************************************)
+(* This module contains theorems about operations on sequences.            *)
+(***************************************************************************)
+EXTENDS Sequences, Functions
+LOCAL INSTANCE NaturalsInduction
+LOCAL INSTANCE TLAPS
+
+
+(***************************************************************************)
+(* Elementary properties about Seq(S)                                      *)
+(***************************************************************************)
+
+LEMMA SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+THEOREM SeqMonotonic ==
+  ASSUME NEW S, NEW T, NEW seq \in Seq(S),
+         S \subseteq T
+  PROVE  seq \in Seq(T)
+
+THEOREM ElementOfSeq ==
+   ASSUME NEW S, NEW seq \in Seq(S),
+          NEW n \in 1..Len(seq)
+   PROVE  seq[n] \in S
+ 
+THEOREM EmptySeq ==
+   ASSUME NEW S
+   PROVE /\ << >> \in Seq(S)
+         /\ Len(<< >>) = 0
+         /\ \A seq \in Seq(S) : (seq # << >>) => (Len(seq) \in Nat \ {0})
+
+THEOREM LenProperties == 
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+         /\ DOMAIN seq = 1 .. Len(seq) 
+
+THEOREM IsASeq ==
+  ASSUME NEW n \in Nat, NEW e(_), NEW S,
+         \A i \in 1..n : e(i) \in S
+  PROVE  [i \in 1..n |-> e(i)] \in Seq(S)
+
+THEOREM ExceptSeq ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW i \in 1 .. Len(seq), NEW e \in S
+ 
+... (truncated) ...
+ME NEW S, NEW seq \in Seq(S), 
+         NEW m \in 1 .. Len(seq)+1, 
+         NEW k \in m-1 .. Len(seq), 
+         NEW n \in k .. Len(seq)
+  PROVE  SubSeq(seq, m, k) \o SubSeq(seq, k+1, n) = SubSeq(seq, m, n)
+OBVIOUS
+
+(***************************************************************************)
+(* Special cases of subsequences of concatenations.                        *)
+(***************************************************************************)
+THEOREM SubSeqOfConcat1 ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S),
+         NEW m \in 1 .. Len(s), NEW n \in 1 .. Len(s)
+  PROVE  SubSeq(s \o t, m, n) = SubSeq(s, m, n)
+OBVIOUS
+
+THEOREM SubSeqOfConcat2 ==
+  ASSUME NEW S, NEW s \in Seq(S), NEW t \in Seq(S),
+         NEW m \in Len(s)+1 .. Len(s)+Len(t), NEW n \in Len(s)+1 .. Len(s)+Len(t)
+  PROVE  SubSeq(s \o t, m, n) = SubSeq(t, m - Len(s), n - Len(s))
+OBVIOUS
+
+(***************************************************************************)
+(* Theorems about Append                                                   *)
+(***************************************************************************)
+
+THEOREM AppendProperties ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+  PROVE  /\ Append(seq, elt) \in Seq(S)
+         /\ Append(seq, elt) # << >>
+         /\ Len(Append(seq, elt)) = Len(seq)+1
+         /\ \A i \in 1.. Len(seq) : Append(seq, elt)[i] = seq[i]
+         /\ Append(seq, elt)[Len(seq)+1] = elt
+         /\ Range(Append(seq, elt)) = Range(seq) \cup {elt}
+BY DEF Range
+[EXIT 0]
+
+[AGENT] The admitted `LenDef` gives the domain shape; I’ll first test how much arithmetic/set reasoning TLAPS discharges directly.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: SequencesTheorems_LenDomain.tla
+@@
+ THEOREM LenDomain == \\A S :
+                        \\A s \\in Seq(S) :
+                          \\A n \\in Nat : DOMAIN s = 1..n => n = Len(s)
+-PROOF OBVIOUS
++PROOF
++  BY LenDef
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SequencesTheorems_LenDomain.tla"
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+(* created new ".tlacache/SequencesTheorems_LenDomain.tlaps/SequencesTheorems_LenDomain.thy" *)
+File "./SequencesTheorems_LenDomain.tla", line 1, character 1 to line 27, character 77:
+[INFO]: All 2 obligations proved.
+(* fingerprints written in ".tlacache/SequencesTheorems_LenDomain.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] That minimal proof verifies with TLAPS; now running the required benchmark checker.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py SequencesTheorems_LenDomain.tla'
+Checking: SequencesTheorems_LenDomain.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/SequencesTheorems_LenDomain.tlaps/SequencesTheorems_LenDomain.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_LenDomain.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_f9cvjupu/SequencesTheorems_LenDomain.tla", line 1, character 1 to line 27, character 77:
+[INFO]: All 2 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SequencesTheorems_LenDomain_nd8yqa_b/SequencesTheorems_LenDomain.result
+[EXIT 0]
+
+[AGENT] Implemented the final TLAPS proof and verified it.
+
+- Replaced `PROOF OBVIOUS` with a valid proof using the admitted `LenDef` lemma in `SequencesTheorems_LenDomain.tla:26`.
+- Ran `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps SequencesTheorems_LenDomain.tla`: all obligations proved.
+- Ran `python3 check_proof.py SequencesTheorems_LenDomain.tla`: `PASS`, no cheating detected.

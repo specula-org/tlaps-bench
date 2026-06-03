@@ -1,0 +1,865 @@
+Benchmark: Data/GraphTheorem_line62.tla
+Time: 445s
+Tokens: 2,919,302 input / 20,698 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and the local proof-check tooling first, then iterate with TLAPS. I’ll keep any edits scoped to helper definitions/lemmas and the placeholder proof.
+
+[CMD] /bin/bash -lc 'ls -la'
+total 8036
+drwx------ 1 ubuntu ubuntu     100 May 26 00:16 .
+drwxrwxrwt 1 root   root    103832 May 26 00:16 ..
+-rwxr-xr-x 1 ubuntu ubuntu 7473264 May 23 03:25 check_proof_bin
+drwxrwxr-x 1 ubuntu ubuntu     144 May 26 00:16 .git
+-rw-rw-r-- 1 ubuntu ubuntu     755 May 25 12:50 GraphTheorem_line62.tla
+-rw-rw-r-- 1 ubuntu ubuntu    4292 May 25 12:50 Sets.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg --files'
+check_proof_bin
+Sets.tla
+GraphTheorem_line62.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' GraphTheorem_line62.tla"
+---------------------------- MODULE GraphTheorem_line62 ----------------------------
+EXTENDS Sets, TLAPS
+
+Edges(Nodes) == { {m[1], m[2]} : m \in Nodes \X Nodes }
+
+-------------------------------------------------------
+
+NonLoopEdges(Nodes) == {e \in Edges(Nodes) : Cardinality(e) = 2}
+SimpleGraphs(Nodes) == SUBSET NonLoopEdges(Nodes)
+Degree(n, G) == Cardinality ({e \in G : n \in e})
+
+------------------------------------------------------------------
+
+THEOREM
+  ASSUME NEW Nodes, IsFiniteSet(Nodes), Cardinality(Nodes) > 1,
+         NEW G \in SimpleGraphs(Nodes)
+  PROVE  \E m, n \in Nodes : /\ m # n
+                             /\ Degree(m, G) = Degree(n, G)
+PROOF OBVIOUS
+=============================================================================
+[EXIT 0]
+
+[AGENT] The target is the usual “two vertices have equal degree” theorem for finite simple graphs. I’m reading the local `Sets.tla` because it likely provides the cardinality and finite-set facts TLAPS can reuse.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' Sets.tla"
+-------------------------------- MODULE Sets --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+           /\ IsFiniteSet({})
+           /\ Cardinality({}) = 0
+           /\ \A S : IsFiniteSet(S) /\ (Cardinality(S)=0) => (S = {})
+  PROOF OMITTED
+
+THEOREM CardinalityPlusOne ==
+    ASSUME NEW S, IsFiniteSet(S),
+           NEW x, x \notin S
+    PROVE  /\ IsFiniteSet(S \cup {x})
+           /\ Cardinality(S \cup {x}) = Cardinality(S) + 1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOne == \A m : /\ IsFiniteSet({m})
+                                 /\ Cardinality({m}) = 1
+  PROOF OMITTED
+
+THEOREM CardinalityTwo == \A m, p : m # p => 
+                              /\ IsFiniteSet({m,p})
+                             
+... (truncated) ...
+iteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM CardinalityUnion ==
+          \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) =>
+                      /\ IsFiniteSet(S \cup T)
+                      /\ IsFiniteSet(S \cap T)
+                      /\ Cardinality(S \cup T) =
+                              Cardinality(S) + Cardinality(T)
+                              - Cardinality(S \cap T)  
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+                       /\ f \in [S -> T]
+                       /\ \A y \in T : \E x \in S : y = f[x]
+                       => /\ IsFiniteSet(T)
+                          /\ Cardinality(T) \leq Cardinality(S)
+PROOF OMITTED
+
+THEOREM ProductFinite ==
+     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+PROOF OMITTED
+
+THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+PROOF OMITTED
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+File "./GraphTheorem_line62.tla", line 19, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 20, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] The stripped `Sets.tla` includes a PigeonHole theorem and basic finite-cardinality facts, so the proof can lean on those. The main work is proving the degree range is small enough by excluding either degree `0` or the maximum degree.
+
+[CMD] /bin/bash -lc "find /home/ubuntu/.tlapm/lib/tlapm/stdlib -maxdepth 1 -type f -name '*.tla' -printf '%f\\n' | sort"
+BagsTheorems_proofs.tla
+BagsTheorems.tla
+Bags.tla
+FiniteSets.tla
+FiniteSetTheorems_proofs.tla
+FiniteSetTheorems.tla
+Folds.tla
+Functions.tla
+FunctionTheorems.tla
+NaturalsInduction_proofs.tla
+NaturalsInduction.tla
+RealTime.tla
+SequenceTheorems_proofs.tla
+SequenceTheorems.tla
+TLAPS.tla
+WellFoundedInduction_proofs.tla
+WellFoundedInduction.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git diff -- GraphTheorem_line62.tla Sets.tla'
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "Cardinality|Finite|Pigeon|SUBSET|Choose|CHOOSE|CASE|PICK|SUFFICES" /home/ubuntu/.tlapm/lib/tlapm/stdlib -n'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:9:EXTENDS Functions, Integers, FiniteSets
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:19:  ASSUME NEW S, NEW T, NEW f \in [S -> T], NEW A \in SUBSET S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:115:         \A U \in SUBSET S : U # S => Surjection(U,T) = {}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:194:         NEW R \in SUBSET S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:245:  ASSUME NEW S, NEW T \in SUBSET S, T # {}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:498:         NEW T \in SUBSET S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:547:         NEW indices, indices # {}, IsFiniteSet(indices)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:558:         NEW indices, IsFiniteSet(indices), NEW fun,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:568:         NEW indices, IsFiniteSet(indices),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:584:         NEW indices, IsFiniteSet(indices), NEW i \in indices, NEW fun,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:595:         NEW indices, IsFiniteSet(indices), NEW i, i \notin indices,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:610:         NEW indices \in SUBSET (DOMAIN fun), IsFiniteSet(indices), 
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:627:         NEW S, IsFiniteSet(S), NEW T, IsFiniteSet(T), S \cap T = {},
+/ho
+... (truncated) ...
+uenceTheorems_proofs.tla:278:<1>. SUFFICES \A k \in Nat : Q(k)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:284:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:287:  <2>. PICK seq \in Seq(S), e \in S : s = Append(seq,e) /\ Len(seq) = n
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:298:<1>. SUFFICES \A k \in Nat : Q(k)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:304:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:320:  PROVE  Range(seq) \in SUBSET S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:340:  <2>1. SUFFICES ASSUME NEW i \in 1 .. Len(s2)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:368:  <2>1. SUFFICES ASSUME NEW i \in DOMAIN t, NEW j \in DOMAIN t, t[i] = t[j]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:378:  <2>1. PICK i \in DOMAIN s : s[i] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:380:  <2>2. PICK j \in DOMAIN t : t[j] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:400:  <2>1. PICK i \in DOMAIN seq : seq[i] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:423:  <2>1. PICK i \in 2 .. Len(seq) : seq[i] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems.tla:34:SeqToBag(seq) == [ x \in Range(seq) |-> Cardinality({i \in DOMAIN seq: seq[i]=x}) ]
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,120p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSets.tla"
+---------------------------- MODULE FiniteSets -----------------------------
+LOCAL INSTANCE Naturals
+LOCAL INSTANCE Sequences
+  (*************************************************************************)
+  (* Imports the definitions from Naturals and Sequences, but doesn't      *)
+  (* export them.                                                          *)
+  (*************************************************************************)
+
+IsFiniteSet(S) ==
+  (*************************************************************************)
+  (* A set S is finite iff there is a finite sequence containing all its   *)
+  (* elements.                                                             *)
+  (*************************************************************************)
+  \E seq \in Seq(S) : \A s \in S : \E n \in 1..Len(seq) : seq[n] = s
+
+Cardinality(S) ==
+  (*************************************************************************)
+  (* Cardinality is defined only for finite sets.                          *)
+  (*************************************************************************)
+  LET CS[T \in SUBSET S] == IF T = {} THEN 0
+                                      ELSE 1 + CS[T \ {CHOOSE x : x \in T}]
+  IN  CS[S]
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,180p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla"
+------------------------------ MODULE Functions -----------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Notions about functions including injection, surjection, and bijection.*)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS Integers, Folds
+
+(***************************************************************************)
+(* Restriction of a function to a set (should be a subset of the domain).  *)
+(***************************************************************************)
+Restrict(f,S) == [ x \in S |-> f[x] ]
+
+(***************************************************************************)
+(* Restriction of a function to the subset of its domain satisfying a      *)
+(* test predicate.                                                         *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*   (LET f == (0 :> "a" @@ 1 :> "b" @@ 2 :> "c")                          *)
+(*    IN  RestrictDomain(f, LAMBDA x : x \in {0,2}))                       *)
+(*   = (0 :> "a" @@ 2 :> "c")                                              *)
+(******************************
+... (truncated) ...
+*********************************************************************)
+(* Special case of the above where indices = DOMAIN fun. In other words,   *)
+(* the values f[i] for all i \in DOMAIN fun, are combined using the binary *)
+(* operator op, in an unspecified order.                                   *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*  FoldFunction(LAMBDA x,y: {x} \cup y, {}, <<1,2,1>>) = {1,2}            *)
+(***************************************************************************)
+FoldFunction(op(_,_), base, fun) ==
+  FoldFunctionOnSet(op, base, fun, DOMAIN fun)
+
+(***************************************************************************)
+(* Sum the values f[i] for i \in indices, a subset of DOMAIN f.            *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*  SumFunctionOnSet(<<4,5,6>>, {1,2}) = 9                                 *)
+(*  SumFunction(<<4,5,6>>) = 15                                            *)
+(***************************************************************************)
+SumFunctionOnSet(fun, indices) == FoldFunctionOnSet(+, 0, fun, indices)
+SumFunction(fun) == SumFunctionOnSet(fun, DOMAIN fun)
+
+=============================================================================
+\* Created Thu Apr 11 10:30:48 PDT 2013 by tomr
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,230p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla"
+------------------------- MODULE FiniteSetTheorems --------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Facts about finite sets and their cardinality.                         *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS FiniteSets, Integers, Functions, WellFoundedInduction
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A set S is finite iff there exists a natural number n such that there   *)
+(* exist a surjection (or a bijection) from 1..n to S.                     *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+LEMMA FS_NatSurjection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsSurjection(1..n,S)
+
+LEMMA FS_NatBijection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsBijection(1..n,S)
+
+
+(*********************************************
+... (truncated) ...
+                                 *)
+(*                                                                         *)
+(* a..b is a finite set for any a,b \in Int.                               *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM FS_Interval ==
+  ASSUME NEW a \in Int, NEW b \in Int
+  PROVE  /\ IsFiniteSet(a..b)
+         /\ Cardinality(a..b) = IF a > b THEN 0 ELSE b-a+1
+
+THEOREM FS_BoundedSetOfNaturals ==
+  ASSUME NEW S \in SUBSET Nat, NEW n \in Nat,
+         \A s \in S : s <= n
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq n+1
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* Induction for finite sets.                                              *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+THEOREM FS_Induction ==
+  ASSUME NEW S, IsFiniteSet(S),
+         NEW P(_), P({}),
+         ASSUME NEW T \in SUBSET S, IsFiniteSet(T), P(T), NEW x \in S \ T
+         PROVE  P(T \cup {x})
+  PROVE  P(S)
+[EXIT 0]
+
+[AGENT] I’m going to add a few named helper definitions and lemmas now. The first batch is deliberately small: finite graph/incident-edge facts, then the range argument can be built on top and TLAPS failures will point to the exact missing detail.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 61, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 62, character 77:
+[ERROR]: 1/27 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The finite-subset scaffolding checks out. Next I’m adding a small set lemma: any finite two-element set containing `n` is exactly `{n, x}` for some distinct `x`; that is the key local fact for incident edges.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 82, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 83, character 77:
+[ERROR]: 1/44 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] That two-element set lemma verifies cleanly. I’m now connecting it to graph edges so TLAPS can rewrite any incident edge as `{n, x}` with `x` a different node.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+File "./GraphTheorem_line62.tla", line 109, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 110, character 77:
+[ERROR]: 1/65 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] The incident-edge pairing lemma also verifies. I’m moving to the cardinality bound: map every incident edge `{n, x}` to its other endpoint `x`, then compare that image with `Nodes \ {n}`.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 207, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 208, character 77:
+[ERROR]: 1/126 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The upper-bound proof is in place. I’m adding the sharper bound for “missing one neighbor,” which is what rules out maximum degree when an isolated node exists.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 296, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 246, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes),
+                  NEW CONSTANT n \in Nodes,
+                  NEW CONSTANT p \in Nodes,
+                  p # n ,
+                  {n, p} \notin G ,
+                  <1>2 ,
+                  <1>4 
+           PROVE  Cardinality((Nodes \ {n}) \ {p}) = Cardinality(Nodes) - 2
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 297, character 77:
+[ERROR]: 2/187 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "rg \"- 2|\\)-1|SMT|SimpleArithmetic|Integer\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*_proofs.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla -n | head -80"
+rg: unrecognized flag -
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -- \"- 2|\\)-1|SMT|SimpleArithmetic|Integer\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*_proofs.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla -n | head -100"
+rg: -n: No such file or directory (os error 2)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:  BY <1>1, <1>2, n+1 \in Nat \ {0}, (n+1)-1 = n, Zenon DEF NatInductiveDefConclusion
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:        <5>3. \A i \in 1..(m+1)-1 : x[i] = y[i]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:EXTENDS Integers
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:          /\ Len(Tail(s)) = Len(s)-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:<1>. DEFINE front == [i \in 1 .. Len(seq)-1 |-> seq[i]]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:      /\ Len(front) = Len(seq)-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:EXTENDS Integers, TLAPS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:          <6>2. g[nn-1] = [ii \in 0 .. (nn-1)-1 |-> Def(g[(nn-1)-1],ii)]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:          <6>2. h[nn-1] = [ii \in 0 .. (nn-1)-1 |-> Def(h[(nn-1)-1],ii)]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:        <5>. QED  BY <3>1, <4>2, <4>3, l-1 \in 0 .. k, m \in 0 .. (l-1)-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:    <3>3. CASE n = 0  BY <3>3, SMT
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:    <3>. QED  BY <3>2, <3>3, <3>4, SMT
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:     
+... (truncated) ...
+APS.tla:(* Backend pragma: Yices SMT solver                                       *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* Backend pragma: veriT SMT solver                                       *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* This method translates the proof obligation to SMTLIB2 and calls veriT.*)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* Backend pragma: Z3 SMT solver                                          *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* This method translates the proof obligation to SMTLIB2 and calls Z3.   *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* supported by the ATP SPASS. The translation is based on the SMT one.   *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* Theorem SetExtensionality is sometimes required by the SMT backend for  *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:(* CVC3 goes first because it's bundled with TLAPS, then the other SMT
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:AllSMT == TRUE (*{
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:AllSMTT(X) == TRUE (*{
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:          /\ Len(Tail(s)) = Len(s)-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:          /\ Len(Tail(s)) = Len(s)-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:<1>. DEFINE front == [i \in 1 .. Len(seq)-1 |-> seq[i]]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:      /\ Len(front) = Len(seq)-1
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 296, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 246, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes),
+                  NEW CONSTANT n \in Nodes,
+                  NEW CONSTANT p \in Nodes,
+                  p # n ,
+                  {n, p} \notin G ,
+                  <1>2 ,
+                  <1>4 ,
+                  SMT 
+           PROVE  Cardinality((Nodes \ {n}) \ {p}) = Cardinality(Nodes) - 2
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 297, character 77:
+[ERROR]: 2/188 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 300, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 301, character 77:
+[ERROR]: 1/193 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The sharper missing-neighbor lemma now verifies after making the arithmetic explicit. I’m adding interval-cardinality lemmas for the two possible degree ranges: `0..k-2` and `1..k-1`.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 339, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 340, character 77:
+[ERROR]: 1/219 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] The interval facts check. I’m adding the final two structural lemmas: every degree is a natural, and every vertex degree lands in the selected smaller interval.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 424, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S))),
+                  NEW CONSTANT Nodes,
+                  IsFiniteSet(Nodes) ,
+                  Cardinality(Nodes) > 1 ,
+                  NEW CONSTANT G \in 
+                  SimpleGraphs(Nodes)
+           PROVE  \E m, n \in Nodes : /\ m # n
+                                   /\ Degree(m, G) = Degree(n, G)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 425, character 77:
+[ERROR]: 1/309 obligations failed.
+There were backend errors processing module `"GraphTheorem_line62"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba GraphTheorem_line62.tla | sed -n '400,450p'"
+   400	  <1>3. CASE ~(\E z \in Nodes : Degree(z, G) = 0)
+   401	    <2>1. \A n \in Nodes : Degree(n, G) \in 1 .. (Cardinality(Nodes) - 1)
+   402	      <3>1. ASSUME NEW n \in Nodes
+   403	            PROVE  Degree(n, G) \in 1 .. (Cardinality(Nodes) - 1)
+   404	        <4>1. Degree(n, G) \in Nat
+   405	          BY DegreeNat
+   406	        <4>2. Degree(n, G) # 0
+   407	          BY <1>3
+   408	        <4>3. 1 <= Degree(n, G)
+   409	          BY <4>1, <4>2, SMT
+   410	        <4>4. Degree(n, G) <= Cardinality(Nodes) - 1
+   411	          BY DegreeUpperBound
+   412	        <4> QED BY <4>1, <4>3, <4>4, SMT
+   413	      <3> QED BY <3>1
+   414	    <2>2. DegTarget(Nodes, G) = 1 .. (Cardinality(Nodes) - 1)
+   415	      BY <1>3 DEF DegTarget
+   416	    <2> QED BY <2>1, <2>2 DEF DegFun
+   417	  <1> QED BY <1>2, <1>3
+   418	
+   419	THEOREM
+   420	  ASSUME NEW Nodes, IsFiniteSet(Nodes), Cardinality(Nodes) > 1,
+   421	         NEW G \in SimpleGraphs(Nodes)
+   422	  PROVE  \E m, n \in Nodes : /\ m # n
+   423	                             /\ Degree(m, G) = Degree(n, G)
+   424	PROOF OBVIOUS
+   425	=============================================================================
+[EXIT 0]
+
+[AGENT] All helper lemmas now verify; the only remaining failure is the placeholder theorem. I’m replacing it with the direct PigeonHole application over the computed smaller degree target.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib GraphTheorem_line62.tla'
+(* loading fingerprints in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "./GraphTheorem_line62.tla", line 1, character 1 to line 439, character 77:
+[INFO]: All 320 obligations proved.
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+[EXIT 0]
+
+[AGENT] TLAPS reports all obligations proved. I’m running the required repository checker now to confirm the proof is accepted under the benchmark’s mutation rules.
+
+[CMD] /bin/bash -lc './check_proof_bin GraphTheorem_line62.tla --level 2'
+Checking: GraphTheorem_line62.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/GraphTheorem_line62.tlaps/GraphTheorem_line62.thy" *)
+(* fingerprints written in ".tlacache/GraphTheorem_line62.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_svzsv9z8/GraphTheorem_line62.tla", line 1, character 1 to line 439, character 77:
+[INFO]: All 320 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_GraphTheorem_line62_jyi_84yq/GraphTheorem_line62.result
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git diff --stat -- GraphTheorem_line62.tla'
+ GraphTheorem_line62.tla | 421 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 420 insertions(+), 1 deletion(-)
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "OMITTED|PROOF OBVIOUS" GraphTheorem_line62.tla'
+[EXIT 1]
+
+[AGENT] Implemented the TLAPS proof in [GraphTheorem_line62.tla](/tmp/codex_bench_GraphTheorem_line62_jyi_84yq/GraphTheorem_line62.tla).
+
+Verification completed:
+- `tlapm` reports: `All 320 obligations proved.`
+- `./check_proof_bin GraphTheorem_line62.tla --level 2` reports: `PASS — all obligations proved`
+- No `PROOF OBVIOUS` or `OMITTED` remains in the target file.

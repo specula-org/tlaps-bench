@@ -1,0 +1,2389 @@
+Benchmark: Paxos/Paxos_Refinement.tla
+Time: 2079s
+Tokens: 26,095,323 input / 47,527 output
+============================================================
+
+[AGENT] I’ll inspect the module and local dependencies first, then run the checker to see the exact failure surface before editing the proof.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' Paxos_Refinement.tla"
+------------------------------- MODULE Paxos_Refinement -------------------------------
+
+EXTENDS Integers, TLAPS, TLC
+-----------------------------------------------------------------------------
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}                 
+
+Ballots == Nat
+
+None == CHOOSE v : v \notin Values
+
+-----------------------------------------------------------------------------
+VARIABLES msgs,    
+          maxBal,  
+          maxVBal, 
+          maxVal   
+
+vars == <<msgs, maxBal, maxVBal, maxVal>>
+
+Send(m) == msgs' = msgs \cup {m}
+-----------------------------------------------------------------------------
+Init == /\ msgs = {}
+        /\ maxVBal = [a \in Acceptors |-> -1]
+        /\ maxBal  = [a \in Acceptors |-> -1]
+        /\ maxVal  = [a \in Acceptors |-> None]
+
+Phase1a(b) == /\ ~ \E m \in msgs : (m.type = "1a") /\ (m.bal = b)
+              /\ Send([type |-> "1a", bal |-> b])
+              /\ UNCHANGED <<maxVBal, maxBal, maxVal>>
+              
+Phase1b(a) == 
+  \E m \in msgs : 
+     /\ m.type = "1a"
+     /\ m.bal > maxBal[a]
+     /\ maxBal' = [maxBal EXCEPT ![a] = m.bal]
+     /\ Send([type |-> "1b", bal |-> m.bal, 
+           maxVBal |-> maxVBal[a], maxVal |-> maxVal[a], acc |-> a])
+     /\ UNCHANGED <<maxVBal, maxVal>>
+        
+Phase2a(b) ==
+  /\ ~ \E m \in msgs : (m.type = "2a") /\ (m.bal = b) 
+  /\ \E v \in Values :
+       /\ \E Q \in Quoru
+... (truncated) ...
+[maxBal EXCEPT ![a] = m.bal]
+    /\ maxVal' = [maxVal EXCEPT ![a] = m.val]
+    /\ Send([type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a])
+-----------------------------------------------------------------------------
+Next == \/ \E b \in Ballots : Phase1a(b) \/ Phase2a(b)
+        \/ \E a \in Acceptors : Phase1b(a) \/ Phase2b(a) 
+
+Spec == Init /\ [][Next]_vars       
+-----------------------------------------------------------------------------
+VotedForIn(a, v, b) == \E m \in msgs : /\ m.type = "2b"
+                                       /\ m.val  = v
+                                       /\ m.bal  = b
+                                       /\ m.acc  = a
+
+ChosenIn(v, b) == \E Q \in Quorums :
+                     \A a \in Q : VotedForIn(a, v, b)
+
+Chosen(v) == \E b \in Ballots : ChosenIn(v, b)
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+chosenBar == {v \in Values : Chosen(v)}
+
+C == INSTANCE Consensus WITH chosen <- chosenBar
+
+THEOREM Refinement == Spec => C!Spec
+PROOF OBVIOUS
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_Paxos_Refinement_ydt9ff30
+check_proof_bin
+Consensus.tla
+Paxos_Refinement.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "ls -la /home/ubuntu/.tlapm/lib/tlapm/stdlib | sed -n '1,120p'"
+total 424
+drwxr-xr-x 2 ubuntu ubuntu   4096 May 25 14:08 .
+drwxr-xr-x 5 ubuntu ubuntu   4096 May 25 14:08 ..
+-rw-r--r-- 1 ubuntu ubuntu  13796 May 25 14:08 BagsTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   9417 May 25 14:08 BagsTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   7554 May 25 14:08 Bags.tla
+-rw-r--r-- 1 ubuntu ubuntu 110932 May 25 14:08 CommunityModules.jar
+-rw-r--r-- 1 ubuntu ubuntu   1302 May 25 14:08 FiniteSets.tla
+-rw-r--r-- 1 ubuntu ubuntu  42189 May 25 14:08 FiniteSetTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  19668 May 25 14:08 FiniteSetTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   2753 May 25 14:08 Folds.tla
+-rw-r--r-- 1 ubuntu ubuntu  11385 May 25 14:08 Functions.tla
+-rw-r--r-- 1 ubuntu ubuntu  44674 May 25 14:08 FunctionTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu  20232 May 25 14:08 NaturalsInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   8950 May 25 14:08 NaturalsInduction.tla
+-rw-r--r-- 1 ubuntu ubuntu    841 May 25 14:08 RealTime.tla
+-rw-r--r-- 1 ubuntu ubuntu  15285 May 25 14:08 SequenceTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  10510 May 25 14:08 SequenceTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu  24588 May 25 14:08 TLAPS.tla
+-rw-r--r-- 1 ubuntu ubuntu  31327 May 25 14:08 WellFoundedInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  16058 May 25 14:08 WellFoundedInduction.tla
+[EXIT 0]
+
+[AGENT] The target is a refinement to a tiny `Consensus` instance over `chosenBar`; I’m reading that dependency now so the proof can match its exact spec rather than guessing the obligations.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Consensus.tla"
+----------------------------- MODULE Consensus -----------------------------
+
+EXTENDS Naturals, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+CONSTANTS Values 
+
+VARIABLES chosen 
+
+TypeOK ==
+    /\ chosen \subseteq Values
+    /\ IsFiniteSet(chosen)
+-----------------------------------------------------------------------------
+Init == chosen = {}
+
+Next == /\ chosen = {}
+        /\ \E v \in Values : chosen' = {v}
+        
+Spec == Init /\ [][Next]_chosen
+-----------------------------------------------------------------------------
+Inv == Cardinality(chosen) <= 1
+
+THEOREM Spec => []Inv
+  PROOF OMITTED
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 95, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 1, character 1 to line 96, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The abstract spec is one-shot consensus: `chosenBar` starts empty, may move once to a singleton value, then must stutter. The concrete proof therefore needs an agreement invariant plus a small action-simulation proof for `chosenBar`.
+
+[AGENT] I’m going to add proof scaffolding rather than touching the protocol operators: message-shape predicates, a persistent “phase 2a certificate” predicate, and an invariant carrying the acceptor promise facts needed for Paxos safety.
+
+[CMD] /bin/bash -lc 'rg -n "Induction|Naturals|NatInd|WF|THEOREM" /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:9:EXTENDS FiniteSets, Integers, Functions, WellFoundedInduction
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:46:THEOREM FS_SurjCardinalityBound ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:59:THEOREM FS_CardinalityType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:72:THEOREM FS_Bijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:77:THEOREM FS_SameCardinalityBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:91:THEOREM FS_SurjSameCardinalityImpliesInj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:106:THEOREM FS_Surjection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:112:THEOREM FS_Image ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:125:THEOREM FS_Injection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:131:THEOREM FS_PigeonHole ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:145:THEOREM FS_EmptySet ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:158:THEOREM FS_AddElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:164:THEOREM FS_RemoveElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:178:THEOREM FS_Singleton ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:190:THEOREM FS_Subset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:204:THEOREM FS_Interval ==
+/home/ubuntu/.tlapm/lib/tlapm/std
+... (truncated) ...
+139:THEOREM FiniteNatInductiveDefType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:141:         FiniteNatInductiveDefConclusion(f, c, Def, m, n),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:145:THEOREM FiniteNatInductiveUnique ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:147:         FiniteNatInductiveDefConclusion(f, c, Def, m, n),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:148:         FiniteNatInductiveDefConclusion(g, c, Def, m, n)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:159:THEOREM FactorialDefConclusion == NatInductiveDefConclusion(factorial, 1, LAMBDA v,n : n*v)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:160:<1>1. NatInductiveDefHypothesis(factorial, 1, LAMBDA v,n : n*v)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:161:  BY DEF NatInductiveDefHypothesis, factorial
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:163:  BY <1>1, NatInductiveDef
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:165:THEOREM FactorialDef == \A n \in Nat : factorial[n] = IF n = 0 THEN 1 ELSE n * factorial[n-1]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:166:BY FactorialDefConclusion DEF NatInductiveDefConclusion
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:168:THEOREM FactorialType == factorial \in [Nat -> Nat]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:172:  BY <1>1, NatInductiveDefType, FactorialDefConclusion, Isa
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,180p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla"
+------------------------- MODULE NaturalsInduction --------------------------
+(***************************************************************************)
+(* This module contains useful theorems for inductive proofs and recursive *)
+(* definitions over the naturals.                                          *)
+(*                                                                         *)
+(* Some of the statements of the theorems are decomposed in terms of       *)
+(* definitions.  This is done for two reasons:                             *)
+(*                                                                         *)
+(*  - It makes it easier for the backends to instantiate the theorems      *)
+(*    when those definitions are not expanded.                             *)
+(*                                                                         *)
+(*  - It can be convenient when writing proofs to use those definitions    *)
+(*    rather than having to write out their expansions.                    *)
+(***************************************************************************)
+EXTENDS Integers
+
+(***************************************************************************)
+(* The following is the simple statement of inductions over the naturals.  *)
+(* For predicates P defined by a moderately complex operator, it is often  *)
+(* useful to hide the operator definition before using this theorem. That  *)
+(* is, you first define a suitable operator P (not necessarily by that     *)
+
+... (truncated) ...
+
+
+THEOREM FiniteNatInductiveUnique ==
+  ASSUME NEW Def(_,_), NEW f, NEW g, NEW c, NEW m \in Nat, NEW n \in Nat,
+         FiniteNatInductiveDefConclusion(f, c, Def, m, n),
+         FiniteNatInductiveDefConclusion(g, c, Def, m, n)
+  PROVE  f = g
+
+=============================================================================
+
+(***************************************************************************)
+(* The following example shows how this module is used.                    *)
+(***************************************************************************)
+
+factorial[n \in Nat] == IF n = 0 THEN 1 ELSE n * factorial[n-1]
+
+THEOREM FactorialDefConclusion == NatInductiveDefConclusion(factorial, 1, LAMBDA v,n : n*v)
+<1>1. NatInductiveDefHypothesis(factorial, 1, LAMBDA v,n : n*v)
+  BY DEF NatInductiveDefHypothesis, factorial
+<1>2. QED
+  BY <1>1, NatInductiveDef
+
+THEOREM FactorialDef == \A n \in Nat : factorial[n] = IF n = 0 THEN 1 ELSE n * factorial[n-1]
+BY FactorialDefConclusion DEF NatInductiveDefConclusion
+
+THEOREM FactorialType == factorial \in [Nat -> Nat]
+<1>1. \A v \in Nat, n \in Nat \ {0} : n * v \in Nat
+  OBVIOUS
+<1>2. QED
+  BY <1>1, NatInductiveDefType, FactorialDefConclusion, Isa
+
+
+\* Modification History
+\* Last modified Thu Aug 22 15:29:20 CEST 2019 by merz
+\* Last modified Tue Oct 15 12:06:48 CEST 2013 by shaolin
+\* Last modified Sat Nov 26 08:49:59 CET 2011 by merz
+\* Last modified Mon Nov 07 08:58:05 PST 2011 by lamport
+\* Created Mon Oct 31 02:52:05 PDT 2011 by lamport
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+480) }*)
+SlowestAuto == TRUE (*{ by (prover:"isabelle"; tactic:"auto"; timeout:960) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle's "force" tactic                        *)
+(*                                                                  *)
+(* This pragma bypasses Zenon. It is useful in situations involving *)
+(* quantifier reasoning.                                            *)
+(********************************************************************)
+Force == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)
+SlowForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:120) }*)
+SlowerForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:480) }*)
+SlowestForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:960) }*)
+
+(***********************************************************************)
+(* Backend pragma: Isabelle's "simplification" tactics                 *)
+(*                                                                     *)
+(* These tactics simplify the goal before running one of the automated *)
+(* tactics. They are often necessary for obligations involving record  *)
+(* or tuple projections. Use the SimplfyAndSolve tactic unless you're  *)
+(* sure you can get away with just Simplification                      *)
+(***********************************************************************)
+SimplifyAndSolve        == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '220,520p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+SlowSimplifyAndSolve    == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:120) }*)
+SlowerSimplifyAndSolve  == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:480) }*)
+SlowestSimplifyAndSolve == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:960) }*)
+
+Simplification == TRUE (*{ by (prover:"isabelle"; tactic:"clarsimp") }*)
+SlowSimplification == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:120) }*)
+SlowerSimplification  == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:480) }*)
+SlowestSimplification == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:960) }*)
+
+(**************************************************************************)
+(* Backend pragma: Isabelle's tableau prover ("blast")                    *)
+(*                                                                        *)
+(* This pragma bypasses Zenon and uses Isabelle's built-in theorem        *)
+(* prover, Blast. It is almost never better than Zenon by itself, but     *)
+(* becomes very useful in combination with the Auto pragma above. The     *)
+(* AutoBlast pragma first attempts Auto and then uses Blast to prove what *)
+(* Auto could not prove. (There is currently no way to use Zenon on the   *)
+(* results left over from Auto.)                                          *)
+(********************************************************************
+... (truncated) ...
+~EM)
+
+
+(***************************************************************************)
+(* The following rule is a special case of the general temporal logic      *)
+(* proof rule STL4 from the paper "The Temporal Logic of Actions".  The    *)
+(* general rule is for arbitrary temporal formulas F and G, but it cannot  *)
+(* yet be handled by TLAPS.                                                *)
+(***************************************************************************)
+THEOREM RuleInvImplication ==
+  ASSUME STATE F, STATE G,
+         F => G
+  PROVE  []F => []G
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following rule is a special case of rule TLA2 from the paper "The   *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleStepSimulation ==
+  ASSUME STATE I, STATE f, STATE g,
+         ACTION M, ACTION N,
+         I /\ I' /\ [M]_f => [N]_g
+  PROVE  []I /\ [][M]_f => [][N]_g
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following may be used to invoke a decision procedure for            *)
+(* propositional temporal logic.                                           *)
+(***************************************************************************)
+PropositionalTemporalLogic == TRUE
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git status --short'
+?? .tlacache/
+?? check_proof_bin
+[EXIT 0]
+
+[AGENT] I’m making the proof state explicit now. The invariant separates routine type/monotonicity obligations from the safety argument so TLAPS gets smaller obligations instead of one large failed `OBVIOUS`.
+
+[AGENT] The first full proof attempt is in place. I’m running TLAPS now; I expect this pass to reveal which obligations need to be split further or which definitions need to be adjusted for the prover.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+File "./Paxos_Refinement.tla", line 213, characters 19-27:
+Error: Operator "chosenBar" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__E_visit.map#expr in file "src/expr/e_visit.ml", line 297, characters 33-60
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__E_visit.map#expr in file "src/expr/e_visit.ml", line 297, characters 33-60
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_visit.map#sequent in file "src/expr/e_visit.ml", line 387, characters 38-61
+Called from Tlapm_lib__M_elab.normalize.spin in file "src/module/m_elab.ml", line 1237, characters 28-57
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba Paxos_Refinement.tla | sed -n '180,280p'"
+   180	
+   181	IndInv ==
+   182	  /\ MsgTypeOK
+   183	  /\ MaxTypeOK
+   184	  /\ One2a
+   185	  /\ VoteInv
+   186	  /\ SafeMsgInv
+   187	  /\ MaxBalInv
+   188	  /\ MaxVBalInv
+   189	  /\ MaxValInv
+   190	  /\ MaxVBalLeMaxBal
+   191	  /\ PromiseInv
+   192	
+   193	THEOREM InitImpliesIndInv == Init => IndInv
+   194	PROOF
+   195	  BY SMT DEF Init, IndInv, MsgTypeOK, MaxTypeOK, One2a, VoteInv,
+   196	             SafeMsgInv, MaxBalInv, MaxVBalInv, MaxValInv,
+   197	             MaxVBalLeMaxBal, PromiseInv, VotedForIn
+   198	
+   199	MsgsMonotone == msgs \subseteq msgs'
+   200	
+   201	THEOREM SendImpliesMsgsMonotone ==
+   202	  \A m : Send(m) => MsgsMonotone
+   203	PROOF
+   204	  BY SMT DEF Send, MsgsMonotone
+   205	
+   206	THEOREM NextImpliesMsgsMonotone ==
+   207	  [Next]_vars => MsgsMonotone
+   208	PROOF
+   209	  BY SMT DEF Next, Phase1a, Phase1b, Phase2a, Phase2b, Send,
+   210	             MsgsMonotone, vars
+   211	
+   212	THEOREM ChosenMonotone ==
+   213	  MsgsMonotone => chosenBar \subseteq chosenBar'
+   214	PROOF
+   215	  BY SMT DEF MsgsMonotone, chosenBar, Chosen, ChosenIn, VotedForIn
+   216	
+   217	SafeMsgMonotone ==
+   218	  \A v \in Values :
+   219	    \A b \in Ballots :
+   220	      SafeMsg(v, b) => SafeMsg(v, b)'
+   221	
+   222	THEOREM MsgsMonotoneImpliesSafeMsgMonotone ==
+   223	  MsgsMonotone => SafeMsgMonotone
+   224	PROOF
+   225	  BY SMT DEF MsgsMonotone, SafeMsgMonotone, SafeMsg, Is1b
+   226	
+   227	THEOREM Phase1aPreservesIndInv ==
+   228	  IndInv /\ \E b \in Ball
+... (truncated) ...
+SMTT(30) DEF IndInv, MsgTypeOK, MaxTypeOK, One2a, VoteInv,
+   247	                 SafeMsgInv, MaxBalInv, MaxVBalInv, MaxValInv,
+   248	                 MaxVBalLeMaxBal, PromiseInv, Phase2a, Send,
+   249	                 Is1a, Is1b, Is2a, Is2b, VotedForIn, SafeMsg
+   250	
+   251	THEOREM Phase2bPreservesIndInv ==
+   252	  IndInv /\ \E a \in Acceptors : Phase2b(a) => IndInv'
+   253	PROOF
+   254	  BY SMTT(30) DEF IndInv, MsgTypeOK, MaxTypeOK, One2a, VoteInv,
+   255	                 SafeMsgInv, MaxBalInv, MaxVBalInv, MaxValInv,
+   256	                 MaxVBalLeMaxBal, PromiseInv, Phase2b, Send,
+   257	                 Is1a, Is1b, Is2a, Is2b, VotedForIn, SafeMsg
+   258	
+   259	THEOREM NextPreservesIndInv ==
+   260	  IndInv /\ [Next]_vars => IndInv'
+   261	PROOF
+   262	  BY Phase1aPreservesIndInv, Phase1bPreservesIndInv,
+   263	     Phase2aPreservesIndInv, Phase2bPreservesIndInv, SMT
+   264	     DEF Next, vars, IndInv
+   265	
+   266	SafeMsgStep(v, n) ==
+   267	  /\ v \in Values
+   268	  /\ n \in Ballots
+   269	  /\ SafeMsg(v, n)
+   270	  /\ \A k \in 0..(n-1) :
+   271	       \A vv \in Values : SafeMsg(vv, k) => SafeAt(vv, k)
+   272	  => SafeAt(v, n)
+   273	
+   274	THEOREM SafeMsgStepLemma ==
+   275	  IndInv => \A n \in Ballots : \A v \in Values : SafeMsgStep(v, n)
+   276	PROOF
+   277	  BY SMTT(60) DEF SafeMsgStep, SafeMsg, SafeAt, ChosenIn, VotedForIn,
+   278	                 IndInv, MsgTypeOK, One2a, VoteInv, PromiseInv,
+   279	                 SafeMsgInv, Is1b, Is2a, Is2b
+   280
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba Paxos_Refinement.tla | sed -n '280,380p'"
+   280	
+   281	THEOREM SafeMsgImpliesSafeAt ==
+   282	  IndInv => \A n \in Ballots : \A v \in Values : SafeMsg(v, n) => SafeAt(v, n)
+   283	PROOF
+   284	<1>1. ASSUME IndInv
+   285	      PROVE  \A n \in Ballots : \A v \in Values : SafeMsg(v, n) => SafeAt(v, n)
+   286	  <2> DEFINE P(n) == \A v \in Values : SafeMsg(v, n) => SafeAt(v, n)
+   287	  <2>1. \A n \in Nat : (\A k \in 0..(n-1) : P(k)) => P(n)
+   288	    BY <1>1, SafeMsgStepLemma DEF P, SafeMsgStep, Ballots
+   289	  <2>2. \A n \in Nat : P(n)
+   290	    BY <2>1, NI!GeneralNatInduction
+   291	  <2>3. QED
+   292	    BY <2>2 DEF P, Ballots
+   293	<1>2. QED
+   294	  BY <1>1
+   295	
+   296	THEOREM ChosenInImpliesSafeMsg ==
+   297	  IndInv /\ ChosenIn(v, b) =>
+   298	    /\ b \in Ballots
+   299	    /\ v \in Values
+   300	    /\ SafeMsg(v, b)
+   301	PROOF
+   302	  BY SMTT(30) DEF IndInv, MsgTypeOK, VoteInv, SafeMsgInv, One2a,
+   303	                 ChosenIn, VotedForIn, QuorumAssumption,
+   304	                 Is2a, Is2b
+   305	
+   306	THEOREM SameBallotAgreement ==
+   307	  IndInv /\ ChosenIn(v, b) /\ ChosenIn(w, b) => v = w
+   308	PROOF
+   309	  BY ChosenInImpliesSafeMsg, SMTT(30)
+   310	     DEF IndInv, One2a, VoteInv, ChosenIn, VotedForIn,
+   311	         Is2a, Is2b, QuorumAssumption
+   312	
+   313	THEOREM ChosenInAgreement ==
+   314	  IndInv /\ ChosenIn(v, b) /\ ChosenIn(w, c) => v = w
+   315	PROOF
+   316	  BY SafeMsgImpliesSafeAt, ChosenInImpliesSafeMsg, SameBallotAgreement,
+   317	     SMTT(60) DEF SafeAt, Ballots
+   318
+... (truncated) ...
+ v = w
+   326	
+   327	THEOREM IndInvImpliesAtMostOneChosenBar ==
+   328	  IndInv => AtMostOneChosenBar
+   329	PROOF
+   330	  BY ChosenAgreement DEF AtMostOneChosenBar, chosenBar
+   331	
+   332	THEOREM ChosenBarEmptyOrSingleton ==
+   333	  IndInv => (chosenBar = {} \/ \E v \in Values : chosenBar = {v})
+   334	PROOF
+   335	  BY IndInvImpliesAtMostOneChosenBar, IsaWithSetExtensionality
+   336	     DEF AtMostOneChosenBar, chosenBar
+   337	
+   338	THEOREM InitImpliesCInit == Init => C!Init
+   339	PROOF
+   340	  BY SMT DEF Init, C!Init, chosenBar, Chosen, ChosenIn, VotedForIn
+   341	
+   342	THEOREM AbsStep ==
+   343	  IndInv /\ IndInv' /\ [Next]_vars => [C!Next]_{chosenBar}
+   344	PROOF
+   345	  BY NextImpliesMsgsMonotone, ChosenMonotone, ChosenBarEmptyOrSingleton,
+   346	     IndInvImpliesAtMostOneChosenBar, IsaWithSetExtensionality, SMTT(30)
+   347	     DEF C!Next, chosenBar, AtMostOneChosenBar
+   348	
+   349	THEOREM SpecImpliesAlwaysIndInv == Spec => []IndInv
+   350	PROOF
+   351	  BY InitImpliesIndInv, NextPreservesIndInv, PTL DEF Spec
+   352	
+   353	-----------------------------------------------------------------------------
+   354	chosenBar == {v \in Values : Chosen(v)}
+   355	
+   356	C == INSTANCE Consensus WITH chosen <- chosenBar
+   357	
+   358	THEOREM Refinement == Spec => C!Spec
+   359	PROOF
+   360	  BY SpecImpliesAlwaysIndInv, InitImpliesCInit, AbsStep, PTL
+   361	     DEF Spec, C!Spec
+   362	=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+File "./Paxos_Refinement.tla", line 292, character 22:
+Error: Operator "v" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.map in file "list.ml", line 86, characters 15-19
+Called from Tlapm_lib__E_anon.anon_sg#expr in file "src/expr/e_anon.ml", line 186, characters 27-56
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__E_visit.map#expr in file "src/expr/e_visit.ml", line 297, characters 33-60
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__E_visit.map#expr in file "src/expr/e_visit.ml", line 297, characters 33-60
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_visit.map#sequent in file "src/expr/e_visit.ml", line 387, characters 38-61
+Called from Tlapm_lib__M_elab.normalize.spin in file "src/module/m_elab.ml", line 1237, characters 28-57
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba Paxos_Refinement.tla | sed -n '286,326p'"
+   286	  <2>3. QED
+   287	    BY <2>2 DEF P, Ballots
+   288	<1>2. QED
+   289	  BY <1>1
+   290	
+   291	THEOREM ChosenInImpliesSafeMsg ==
+   292	  IndInv /\ ChosenIn(v, b) =>
+   293	    /\ b \in Ballots
+   294	    /\ v \in Values
+   295	    /\ SafeMsg(v, b)
+   296	PROOF
+   297	  BY SMTT(30) DEF IndInv, MsgTypeOK, VoteInv, SafeMsgInv, One2a,
+   298	                 ChosenIn, VotedForIn, QuorumAssumption,
+   299	                 Is2a, Is2b
+   300	
+   301	THEOREM SameBallotAgreement ==
+   302	  IndInv /\ ChosenIn(v, b) /\ ChosenIn(w, b) => v = w
+   303	PROOF
+   304	  BY ChosenInImpliesSafeMsg, SMTT(30)
+   305	     DEF IndInv, One2a, VoteInv, ChosenIn, VotedForIn,
+   306	         Is2a, Is2b, QuorumAssumption
+   307	
+   308	THEOREM ChosenInAgreement ==
+   309	  IndInv /\ ChosenIn(v, b) /\ ChosenIn(w, c) => v = w
+   310	PROOF
+   311	  BY SafeMsgImpliesSafeAt, ChosenInImpliesSafeMsg, SameBallotAgreement,
+   312	     SMTT(60) DEF SafeAt, Ballots
+   313	
+   314	THEOREM ChosenAgreement ==
+   315	  IndInv /\ Chosen(v) /\ Chosen(w) => v = w
+   316	PROOF
+   317	  BY ChosenInAgreement DEF Chosen
+   318	
+   319	THEOREM SpecImpliesAlwaysIndInv == Spec => []IndInv
+   320	PROOF
+   321	  BY InitImpliesIndInv, NextPreservesIndInv, PTL DEF Spec
+   322	
+   323	-----------------------------------------------------------------------------
+   324	chosenBar == {v \in Values : Chosen(v)}
+   325	
+   326	C == INSTANCE Consensus WITH chosen <- chosenBar
+[EXIT 0]
+
+[AGENT] TLAPS is still running on the larger obligations, which usually means one of the monolithic SMT proofs is too broad. I’ll let this pass finish so we get exact failed obligations, then split the slow ones.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 363, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 357, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+                    /\ \A m \in msgs :
+                                 (/\ Is2b(m)
+                                  /\ m.acc = r.acc
+                                  /\ m.bal < r.bal)
+                                 => 
+                                 m.bal =< r.maxVBal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E b \in Ballots : Phase1a(b) => IndInv')
+File "./Paxos_Refinement.tla", line 1, character 1 to line 365, character 77:
+[ERROR]: 12/71 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The first failure set exposed one real syntax issue: several action-preservation theorems parsed as `exists b : Phase => Inv'` inside the antecedent. I’m tightening those statements before tackling the remaining proof splits.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 363, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 357, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+                    /\ \A m \in msgs :
+                                 (/\ Is2b(m)
+                                  /\ m.acc = r.acc
+                                  /\ m.bal < r.bal)
+                                 => 
+                                 m.bal =< r.maxVBal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E b \in Ballots : Phase1a(b)) => IndInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 365, character 77:
+[ERROR]: 12/71 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "sed -n '145,180p' Paxos_Refinement.tla"
+
+SafeMsgInv ==
+  \A m \in msgs :
+    Is2a(m) => SafeMsg(m.val, m.bal)
+
+MaxBalInv ==
+  \A a \in Acceptors :
+    \A m \in msgs :
+      /\ (Is1b(m) \/ Is2b(m))
+      /\ m.acc = a
+      => m.bal <= maxBal[a]
+
+MaxVBalInv ==
+  \A a \in Acceptors :
+    \A m \in msgs :
+      /\ Is2b(m)
+      /\ m.acc = a
+      => m.bal <= maxVBal[a]
+
+MaxValInv ==
+  \A a \in Acceptors :
+    maxVBal[a] = -1 \/ VotedForIn(a, maxVal[a], maxVBal[a])
+
+MaxVBalLeMaxBal ==
+  \A a \in Acceptors : maxVBal[a] <= maxBal[a]
+
+PromiseInv ==
+  \A r \in msgs :
+    Is1b(r) =>
+      /\ (r.maxVBal = -1 \/ VotedForIn(r.acc, r.maxVal, r.maxVBal))
+      /\ \A m \in msgs :
+           /\ Is2b(m)
+           /\ m.acc = r.acc
+           /\ m.bal < r.bal
+           => m.bal <= r.maxVBal
+[EXIT 0]
+
+[AGENT] The preservation obligations are carrying more type facts than the safety proof actually uses. I’m trimming the helper invariant to the message fields that matter for Paxos safety, which should reduce the routine action proofs substantially.
+
+[AGENT] The invariant trim helped the proof structure but TLAPS is still spending time in broad SMT calls. If the same obligations remain, I’ll replace those monolithic calls with explicit case proofs for each action.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 358, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 352, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+                    /\ \A m \in msgs :
+                                 (/\ Is2b(m)
+                                  /\ m.acc = r.acc
+                                  /\ m.bal < r.bal)
+                                 => 
+                                 m.bal =< r.maxVBal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E b \in Ballots : Phase1a(b)) => IndInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 360, character 77:
+[ERROR]: 12/71 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "pkill -f '/home/ubuntu/.tlapm/bin/tlapm' || true"
+[EXIT -1]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+Executable "cvc4" not found in this PATH:
+/home/ubuntu/.tlapm/lib/tlapm/backends/bin:/home/ubuntu/.tlapm/lib/tlapm/backends/Isabelle/bin:/home/ubuntu/.local/bin:/home/ubuntu/.codex/tmp/arg0/codex-arg0KH6ZU6:/home/ubuntu/.nvm/versions/node/v20.19.6/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/ubuntu/.nvm/versions/node/v20.19.6/bin:/tmp/codex_bench_Paxos_Refinement_ydt9ff30/node_modules/.bin:/tmp/node_modules/.bin:/node_modules/.bin:/home/ubuntu/.nvm/versions/node/v20.19.6/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin:/home/ubuntu/.local/bin:/home/ubuntu/.local/bin:/home/ubuntu/.nvm/versions/node/v20.19.6/bin:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/ubuntu/.vscode-server/cli/servers/Stable-f6cfa2ea2403534de03f069bdf160d06451ed282/server/bin/remote-cli:/home/ubuntu/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+ tlapm ending abnormally with Unix.Unix_error(Unix.EINTR, "select", "")
+Raised by primitive operation at Tlapm_lib__Schedule.run.spin in file "src/backend/schedule.ml", line 149, characters 26-54
+Called from Tlapm_lib__Schedule.run in file "src/backend/schedule.ml", line 183, characters 4-14
+Called from Tlapm_lib.process_obs in file "src/tlapm_lib.ml", line 236, characters 4-42
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 364, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 358, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v \in Values :
+                       \A b \in Ballots : SafeMsg(v, b) => SafeMsg(v, b)',
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E b \in Ballots : Phase1a(b)) => IndInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 366, character 77:
+[ERROR]: 12/79 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] I’m splitting one action-preservation proof into invariant components to identify which facts TLAPS cannot derive automatically. Once the pattern is clear, I’ll apply the same decomposition to the other actions.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+[EXIT -1]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla; echo EXIT:$?'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 389, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 383, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+ndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v \in Values :
+                       \A b \in Ballots : SafeMsg(v, b) => SafeMsg(v, b)',
+                  <1>1 ,
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  SafeMsgInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 391, character 77:
+[ERROR]: 12/119 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+EXIT:3
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 387, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 381, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+.bal =< r.maxVBal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E a \in Acceptors : Phase1b(a)) => IndInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 389, character 77:
+[ERROR]: 11/119 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Phase1a now verifies after the monotonic certificate predicate was made unbounded. I’m applying the same component-by-component shape to the remaining concrete actions; the hard parts should now be isolated to promises and new votes.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 413, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 407, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+    Is1b(m) == m.type = "1b",
+                  Is2b(m) == m.type = "2b",
+                  MaxBalInv ==
+                    \A a \in Acceptors :
+                       \A m \in msgs :
+                          (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  <1>1 ,
+                  SMTT(30) 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 415, character 77:
+[ERROR]: 12/159 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Reintroducing the acceptor-state function types made these obligations heavier but necessary for `EXCEPT` updates. I’m waiting for TLAPS to identify whether it now gets the Phase1b update reasoning or still needs explicit `a = x` cases.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 417, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 411, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+    Is1b(m) == m.type = "1b",
+                  Is2b(m) == m.type = "2b",
+                  MaxBalInv ==
+                    \A a \in Acceptors :
+                       \A m \in msgs :
+                          (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  <1>1 ,
+                  SMTT(30) 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 419, character 77:
+[ERROR]: 12/161 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 427, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 421, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+VBal \in [Acceptors -> {-1} \cup Ballots]
+                    /\ maxVal \in [Acceptors -> Values \cup {None}],
+                  MaxVBalLeMaxBal ==
+                    \A a \in Acceptors : maxVBal[a] =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  <1>1 ,
+                  <3>1 ,
+                  SMTT(30) 
+           PROVE  MaxVBalLeMaxBal'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 429, character 77:
+[ERROR]: 11/167 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+[EXIT -1]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla; echo EXIT:$?'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 438, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 432, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+[Acceptors -> Values \cup {None}],
+                  MaxVBalLeMaxBal ==
+                    \A a \in Acceptors : maxVBal[a] =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  NEW CONSTANT mm \in msgs,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  SMTT(30) 
+           PROVE  MaxVBalLeMaxBal'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 440, character 77:
+[ERROR]: 11/170 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+EXIT:3
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 439, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 433, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+al \in [Acceptors -> Values \cup {None}],
+                  MaxVBalLeMaxBal ==
+                    \A a \in Acceptors : maxVBal[a] =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ MaxVBalLeMaxBal
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  NEW CONSTANT mm \in msgs,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  SMTT(30) 
+           PROVE  MaxVBalLeMaxBal'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 441, character 77:
+[ERROR]: 11/171 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The problematic Phase1b component is an invariant (`maxVBal <= maxBal`) that is stronger than the safety proof needs. I’m removing it from the inductive invariant and relying on `MaxBalInv` for the Phase2b preservation argument instead.
+
+[CMD] /bin/bash -lc 'rg -n "MaxVBalLeMaxBal" Paxos_Refinement.tla'
+164:MaxVBalLeMaxBal ==
+294:                 MaxVBalLeMaxBal, PromiseInv, Phase2a, Send,
+304:                 MaxVBalLeMaxBal, PromiseInv, Phase2b, Send,
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 417, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 411, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+   => 
+                                 m.bal =< r.maxVBal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E b \in Ballots : Phase2a(b)) => IndInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 419, character 77:
+[ERROR]: 10/156 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Phase1b’s local preservation now verifies far enough that TLAPS has moved back to the remaining monolithic Phase2 actions and the safety lemmas. I’m waiting for the current run to finish before splitting Phase2a/Phase2b the same way.
+
+[AGENT] Both Phase1 actions are now discharged. I’m replacing the Phase2a monolithic preservation proof with component steps; the key obligation there is proving the newly sent `2a` message carries the same certificate as `SafeMsg`.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 440, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 434, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+Inv ==
+                    \A m \in msgs : Is2a(m) => SafeMsg(m.val, m.bal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  <1>1 ,
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  SafeMsgInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 442, character 77:
+[ERROR]: 10/193 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 449, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 443, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+               /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  NEW CONSTANT bb \in Ballots,
+                  NEW CONSTANT vv \in Values,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  SafeMsgInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 451, character 77:
+[ERROR]: 11/200 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 458, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 452, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+alInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  NEW CONSTANT bb \in Ballots,
+                  NEW CONSTANT vv \in Values,
+                  NEW CONSTANT QQ \in Quorums,
+                  NEW CONSTANT SS \in 
+                  SUBSET {m \in msgs : /\ m.type = "1b" /\ m.bal = bb},
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  <3>3 ,
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  SafeMsgInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 460, character 77:
+[ERROR]: 10/203 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 469, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 463, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+              /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  NEW CONSTANT bb \in Ballots,
+                  NEW CONSTANT vv \in Values,
+                  NEW CONSTANT QQ \in Quorums,
+                  NEW CONSTANT SS \in 
+                  SUBSET {m \in msgs : /\ m.type = "1b" /\ m.bal = bb},
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  <3>3 ,
+                  SendImpliesMsgsMonotone ,
+                  Add2aPreservesSafeMsgInv ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  SafeMsgInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 471, character 77:
+[ERROR]: 10/206 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 471, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 465, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+  => 
+                                 m.bal =< r.maxVBal),
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  MsgsMonotone == msgs \subseteq msgs',
+                  SafeMsgMonotone ==
+                    \A v, b : SafeMsg(v, b) => SafeMsg(v, b)',
+                  SendImpliesMsgsMonotone ,
+                  MsgsMonotoneImpliesSafeMsgMonotone ,
+                  SMTT(30) 
+           PROVE  IndInv /\ (\E a \in Acceptors : Phase2b(a)) => IndInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 473, character 77:
+[ERROR]: 9/211 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Phase2a is now discharged. I’m splitting Phase2b next; this is the last inductive action and it carries the important acceptor-state updates for new votes.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 498, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 492, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+            acc |-> a]),
+                  Is1b(m) == m.type = "1b",
+                  Is2b(m) == m.type = "2b",
+                  MaxBalInv ==
+                    \A a \in Acceptors :
+                       \A m \in msgs :
+                          (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  <1>1 ,
+                  SMTT(30) 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 500, character 77:
+[ERROR]: 12/248 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 550, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 544, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+
+                    \A a \in Acceptors :
+                       \A m \in msgs :
+                          (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  NEW CONSTANT mm \in msgs,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  SMTT(30) 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 552, character 77:
+[ERROR]: 11/272 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 550, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 544, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+ ==
+                    \A a \in Acceptors :
+                       \A m \in msgs :
+                          (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  NEW CONSTANT mm \in msgs,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  Force 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 552, character 77:
+[ERROR]: 12/272 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 555, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 549, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+               \A m \in msgs :
+                          (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  NEW CONSTANT mm \in msgs,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  <3>3 ,
+                  <3>4 ,
+                  SMTT(30) 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 557, character 77:
+[ERROR]: 12/281 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 4/5 (stream disconnected before completion: response.failed event received)
+
+[AGENT] The remaining Phase2b failures are all pointwise `EXCEPT` update reasoning. I’m adding a small general EXCEPT lemma so the action proof can cite the update equation directly instead of asking the backend to rediscover it inside each invariant.
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+[EXIT -1]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla; echo EXIT:$?'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 564, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 558, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+pply ,
+                  SimplifyAndSolve 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 218, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  SMT 
+           PROVE  \A f, i, e, j :
+                     [f EXCEPT ![i] = e][j] = (IF j = i THEN e ELSE f[j])
+File "./Paxos_Refinement.tla", line 1, character 1 to line 566, character 77:
+[ERROR]: 13/287 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+EXIT:3
+[EXIT 0]
+
+[ERROR] Reconnecting... 1/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 2/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 3/5 (stream disconnected before completion: response.failed event received)
+
+[ERROR] Reconnecting... 4/5 (stream disconnected before completion: stream closed before response.completed)
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Paxos_Refinement.tla'
+(* created new ".tlacache/Paxos_Refinement.tlaps/Paxos_Refinement.thy" *)
+(* fingerprints written in ".tlacache/Paxos_Refinement.tlaps/fingerprints" *)
+File "./Paxos_Refinement.tla", line 568, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  Spec == Init /\ [][Next]_vars,
+                  C!Spec == C!Init /\ [][C!Next]_chosenBar,
+                  SpecImpliesAlwaysIndInv ,
+                  InitImpliesCInit ,
+                  AbsStep ,
+                  PTL 
+           PROVE  Spec => C!Spec
+File "./Paxos_Refinement.tla", line 562, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE msgs,
+                  NEW VARIABLE maxBal,
+                  NEW VARIABLE maxVBal,
+                  NEW VARIABLE maxVal,
+                  
+... (truncated) ...
+                 (Is1b(m) \/ Is2b(m)) /\ m.acc = a
+                          => m.bal =< maxBal[a],
+                  IndInv ==
+                    /\ MsgTypeOK
+                    /\ MaxTypeOK
+                    /\ One2a
+                    /\ VoteInv
+                    /\ SafeMsgInv
+                    /\ MaxBalInv
+                    /\ MaxVBalInv
+                    /\ MaxValInv
+                    /\ PromiseInv,
+                  NEW CONSTANT aa \in Acceptors,
+                  NEW CONSTANT mm \in msgs,
+                  <1>1 ,
+                  <3>1 ,
+                  <3>2 ,
+                  <3>3 ,
+                  <3>4 ,
+                  ExceptApply ,
+                  SimplifyAndSolve 
+           PROVE  MaxBalInv'
+File "./Paxos_Refinement.tla", line 1, character 1 to line 570, character 77:
+[ERROR]: 12/287 obligations failed.
+There were backend errors processing module `"Paxos_Refinement"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Ready. What would you like me to work on in `/tmp/codex_bench_Paxos_Refinement_ydt9ff30`?

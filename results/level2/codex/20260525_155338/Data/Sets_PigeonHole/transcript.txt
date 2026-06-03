@@ -1,0 +1,876 @@
+Benchmark: Data/Sets_PigeonHole.tla
+Time: 201s
+Tokens: 1,193,584 input / 9,254 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and the local proof-checking setup first, then iterate against `tlapm` and the provided checker until both accept the proof.
+
+[CMD] /bin/bash -lc "ls -la /home/ubuntu/.tlapm/lib/tlapm/stdlib | sed -n '1,120p'"
+total 412
+drwxr-xr-x 1 ubuntu ubuntu    706 May 24 09:16 .
+drwxr-xr-x 1 ubuntu ubuntu    120 Apr 14 16:04 ..
+-rw-r--r-- 1 ubuntu ubuntu  13796 Apr 14 16:04 BagsTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   9417 Apr 14 16:04 BagsTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   7554 Apr 14 16:04 Bags.tla
+-rw-r--r-- 1 ubuntu ubuntu 110320 Apr 14 16:04 CommunityModules.jar
+-rw-r--r-- 1 ubuntu ubuntu   1302 Apr 14 16:04 FiniteSets.tla
+-rw-r--r-- 1 ubuntu ubuntu  42189 Apr 14 16:04 FiniteSetTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  19668 Apr 14 16:04 FiniteSetTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   2753 Apr 14 16:04 Folds.tla
+-rw-r--r-- 1 ubuntu ubuntu  11385 Apr 14 16:04 Functions.tla
+-rw-r--r-- 1 ubuntu ubuntu  43420 Apr 14 16:04 FunctionTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu  20232 Apr 14 16:04 NaturalsInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   8950 Apr 14 16:04 NaturalsInduction.tla
+-rw-r--r-- 1 ubuntu ubuntu    841 Apr 14 16:04 RealTime.tla
+-rw-r--r-- 1 ubuntu ubuntu  15285 Apr 14 16:04 SequenceTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  10510 Apr 14 16:04 SequenceTheorems.tla
+drwxrwxr-x 1 ubuntu ubuntu     28 May 24 09:16 .tlacache
+-rw-r--r-- 1 ubuntu ubuntu  24588 Apr 14 16:04 TLAPS.tla
+-rw-r--r-- 1 ubuntu ubuntu  31327 Apr 14 16:04 WellFoundedInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  16058 Apr 14 16:04 WellFoundedInduction.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_Sets_PigeonHole_2s3e4yeb
+check_proof_bin
+Sets.tla
+Sets_PigeonHole.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Sets_PigeonHole.tla"
+-------------------------------- MODULE Sets_PigeonHole --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+PROOF OBVIOUS
+-------------------------------------------------------
+
+=============================================================================
+[EXIT 0]
+
+[AGENT] The stripped module is very small: it defines finiteness through existence of a bijection from `1..n`, then axiomatizes `Cardinality`. I’m checking the neighboring module and induction library now so the proof can reuse available theorem forms instead of fighting TLAPS syntax.
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla"
+------------------------- MODULE NaturalsInduction --------------------------
+(***************************************************************************)
+(* This module contains useful theorems for inductive proofs and recursive *)
+(* definitions over the naturals.                                          *)
+(*                                                                         *)
+(* Some of the statements of the theorems are decomposed in terms of       *)
+(* definitions.  This is done for two reasons:                             *)
+(*                                                                         *)
+(*  - It makes it easier for the backends to instantiate the theorems      *)
+(*    when those definitions are not expanded.                             *)
+(*                                                                         *)
+(*  - It can be convenient when writing proofs to use those definitions    *)
+(*    rather than having to write out their expansions.                    *)
+(***************************************************************************)
+EXTENDS Integers
+
+(***************************************************************************)
+(* The following is the simple statement of inductions over the naturals.  *)
+(* For predicates P defined by a moderately complex operator, it is often  *)
+(* useful to hide the operator definition before using this theorem. That  *)
+(* is, you first define a suitable operator P (not necessarily by that     *)
+
+... (truncated) ...
+
+
+THEOREM FiniteNatInductiveUnique ==
+  ASSUME NEW Def(_,_), NEW f, NEW g, NEW c, NEW m \in Nat, NEW n \in Nat,
+         FiniteNatInductiveDefConclusion(f, c, Def, m, n),
+         FiniteNatInductiveDefConclusion(g, c, Def, m, n)
+  PROVE  f = g
+
+=============================================================================
+
+(***************************************************************************)
+(* The following example shows how this module is used.                    *)
+(***************************************************************************)
+
+factorial[n \in Nat] == IF n = 0 THEN 1 ELSE n * factorial[n-1]
+
+THEOREM FactorialDefConclusion == NatInductiveDefConclusion(factorial, 1, LAMBDA v,n : n*v)
+<1>1. NatInductiveDefHypothesis(factorial, 1, LAMBDA v,n : n*v)
+  BY DEF NatInductiveDefHypothesis, factorial
+<1>2. QED
+  BY <1>1, NatInductiveDef
+
+THEOREM FactorialDef == \A n \in Nat : factorial[n] = IF n = 0 THEN 1 ELSE n * factorial[n-1]
+BY FactorialDefConclusion DEF NatInductiveDefConclusion
+
+THEOREM FactorialType == factorial \in [Nat -> Nat]
+<1>1. \A v \in Nat, n \in Nat \ {0} : n * v \in Nat
+  OBVIOUS
+<1>2. QED
+  BY <1>1, NatInductiveDefType, FactorialDefConclusion, Isa
+
+
+\* Modification History
+\* Last modified Thu Aug 22 15:29:20 CEST 2019 by merz
+\* Last modified Tue Oct 15 12:06:48 CEST 2013 by shaolin
+\* Last modified Sat Nov 26 08:49:59 CET 2011 by merz
+\* Last modified Mon Nov 07 08:58:05 PST 2011 by lamport
+\* Created Mon Oct 31 02:52:05 PDT 2011 by lamport
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' Sets.tla"
+-------------------------------- MODULE Sets --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+           /\ IsFiniteSet({})
+           /\ Cardinality({}) = 0
+           /\ \A S : IsFiniteSet(S) /\ (Cardinality(S)=0) => (S = {})
+  PROOF OMITTED
+
+THEOREM CardinalityPlusOne ==
+    ASSUME NEW S, IsFiniteSet(S),
+           NEW x, x \notin S
+    PROVE  /\ IsFiniteSet(S \cup {x})
+           /\ Cardinality(S \cup {x}) = Cardinality(S) + 1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOne == \A m : /\ IsFiniteSet({m})
+                                 /\ Cardinality({m}) = 1
+  PROOF OMITTED
+
+THEOREM CardinalityTwo == \A m, p : m # p => 
+                              /\ IsFiniteSet({m,p})
+                             
+... (truncated) ...
+iteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM CardinalityUnion ==
+          \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) =>
+                      /\ IsFiniteSet(S \cup T)
+                      /\ IsFiniteSet(S \cap T)
+                      /\ Cardinality(S \cup T) =
+                              Cardinality(S) + Cardinality(T)
+                              - Cardinality(S \cap T)  
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+                       /\ f \in [S -> T]
+                       /\ \A y \in T : \E x \in S : y = f[x]
+                       => /\ IsFiniteSet(T)
+                          /\ Cardinality(T) \leq Cardinality(S)
+PROOF OMITTED
+
+THEOREM ProductFinite ==
+     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+PROOF OMITTED
+
+THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+PROOF OMITTED
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla"
+------------------------------ MODULE Functions -----------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Notions about functions including injection, surjection, and bijection.*)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS Integers, Folds
+
+(***************************************************************************)
+(* Restriction of a function to a set (should be a subset of the domain).  *)
+(***************************************************************************)
+Restrict(f,S) == [ x \in S |-> f[x] ]
+
+(***************************************************************************)
+(* Restriction of a function to the subset of its domain satisfying a      *)
+(* test predicate.                                                         *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*   (LET f == (0 :> "a" @@ 1 :> "b" @@ 2 :> "c")                          *)
+(*    IN  RestrictDomain(f, LAMBDA x : x \in {0,2}))                       *)
+(*   = (0 :> "a" @@ 2 :> "c")                                              *)
+(******************************
+... (truncated) ...
+*********************************************************************)
+(* Special case of the above where indices = DOMAIN fun. In other words,   *)
+(* the values f[i] for all i \in DOMAIN fun, are combined using the binary *)
+(* operator op, in an unspecified order.                                   *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*  FoldFunction(LAMBDA x,y: {x} \cup y, {}, <<1,2,1>>) = {1,2}            *)
+(***************************************************************************)
+FoldFunction(op(_,_), base, fun) ==
+  FoldFunctionOnSet(op, base, fun, DOMAIN fun)
+
+(***************************************************************************)
+(* Sum the values f[i] for i \in indices, a subset of DOMAIN f.            *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*  SumFunctionOnSet(<<4,5,6>>, {1,2}) = 9                                 *)
+(*  SumFunction(<<4,5,6>>) = 15                                            *)
+(***************************************************************************)
+SumFunctionOnSet(fun, indices) == FoldFunctionOnSet(+, 0, fun, indices)
+SumFunction(fun) == SumFunctionOnSet(fun, DOMAIN fun)
+
+=============================================================================
+\* Created Thu Apr 11 10:30:48 PDT 2013 by tomr
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla"
+------------------------- MODULE FiniteSetTheorems --------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Facts about finite sets and their cardinality.                         *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS FiniteSets, Integers, Functions, WellFoundedInduction
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A set S is finite iff there exists a natural number n such that there   *)
+(* exist a surjection (or a bijection) from 1..n to S.                     *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+LEMMA FS_NatSurjection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsSurjection(1..n,S)
+
+LEMMA FS_NatBijection ==
+  ASSUME NEW S
+  PROVE  IsFiniteSet(S) <=> \E n \in Nat : ExistsBijection(1..n,S)
+
+
+(*********************************************
+... (truncated) ...
+*************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* The finite subsets form a well-founded ordering with respect to strict  *)
+(* set inclusion.                                                          *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+FiniteSubsetsOf(S) == { T \in SUBSET S : IsFiniteSet(T) }
+StrictSubsetOrdering(S) == { ss \in (SUBSET S) \X (SUBSET S) :
+                                ss[1] \subseteq ss[2] /\ ss[1] # ss[2] }
+
+LEMMA FS_FiniteSubsetsOfFinite ==
+  ASSUME NEW S, IsFiniteSet(S)
+  PROVE  FiniteSubsetsOf(S) = SUBSET S
+
+
+(*****************************************************************************)
+(*  The formulation of the following theorem doesn't require S being finite. *)
+(*  If S is finite, it implies                                               *)
+(*       IsWellFoundedOn(StrictSubsetOrdering(S), SUBSET S)                  *)
+(*  using lemma FS_FiniteSubsetsOfFinite.                                    *)
+(*****************************************************************************)
+THEOREM FS_StrictSubsetOrderingWellFounded ==
+  ASSUME NEW S
+  PROVE  IsWellFoundedOn(StrictSubsetOrdering(S), FiniteSubsetsOf(S))
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSets.tla"
+---------------------------- MODULE FiniteSets -----------------------------
+LOCAL INSTANCE Naturals
+LOCAL INSTANCE Sequences
+  (*************************************************************************)
+  (* Imports the definitions from Naturals and Sequences, but doesn't      *)
+  (* export them.                                                          *)
+  (*************************************************************************)
+
+IsFiniteSet(S) ==
+  (*************************************************************************)
+  (* A set S is finite iff there is a finite sequence containing all its   *)
+  (* elements.                                                             *)
+  (*************************************************************************)
+  \E seq \in Seq(S) : \A s \in S : \E n \in 1..Len(seq) : seq[n] = s
+
+Cardinality(S) ==
+  (*************************************************************************)
+  (* Cardinality is defined only for finite sets.                          *)
+  (*************************************************************************)
+  LET CS[T \in SUBSET S] == IF T = {} THEN 0
+                                      ELSE 1 + CS[T \ {CHOOSE x : x \in T}]
+  IN  CS[S]
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla"
+---------------------- MODULE FiniteSetTheorems_proofs ----------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Facts about finite sets and their cardinality.                         *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS
+  FiniteSets,
+  Sequences,
+  FunctionTheorems,
+  WellFoundedInduction,
+  TLAPS
+
+(***************************************************************************)
+(* Arithmetic lemma that is currently not proved.                          *)
+(***************************************************************************)
+LEMMA TwoExpLemma ==
+  ASSUME NEW n \in Nat
+  PROVE  /\ 2^0 = 1
+         /\ 2^(n+1) = 2^n + 2^n
+PROOF OMITTED
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A set S is finite iff there exists a natural number n such that there   *)
+(* exist a surjection (or a bijection) from 1..n to S.                     *)
+(*                                                                         *)
+(* `.  .'                                          
+... (truncated) ...
+   (*******************************************************************)
+        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+             PROVE CS1[T] = CS2[T]
+              OBVIOUS
+        <4>5. ~ExistsBijection(1..0,T)  BY Fun_NatBijSame, Z3
+        <4>6. T # {}  BY <4>5, Fun_NatBijEmpty
+        <4>7. PICK t \in T : t = CHOOSE x : x \in T  BY <4>6
+        <4>. DEFINE U == T \ {t}
+        <4>9. ExistsBijection(1..i,U)  BY Fun_NatBijSubElem, Z3
+        <4>10. CS1[U] = CS2[U]  BY <4>9, <3>2
+        <4>11. CS1[T] = 1 + CS1[U]  BY <4>6, <4>7, <1>2, Zenon  DEF fn
+        <4>12. CS2[T] = 1 + CS2[U]  BY <4>6, <4>7, <1>2, Zenon  DEF fn
+        <4> QED BY <4>10, <4>11, <4>12
+
+      <3> HIDE DEF Prop
+      <3> QED BY Isa, <3>1, <3>2, NatInduction
+
+    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE CS1[T] = CS2[T]  BY <1>2, Zenon
+    <2>2. PICK i \in Nat : ExistsBijection(1..i,T)  BY Fun_NatBijSubset, Zenon
+    <2> QED BY <2>1, <2>2
+
+
+  (*************************************************************************)
+  (* Since SZ satisfies the CS property, the CS function must satisfy the  *)
+  (* CS property.  And it must be the same as SZ.                          *)
+  (*************************************************************************)
+  <1>3. IsCS(CS)  BY <1>1  DEF CS
+  <1>4. CS = SZ  BY <1>1, <1>2, <1>3, Zenon
+
+
+  <1>5. Cardinality(S) = CS[S]  BY Zenon DEF Cardinality, CS, fn
+  <1>7. SZ[S] = Size(S)  BY Zenon DEF SZ
+  <1>8. Size(S) = n  BY Fun_NatBijSame
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg -n "Pigeon|Injection|SurjCardinality|Induction|Cardinality" /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:9:EXTENDS FiniteSets, Integers, Functions, WellFoundedInduction
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:33:(* then Cardinality(S) = n.                                                *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:40:  PROVE  Cardinality(S) = n
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:46:THEOREM FS_SurjCardinalityBound ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:48:  PROVE  Cardinality(S) <= n
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:54:(* For any finite set S, Cardinality(S) \in Nat. Moreover, there is a      *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:55:(* bijection from 1 .. Cardinality(S) to S.                                *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:59:THEOREM FS_CardinalityType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:61:  PROVE  /\ Cardinality(S) \in Nat
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:62:         /\ ExistsBijection(1..Cardinality(S), S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:75:         /\ Cardinality(T) = Cardinality(S)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:77:THEOREM FS_SameCardinalityBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:79:         Cardinality(S) = Cardinality(T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems.tla:91:THEOREM FS_S
+... (truncated) ...
+ofs.tla:876:                    /\ Cardinality(SUBSET A) = 2^Cardinality(A)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:879:       /\ Cardinality({{}}) = 1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:885:  <2>1. Cardinality(A \cup {x}) = Cardinality(A) + 1  BY <1>2, FS_AddElement, Zenon
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:886:  <2>2. 2^Cardinality(A \cup {x}) = 2^Cardinality(A) + 2^Cardinality(A)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:887:    BY <2>1, <1>2, FS_CardinalityType, TwoExpLemma, Zenon
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:891:    <3>1. f \in Injection(SUBSET A, Ax)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:903:        /\ Cardinality(Ax) = Cardinality(SUBSET A)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:906:        /\ Cardinality(SUBSET (A \cup {x})) =
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:907:             Cardinality(SUBSET A) + Cardinality(Ax) - Cardinality((SUBSET A) \cap Ax)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:910:  <2>8. Cardinality((SUBSET A) \cap Ax) = 0  BY <2>7, FS_EmptySet
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:911:  <2>. QED  BY <2>2, <2>5, <2>6, <2>8, P(A), FS_CardinalityType
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:913:<1>. P(S)  BY <1>1, <1>2, FS_Induction, IsaM("blast")
+[EXIT 0]
+
+[AGENT] The standard library already has a short proof of its own `FS_PigeonHole`, but it rests on the library’s sequence-based `FiniteSets` definition, not this file’s axiomatized one. I’m looking for lower-level function/interval lemmas that can be imported without changing this module’s meaning.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla"
+------------------------ MODULE FunctionTheorems ----------------------------
+(***************************************************************************)
+(* `^{\large \vspace{12pt}                                                 *)
+(*  Proofs of facts about functions.                                       *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS Functions, Integers, FiniteSets
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* Function restriction.                                                   *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_RestrictProperties ==
+  ASSUME NEW S, NEW T, NEW f \in [S -> T], NEW A \in SUBSET S
+  PROVE  /\ Restrict(f,A) \in [A -> T]
+         /\ \A x \in A : Restrict(f,A)[x] = f[x]
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                       
+... (truncated) ...
+>  Bijection(S,T) # {}
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* There is a surjection from any set S to any non-empty subset T of S.    *)
+(* (Note that there cannot be a surjection to {} except if S is empty.)    *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_ExistsSurjSubset ==
+  ASSUME NEW S, NEW T \in SUBSET S, T # {}
+  PROVE  ExistsSurjection(S,T)
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* If there is a surjection from S to T, then there is an injection from T *)
+(* to S.                                                                   *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_ExistsSurjMeansExistsRevInj ==
+  ASSUME NEW S, NEW T, ExistsSurjection(S,T)
+  PROVE  ExistsInjection(T,S)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"NatBij|Pigeon|Injection|Inject|Surj|Bijection|1\\.\\.\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems* /home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:108:IsInjective(f) == \A a,b \in DOMAIN f : f[a] = f[b] => a = b
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:113:Injection(S,T) == { M \in [S -> T] : IsInjective(M) }
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:120:Surjection(S,T) == { M \in [S -> T] : \A t \in T : \E s \in S : M[s] = t }
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:126:Bijection(S,T) == Injection(S,T) \cap Surjection(S,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:133:ExistsInjection(S,T)  == Injection(S,T) # {}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:134:ExistsSurjection(S,T) == Surjection(S,T) # {}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla:135:ExistsBijection(S,T)  == Bijection(S,T) # {}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:34:         /\ f \in Surjection(S, Range(f))
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:60:  PROVE  F \in Injection(S,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:62:THEOREM Fun_IsSurj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:65:  PROVE  F \in Surjection(S,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:69:         \/ F \in Injection(S,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:72:         \/ F \in Surjection(S,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:74:  PROVE  F \in Bijection(S,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:85:THEOREM Fun_InjectionProp
+... (truncated) ...
+/tlapm/stdlib/FunctionTheorems.tla:496:THEOREM Fun_NatBijSubset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:497:  ASSUME NEW S, NEW m \in Nat, ExistsBijection(1..m,S),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:499:  PROVE  \E n \in Nat : ExistsBijection(1..n,T) /\ n \leq m
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:505:(* If there exists a bijection from 1..m to S (for some m \in Nat), then   *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:506:(* there exists a bijection from 1..(m+1) to S \cup {x}, where x \notin S. *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:511:THEOREM Fun_NatBijAddElem ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:512:  ASSUME NEW S, NEW m \in Nat, ExistsBijection(1..m,S),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:514:  PROVE  ExistsBijection(1..(m+1), S \cup {x})
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:520:(* If there exists a bijection from 1..m to S (for some m \in Nat), then   *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:521:(* there exists a bijection from 1..(m-1) to S \ {x}, where x \in S.       *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:526:THEOREM Fun_NatBijSubElem ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:527:  ASSUME NEW S, NEW m \in Nat, ExistsBijection(1..m,S),
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:529:  PROVE  ExistsBijection(1..(m-1), S \ {x})
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '260,560p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla"
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* ExistsBijection is reflexive, symmetric, and transitive.                *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_ExistsBijReflexive ==
+  ASSUME NEW S
+  PROVE  ExistsBijection(S,S)
+
+THEOREM Fun_ExistsBijSymmetric ==
+  ASSUME NEW S, NEW T, ExistsBijection(S,T)
+  PROVE  ExistsBijection(T,S)
+
+THEOREM Fun_ExistsBijTransitive ==
+  ASSUME NEW S, NEW T, NEW U, ExistsBijection(S,T), ExistsBijection(T,U)
+  PROVE  ExistsBijection(S,U)
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* Existence of injections and surjections is reflexive and transitive.    *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+THEOREM Fun_ExistsInjReflexive ==
+  ASSUME NEW S
+  PROVE  ExistsInjection(S,S
+... (truncated) ...
+s yields the base value.   *)
+(***************************************************************************)
+THEOREM FoldFunctionOnSetEmpty ==
+  ASSUME NEW op(_,_), NEW base, NEW fun
+  PROVE  FoldFunctionOnSet(op, base, fun, {}) = base 
+
+(***************************************************************************)
+(* Folding a function for a non-empty set of indices corresponds to        *)
+(* applying the binary operator to f[i], for some i \in indices, and the   *)
+(* result of recursing for the set indices \ {i}.                          *)
+(***************************************************************************)
+THEOREM FoldFunctionOnSetNonempty ==
+  ASSUME NEW op(_,_), NEW base, NEW fun, 
+         NEW indices, indices # {}, IsFiniteSet(indices)
+  PROVE  \E i \in indices : FoldFunctionOnSet(op, base, fun, indices) = 
+            op(fun[i], FoldFunctionOnSet(op, base, fun, indices \ {i}))
+
+(***************************************************************************)
+(* The type of folding a function corresponds to the type associated with  *)
+(* the binary operator that underlies the fold.                            *)
+(***************************************************************************)
+THEOREM FoldFunctionOnSetType ==
+  ASSUME NEW Typ, NEW op(_,_), NEW base \in Typ,
+         \A t,u \in Typ : op(t,u) \in Typ,
+         NEW indices, IsFiniteSet(indices), NEW fun,
+         \A i \in indices : fun[i] \in Typ
+  PROVE FoldFunctionOnSet(op, base, fun, indices) \in Typ
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Sets_PigeonHole.tla'
+(* created new ".tlacache/Sets_PigeonHole.tlaps/Sets_PigeonHole.thy" *)
+(* fingerprints written in ".tlacache/Sets_PigeonHole.tlaps/fingerprints" *)
+File "./Sets_PigeonHole.tla", line 35, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Cardinality
+                  (_),
+                  CardinalityAxiom ==
+                    \A S :
+                       IsFiniteSet(S)
+                       => (\A n :
+                              n = Cardinality(S)
+                              <=> n \in Nat
+                                  /\ (
+                                  \E f : IsBijection(f, 1..n, S)))
+           PROVE  \A S, T :
+                     (/\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S))
+                     => (\A f \in [S -> T] :
+                            \E x, y \in S : x # y /\ f[x] = f[y])
+File "./Sets_PigeonHole.tla", line 1, character 1 to line 38, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Sets_PigeonHole"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] I’m going to add a prefixed standard-library instance for pure function facts, plus small bridge lemmas from this module’s `IsBijection`/`CardinalityAxiom` into those function facts. The target theorem itself will then reduce to: an injective `S -> T` would give an injection `1..|S| -> 1..|T|`, contradicting `|T| < |S|`.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Sets_PigeonHole.tla'
+(* loading fingerprints in ".tlacache/Sets_PigeonHole.tlaps/fingerprints" *)
+(* created new ".tlacache/Sets_PigeonHole.tlaps/Sets_PigeonHole.thy" *)
+(* fingerprints written in ".tlacache/Sets_PigeonHole.tlaps/fingerprints" *)
+File "./Sets_PigeonHole.tla", line 1, character 1 to line 136, character 77:
+[INFO]: All 64 obligations proved.
+[EXIT 0]
+
+[AGENT] `tlapm` now proves all generated obligations. I’m running the required repository checker next; that will catch any policy issue such as illegal edits outside the proof scaffolding.
+
+[CMD] /bin/bash -lc './check_proof_bin Sets_PigeonHole.tla --level 2'
+Checking: Sets_PigeonHole.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Sets_PigeonHole.tlaps/Sets_PigeonHole.thy" *)
+(* fingerprints written in ".tlacache/Sets_PigeonHole.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_mrwaaxto/Sets_PigeonHole.tla", line 1, character 1 to line 136, character 77:
+[INFO]: All 64 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Sets_PigeonHole_2s3e4yeb/Sets_PigeonHole.result
+[EXIT 0]
+
+[CMD] /bin/bash -lc "git diff -- Sets_PigeonHole.tla | sed -n '1,220p'"
+diff --git a/Sets_PigeonHole.tla b/Sets_PigeonHole.tla
+index 7dd56c4..25bb57e 100644
+--- a/Sets_PigeonHole.tla
++++ b/Sets_PigeonHole.tla
+@@ -14,6 +14,81 @@ AXIOM CardinalityAxiom ==
+                     (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+ -----------------------------------------------------------------------------
+ 
++FT == INSTANCE FunctionTheorems
++
++LEMMA IsBijectionImpliesFTBijection ==
++  ASSUME NEW f, NEW S, NEW T,
++         IsBijection(f, S, T)
++  PROVE  f \in FT!Bijection(S, T)
++  BY DEF IsBijection, FT!Bijection, FT!Injection, FT!Surjection,
++         FT!IsInjective
++
++LEMMA NoCollisionImpliesFTInjection ==
++  ASSUME NEW f, NEW S, NEW T,
++         f \in [S -> T],
++         \A x, y \in S : x # y => f[x] # f[y]
++  PROVE  f \in FT!Injection(S, T)
++  BY DEF FT!Injection, FT!IsInjective
++
++LEMMA CardinalityWitness ==
++  ASSUME NEW S, IsFiniteSet(S)
++  PROVE  /\ Cardinality(S) \in Nat
++         /\ \E f : IsBijection(f, 1..Cardinality(S), S)
++<1>1. (Cardinality(S) = Cardinality(S)) <=>
++        (Cardinality(S) \in Nat
++          /\ \E f : IsBijection(f, 1..Cardinality(S), S))
++  BY CardinalityAxiom
++<1>2. Cardinality(S) = Cardinality(S)
++  OBVIOUS
++<1> QED
++  BY <1>1, <1>2
++
++LEMMA InjectionGivesNatInjection ==
++  ASSUME NEW S, NEW T,
++         NEW n \in Nat, NEW m \in Nat,
++         NEW bS, IsBijection(bS, 1..n, S),
++         NEW bT, IsBijection(bT, 1..m, T),
++         NEW f \in FT!Injection(S, T)
++  PROVE  FT!ExistsInjection(1..n, 1..m)
++<1>1. bS \in FT!Bijecti
+... (truncated) ...
+ijection(bT, 1..Cardinality(T), T)
++  BY <1>2
++<1>5. FT!ExistsInjection(1..Cardinality(S), 1..Cardinality(T))
++  BY <1>1, <1>2, <1>3, <1>4, InjectionGivesNatInjection
++<1> QED
++  BY <1>1, <1>2, <1>5, FT!Fun_NatInjLeq
++
+ ------------------------------------------------------------------
+ 
+ ------------------------------------------------------------------
+@@ -32,7 +107,30 @@ THEOREM PigeonHole ==
+                       /\ Cardinality(T) < Cardinality(S)
+                       => \A f \in [S -> T] :
+                            \E x, y \in S : x # y /\ f[x] = f[y]
+-PROOF OBVIOUS
++PROOF
++<1>. SUFFICES ASSUME NEW S, NEW T,
++                      IsFiniteSet(S),
++                      IsFiniteSet(T),
++                      Cardinality(T) < Cardinality(S)
++              PROVE  \A f \in [S -> T] :
++                       \E x, y \in S : x # y /\ f[x] = f[y]
++  OBVIOUS
++<1>1. ASSUME NEW f \in [S -> T]
++       PROVE  \E x, y \in S : x # y /\ f[x] = f[y]
++  <2>. SUFFICES ASSUME \A x, y \in S : x # y => f[x] # f[y]
++                PROVE  FALSE
++    BY Zenon
++  <2>1. f \in FT!Injection(S, T)
++    BY NoCollisionImpliesFTInjection
++  <2>2. Cardinality(S) <= Cardinality(T)
++    BY <2>1, InjectionCardinalityLeq
++  <2>3. /\ Cardinality(S) \in Nat
++        /\ Cardinality(T) \in Nat
++    BY CardinalityWitness
++  <2> QED
++    BY <2>2, <2>3
++<1> QED
++  BY <1>1
+ -------------------------------------------------------
+ 
+ =============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba Sets_PigeonHole.tla | sed -n '1,150p'"
+     1	-------------------------------- MODULE Sets_PigeonHole --------------------------------
+     2	EXTENDS Integers, NaturalsInduction, TLAPS
+     3	
+     4	IsBijection(f, S, T) == /\ f \in [S -> T]
+     5	                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+     6	                        /\ \A y \in T : \E x \in S : f[x] = y
+     7	
+     8	IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+     9	
+    10	CONSTANT Cardinality(_)
+    11	AXIOM CardinalityAxiom ==
+    12	         \A S : IsFiniteSet(S) =>
+    13	           \A n : (n = Cardinality(S)) <=>
+    14	                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+    15	-----------------------------------------------------------------------------
+    16	
+    17	FT == INSTANCE FunctionTheorems
+    18	
+    19	LEMMA IsBijectionImpliesFTBijection ==
+    20	  ASSUME NEW f, NEW S, NEW T,
+    21	         IsBijection(f, S, T)
+    22	  PROVE  f \in FT!Bijection(S, T)
+    23	  BY DEF IsBijection, FT!Bijection, FT!Injection, FT!Surjection,
+    24	         FT!IsInjective
+    25	
+    26	LEMMA NoCollisionImpliesFTInjection ==
+    27	  ASSUME NEW f, NEW S, NEW T,
+    28	         f \in [S -> T],
+    29	         \A x, y \in S : x # y => f[x] # f[y]
+    30	  PROVE  f \in FT!Injection(S, T)
+    31	  BY DEF FT!Injection, FT!IsInjective
+    32	
+    33	LEMMA CardinalityWitness ==
+    34	  ASSUME NEW S, IsFiniteSet(S)
+    35	  PROVE  /\ Cardinality(S) \in Nat
+    36	         /\ \E f : IsBijection(f, 1..Cardi
+... (truncated) ...
+---------
+   101	
+   102	-----------------------------------------------------------------------------
+   103	
+   104	THEOREM PigeonHole ==
+   105	            \A S, T : /\ IsFiniteSet(S)
+   106	                      /\ IsFiniteSet(T)
+   107	                      /\ Cardinality(T) < Cardinality(S)
+   108	                      => \A f \in [S -> T] :
+   109	                           \E x, y \in S : x # y /\ f[x] = f[y]
+   110	PROOF
+   111	<1>. SUFFICES ASSUME NEW S, NEW T,
+   112	                      IsFiniteSet(S),
+   113	                      IsFiniteSet(T),
+   114	                      Cardinality(T) < Cardinality(S)
+   115	              PROVE  \A f \in [S -> T] :
+   116	                       \E x, y \in S : x # y /\ f[x] = f[y]
+   117	  OBVIOUS
+   118	<1>1. ASSUME NEW f \in [S -> T]
+   119	       PROVE  \E x, y \in S : x # y /\ f[x] = f[y]
+   120	  <2>. SUFFICES ASSUME \A x, y \in S : x # y => f[x] # f[y]
+   121	                PROVE  FALSE
+   122	    BY Zenon
+   123	  <2>1. f \in FT!Injection(S, T)
+   124	    BY NoCollisionImpliesFTInjection
+   125	  <2>2. Cardinality(S) <= Cardinality(T)
+   126	    BY <2>1, InjectionCardinalityLeq
+   127	  <2>3. /\ Cardinality(S) \in Nat
+   128	        /\ Cardinality(T) \in Nat
+   129	    BY CardinalityWitness
+   130	  <2> QED
+   131	    BY <2>2, <2>3
+   132	<1> QED
+   133	  BY <1>1
+   134	-------------------------------------------------------
+   135	
+   136	=============================================================================
+[EXIT 0]
+
+[AGENT] Implemented the TLAPS proof in [Sets_PigeonHole.tla](/tmp/codex_bench_Sets_PigeonHole_2s3e4yeb/Sets_PigeonHole.tla:17).
+
+I added helper lemmas that bridge the local bijection/cardinality axiom to standard `FunctionTheorems`, then proved `PigeonHole` by contradiction via an impossible injection `1..Cardinality(S) -> 1..Cardinality(T)`.
+
+Verification passed:
+
+```text
+/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Sets_PigeonHole.tla
+[INFO]: All 64 obligations proved.
+
+./check_proof_bin Sets_PigeonHole.tla --level 2
+PASS — all obligations proved
+```

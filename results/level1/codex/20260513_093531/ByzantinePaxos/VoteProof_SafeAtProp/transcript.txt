@@ -1,0 +1,2441 @@
+Benchmark: ByzantinePaxos/VoteProof_SafeAtProp.tla
+Time: 620s
+Tokens: 3,001,395 input / 19,771 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and checker, then iteratively patch the final proof and run TLAPS/checks.
+
+[CMD] /bin/bash -lc "ls && sed -n '1,240p' VoteProof_SafeAtProp.tla && sed -n '1,220p' check_proof.py"
+Consensus.tla
+PConProof.tla
+VoteProof.tla
+VoteProof_SafeAtProp.tla
+cheating_detection.py
+check_proof.py
+----------------------------- MODULE VoteProof_SafeAtProp ------------------------------ 
+(***************************************************************************)
+(* This is a high-level consensus algorithm in which a set of processes    *)
+(* called `acceptors' cooperatively choose a value.  The algorithm uses    *)
+(* numbered ballots, where a ballot is a round of voting.  Acceptors cast  *)
+(* votes in ballots, casting at most one vote per ballot.  A value is      *)
+(* chosen when a large enough set of acceptors, called a `quorum', have    *)
+(* all voted for the same value in the same ballot.                        *)
+(*                                                                         *)
+(* Ballots are not executed in order.  Different acceptors may be          *)
+(* concurrently performing actions for different ballots.                  *)
+(***************************************************************************)
+EXTENDS Integers , FiniteSets, TLC, TLAPS
+
+\* THEOREM SMT == TRUE (*{ by (smt) }*)
+-----------------------------------------------------------------------------
+CONSTANT Value,     \* As in module Consensus, the set of choosable values.
+         Acceptor,  \* The set of all acceptors.
+         Quorum     \* The set of all quorums.
+ 
+(***************************************************************************)
+(* The following assumption asserts
+... (truncated) ...
+ parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+[EXIT 0]
+
+[AGENT] The first output was truncated, so I’m narrowing to theorem and nearby lemma names.
+
+[CMD] /bin/bash -lc "grep -n \"THEOREM\\|LEMMA\\|PROOF OBVIOUS\\|SafeAt\" VoteProof_SafeAtProp.tla && tail -n 220 VoteProof_SafeAtProp.tla"
+1:----------------------------- MODULE VoteProof_SafeAtProp ------------------------------ 
+15:\* THEOREM SMT == TRUE (*{ by (smt) }*)
+29:THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+82:   (* We now define the operator SafeAt so SafeAt(b, v) is function of the *)
+113:   (* We now define SafeAt.  We define it recursively.  The nicest         *)
+116:   (*    RECURSIVE SafeAt(_, _)                                            *)
+117:   (*    SafeAt(b, v) ==                                                   *)
+122:   (*                /\ (c # -1) => /\ SafeAt(c, v)                        *)
+132:   SafeAt(b, v) ==
+135:           (* This recursively defines SA[bb] to equal SafeAt(bb, v).      *)
+169:         /\ SafeAt(b, v) ;
+214:SafeAt(b, v) ==
+244:                               /\ SafeAt(b, v)
+257:(* theorem about it.  In particular, to reason about SafeAt, we need to    *)
+258:(* prove that SafeAt(b, v) equals the right-hand side of its definition,   *)
+270:(* To prove the desired property of SafeAt, we use the following proof     *)
+275:THEOREM RecursiveFcnOfNat ==
+284:(* Here is the theorem that essentially asserts that SafeAt(b, v) equals   *)
+287:THEOREM SafeAtProp ==
+289:    SafeAt(b, v) =
+294:                /\ (c # -1) => /\ SafeAt(c, v)
+299:PROOF OBVIOUS
+   (* We now define the operator SafeAt so SafeAt(b, v) is function of the *)
+   (* state that equals TRUE if no value other than v has been chosen or   *)
+   (* can ever be chosen in the future (because the values o
+... (truncated) ...
+
+(* To prove the desired property of SafeAt, we use the following proof     *)
+(* rule.  It will eventually be in a standard module--probably in TLAPS.   *)
+(* However, for now, we put it here.                                       *)
+(***************************************************************************)
+
+THEOREM RecursiveFcnOfNat ==
+          ASSUME NEW Def(_,_), 
+                 \A n \in Nat : 
+                    \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+          PROVE  LET f[n \in Nat] == Def(f, n)
+                 IN  f = [n \in Nat |-> Def(f, n)]
+PROOF OMITTED
+
+(***************************************************************************)
+(* Here is the theorem that essentially asserts that SafeAt(b, v) equals   *)
+(* the right-hand side of its definition.                                  *)
+(***************************************************************************)
+THEOREM SafeAtProp ==
+  \A b \in Ballot, v \in Value :
+    SafeAt(b, v) =
+      \/ b = 0
+      \/ \E Q \in Quorum :
+           /\ \A a \in Q : maxBal[a] \geq b
+           /\ \E c \in -1..(b-1) :
+                /\ (c # -1) => /\ SafeAt(c, v)
+                               /\ \A a \in Q :
+                                    \A w \in Value :
+                                        VotedFor(a, c, w) => (w = v)
+                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)
+PROOF OBVIOUS
+
+===============================================================================
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; next I’ll test the baseline error and inspect available recursive-function facts.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 299, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal
+           PROVE  \A b \in Ballot, v \in Value :
+                     SafeAt(b, v)
+                     = (\/ b = 0
+                        \/ \E Q \in Quorum :
+                              /\ \A a \in Q : maxBal[a] >= b
+                              /\ \E c \in -1..b - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 301, character 79:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/bash -lc "grep -R \"RecursiveFcnOfNat\\|LET f\\[n \\\\in Nat\\]\\|DEF\" -n /opt/tlapm15/lib/tlaps *.tla | head -80"
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:39:<1>. DEFINE Q(i) == i \leq m => P(m-i)
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:56:<1> DEFINE Q(n) == \A m \in 0..n : P(m)
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:73:<1>. DEFINE Q(k) == ~ P(k)
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:80:<1>. HIDE DEF Q
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:88:THEOREM RecursiveFcnOfNat ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:103:<1>. DEFINE F[n \in Nat] == [i \in 0 .. n-1 |-> Def(F[n-1], i)]
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:113:  <2>. DEFINE P(g,k) == g = [n \in 0 .. k |-> [i \in 0 .. n-1 |-> Def(g[n-1], i)]]
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:119:    <3>. DEFINE gg == [m \in 0 .. k |-> [j \in 0 .. m-1 |-> Def(g[m-1], j)]]
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:124:    <3>. DEFINE Q(k) == \E g : P(g,k)
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:127:      <4>. DEFINE g0 == [n \in {0} |-> [i \in {} |-> {}]]
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:136:      <4>. DEFINE h == [n \in 0 .. k+1 |-> [i \in 0 .. n-1 |-> Def(g[n-1], i) ]]
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:145:        <5>. HIDE DEF h
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:148:      <4>. HIDE DEF h
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:150:    <3>. HIDE DEF Q
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:155:    <3>. DEFINE Q(k) == \A l \in 0 .. k : \A i 
+... (truncated) ...
+ps/SequenceTheorems_proofs.tla:311:BY DEF Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:318:  BY DEF Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:326:  <2>. QED  BY <2>2 DEF Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:328:  BY DEF Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:338:BY DEF IsInjective
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:344:<1>. DEFINE st == s \o t
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:346:  BY <1>1 DEF IsInjective
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:350:    BY DEF IsInjective
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:355:  <2>. QED  BY <1>2, <2>2 DEF IsInjective
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:359:    BY <1>3 DEF Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:361:    BY <1>3 DEF Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:365:  <2>. QED  BY <1>3, <2>3 DEF IsInjective
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:368:  BY <1>4 DEF IsInjective, Range
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:374:<1>. DEFINE app == Append(seq,e)
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:377:  BY <1>1 DEF IsInjective
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:381:    BY <1>2 DEF Range
+grep: /opt/tlapm15/lib/tlaps/heaps/polyml-5.4.0_x86_64-linux/Pure: binary file matches
+grep: /opt/tlapm15/lib/tlaps/heaps/polyml-5.4.0_x86_64-linux/TLA+: binary file matches
+grep: /opt/tlapm15/lib/tlaps/un-inst: binary file matches
+[EXIT 0]
+
+[AGENT] The local standard library has the exact recursive theorem proof pattern; I’m reading just that section for syntax guidance.
+
+[CMD] /bin/bash -lc "sed -n '80,115p' /opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla && sed -n '270,290p' /opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla"
+<1>. HIDE DEF Q
+<1>. QED  BY ONLY <1>1, GeneralNatInduction, Isa
+
+(***************************************************************************)
+(* The following theorem says that a recursively defined function f over   *)
+(* the natural numbers is well-defined if for every n \in Nat the          *)
+(* definition of f[n] depends only on arguments smaller than n.            *)
+(***************************************************************************)
+THEOREM RecursiveFcnOfNat ==
+  ASSUME NEW Def(_,_), 
+         ASSUME NEW n \in Nat, NEW g, NEW h,
+                \A i \in 0..(n-1) : g[i] = h[i] 
+         PROVE  Def(g, n) = Def(h, n)
+  PROVE  LET f[n \in Nat] == Def(f, n)
+         IN  f = [n \in Nat |-> Def(f, n)]
+<1>. SUFFICES \E ff : ff = [n \in Nat |-> Def(ff, n)]
+  OBVIOUS
+  (*************************************************************************)
+  (* The strategy of the proof is to define a sequence F of approximations *)
+  (* such that F[n] is a function with domain 0 .. n-1 that computes       *)
+  (* F[n][i] by applying the definition to the preceding approximation     *)
+  (* function F[n-1].                                                      *)
+  (*************************************************************************)
+<1>. DEFINE F[n \in Nat] == [i \in 0 .. n-1 |-> Def(F[n-1], i)]
+            f[n \in Nat] == F[n+1][n]
+
+  (*************************************************************************)
+  (* We first show that F itself is well-defined by diagonalization        *)
+  (* over functions that are defined over finite intervals of integers.    *)
+  (*************************************************************************)
+<1>1. F = [n \in Nat |-> [i \in 0 .. n-1 |-> Def(F[n-1], i)]]
+  <2>. SUFFICES \E FF : FF = [n \in Nat |-> [i \in 0 .. n-1 |-> Def(FF[n-1], i)]]
+    BY Zenon
+  <2>. DEFINE P(g,k) == g = [n \in 0 .. k |-> [i \in 0 .. n-1 |-> Def(g[n-1], i)]]
+              G(k) == CHOOSE g : P(g,k)
+              FF == [n \in Nat |-> [i \in 0 .. n-1 |-> G(n)[n][i] ]]
+NatInductiveDefConclusion(f, f0, Def(_,_)) ==
+     f = [i \in Nat |-> IF i = 0 THEN f0 ELSE Def(f[i-1], i)]
+
+THEOREM NatInductiveDef ==
+  ASSUME NEW Def(_,_), NEW f, NEW f0,
+         NatInductiveDefHypothesis(f, f0, Def)
+  PROVE  NatInductiveDefConclusion(f, f0, Def)
+<1>. DEFINE PRDef(g,n) == IF n = 0 THEN f0 ELSE Def(g[n-1], n)
+            ff[n \in Nat] == PRDef(ff,n)
+<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
+             \A i \in 0 .. n-1 : g[i] = h[i]
+      PROVE  PRDef(g,n) = PRDef(h,n)
+  BY <1>1, Z3
+<1>. HIDE DEF PRDef
+<1>2. ff = [n \in Nat |-> PRDef(ff,n)]  BY <1>1, RecursiveFcnOfNat, Isa
+<1>. USE DEF PRDef
+<1>3. ff = f  BY DEF NatInductiveDefHypothesis
+<1>. HIDE DEF ff
+<1>. QED  BY <1>2, <1>3 DEF NatInductiveDefConclusion
+
+(***************************************************************************)
+[EXIT 0]
+
+[AGENT] I’m going to replace the placeholder with a focused instantiation of `RecursiveFcnOfNat`.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+                 /\\ (c # -1) => /\\ SafeAt(c, v)
+                                /\\ \\A a \\in Q :
+                                     \\A w \\in Value :
+                                         VotedFor(a, c, w) => (w = v)
+                 /\\ \\A d \\in (c+1)..(b-1), a \\in Q : DidNotVoteIn(a, d)
+-PROOF OBVIOUS
++PROOF
++<1>. DEFINE Def(f, bb) ==
++      \\/ bb = 0
++      \\/ \\E Q \\in Quorum :
++           /\\ \\A a \\in Q : maxBal[a] \\geq bb
++           /\\ \\E c \\in -1..(bb-1) :
++                /\\ (c # -1) => /\\ f[c]
++                               /\\ \\A a \\in Q :
++                                    \\A w \\in Value :
++                                        VotedFor(a, c, w) => (w = v)
++                /\\ \\A d \\in (c+1)..(bb-1), a \\in Q : DidNotVoteIn(a, d)
++<1>1. \\A n \\in Nat :
++        \\A g, h : (\\A i \\in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
++  BY Z3 DEF Def
++<1>2. LET SA[bb \\in Ballot] == Def(SA, bb)
++      IN  SA = [bb \\in Ballot |-> Def(SA, bb)]
++  BY <1>1, RecursiveFcnOfNat DEF Ballot
++<1>3. \\A b \\in Ballot, v \\in Value :
++        SafeAt(b, v) = Def([bb \\in Ballot |-> SafeAt(bb, v)], b)
++  BY <1>2 DEF SafeAt, Ballot, Def
++<1>. QED BY <1>3 DEF Def
+ 
+ ===============================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+Success. Updated the following files:
+M VoteProof_SafeAtProp.tla
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./VoteProof_SafeAtProp.tla", line 308, character 67:
+Error: Operator "v" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from E_visit.map#expr in file "e_visit.ml", line 65, characters 33-60
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Calle
+... (truncated) ...
+aracters 22-37
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from E_visit.map#expr in file "e_visit.ml", line 77, characters 17-44
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_visit.map#expr in file "e_visit.ml", line 59, characters 20-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon_sg#defn in file "e_anon.ml", line 214, characters 14-30
+Called from E_visit.map#defns in file "e_visit.ml", line 164, characters 17-33
+Called from P_visit.map#step in file "p_visit.ml", line 61, characters 27-45
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] TLAPS rejected a free proof-local `v`; I’m moving the definition under quantified witnesses.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ PROOF
++<1>. TAKE b \\in Ballot, v \\in Value
+ <1>. DEFINE Def(f, bb) ==
+       \\/ bb = 0
+       \\/ \\E Q \\in Quorum :
+@@
+ <1>2. LET SA[bb \\in Ballot] == Def(SA, bb)
+       IN  SA = [bb \\in Ballot |-> Def(SA, bb)]
+   BY <1>1, RecursiveFcnOfNat DEF Ballot
+-<1>3. \\A b \\in Ballot, v \\in Value :
+-        SafeAt(b, v) = Def([bb \\in Ballot |-> SafeAt(bb, v)], b)
++<1>3. SafeAt(b, v) = Def([bb \\in Ballot |-> SafeAt(bb, v)], b)
+   BY <1>2 DEF SafeAt, Ballot, Def
+ <1>. QED BY <1>3 DEF Def
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 318, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>3 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 321, character 79:
+[ERROR]: 3/11 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first structure is close, but the theorem instantiation needs to match `Nat` exactly. I’ll tighten the intermediate claims.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>2. LET SA[bb \\in Ballot] == Def(SA, bb)
+-      IN  SA = [bb \\in Ballot |-> Def(SA, bb)]
+-  BY <1>1, RecursiveFcnOfNat DEF Ballot
+-<1>3. SafeAt(b, v) = Def([bb \\in Ballot |-> SafeAt(bb, v)], b)
+-  BY <1>2 DEF SafeAt, Ballot, Def
++<1>2. LET SA[bb \\in Nat] == Def(SA, bb)
++      IN  SA = [bb \\in Nat |-> Def(SA, bb)]
++  BY <1>1, RecursiveFcnOfNat, Isa
++<1>3. SafeAt(b, v) = Def([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>2 DEF SafeAt, Ballot, Def
+ <1>. QED BY <1>3 DEF Def
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 318, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1, a \in Q :
+                             
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>3 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 321, character 79:
+[ERROR]: 3/12 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The remaining failures are around applying the admitted recursion lemma, so I’ll try a more explicit `USE`/instantiation style.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>2. LET SA[bb \\in Nat] == Def(SA, bb)
+-      IN  SA = [bb \\in Nat |-> Def(SA, bb)]
+-  BY <1>1, RecursiveFcnOfNat, Isa
++<1>2. LET SA[bb \\in Nat] == Def(SA, bb)
++      IN  SA = [bb \\in Nat |-> Def(SA, bb)]
++  <2>. USE RecursiveFcnOfNat
++  <2>. QED BY <1>1, Isa
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 319, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d)]
+                    IN  SA[b],
+    
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>3 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 322, character 79:
+[ERROR]: 3/12 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The admitted lemma’s hypothesis is awkward for backend matching here; I’m reshaping the local hypothesis to the same proof-rule form.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>1. \\A n \\in Nat :
+-        \\A g, h : (\\A i \\in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+-  BY Z3 DEF Def
++<1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
++             \\A i \\in 0..(n-1) : g[i] = h[i]
++       PROVE  Def(g, n) = Def(h, n)
++  BY Z3 DEF Def
++<1>2. \\A n \\in Nat :
++        \\A g, h : (\\A i \\in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
++  BY <1>1
+-<1>2. LET SA[bb \\in Nat] == Def(SA, bb)
++<1>3. LET SA[bb \\in Nat] == Def(SA, bb)
+       IN  SA = [bb \\in Nat |-> Def(SA, bb)]
+   <2>. USE RecursiveFcnOfNat
+-  <2>. QED BY <1>1, Isa
+-<1>3. SafeAt(b, v) = Def([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>2 DEF SafeAt, Ballot, Def
+-<1>. QED BY <1>3 DEF Def
++  <2>. QED BY <1>2, Isa
++<1>4. SafeAt(b, v) = Def([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>3 DEF SafeAt, Ballot, Def
++<1>. QED BY <1>4 DEF Def
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 323, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+    
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 326, character 79:
+[ERROR]: 4/14 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The dependency condition also needs a small interval fact; I’m inspecting the exact proof text before patching.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_SafeAtProp.tla | sed -n '295,330p'"
+   295	                               /\ \A a \in Q :
+   296	                                    \A w \in Value :
+   297	                                        VotedFor(a, c, w) => (w = v)
+   298	                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)
+   299	PROOF
+   300	<1>. TAKE b \in Ballot, v \in Value
+   301	<1>. DEFINE Def(f, bb) ==
+   302	      \/ bb = 0
+   303	      \/ \E Q \in Quorum :
+   304	           /\ \A a \in Q : maxBal[a] \geq bb
+   305	           /\ \E c \in -1..(bb-1) :
+   306	                /\ (c # -1) => /\ f[c]
+   307	                               /\ \A a \in Q :
+   308	                                    \A w \in Value :
+   309	                                        VotedFor(a, c, w) => (w = v)
+   310	                /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+   311	<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
+   312	             \A i \in 0..(n-1) : g[i] = h[i]
+   313	       PROVE  Def(g, n) = Def(h, n)
+   314	  BY Z3 DEF Def
+   315	<1>2. \A n \in Nat :
+   316	        \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+   317	  BY <1>1
+   318	<1>3. LET SA[bb \in Nat] == Def(SA, bb)
+   319	      IN  SA = [bb \in Nat |-> Def(SA, bb)]
+   320	  <2>. USE RecursiveFcnOfNat
+   321	  <2>. QED BY <1>2, Isa
+   322	<1>4. SafeAt(b, v) = Def([bb \in Nat |-> SafeAt(bb, v)], b)
+   323	  BY <1>3 DEF SafeAt, Ballot, Def
+   324	<1>. QED BY <1>4 DEF Def
+   325	
+   326	===============================================================================
+[EXIT 0]
+
+[AGENT] The failed dependency step is due `c # -1` implying `c` is in the recursive prefix; I’ll add that arithmetic fact explicitly.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
+              \\A i \\in 0..(n-1) : g[i] = h[i]
+        PROVE  Def(g, n) = Def(h, n)
+-  BY Z3 DEF Def
++  <2>1. \\A c \\in -1..(n-1) : c # -1 => c \\in 0..(n-1)
++    BY SMT
++  <2>. QED BY <2>1 DEF Def
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 325, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 328, character 79:
+[ERROR]: 4/16 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I suspect a name-shadowing issue with the proof rule’s formal `Def`; I’ll rename the local operator and retry.
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/\\bDef\\(/D(/g; s/DEF Def/DEF D/g; s/DEFINE D/DEFINE D/g' VoteProof_SafeAtProp.tla
+nl -ba VoteProof_SafeAtProp.tla | sed -n '299,330p'
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+   299	PROOF
+   300	<1>. TAKE b \in Ballot, v \in Value
+   301	<1>. DEFINE D(f, bb) ==
+   302	      \/ bb = 0
+   303	      \/ \E Q \in Quorum :
+   304	           /\ \A a \in Q : maxBal[a] \geq bb
+   305	           /\ \E c \in -1..(bb-1) :
+   306	                /\ (c # -1) => /\ f[c]
+   307	                               /\ \A a \in Q :
+   308	                                    \A w \in Value :
+   309	                                        VotedFor(a, c, w) => (w = v)
+   310	                /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+   311	<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
+   312	             \A i \in 0..(n-1) : g[i] = h[i]
+   313	       PROVE  D(g, n) = D(h, n)
+   314	  <2>1. \A c \in -1..(n-1) : c # -1 => c \in 0..(n-1)
+   315	    BY SMT
+   316	  <2>. QED BY <2>1 DEF D
+   317	<1>2. \A n \in Nat :
+   318	        \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
+   319	  BY <1>1
+   320	<1>3. LET SA[bb \in Nat] == D(SA, bb)
+   321	      IN  SA = [bb \in Nat |-> D(SA, bb)]
+   322	  <2>. USE RecursiveFcnOfNat
+   323	  <2>. QED BY <1>2, Isa
+   324	<1>4. SafeAt(b, v) = D([bb \in Nat |-> SafeAt(bb, v)], b)
+   325	  BY <1>3 DEF SafeAt, Ballot, Def
+   326	<1>. QED BY <1>4 DEF D
+   327	
+   328	===============================================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tl
+... (truncated) ...
+ters 21-62
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 188, characters 26-50
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Renaming helped reveal a leftover reference; I’ll correct it and continue.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>3 DEF SafeAt, Ballot, Def
++  BY <1>3 DEF SafeAt, Ballot, D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 325, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d)]
+                    IN  SA[b],
+    
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 328, character 79:
+[ERROR]: 4/16 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll check local proof syntax examples for explicit theorem instantiation rather than guessing.
+
+[CMD] /bin/bash -lc "grep -R \"WITH .*<-\\|INSTANCE .*WITH\\|USE .*WITH\" -n /opt/tlapm15/lib/tlaps *.tla | head -120"
+grep: /opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/kodkodi-1.2.16/jni/x86-darwin/libzchaff.jnilib: Permission denied
+grep: /opt/tlapm15/lib/tlaps/Isabelle/contrib/kodkodi-1.2.16/jni/x86-darwin/libzchaff.jnilib: Permission denied
+[EXIT 0]
+
+[CMD] /bin/bash -lc "grep -R --exclude-dir=heaps --exclude-dir=Isabelle2011-1 \"WITH .*<-\\|INSTANCE .*WITH\\|USE .*WITH\" -n /opt/tlapm15/lib/tlaps *.tla | head -120"
+[EXIT 0]
+
+[AGENT] The local theorem form differs from the library proof file, so I’m checking the exact admitted statement now.
+
+[CMD] /bin/bash -lc "sed -n '270,286p' VoteProof_SafeAtProp.tla && grep -R --exclude-dir=heaps --exclude-dir=Isabelle --exclude-dir=Isabelle2011-1 \"BY .*RecursiveFcnOfNat\" -n /opt/tlapm15/lib/tlaps *.tla | head -40"
+(* To prove the desired property of SafeAt, we use the following proof     *)
+(* rule.  It will eventually be in a standard module--probably in TLAPS.   *)
+(* However, for now, we put it here.                                       *)
+(***************************************************************************)
+
+THEOREM RecursiveFcnOfNat ==
+          ASSUME NEW D(_,_), 
+                 \A n \in Nat : 
+                    \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
+          PROVE  LET f[n \in Nat] == D(f, n)
+                 IN  f = [n \in Nat |-> D(f, n)]
+PROOF OMITTED
+
+(***************************************************************************)
+(* Here is the theorem that essentially asserts that SafeAt(b, v) equals   *)
+(* the right-hand side of its definition.                                  *)
+(***************************************************************************)
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:284:<1>2. ff = [n \in Nat |-> PRDef(ff,n)]  BY <1>1, RecursiveFcnOfNat, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:383:  BY <1>1, RecursiveFcnOfNat, Isa
+[EXIT 0]
+
+[AGENT] I noticed an accidental rename in the admitted theorem statement from a broad replacement. I’m restoring that first, then continuing.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-THEOREM RecursiveFcnOfNat ==
+-          ASSUME NEW D(_,_), 
++THEOREM RecursiveFcnOfNat ==
++          ASSUME NEW Def(_,_), 
+                  \\A n \\in Nat : 
+-                    \\A g, h : (\\A i \\in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
++                    \\A g, h : (\\A i \\in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+           PROVE  LET f[n \\in Nat] == D(f, n)
+                  IN  f = [n \\in Nat |-> D(f, n)]
+ PROOF OMITTED
+*** End Patch
+PATCH
+sed -n '275,285p' VoteProof_SafeAtProp.tla"
+Success. Updated the following files:
+M VoteProof_SafeAtProp.tla
+THEOREM RecursiveFcnOfNat ==
+          ASSUME NEW Def(_,_), 
+                 \A n \in Nat : 
+                    \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (Def(g, n) = Def(h, n))
+          PROVE  LET f[n \in Nat] == D(f, n)
+                 IN  f = [n \in Nat |-> D(f, n)]
+PROOF OMITTED
+
+(***************************************************************************)
+(* Here is the theorem that essentially asserts that SafeAt(b, v) equals   *)
+(* the right-hand side of its definition.                                  *)
+[EXIT 0]
+
+[AGENT] That patch still left the conclusion wrong; I’m restoring the admitted theorem exactly to avoid illegal preamble changes.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-          PROVE  LET f[n \\in Nat] == D(f, n)
+-                 IN  f = [n \\in Nat |-> D(f, n)]
++          PROVE  LET f[n \\in Nat] == Def(f, n)
++                 IN  f = [n \\in Nat |-> Def(f, n)]
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 325, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d)]
+                    IN  SA[b],
+    
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 328, character 79:
+[ERROR]: 4/16 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll make the dependency proof more explicit and use a named local function for the fixed-point result.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
+              \\A i \\in 0..(n-1) : g[i] = h[i]
+        PROVE  D(g, n) = D(h, n)
+   <2>1. \\A c \\in -1..(n-1) : c # -1 => c \\in 0..(n-1)
+     BY SMT
+-  <2>. QED BY <2>1 DEF D
++  <2>2. \\A c \\in -1..(n-1) : c # -1 => g[c] = h[c]
++    BY <2>1
++  <2>. QED BY <2>2, SMT DEF D
+@@
+-<1>3. LET SA[bb \\in Nat] == D(SA, bb)
+-      IN  SA = [bb \\in Nat |-> D(SA, bb)]
+-  <2>. USE RecursiveFcnOfNat
+-  <2>. QED BY <1>2, Isa
+-<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>3 DEF SafeAt, Ballot, D
++<1>. DEFINE F[bb \\in Nat] == D(F, bb)
++<1>3. F = [bb \\in Nat |-> D(F, bb)]
++  BY <1>2, RecursiveFcnOfNat, Isa
++<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>3 DEF F, SafeAt, Ballot, D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 326, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \
+... (truncated) ...
+                                   DidNotVoteIn(a, d),
+                  F == CHOOSE F : F = [bb \in Nat |-> D(F, bb)],
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 329, character 79:
+[ERROR]: 4/19 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll search local installed examples more carefully for theorem substitution syntax.
+
+[CMD] /bin/bash -lc "find /opt/tlapm15/lib/tlaps -name '*.tla' -maxdepth 2 -print0 | xargs -0 grep -n \"WITH\\|INSTANCE\\|RecursiveFcnOfNat\" | head -200"
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla:7:LOCAL INSTANCE SequenceTheorems
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla:8:LOCAL INSTANCE NaturalsInduction
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla:9:LOCAL INSTANCE WellFoundedInduction
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla:10:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:88:THEOREM RecursiveFcnOfNat ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:284:<1>2. ff = [n \in Nat |-> PRDef(ff,n)]  BY <1>1, RecursiveFcnOfNat, Isa
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:294:THEOREM RecursiveFcnOfNatType ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:328:THEOREM RecursiveFcnOfNatUnique ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:383:  BY <1>1, RecursiveFcnOfNat, Isa
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:7:LOCAL INSTANCE NaturalsInduction
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:8:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/SequenceTheorems.tla:6:LOCAL INSTANCE NaturalsInduction
+/opt/tlapm15/lib/tlaps/SequenceTheorems.tla:7:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/SequencesExt.tla:11:LOCAL INSTANCE Sequences
+/opt/tlapm15/lib/tlaps/SequencesExt.tla:12:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/SequencesExt.tla:13:LOCAL INSTANCE FiniteSets
+/opt/tlapm15/lib/tlaps/SequencesExt.tla:14:\* LOCAL INSTANCE FiniteSetsExt
+/opt/tlapm15/lib/tlaps/SequencesExt.tla:15:LOCAL INSTANCE Functions
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:7:LOCAL INSTANCE SequenceTheorems
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:8:LOCAL INSTANCE NaturalsInduction
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:9:LOCAL INSTANCE WellFoundedInduction
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:10:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/Bags.tla:15:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/FiniteSets.tla:2:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/FiniteSets.tla:3:LOCAL INSTANCE Sequences
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:66:THEOREM RecursiveFcnOfNat ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:92:THEOREM RecursiveFcnOfNatType ==
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla:109:THEOREM RecursiveFcnOfNatUnique ==
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:13:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:16:LOCAL INSTANCE Naturals
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '50,80p' /opt/tlapm15/lib/tlaps/NaturalsInduction.tla && sed -n '360,388p' /opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla"
+(* The following theorem expresses the ``least-number principle'':         *)
+(* if P(n) is true for some natural number n then there is a               *)
+(* smallest natural number for which P is true. It could be derived in     *)
+(* module WellFoundedInduction as a corollary of the fact that the natural *)
+(* numbers are well ordered, but we give a direct proof.                   *)
+(***************************************************************************)
+THEOREM SmallestNatural ==
+  ASSUME NEW P(_), NEW n \in Nat, P(n)
+  PROVE  \E m \in Nat : /\ P(m)
+                        /\ \A k \in 0 .. m-1 : ~ P(k)
+
+(***************************************************************************)
+(* The following theorem says that a recursively defined function f over   *)
+(* the natural numbers is well-defined if for every n \in Nat the          *)
+(* definition of f[n] depends only on arguments smaller than n.            *)
+(***************************************************************************)
+THEOREM RecursiveFcnOfNat ==
+  ASSUME NEW Def(_,_), 
+         ASSUME NEW n \in Nat, NEW g, NEW h,
+                \A i \in 0..(n-1) : g[i] = h[i] 
+         PROVE  Def(g, n) = Def(h, n)
+  PROVE  LET f[n \in Nat] == Def(f, n)
+         IN  f = [n \in Nat |-> Def(f, n)]
+
+(***************************************************************************)
+(* The following theorem NatInductiveDef is what you use to justify a      *)
+(* function defined by primitive recursion over the naturals.    
+... (truncated) ...
+NatInductiveDefHypothesis(f, f0, Def(_,_)) == 
+   (f =  CHOOSE g : g = [i \in Nat |-> IF i = 0 THEN f0 ELSE Def(g[i-1], i)])
+NatInductiveDefConclusion(f, f0, Def(_,_)) ==
+(***************************************************************************)
+(* The following theorems are analogous to the preceding ones but for      *)
+(* functions defined over intervals of natural numbers.                    *)
+(***************************************************************************)
+
+FiniteNatInductiveDefHypothesis(f, c, Def(_,_), m, n) == 
+   (f =  CHOOSE g : g = [i \in m..n |-> IF i = m THEN c ELSE Def(g[i-1], i)])
+FiniteNatInductiveDefConclusion(f, c, Def(_,_), m, n) ==
+     f = [i \in m..n |-> IF i = m THEN c ELSE Def(f[i-1], i)]
+                                       
+THEOREM FiniteNatInductiveDef ==
+  ASSUME NEW Def(_,_), NEW f, NEW c, NEW m \in Nat, NEW n \in Nat,
+         FiniteNatInductiveDefHypothesis(f, c, Def, m, n)
+  PROVE  FiniteNatInductiveDefConclusion(f, c, Def, m, n)
+<1>. DEFINE PRDef(g,i) == IF i <= m THEN c ELSE Def(g[i-1], i)
+            ff[i \in Nat] == PRDef(ff,i)
+            gg == [i \in m..n |-> ff[i]]
+<1>1. ASSUME NEW i \in Nat, NEW g, NEW h,
+             \A j \in 0 .. i-1 : g[j] = h[j]
+      PROVE  PRDef(g,i) = PRDef(h,i)
+  BY <1>1, Z3
+<1>. HIDE DEF PRDef
+<1>2. ff = [i \in Nat |-> PRDef(ff,i)]
+  BY <1>1, RecursiveFcnOfNat, Isa
+<1>. HIDE DEF ff
+<1>. USE DEF PRDef
+<1>3. gg = [i \in m..n |-> IF i=m THEN c ELSE Def(gg[i-1],i)]
+  BY <1>2, Z3
+<1>. HIDE DEF gg
+[EXIT 0]
+
+[AGENT] The local copy of `RecursiveFcnOfNat` uses an older shape. I’ll try matching its conclusion literally.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>. DEFINE F[bb \\in Nat] == D(F, bb)
+-<1>3. F = [bb \\in Nat |-> D(F, bb)]
+-  BY <1>2, RecursiveFcnOfNat, Isa
+-<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>3 DEF F, SafeAt, Ballot, D
++<1>3. LET F[bb \\in Nat] == D(F, bb)
++      IN  F = [bb \\in Nat |-> D(F, bb)]
++  BY <1>2, RecursiveFcnOfNat, Isa
++<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>3 DEF SafeAt, Ballot, D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 326, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d)]
+                    IN  SA[b],
+    
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 329, character 79:
+[ERROR]: 4/19 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll compare the diff now to ensure only the final proof remains changed.
+
+[CMD] /bin/bash -lc "git diff -- VoteProof_SafeAtProp.tla | sed -n '1,220p' && nl -ba VoteProof_SafeAtProp.tla | sed -n '270,335p'"
+diff --git a/VoteProof_SafeAtProp.tla b/VoteProof_SafeAtProp.tla
+index 45a254e..5a27752 100644
+--- a/VoteProof_SafeAtProp.tla
++++ b/VoteProof_SafeAtProp.tla
+@@ -296,6 +296,34 @@ THEOREM SafeAtProp ==
+                                     \A w \in Value :
+                                         VotedFor(a, c, w) => (w = v)
+                 /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)
+-PROOF OBVIOUS
++PROOF
++<1>. TAKE b \in Ballot, v \in Value
++<1>. DEFINE D(f, bb) ==
++      \/ bb = 0
++      \/ \E Q \in Quorum :
++           /\ \A a \in Q : maxBal[a] \geq bb
++           /\ \E c \in -1..(bb-1) :
++                /\ (c # -1) => /\ f[c]
++                               /\ \A a \in Q :
++                                    \A w \in Value :
++                                        VotedFor(a, c, w) => (w = v)
++                /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
++<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
++             \A i \in 0..(n-1) : g[i] = h[i]
++       PROVE  D(g, n) = D(h, n)
++  <2>1. \A c \in -1..(n-1) : c # -1 => c \in 0..(n-1)
++    BY SMT
++  <2>2. \A c \in -1..(n-1) : c # -1 => g[c] = h[c]
++    BY <2>1
++  <2>. QED BY <2>2, SMT DEF D
++<1>2. \A n \in Nat :
++        \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
++  BY <1>1
++<1>3. LET F[bb \in Nat] == D(F, bb)
++      IN  F = [bb \in Nat |-> D(F, bb)]
++  BY <1>2, RecursiveFcnOfNat, Isa
++<1>4. SafeAt(b, v) = D([bb \in Nat |-> SafeAt(bb, v)], b)
++  BY <1>3 DEF SafeAt, Ballot, D
++<1>. QE
+... (truncated) ...
+                   VotedFor(a, c, w) => (w = v)
+   298	                /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)
+   299	PROOF
+   300	<1>. TAKE b \in Ballot, v \in Value
+   301	<1>. DEFINE D(f, bb) ==
+   302	      \/ bb = 0
+   303	      \/ \E Q \in Quorum :
+   304	           /\ \A a \in Q : maxBal[a] \geq bb
+   305	           /\ \E c \in -1..(bb-1) :
+   306	                /\ (c # -1) => /\ f[c]
+   307	                               /\ \A a \in Q :
+   308	                                    \A w \in Value :
+   309	                                        VotedFor(a, c, w) => (w = v)
+   310	                /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+   311	<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
+   312	             \A i \in 0..(n-1) : g[i] = h[i]
+   313	       PROVE  D(g, n) = D(h, n)
+   314	  <2>1. \A c \in -1..(n-1) : c # -1 => c \in 0..(n-1)
+   315	    BY SMT
+   316	  <2>2. \A c \in -1..(n-1) : c # -1 => g[c] = h[c]
+   317	    BY <2>1
+   318	  <2>. QED BY <2>2, SMT DEF D
+   319	<1>2. \A n \in Nat :
+   320	        \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
+   321	  BY <1>1
+   322	<1>3. LET F[bb \in Nat] == D(F, bb)
+   323	      IN  F = [bb \in Nat |-> D(F, bb)]
+   324	  BY <1>2, RecursiveFcnOfNat, Isa
+   325	<1>4. SafeAt(b, v) = D([bb \in Nat |-> SafeAt(bb, v)], b)
+   326	  BY <1>3 DEF SafeAt, Ballot, D
+   327	<1>. QED BY <1>4 DEF D
+   328	
+   329	===============================================================================
+[EXIT 0]
+
+[AGENT] I’m going to use the admitted recursion theorem to prove existence first, which should make the `CHOOSE` unfolding direct.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>3. LET F[bb \\in Nat] == D(F, bb)
+-      IN  F = [bb \\in Nat |-> D(F, bb)]
+-  BY <1>2, RecursiveFcnOfNat, Isa
+-<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>3 DEF SafeAt, Ballot, D
++<1>3. \\E F : F = [bb \\in Nat |-> D(F, bb)]
++  <2>. DEFINE F[bb \\in Nat] == D(F, bb)
++  <2>1. F = [bb \\in Nat |-> D(F, bb)]
++    BY <1>2, RecursiveFcnOfNat, Isa
++  <2>. QED BY <2>1
++<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>3 DEF SafeAt, Ballot, D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 328, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                      
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 331, character 79:
+[ERROR]: 4/21 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The recursive lemma still isn’t instantiating cleanly; I’ll hide the local definition like the library examples do before applying it.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>2. \\A n \\in Nat :
+         \\A g, h : (\\A i \\in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
+   BY <1>1
++<1>. HIDE DEF D
+ <1>3. \\E F : F = [bb \\in Nat |-> D(F, bb)]
+   <2>. DEFINE F[bb \\in Nat] == D(F, bb)
+   <2>1. F = [bb \\in Nat |-> D(F, bb)]
+     BY <1>2, RecursiveFcnOfNat, Isa
+   <2>. QED BY <2>1
++<1>. USE DEF D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: CONSTANT_Ballot_, STATE_D_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 330, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidN
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 333, character 79:
+[ERROR]: 3/21 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Recursive existence is now accepted; I’m addressing the two remaining unfold/equality obligations.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+   <2>1. \\A c \\in -1..(n-1) : c # -1 => c \\in 0..(n-1)
+     BY SMT
+   <2>2. \\A c \\in -1..(n-1) : c # -1 => g[c] = h[c]
+-    BY <2>1
++    BY <2>1, SMT
+@@
+-<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>3 DEF SafeAt, Ballot, D
++<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>3, SMT DEF SafeAt, Ballot, D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 330, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  Ballot == Nat,
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  SafeAt(b, v) ==
+                    LET SA ==
+                          CHOOSE SA :
+                            SA
+                            = [bb \in Ballot |->
+                                 \/ bb = 0
+                                 \/ \E Q \in Quorum :
+                                   /\ \A a \in Q : maxBal[a] >= bb
+                                   /\ \E c \in -1..bb - 1 :
+                                   /\ c # -1
+                                   => (
+                                   /\ SA[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                   /\ \A d \in c + 1..bb - 1
+... (truncated) ...
+                            /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  <1>4 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 333, character 79:
+[ERROR]: 3/23 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll label the recursive-dependency assumption explicitly, then split the unfolding through a chosen fixed point.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
+-             \\A i \\in 0..(n-1) : g[i] = h[i]
++<1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
++             H == \\A i \\in 0..(n-1) : g[i] = h[i]
+        PROVE  D(g, n) = D(h, n)
+@@
+   <2>2. \\A c \\in -1..(n-1) : c # -1 => g[c] = h[c]
+-    BY <2>1, SMT
++    BY <2>1, H, SMT
+@@
+ <1>. USE DEF D
+-<1>4. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>3, SMT DEF SafeAt, Ballot, D
+-<1>. QED BY <1>4 DEF D
++<1>. DEFINE S == CHOOSE F : F = [bb \\in Nat |-> D(F, bb)]
++<1>4. S = [bb \\in Nat |-> D(S, bb)]
++  BY <1>3 DEF S
++<1>5. SafeAt(b, v) = S[b]
++  BY <1>4 DEF S, SafeAt, Ballot, D
++<1>6. \\A bb \\in Nat : SafeAt(bb, v) = S[bb]
++  BY <1>4 DEF S, SafeAt, Ballot, D
++<1>7. D(S, b) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>6, SMT DEF D
++<1>8. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>4, <1>5, <1>7
++<1>. QED BY <1>8 DEF D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+Success. Updated the following files:
+M VoteProof_SafeAtProp.tla
+File "./VoteProof_SafeAtProp.tla", line 312, character 15
+Unexpected ==
+File "<unknown>":
+Error: Could not parse "./VoteProof_SafeAtProp.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] That label syntax isn’t accepted here; I’ll revert to plain assumptions and reference the enclosing step directly.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
+-             H == \\A i \\in 0..(n-1) : g[i] = h[i]
++<1>1. ASSUME NEW n \\in Nat, NEW g, NEW h,
++             \\A i \\in 0..(n-1) : g[i] = h[i]
+@@
+   <2>2. \\A c \\in -1..(n-1) : c # -1 => g[c] = h[c]
+-    BY <2>1, H, SMT
++    BY <1>1, <2>1, SMT
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+[EXIT 255]
+
+[AGENT] The run ended abnormally without a visible diagnostic, so I’m rerunning with full output and then isolating the failing obligation.
+
+[CMD] /bin/bash -lc '/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla; echo EXIT:$?'
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_DidNotVoteIn_, STATE_VotedFor_, CONSTANT_Ballot_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 339, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT v \in Value,
+                  D(f, bb) ==
+                    \/ bb = 0
+                    \/ \E Q \in Quorum :
+                          /\ \A a \in Q : maxBal[a] >= bb
+                          /\ \E c \in -1..bb - 1 :
+                                /\ c # -1
+                                   => (
+                         
+... (truncated) ...
+                            DidNotVoteIn(a, d),
+                  S == CHOOSE F : F = [bb \in Nat |-> D(F, bb)],
+                  <1>8 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 342, character 79:
+[ERROR]: 3/34 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+
+EXIT:3
+[EXIT 0]
+
+[AGENT] Only the final substitutions remain; I’ll prove them pointwise instead of asking SMT to rewrite the whole recursive body.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_SafeAtProp.tla | sed -n '310,345p'"
+   310	                /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
+   311	<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
+   312	             \A i \in 0..(n-1) : g[i] = h[i]
+   313	       PROVE  D(g, n) = D(h, n)
+   314	  <2>1. \A c \in -1..(n-1) : c # -1 => c \in 0..(n-1)
+   315	    BY SMT
+   316	  <2>2. \A c \in -1..(n-1) : c # -1 => g[c] = h[c]
+   317	    BY <1>1, <2>1, SMT
+   318	  <2>. QED BY <2>2, SMT DEF D
+   319	<1>2. \A n \in Nat :
+   320	        \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
+   321	  BY <1>1
+   322	<1>. HIDE DEF D
+   323	<1>3. \E F : F = [bb \in Nat |-> D(F, bb)]
+   324	  <2>. DEFINE F[bb \in Nat] == D(F, bb)
+   325	  <2>1. F = [bb \in Nat |-> D(F, bb)]
+   326	    BY <1>2, RecursiveFcnOfNat, Isa
+   327	  <2>. QED BY <2>1
+   328	<1>. USE DEF D
+   329	<1>. DEFINE S == CHOOSE F : F = [bb \in Nat |-> D(F, bb)]
+   330	<1>4. S = [bb \in Nat |-> D(S, bb)]
+   331	  BY <1>3 DEF S
+   332	<1>5. SafeAt(b, v) = S[b]
+   333	  BY <1>4 DEF S, SafeAt, Ballot, D
+   334	<1>6. \A bb \in Nat : SafeAt(bb, v) = S[bb]
+   335	  BY <1>4 DEF S, SafeAt, Ballot, D
+   336	<1>7. D(S, b) = D([bb \in Nat |-> SafeAt(bb, v)], b)
+   337	  BY <1>6, SMT DEF D
+   338	<1>8. SafeAt(b, v) = D([bb \in Nat |-> SafeAt(bb, v)], b)
+   339	  BY <1>4, <1>5, <1>7
+   340	<1>. QED BY <1>8 DEF D
+   341	
+   342	===============================================================================
+[EXIT 0]
+
+[AGENT] I’m adding the missing fact that `b` is a natural and using it for function application.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>. USE DEF D
+ <1>. DEFINE S == CHOOSE F : F = [bb \\in Nat |-> D(F, bb)]
+ <1>4. S = [bb \\in Nat |-> D(S, bb)]
+   BY <1>3 DEF S
+-<1>5. SafeAt(b, v) = S[b]
+-  BY <1>4 DEF S, SafeAt, Ballot, D
+-<1>6. \\A bb \\in Nat : SafeAt(bb, v) = S[bb]
++<1>5. b \\in Nat
++  BY DEF Ballot
++<1>6. SafeAt(b, v) = S[b]
++  BY <1>4, <1>5 DEF S, SafeAt, Ballot, D
++<1>7. \\A bb \\in Nat : SafeAt(bb, v) = S[bb]
+   BY <1>4 DEF S, SafeAt, Ballot, D
+-<1>7. D(S, b) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>6, SMT DEF D
+-<1>8. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>4, <1>5, <1>7
+-<1>. QED BY <1>8 DEF D
++<1>8. D(S, b) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>7, SMT DEF D
++<1>9. S[b] = D(S, b)
++  BY <1>4, <1>5
++<1>10. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>6, <1>8, <1>9
++<1>. QED BY <1>10 DEF D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_DidNotVoteIn_, STATE_VotedFor_, CONSTANT_Ballot_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 339, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT v \in Value,
+                  D(f, bb) ==
+                    \/ bb = 0
+                    \/ \E Q \in Quorum :
+                          /\ \A a \in Q : maxBal[a] >= bb
+                          /\ \E c \in -1..bb - 1 :
+                                /\ c # -1
+                                   => (
+                                   /\ f[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                /\ \A d \in 
+... (truncated) ...
+                                  DidNotVoteIn(a, d),
+                  S == CHOOSE F : F = [bb \in Nat |-> D(F, bb)],
+                  <1>10 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 346, character 79:
+[ERROR]: 2/39 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll replace the broad SMT rewrite with the dependency lemma already proved for `D`.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>8. D(S, b) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>7, SMT DEF D
+-<1>9. S[b] = D(S, b)
++<1>8. \\A i \\in 0..(b-1) : S[i] = [bb \\in Nat |-> SafeAt(bb, v)][i]
++  BY <1>7, SMT
++<1>9. D(S, b) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>1, <1>5, <1>8
++<1>10. S[b] = D(S, b)
+   BY <1>4, <1>5
+-<1>10. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+-  BY <1>6, <1>8, <1>9
+-<1>. QED BY <1>10 DEF D
++<1>11. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
++  BY <1>6, <1>9, <1>10
++<1>. QED BY <1>11 DEF D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 339, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT v \in Value,
+                  D(f, bb) ==
+                    \/ bb = 0
+                    \/ \E Q \in Quorum :
+                          /\ \A a \in Q : maxBal[a] >= bb
+                          /\ \E c \in -1..bb - 1 :
+                                /\ c # -1
+                                   => (
+                                   /\ f[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a
+... (truncated) ...
+                                  DidNotVoteIn(a, d),
+                  S == CHOOSE F : F = [bb \in Nat |-> D(F, bb)],
+                  <1>11 
+           PROVE  SafeAt(b, v)
+                  = (\/ b = 0
+                     \/ \E Q \in Quorum :
+                           /\ \A a \in Q : maxBal[a] >= b
+                           /\ \E c \in -1..b - 1 :
+                                 /\ c # -1
+                                   => (
+                                   /\ SafeAt(c, v)
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                 /\ \A d \in c + 1..b - 1, a \in Q :
+                                   DidNotVoteIn(a, d))
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 348, character 79:
+[ERROR]: 2/43 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I’ll add explicit pointwise function-application facts for the remaining rewrites.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+-<1>8. \\A i \\in 0..(b-1) : S[i] = [bb \\in Nat |-> SafeAt(bb, v)][i]
+-  BY <1>7, SMT
++<1>8. \\A i \\in 0..(b-1) : S[i] = [bb \\in Nat |-> SafeAt(bb, v)][i]
++  <2>. TAKE i \\in 0..(b-1)
++  <2>1. i \\in Nat
++    BY <1>5, SMT
++  <2>2. SafeAt(i, v) = S[i]
++    BY <1>7, <2>1
++  <2>3. [bb \\in Nat |-> SafeAt(bb, v)][i] = SafeAt(i, v)
++    BY <2>1
++  <2>. QED BY <2>2, <2>3
+@@
+ <1>11. SafeAt(b, v) = D([bb \\in Nat |-> SafeAt(bb, v)], b)
+   BY <1>6, <1>9, <1>10
+-<1>. QED BY <1>11 DEF D
++<1>12. \\A c \\in -1..(b-1) : c # -1 => [bb \\in Nat |-> SafeAt(bb, v)][c] = SafeAt(c, v)
++  <2>. TAKE c \\in -1..(b-1)
++  <2>. ASSUME c # -1
++  <2>1. c \\in Nat
++    BY <1>5, SMT
++  <2>. QED BY <2>1
++<1>. QED BY <1>11, <1>12 DEF D
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+Success. Updated the following files:
+M VoteProof_SafeAtProp.tla
+File "./VoteProof_SafeAtProp.tla", line 355, character 21
+Unexpected <2>1.
+File "<unknown>":
+Error: Could not parse "./VoteProof_SafeAtProp.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The nested assumption syntax needs a labeled asserted implication; I’ll fix that parse issue.
+
+[CMD] /bin/bash -lc "nl -ba VoteProof_SafeAtProp.tla | sed -n '345,365p'
+apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>12. \\A c \\in -1..(b-1) : c # -1 => [bb \\in Nat |-> SafeAt(bb, v)][c] = SafeAt(c, v)
+   <2>. TAKE c \\in -1..(b-1)
+-  <2>. ASSUME c # -1
+-  <2>1. c \\in Nat
++  <2>1. ASSUME c # -1
++        PROVE c \\in Nat
+     BY <1>5, SMT
+-  <2>. QED BY <2>1
++  <2>2. c # -1 => [bb \\in Nat |-> SafeAt(bb, v)][c] = SafeAt(c, v)
++    BY <2>1
++  <2>. QED BY <2>2
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 357, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Value,
+                  NEW CONSTANT Acceptor,
+                  NEW CONSTANT Quorum,
+                  QA ==
+                    /\ \A Q \in Quorum : Q \subseteq Acceptor
+                    /\ \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {},
+                  NEW VARIABLE votes,
+                  NEW VARIABLE maxBal,
+                  NEW CONSTANT b \in Ballot,
+                  NEW CONSTANT v \in Value,
+                  D(f, bb) ==
+                    \/ bb = 0
+                    \/ \E Q \in Quorum :
+                          /\ \A a \in Q : maxBal[a] >= bb
+                          /\ \E c \in -1..bb - 1 :
+                                /\ c # -1
+                                   => (
+                                   /\ f[c]
+                                   /\ \A a \in Q :
+                                   \A w \in Value :
+                                   VotedFor(a, c, w) => w = v)
+                                /\ \A d \in c + 1..bb - 1, a \in Q :
+                                   DidNotVoteIn(a, d),
+                  S == CHOOSE F : F = [bb \in Nat |-> D(F, bb)],
+                  NEW CONSTANT c \in 
+                  -1..b - 1,
+                  <1>5 ,
+                  SMT 
+           PROVE  c \in Nat
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 363, character 79:
+[ERROR]: 1/63 obligations failed.
+There were backend errors processing module `"VoteProof_SafeAtProp"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The implication assumption wasn’t available in the subproof; I’ll simplify that last helper using the existing interval fact.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: VoteProof_SafeAtProp.tla
+@@
+ <1>12. \\A c \\in -1..(b-1) : c # -1 => [bb \\in Nat |-> SafeAt(bb, v)][c] = SafeAt(c, v)
+-  <2>. TAKE c \\in -1..(b-1)
+-  <2>1. ASSUME c # -1
+-        PROVE c \\in Nat
+-    BY <1>5, SMT
+-  <2>2. c # -1 => [bb \\in Nat |-> SafeAt(bb, v)][c] = SafeAt(c, v)
+-    BY <2>1
+-  <2>. QED BY <2>2
++  BY <1>5, SMT
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps VoteProof_SafeAtProp.tla"
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "./VoteProof_SafeAtProp.tla", line 1, character 1 to line 357, character 79:
+[INFO]: All 57 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves all obligations. I’ll run the required checker to verify legality and final PASS.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py VoteProof_SafeAtProp.tla'
+Checking: VoteProof_SafeAtProp.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_, STATE_D_
+
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ❌ FAIL — tlapm exit code 255
+
+Result written to: /tmp/codex_bench_VoteProof_SafeAtProp_m6jg2bj0/VoteProof_SafeAtProp.result
+[EXIT 1]
+
+[AGENT] Direct TLAPS passed, but the checker got a non-proof exit; I’m inspecting its captured result details.
+
+[CMD] /bin/bash -lc 'cat VoteProof_SafeAtProp.result && python3 check_proof.py --timeout 300 VoteProof_SafeAtProp.tla'
+Checking: VoteProof_SafeAtProp.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/FiniteSets.tlaps/FiniteSets.thy" *)
+(* fingerprints written in ".tlacache/FiniteSets.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/VoteProof_SafeAtProp.tlaps/VoteProof_SafeAtProp.thy" *)
+(* fingerprints written in ".tlacache/VoteProof_SafeAtProp.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/FiniteSets.tla", line 1, character 1 to line 23, character 77:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_, STATE_D_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_DidNotVoteIn_, STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+File "/tmp/tlaps_check_z7fjrf9z/VoteProof_SafeAtProp.tla", line 1, character 1 to line 357, character 79:
+[INFO]: All 57 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_VoteProof_SafeAtProp_m6jg2bj0/VoteProof_SafeAtProp.result
+[EXIT 0]
+
+[AGENT] Checker passes with a longer timeout. I’ll do a final diff check and update the plan.
+
+[CMD] /bin/bash -lc "git diff -- VoteProof_SafeAtProp.tla | sed -n '1,220p' && tail -n 80 VoteProof_SafeAtProp.result"
+diff --git a/VoteProof_SafeAtProp.tla b/VoteProof_SafeAtProp.tla
+index 45a254e..4d1f98e 100644
+--- a/VoteProof_SafeAtProp.tla
++++ b/VoteProof_SafeAtProp.tla
+@@ -296,6 +296,62 @@ THEOREM SafeAtProp ==
+                                     \A w \in Value :
+                                         VotedFor(a, c, w) => (w = v)
+                 /\ \A d \in (c+1)..(b-1), a \in Q : DidNotVoteIn(a, d)
+-PROOF OBVIOUS
++PROOF
++<1>. TAKE b \in Ballot, v \in Value
++<1>. DEFINE D(f, bb) ==
++      \/ bb = 0
++      \/ \E Q \in Quorum :
++           /\ \A a \in Q : maxBal[a] \geq bb
++           /\ \E c \in -1..(bb-1) :
++                /\ (c # -1) => /\ f[c]
++                               /\ \A a \in Q :
++                                    \A w \in Value :
++                                        VotedFor(a, c, w) => (w = v)
++                /\ \A d \in (c+1)..(bb-1), a \in Q : DidNotVoteIn(a, d)
++<1>1. ASSUME NEW n \in Nat, NEW g, NEW h,
++             \A i \in 0..(n-1) : g[i] = h[i]
++       PROVE  D(g, n) = D(h, n)
++  <2>1. \A c \in -1..(n-1) : c # -1 => c \in 0..(n-1)
++    BY SMT
++  <2>2. \A c \in -1..(n-1) : c # -1 => g[c] = h[c]
++    BY <1>1, <2>1, SMT
++  <2>. QED BY <2>2, SMT DEF D
++<1>2. \A n \in Nat :
++        \A g, h : (\A i \in 0..(n-1) : g[i] = h[i]) => (D(g, n) = D(h, n))
++  BY <1>1
++<1>. HIDE DEF D
++<1>3. \E F : F = [bb \in Nat |-> D(F, bb)]
++  <2>. DEFINE F[bb \in Nat] == D(F, bb)
++  <2>1. F = [bb \in Nat |-> D(F, bb)]
++    BY <1>2, RecursiveFcnOfNat, Isa
++  <2>. QED BY <2>1
++<1>
+... (truncated) ...
+otedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_, STATE_D_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_VotedFor_, CONSTANT_Ballot_, STATE_DidNotVoteIn_
+
+** Unexpanded symbols: STATE_SafeAt_, STATE_DidNotVoteIn_, STATE_VotedFor_, CONSTANT_Ballot_
+
+** Unexpanded symbols: STATE_SafeAt_, CONSTANT_Ballot_
+
+File "/tmp/tlaps_check_z7fjrf9z/VoteProof_SafeAtProp.tla", line 1, character 1 to line 357, character 79:
+[INFO]: All 57 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+[EXIT 0]
+
+[AGENT] Implemented the final TLAPS proof in `VoteProof_SafeAtProp.tla:299`.
+
+- Replaced `PROOF OBVIOUS` with a complete proof using the admitted `RecursiveFcnOfNat` lemma.
+- Kept all earlier declarations, theorem statements, and `PROOF OMITTED` sections unchanged.
+- Verified direct TLAPS success: all 57 obligations proved.
+- Verified legality and final status with `python3 check_proof.py --timeout 300 VoteProof_SafeAtProp.tla`: PASS.
+
+Note: the checker’s default 120s timeout once returned `tlapm exit code 255`; rerunning with `--timeout 300` completed successfully and produced `✅ PASS`.

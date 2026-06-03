@@ -1,0 +1,2727 @@
+Benchmark: Paxos/PaxosHistVar_Invariant.tla
+Time: 1648s
+Tokens: 17,993,247 input / 44,659 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and nearby files first, then iterate directly with `tlapm` and the provided checker until it passes.
+
+[CMD] /bin/bash -lc 'ls -la'
+total 8032
+drwx------ 1 ubuntu ubuntu     116 May 26 01:35 .
+drwxrwxrwt 1 root   root    104026 May 26 01:35 ..
+-rwxr-xr-x 1 ubuntu ubuntu 7473264 May 23 03:25 check_proof_bin
+-rw-rw-r-- 1 ubuntu ubuntu     733 May 25 12:50 Consensus.tla
+drwxrwxr-x 1 ubuntu ubuntu     144 May 26 01:35 .git
+-rw-rw-r-- 1 ubuntu ubuntu    3570 May 25 12:50 PaxosHistVar_Invariant.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,240p' PaxosHistVar_Invariant.tla"
+------------------------------- MODULE PaxosHistVar_Invariant --------------------------
+
+EXTENDS Integers, TLAPS, NaturalsInduction
+
+CONSTANTS Acceptors, Values, Quorums
+
+ASSUME QuorumAssumption == 
+          /\ Quorums \subseteq SUBSET Acceptors
+          /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {}
+
+Ballots == Nat
+
+VARIABLES sent
+
+vars == <<sent>>
+
+Send(m) == sent' = sent \cup {m}
+
+None == CHOOSE v : v \notin Values
+
+Init == sent = {}
+
+Phase1a(b) == Send([type |-> "1a", bal |-> b])
+
+last_voted(a) == LET 2bs == {m \in sent: m.type = "2b" /\ m.acc = a}
+                 IN IF 2bs # {} THEN {m \in 2bs: \A m2 \in 2bs: m.bal >= m2.bal}
+                    ELSE {[bal |-> -1, val |-> None]}
+
+Phase1b(a) ==
+  \E m \in sent, r \in last_voted(a):
+     /\ m.type = "1a"
+     /\ \A m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.acc = a => m.bal > m2.bal
+     /\ Send([type |-> "1b", bal |-> m.bal,
+              maxVBal |-> r.bal, maxVal |-> r.val, acc |-> a])
+
+Phase2a(b) ==
+  /\ ~ \E m \in sent : (m.type = "2a") /\ (m.bal = b) 
+  /\ \E v \in Values, Q \in Quorums, S \in SUBSET {m \in sent : m.type = "1b" /\ m.bal = b}:
+       /\ \A a \in Q : \E m \in S : m.acc = a
+       /\ \/ \A m \in S : m.maxVBal = -1
+          \/ \E c \in 0..(b-1) : 
+               /\ \A m \in S : m.maxVBal =< c
+               /\ \E m \in S : /\ m.maxVBal = c
+                               /\ m.maxVal = v
+       /\ Send([type |-> "2a", bal |-> b, val |-> v])
+
+Phase2b(a) == 
+  \E m \in sent :
+    /\ m.type = "2a" 
+    /\ \A
+... (truncated) ...
+m.acc  = a
+
+-----------------------------------------------------------------------------
+
+Messages ==      [type : {"1a"}, bal : Ballots]
+            \cup [type : {"1b"}, bal : Ballots, maxVBal : Ballots \cup {-1},
+                    maxVal : Values \cup {None}, acc : Acceptors]
+            \cup [type : {"2a"}, bal : Ballots, val : Values]
+            \cup [type : {"2b"}, bal : Ballots, val : Values, acc : Acceptors]
+
+TypeOK == sent \in SUBSET Messages
+
+WontVoteIn(a, b) == /\ \A v \in Values : ~ VotedForIn(a, v, b)
+                    /\ \E m \in sent: m.type \in {"1b", "2b"} /\ m.acc = a /\ m.bal > b
+
+SafeAt(v, b) == 
+  \A b2 \in 0..(b-1) :
+    \E Q \in Quorums :
+      \A a \in Q : VotedForIn(a, v, b2) \/ WontVoteIn(a, b2)
+
+MsgInv ==
+  \A m \in sent : 
+    /\ m.type = "1b" => /\ VotedForIn(m.acc, m.maxVal, m.maxVBal) \/ m.maxVBal = -1
+                        /\ \A b \in m.maxVBal+1..m.bal-1: ~\E v \in Values: VotedForIn(m.acc, v, b)
+    /\ m.type = "2a" => /\ SafeAt(m.val, m.bal)
+                        /\ \A m2 \in sent : (m2.type = "2a" /\ m2.bal = m.bal) => m2 = m
+    /\ m.type = "2b" => \E m2 \in sent : /\ m2.type = "2a"
+                                         /\ m2.bal  = m.bal
+                                         /\ m2.val  = m.val
+
+Inv == TypeOK /\ MsgInv
+
+-----------------------------------------------------------------------------
+
+THEOREM Invariant == Spec => []Inv
+PROOF OBVIOUS
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg --files'
+check_proof_bin
+Consensus.tla
+PaxosHistVar_Invariant.tla
+[EXIT 0]
+
+[AGENT] The module is a compact Paxos history-variable spec. I’m going to check the companion module and the local TLAPS library surface so the proof uses only available facts and syntax.
+
+[CMD] /bin/bash -lc "sed -n '1,220p' Consensus.tla"
+----------------------------- MODULE Consensus -----------------------------
+
+EXTENDS Naturals, FiniteSets, TLAPS
+-----------------------------------------------------------------------------
+CONSTANTS Values 
+
+VARIABLES chosen 
+
+TypeOK ==
+    /\ chosen \subseteq Values
+    /\ IsFiniteSet(chosen)
+-----------------------------------------------------------------------------
+Init == chosen = {}
+
+Next == /\ chosen = {}
+        /\ \E v \in Values : chosen' = {v}
+        
+Spec == Init /\ [][Next]_chosen
+-----------------------------------------------------------------------------
+Inv == Cardinality(chosen) <= 1
+
+THEOREM Spec => []Inv
+  PROOF OMITTED
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg -n "THEOREM|LEMMA|NaturalsInduction|CASE|SUFFICES|TAKE|PICK|DEF" /home/ubuntu/.tlapm/lib/tlapm/stdlib | head -120'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:43:THEOREM BagEquality ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:48:  BY DEF IsABag, CopiesIn, BagIn, BagToSet
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:51:<1>. QED  BY <1>2 DEF IsABag, CopiesIn, BagIn, BagToSet
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:58:THEOREM Bags_SqsubsetPO_Reflexivity ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:61:BY DEF \sqsubseteq, IsABag
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:64:THEOREM Bags_SqsubseteqPO_AntiSymmetry ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:68:BY DEF IsABag, \sqsubseteq
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:71:THEOREM Bags_SqsubseteqPO_Transitivity ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:75:BY DEF IsABag, \sqsubseteq
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:81:THEOREM Bags_EmptyBag ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:88:BY DEF EmptyBag, SetToBag, IsABag, \sqsubseteq, BagIn, BagToSet
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:94:THEOREM Bags_Scaling ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:103:  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:105:  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:107:  BY DEF
+... (truncated) ...
+/lib/tlapm/stdlib/FunctionTheorems.tla:302:THEOREM Fun_ExistsSurjTransitive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:330:THEOREM Fun_CantorBernsteinSchroeder_Lemma ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:349:THEOREM Fun_CantorBernsteinSchroeder ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:367:THEOREM Fun_ExistInjAndSurjThenBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:372:THEOREM Fun_ExistSurjAndSurjThenBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:385:THEOREM Fun_ExistsBijEquiv ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:409:THEOREM Fun_ExistsBijInterval ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:421:THEOREM Fun_NatInjLeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:434:THEOREM Fun_NatSurjImpliesNatBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:442:THEOREM Fun_NatSurjEquivNatBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:456:THEOREM Fun_NatBijSame ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:470:THEOREM Fun_NatBijEmpty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:482:THEOREM Fun_NatBijSingleton ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:496:THEOREM Fun_NatBijSubset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:511:THEOREM Fun_NatBijAddElem ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:526:THEOREM Fun_NatBijSubElem ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 97, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent
+           PROVE  Spec => []Inv
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 99, character 77:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The placeholder fails as expected. The proof obligation is the usual invariant shape, so I’m going to add an explicit inductive proof: initial state, stuttering step, and each Paxos message action.
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+480) }*)
+SlowestAuto == TRUE (*{ by (prover:"isabelle"; tactic:"auto"; timeout:960) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle's "force" tactic                        *)
+(*                                                                  *)
+(* This pragma bypasses Zenon. It is useful in situations involving *)
+(* quantifier reasoning.                                            *)
+(********************************************************************)
+Force == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)
+SlowForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:120) }*)
+SlowerForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:480) }*)
+SlowestForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:960) }*)
+
+(***********************************************************************)
+(* Backend pragma: Isabelle's "simplification" tactics                 *)
+(*                                                                     *)
+(* These tactics simplify the goal before running one of the automated *)
+(* tactics. They are often necessary for obligations involving record  *)
+(* or tuple projections. Use the SimplfyAndSolve tactic unless you're  *)
+(* sure you can get away with just Simplification                      *)
+(***********************************************************************)
+SimplifyAndSolve        == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla"
+------------------------- MODULE NaturalsInduction --------------------------
+(***************************************************************************)
+(* This module contains useful theorems for inductive proofs and recursive *)
+(* definitions over the naturals.                                          *)
+(*                                                                         *)
+(* Some of the statements of the theorems are decomposed in terms of       *)
+(* definitions.  This is done for two reasons:                             *)
+(*                                                                         *)
+(*  - It makes it easier for the backends to instantiate the theorems      *)
+(*    when those definitions are not expanded.                             *)
+(*                                                                         *)
+(*  - It can be convenient when writing proofs to use those definitions    *)
+(*    rather than having to write out their expansions.                    *)
+(***************************************************************************)
+EXTENDS Integers
+
+(***************************************************************************)
+(* The following is the simple statement of inductions over the naturals.  *)
+(* For predicates P defined by a moderately complex operator, it is often  *)
+(* useful to hide the operator definition before using this theorem. That  *)
+(* is, you first define a suitable operator P (not necessarily by that     *)
+
+... (truncated) ...
+
+
+THEOREM FiniteNatInductiveUnique ==
+  ASSUME NEW Def(_,_), NEW f, NEW g, NEW c, NEW m \in Nat, NEW n \in Nat,
+         FiniteNatInductiveDefConclusion(f, c, Def, m, n),
+         FiniteNatInductiveDefConclusion(g, c, Def, m, n)
+  PROVE  f = g
+
+=============================================================================
+
+(***************************************************************************)
+(* The following example shows how this module is used.                    *)
+(***************************************************************************)
+
+factorial[n \in Nat] == IF n = 0 THEN 1 ELSE n * factorial[n-1]
+
+THEOREM FactorialDefConclusion == NatInductiveDefConclusion(factorial, 1, LAMBDA v,n : n*v)
+<1>1. NatInductiveDefHypothesis(factorial, 1, LAMBDA v,n : n*v)
+  BY DEF NatInductiveDefHypothesis, factorial
+<1>2. QED
+  BY <1>1, NatInductiveDef
+
+THEOREM FactorialDef == \A n \in Nat : factorial[n] = IF n = 0 THEN 1 ELSE n * factorial[n-1]
+BY FactorialDefConclusion DEF NatInductiveDefConclusion
+
+THEOREM FactorialType == factorial \in [Nat -> Nat]
+<1>1. \A v \in Nat, n \in Nat \ {0} : n * v \in Nat
+  OBVIOUS
+<1>2. QED
+  BY <1>1, NatInductiveDefType, FactorialDefConclusion, Isa
+
+
+\* Modification History
+\* Last modified Thu Aug 22 15:29:20 CEST 2019 by merz
+\* Last modified Tue Oct 15 12:06:48 CEST 2013 by shaolin
+\* Last modified Sat Nov 26 08:49:59 CET 2011 by merz
+\* Last modified Mon Nov 07 08:58:05 PST 2011 by lamport
+\* Created Mon Oct 31 02:52:05 PDT 2011 by lamport
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"\\[\\]\\w+|INV|PTL|Temporal|UNCHANGED|ENABLED|SUFFICES ASSUME.*PROVE.*\\[\\]\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla | head -160"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:106:(* Backend pragma: The PTL propositional linear time temporal logic       *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:115:PTL == TRUE (*{ by (prover: "ls4") }*)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:330:(* The pragma ExpandEnabled invokes expansion of the operator ENABLED.    *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:338:(* ENABLED and \cdot to an intermediate form with bound VARIABLES,        *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:340:(* The pragma Lambdify is sound for occurrences of ENABLED and \cdot      *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:343:ExpandENABLED == TRUE  (*{ by (prover:"expandenabled") }*)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:347:ENABLEDaxioms == TRUE  (*{ by (prover:"enabledaxioms") }*)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:365:the PTL decision procedure, and their formulation is unsound for the semantics
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:383:(* Temporal Logic of Actions".                                             *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:387:                    PROVE  []P <=> P /\ [][P => P']_f
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:392:                    PROVE  []P /\ [][A]_f => []Q /\ [][B]_g
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:394:THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:396:                    PROVE  I /\ [][N]_F => []
+... (truncated) ...
+*      M <- M ,   g <- g ,  EM <- ENABLED <<M>>_g       .'                *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:426:                          P /\ EM => ENABLED A,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:427:                          [][N /\ ~B]_f /\ WF_f(A) /\ []F /\ <>[]EM => <>[]P
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:428:                   PROVE  [][N]_f /\ WF_f(A) /\ []F => []<><<M>>_g \/ []<>(~EM)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:435:                          P /\ EM => ENABLED A,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:436:                          [][N /\ ~B]_f /\ SF_f(A) /\ []F /\ []<>EM => <>[]P
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:437:                   PROVE  [][N]_f /\ SF_f(A) /\ []F => []<><<M>>_g \/ <>[](~EM)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:442:(* proof rule STL4 from the paper "The Temporal Logic of Actions".  The    *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:449:  PROVE  []F => []G
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:454:(* Temporal Logic of Actions".                                             *)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:460:  PROVE  []I /\ [][M]_f => [][N]_g
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:467:PropositionalTemporalLogic == TRUE
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/RealTime.tla:6:  LET TNext(t)  ==  t' = IF <<A>>_v \/ ~(ENABLED <<A>>_v)'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/RealTime.tla:18:                           /\ UNCHANGED v
+[EXIT 0]
+
+[CMD] /bin/bash -lc pwd
+/tmp/codex_bench_PaxosHistVar_Invariant_gwiuskdz
+[EXIT 0]
+
+[AGENT] I’m making the first pass intentionally simple: separate the temporal rule from the state-action proof, then see how much of the action preservation the backends can discharge before splitting further.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+File "./PaxosHistVar_Invariant.tla", line 110, characters 24-31:
+Error: Operator "RuleINV1" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__P_anon.anon#usable in file "src/proof/p_anon.ml", line 234, characters 20-70
+Called from Tlapm_lib__P_visit.map#proof in file "src/proof/p_visit.ml", line 26, characters 12-30
+Called from Tlapm_lib__M_elab.normalize.spin.map_proof in file "src/module/m_elab.ml", line 1142, characters 21-48
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "sed -n '360,410p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+
+
+=============================================================================
+
+The material below is obsolete: the TLA proof rules below are superseded by
+the PTL decision procedure, and their formulation is unsound for the semantics
+of temporal reasoning that TLAPS adopts.
+
+----------------------------------------------------------------------------
+(***************************************************************************)
+(*                           TEMPORAL LOGIC                                *)
+(*                                                                         *)
+(* The following rules are intended to be used when TLAPS handles temporal *)
+(* logic.  They will not work now.  Moreover when temporal reasoning is    *)
+(* implemented, these rules may be changed or omitted, and additional      *)
+(* rules will probably be added.  However, they are included mainly so     *)
+(* their names will be defined, preventing the use of identifiers that are *)
+(* likely to produce name clashes with future versions of this module.     *)
+(***************************************************************************)
+
+
+(***************************************************************************)
+(* The following proof rules (and their names) are from the paper "The     *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleTLA1 == ASSUME STATE P, STATE f,
+                           P /\ (f' = f) => P'
+                    PROVE  []P <=> P /\ [][P => P']_f
+
+THEOREM RuleTLA2 == ASSUME STATE P, STATE Q, STATE f, STATE g,
+                           ACTION A, ACTION B,
+                           P /\ [A]_f => Q /\ [B]_g
+                    PROVE  []P /\ [][A]_f => []Q /\ [][B]_g
+
+THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+                           I /\ [N]_F => I'
+                    PROVE  I /\ [][N]_F => []I
+
+THEOREM RuleINV2 == ASSUME STATE I, STATE f, ACTION N
+                    PROVE  []I => ([][N]_f <=> [][N /\ I /\ I']_f)
+
+THEOREM RuleWF1 == ASSUME STATE P, STATE Q, STATE f, ACTION N, ACTION A,
+                          P /\ [N]_f => (P' \/ Q'),
+                          P /\ <<N /\ A>>_f => Q',
+                          P => ENABLED <<A>>_f
+                   PROVE  [][N]_f /\ WF_f(A) => (P ~> Q)
+
+THEOREM RuleSF1 == ASSUME STATE P, STATE Q, STATE f,
+                          ACTION N, ACTION A, TEMPORAL F,
+                          P /\ [N]_f => (P' \/ Q'),
+                          P /\ <<N /\ A>>_f => Q',
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 102, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  vars == <<sent>>,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase1a(b) == Send([type |-> "1a", bal |-> b]),
+                  last_voted(a) ==
+                    LET 2bs == {m \in sent : m.type = "2b" /\ m.acc = a}
+                    IN  IF 2bs # {}
+                          THEN {m \in 2bs : \A m2 \in 2bs : m.bal >= m2.bal}
+                          ELSE {[bal |-> -1, val |-> None]},
+                  Phase1b(a) ==
+                    \E m \in sent, r \in last_voted(a) :
+                       /\ m.type = "1a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal > m2.bal
+                       /\ Send([type |-> "1b", 
+                                bal |-> m.bal, 
+                                maxVBal |-> r.bal, 
+         
+... (truncated) ...
+ :
+                                   VotedForIn(m.acc, v, b)))
+                       /\ m.type = "2a"
+                          => (/\ SafeAt(m.val, m.bal)
+                              /\ \A m2 \in sent :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m)
+                       /\ m.type = "2b"
+                          => (\E m2 \in sent :
+                                 /\ m2.type = "2a"
+                                 /\ m2.bal = m.bal
+                                 /\ m2.val = m.val),
+                  Inv == TypeOK /\ MsgInv,
+                  SMTT(20) 
+           PROVE  Inv /\ [Next]_vars => Inv'
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 112, character 77:
+[ERROR]: 1/8 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] The backend can prove the initial and temporal wrapper, but not the whole transition in one obligation. I’m splitting the transition by action now so failures point to the Paxos case that actually needs detailed reasoning.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 117, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                       
+... (truncated) ...
+                   VotedForIn(m.acc, v, b)))
+                       /\ m.type = "2a"
+                          => (/\ SafeAt(m.val, m.bal)
+                              /\ \A m2 \in sent :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m)
+                       /\ m.type = "2b"
+                          => (\E m2 \in sent :
+                                 /\ m2.type = "2a"
+                                 /\ m2.bal = m.bal
+                                 /\ m2.val = m.val),
+                  Inv == TypeOK /\ MsgInv,
+                  SMTT(20) 
+           PROVE  \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 135, character 77:
+[ERROR]: 4/22 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] The action facts are still too large because each proof asks the prover to rediscover how `sent' = sent \\cup {msg}` affects every definition. I’m factoring the invariant through a set-parameterized form, which lets each send case reason about a plain set update instead of primed operator expansion.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 167, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                          bal : Ballots, 
+                          maxVBal : Ballots \cup {-1},
+            
+... (truncated) ...
+             VotedForInS(S, m.acc, v, b))))
+                    /\ m.type = "2a"
+                       => (/\ SafeAtS(S, m.val, m.bal)
+                              /\ (\A m2 \in S :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m))
+                    /\ m.type = "2b"
+                       => (\E m2 \in S :
+                              /\ m2.type = "2a"
+                              /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  MsgInvS(S) == \A m \in S : MsgInvFor(S, m),
+                  TypeOKS(S) == S \in SUBSET Messages,
+                  StateInv(S) == TypeOKS(S) /\ MsgInvS(S),
+                  SMT 
+           PROVE  Inv <=> StateInv(sent)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 185, character 77:
+[ERROR]: 7/30 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 170, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a
+... (truncated) ...
+(/\ SafeAtS(S, m.val, m.bal)
+                              /\ (\A m2 \in S :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m))
+                    /\ m.type = "2b"
+                       => (\E m2 \in S :
+                              /\ m2.type = "2a"
+                              /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  MsgInvS(S) == \A m \in S : MsgInvFor(S, m),
+                  TypeOKS(S) == S \in SUBSET Messages,
+                  StateInv(S) == TypeOKS(S) /\ MsgInvS(S),
+                  SMTT(20) 
+           PROVE  \A S, b \in Ballots :
+                     StateInv(S)
+                     => StateInv(S \cup {[type |-> "1a", bal |-> b]})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 188, character 77:
+[ERROR]: 5/30 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "rg -n \"TAKE .*\\\\in|PICK .*\\\\in|HAVE|SUFFICES\" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla | head -120"
+rg: regex parse error:
+    (?:TAKE .*\in|PICK .*\in|HAVE|SUFFICES)
+              ^^
+error: unrecognized escape sequence
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n 'TAKE .*\\\\in|PICK .*\\\\in|HAVE|SUFFICES' /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla | head -140"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:61:<1>1. SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:85:<1> SUFFICES ASSUME \A x \in T : \E y \in T : <<y, x>> \in R
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:114:<1> SUFFICES ASSUME NEW f \in [Nat -> S],
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:178:<1>1. SUFFICES ASSUME T # {}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:181:<1>2. PICK x \in T : \A y \in T : ~ (<<y, x>> \in R)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:214:<1>1. SUFFICES ASSUME NEW g, NEW h,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:219:<1> SUFFICES \A x \in S : g[x] = h[x]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:253:  <2>1. SUFFICES ASSUME NEW x \in S,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:359:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in R
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:365:  <2> SUFFICES ASSUME NEW x \in S, NEW y \in S, <<x,y>> \in U
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:371:  <2>1. SUFFICES ASSUME NEW x \in S, NEW y \in S, NEW z \in S,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:377:  <2>3. PICK s \in S : /\ <<s,z>> \in R
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_p
+... (truncated) ...
+duction_proofs.tla:125:    <3>. SUFFICES \A k \in Nat : Q(k)  BY Zenon
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:138:        <5>. SUFFICES ASSUME NEW n \in 0 .. k+1, NEW i \in 0 .. n-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:157:    <3>. SUFFICES \A k \in Nat : Q(k)  BY Zenon
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:162:      <4>. SUFFICES ASSUME NEW l \in 1 .. k+1, NEW i \in 0 .. l-1, NEW g, NEW h,
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:202:    <3>. SUFFICES ASSUME NEW k \in Nat, NEW i \in 0 .. k-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:235:    <3>. SUFFICES ASSUME NEW m \in 0 .. n, NEW i \in 0 .. m-1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:254:  <2>. SUFFICES ASSUME NEW n \in Nat
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:300:<1>1. SUFFICES \A n \in Nat : f[n] \in S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:314:<1> SUFFICES \A n \in Nat : f[n] \in S
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:337:<1>1. SUFFICES \A n \in Nat : f[n] = g[n]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:352:<1>1. SUFFICES \A n \in Nat : f[n] = g[n]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:400:<1>1. SUFFICES \A i \in Nat : P(i)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:417:<1>1. SUFFICES \A i \in Nat : P(i)
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 188, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+  
+... (truncated) ...
+nvIsStateInv ,
+                  InvPrimeIsStateInv 
+           PROVE  \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 154, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b \in Ballots,
+                  mm == [type |-> "1a", bal |-> b],
+                  <2>1 
+           PROVE  MsgInvS(S \cup {mm})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 206, character 77:
+[ERROR]: 5/44 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '130,175p'"
+   130	PROOF
+   131	  BY SMT DEF Inv, TypeOK, MsgInv, StateInv, TypeOKS, MsgInvS, MsgInvFor,
+   132	             VotedForIn, VotedForInS, WontVoteIn, WontVoteInS, SafeAt, SafeAtS,
+   133	             Messages, Ballots
+   134	
+   135	LEMMA InvPrimeIsStateInv == Inv' <=> StateInv(sent')
+   136	PROOF
+   137	  BY SMT DEF Inv, TypeOK, MsgInv, StateInv, TypeOKS, MsgInvS, MsgInvFor,
+   138	             VotedForIn, VotedForInS, WontVoteIn, WontVoteInS, SafeAt, SafeAtS,
+   139	             Messages, Ballots
+   140	
+   141	LEMMA Add1aStateInv == \A S, b \in Ballots :
+   142	  StateInv(S) => StateInv(S \cup {[type |-> "1a", bal |-> b]})
+   143	PROOF
+   144	  <1>1. SUFFICES ASSUME NEW S, NEW b \in Ballots, StateInv(S)
+   145	          PROVE StateInv(S \cup {[type |-> "1a", bal |-> b]})
+   146	    OBVIOUS
+   147	  <1>2. DEFINE mm == [type |-> "1a", bal |-> b]
+   148	  <1>3. TypeOKS(S \cup {mm})
+   149	    BY <1>1 DEF StateInv, TypeOKS, Messages, Ballots
+   150	  <1>4. MsgInvS(S \cup {mm})
+   151	  PROOF
+   152	    <2>1. SUFFICES ASSUME NEW m \in S \cup {mm}
+   153	            PROVE MsgInvFor(S \cup {mm}, m)
+   154	      OBVIOUS
+   155	    <2>2. CASE m \in S
+   156	      BY <1>1, <2>2 DEF StateInv, MsgInvS, MsgInvFor,
+   157	                          VotedForInS, WontVoteInS, SafeAtS
+   158	    <2>3. CASE m = mm
+   159	      BY <2>3 DEF mm, MsgInvFor
+   160	    <2>4. QED
+   161	      BY <2>1, <2>2, <2>3
+   162	  <1>5. QED
+   163	    BY <1>3, <1>4 DEF StateInv
+   164	
+   165	-----------------------------------------------------------------------------
+   166	
+   167	LEMMA InitInv == Init => Inv
+   168	PROOF
+   169	  BY SMT DEF Init, Inv, TypeOK, MsgInv, Messages, VotedForIn, SafeAt, WontVoteIn
+   170	
+   171	LEMMA Phase1aInv == \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+   172	PROOF
+   173	  BY Add1aStateInv, InvIsStateInv, InvPrimeIsStateInv
+   174	     DEF Phase1a, Send, Ballots
+   175
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 188, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                          bal : Ballots, 
+                          maxVBal : Ballots \cup {-1},
+            
+... (truncated) ...
+axosHistVar_Invariant.tla", line 173, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase1a(b) == Send([type |-> "1a", bal |-> b]),
+                  Add1aStateInv ,
+                  InvIsStateInv ,
+                  InvPrimeIsStateInv 
+           PROVE  \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 206, character 77:
+[ERROR]: 4/44 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 197, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                          bal : Ballots, 
+                          maxVBal : Ballots \cup {-1},
+            
+... (truncated) ...
+ characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT b \in Ballots,
+                  <1>1 ,
+                  <1>2 ,
+                  <1>3 ,
+                  Add1aStateInv 
+           PROVE  StateInv(sent')
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 215, character 77:
+[ERROR]: 4/54 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 199, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                       
+... (truncated) ...
+v == TypeOK /\ MsgInv,
+                  SMTT(20) 
+           PROVE  \A a \in Acceptors : Inv /\ Phase1b(a) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 181, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT b \in Ballots,
+                  <1>1 ,
+                  <1>2 ,
+                  Add1aStateInv 
+           PROVE  StateInv(sent \cup {[type |-> "1a", bal |-> b]})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 217, character 77:
+[ERROR]: 4/56 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 199, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a
+... (truncated) ...
+.bal - 1 :
+                                   ~(\E v \in Values :
+                                   VotedForIn(m.acc, v, b)))
+                       /\ m.type = "2a"
+                          => (/\ SafeAt(m.val, m.bal)
+                              /\ \A m2 \in sent :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m)
+                       /\ m.type = "2b"
+                          => (\E m2 \in sent :
+                                 /\ m2.type = "2a"
+                                 /\ m2.bal = m.bal
+                                 /\ m2.val = m.val),
+                  Inv == TypeOK /\ MsgInv,
+                  SMTT(20) 
+           PROVE  \A a \in Acceptors : Inv /\ Phase1b(a) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 217, character 77:
+[ERROR]: 3/56 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Phase1b needs facts about the `last_voted` choice. I’m adding a small generic “adding a 1b message preserves the invariant” lemma, then a lemma that extracts the max-vote properties from `last_voted`.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 281, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a
+... (truncated) ...
+n S :
+                       /\ m.type = "2b" /\ m.val = v /\ m.bal = b
+                          /\ m.acc = a,
+                  NEW CONSTANT a \in Acceptors,
+                  NEW CONSTANT m \in sent,
+                  NEW CONSTANT r \in 
+                  last_voted(a),
+                  <1>1 ,
+                  <1>3 ,
+                  <1>5 ,
+                  <1>6 ,
+                  Add1bStateInv ,
+                  InvIsStateInv 
+           PROVE  StateInv(sent
+                           \cup {[type |-> "1b", 
+                                  bal |-> m.bal, 
+                                  maxVBal |-> r.bal, 
+                                  maxVal |-> r.val, 
+                                  acc |-> a]})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 299, character 77:
+[ERROR]: 3/102 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 285, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                          bal : Ballots, 
+                          maxVBal : Ballots \cup {-1},
+            
+... (truncated) ...
+NSTANT a \in Acceptors,
+                  NEW CONSTANT m \in sent,
+                  NEW CONSTANT r \in 
+                  last_voted(a),
+                  <1>1 ,
+                  <1>3 ,
+                  <1>5 ,
+                  <1>7 ,
+                  Add1bStateInv 
+           PROVE  StateInv(sent
+                           \cup {[type |-> "1b", 
+                                  bal |-> m.bal, 
+                                  maxVBal |-> r.bal, 
+                                  maxVal |-> r.val, 
+                                  acc |-> a]})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 303, character 77:
+[ERROR]: 3/103 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '160,225p'"
+   160	    <2>4. QED
+   161	      BY <2>2, <2>3, SMT
+   162	  <1>5. QED
+   163	    BY <1>3, <1>4 DEF StateInv
+   164	
+   165	LEMMA Add1bStateInv ==
+   166	  \A S, a, b, mb, mv :
+   167	    /\ StateInv(S)
+   168	    /\ a \in Acceptors
+   169	    /\ b \in Ballots
+   170	    /\ mb \in Ballots \cup {-1}
+   171	    /\ mv \in Values \cup {None}
+   172	    /\ VotedForInS(S, a, mv, mb) \/ mb = -1
+   173	    /\ \A c \in mb+1..b-1 : ~\E v \in Values : VotedForInS(S, a, v, c)
+   174	    => StateInv(S \cup {[type |-> "1b", bal |-> b,
+   175	                          maxVBal |-> mb, maxVal |-> mv, acc |-> a]})
+   176	PROOF
+   177	  <1>1. SUFFICES ASSUME NEW S, NEW a, NEW b, NEW mb, NEW mv,
+   178	                          StateInv(S),
+   179	                          a \in Acceptors,
+   180	                          b \in Ballots,
+   181	                          mb \in Ballots \cup {-1},
+   182	                          mv \in Values \cup {None},
+   183	                          VotedForInS(S, a, mv, mb) \/ mb = -1,
+   184	                          \A c \in mb+1..b-1 :
+   185	                            ~\E v \in Values : VotedForInS(S, a, v, c)
+   186	          PROVE StateInv(S \cup {[type |-> "1b", bal |-> b,
+   187	                                  maxVBal |-> mb, maxVal |-> mv, acc |-> a]})
+   188	    OBVIOUS
+   189	  <1>2. DEFINE mm == [type |-> "1b", bal |-> b,
+   190	                       maxVBal |-> mb, maxVal |-> mv, acc |-> a]
+   191	  <1>3. TypeOKS(S \cup {mm})
+   192	    BY <1>1 DEF StateInv, TypeOKS, Messages, Ballots, mm
+   193	  <1>4. MsgInvS(S \cup {mm})
+   194	  PROOF
+   195	    <2>1. SUFFICES ASSUME NEW m \in S \cup {mm}
+   196	            PROVE MsgInvFor(S \cup {mm}, m)
+   197	      BY DEF MsgInvS
+   198	    <2>2. CASE m \in S
+   199	      BY <1>1, <2>2 DEF StateInv, MsgInvS, MsgInvFor,
+   200	                          VotedForInS, WontVoteInS, SafeAtS, mm
+   201	    <2>3. CASE m = mm
+   202	      BY <1>1, <2>3 DEF mm, MsgInvFor, VotedForInS, WontVoteInS, SafeAtS
+   203	    <2>4. QED
+   204	      BY <2>2, <2>3, SMT
+   205	  <1>5. QED
+   206	    BY <1>3, <1>4 DEF StateInv
+   207	
+   208	LEMMA LastVotedGood ==
+   209	  \A a, r, b :
+   210	    TypeOK /\ r \in last_voted(a) =>
+   211	      /\ r.bal \in Ballots \cup {-1}
+   212	      /\ r.val \in Values \cup {None}
+   213	      /\ VotedForIn(a, r.val, r.bal) \/ r.bal = -1
+   214	      /\ \A c \in r.bal+1..b-1 :
+   215	           ~\E v \in Values : VotedForIn(a, v, c)
+   216	PROOF
+   217	  BY SMTT(20) DEF TypeOK, Messages, last_voted, VotedForIn, Ballots
+   218	
+   219	-----------------------------------------------------------------------------
+   220	
+   221	LEMMA InitInv == Init => Inv
+   222	PROOF
+   223	  BY SMT DEF Init, Inv, TypeOK, MsgInv, Messages, VotedForIn, SafeAt, WontVoteIn
+   224	
+   225	LEMMA Phase1aInv == \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 294, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                       
+... (truncated) ...
+ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT a \in Acceptors,
+                  NEW CONSTANT m \in sent,
+                  NEW CONSTANT r \in 
+                  last_voted(a),
+                  <1>8 ,
+                  Add1bStateInv 
+           PROVE  StateInv(sent
+                           \cup {[type |-> "1b", 
+                                  bal |-> m.bal, 
+                                  maxVBal |-> r.bal, 
+                                  maxVal |-> r.val, 
+                                  acc |-> a]})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 312, character 77:
+[ERROR]: 3/105 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 294, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                       
+... (truncated) ...
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT a \in Acceptors,
+                  NEW CONSTANT m \in sent,
+                  NEW CONSTANT r \in 
+                  last_voted(a),
+                  <1>8 ,
+                  Add1bStateInv ,
+                  SMT 
+           PROVE  StateInv(sent
+                           \cup {[type |-> "1b", 
+                                  bal |-> m.bal, 
+                                  maxVBal |-> r.bal, 
+                                  maxVal |-> r.val, 
+                                  acc |-> a]})
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 312, character 77:
+[ERROR]: 3/106 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 294, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2b(a) ==
+                    \E m \in sent :
+                       /\ m.type = "2a"
+                       /\ \A m2 \in sent :
+                             m2.type \in {"1b", "2b"} /\ m2.acc = a
+                             => m.bal >= m2.bal
+                       /\ Send([type |-> "2b", 
+                                bal |-> m.bal, 
+                                val |-> m.val, 
+                                acc |-> a]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+                       /\ m.val = v
+                       /\ m.bal = b
+                       /\ m.acc = a,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                       
+... (truncated) ...
+m.bal - 1 :
+                                   ~(\E v \in Values :
+                                   VotedForIn(m.acc, v, b)))
+                       /\ m.type = "2a"
+                          => (/\ SafeAt(m.val, m.bal)
+                              /\ \A m2 \in sent :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m)
+                       /\ m.type = "2b"
+                          => (\E m2 \in sent :
+                                 /\ m2.type = "2a"
+                                 /\ m2.bal = m.bal
+                                 /\ m2.val = m.val),
+                  Inv == TypeOK /\ MsgInv,
+                  SMTT(20) 
+           PROVE  \A b \in Ballots : Inv /\ Phase2a(b) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 312, character 77:
+[ERROR]: 2/106 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Phase2b is the next preservation case. I’m encoding the exact acceptor precondition as a generic “adding a 2b” lemma so the action proof only has to unpack the witness 2a message.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 331, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                    
+... (truncated) ...
+ m2 = m))
+                    /\ m.type = "2b"
+                       => (\E m2 \in S :
+                              /\ m2.type = "2a"
+                              /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  MsgInvS(S) == \A m \in S : MsgInvFor(S, m),
+                  StateInv(S) == TypeOKS(S) /\ MsgInvS(S),
+                  NEW CONSTANT S,
+                  NEW CONSTANT a,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  mm == [type |-> "2b", bal |-> b, val |-> v, acc |-> a],
+                  NEW CONSTANT m \in 
+                  S \cup {mm},
+                  <1>1 ,
+                  <2>2 
+           PROVE  MsgInvFor(S \cup {mm}, m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 377, character 77:
+[ERROR]: 2/148 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '226,265p'"
+   226	                      /\ m2.bal = b
+   227	                      /\ m2.val = v
+   228	    /\ \A m2 \in S : m2.type \in {"1b", "2b"} /\ m2.acc = a => b >= m2.bal
+   229	    => StateInv(S \cup {[type |-> "2b", bal |-> b, val |-> v, acc |-> a]})
+   230	PROOF
+   231	  <1>1. SUFFICES ASSUME NEW S, NEW a, NEW b, NEW v,
+   232	                          StateInv(S),
+   233	                          a \in Acceptors,
+   234	                          b \in Ballots,
+   235	                          v \in Values,
+   236	                          \E m2 \in S : /\ m2.type = "2a"
+   237	                                         /\ m2.bal = b
+   238	                                         /\ m2.val = v,
+   239	                          \A m2 \in S : m2.type \in {"1b", "2b"} /\ m2.acc = a
+   240	                                          => b >= m2.bal
+   241	          PROVE StateInv(S \cup {[type |-> "2b", bal |-> b, val |-> v, acc |-> a]})
+   242	    OBVIOUS
+   243	  <1>2. DEFINE mm == [type |-> "2b", bal |-> b, val |-> v, acc |-> a]
+   244	  <1>3. TypeOKS(S \cup {mm})
+   245	    BY <1>1 DEF StateInv, TypeOKS, Messages, Ballots, mm
+   246	  <1>4. MsgInvS(S \cup {mm})
+   247	  PROOF
+   248	    <2>1. SUFFICES ASSUME NEW m \in S \cup {mm}
+   249	            PROVE MsgInvFor(S \cup {mm}, m)
+   250	      BY DEF MsgInvS
+   251	    <2>2. CASE m \in S
+   252	      BY <1>1, <2>2 DEF StateInv, MsgInvS, MsgInvFor,
+   253	                          VotedForInS, WontVoteInS, SafeAtS, mm
+   254	    <2>3. CASE m = mm
+   255	      BY <1>1, <2>3 DEF mm, MsgInvFor, VotedForInS
+   256	    <2>4. QED
+   257	      BY <2>2, <2>3, SMT
+   258	  <1>5. QED
+   259	    BY <1>3, <1>4 DEF StateInv
+   260	
+   261	-----------------------------------------------------------------------------
+   262	
+   263	LEMMA InitInv == Init => Inv
+   264	PROOF
+   265	  BY SMT DEF Init, Inv, TypeOK, MsgInv, Messages, VotedForIn, SafeAt, WontVoteIn
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 345, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                          /\ Send([type |-> "2a", bal |-> b, val |-> v]),
+                  VotedForIn(a
+... (truncated) ...
+ m2 = m))
+                    /\ m.type = "2b"
+                       => (\E m2 \in S :
+                              /\ m2.type = "2a"
+                              /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  MsgInvS(S) == \A m \in S : MsgInvFor(S, m),
+                  StateInv(S) == TypeOKS(S) /\ MsgInvS(S),
+                  NEW CONSTANT S,
+                  NEW CONSTANT a,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  mm == [type |-> "2b", bal |-> b, val |-> v, acc |-> a],
+                  NEW CONSTANT m \in 
+                  S \cup {mm},
+                  <1>1 ,
+                  <2>2 
+           PROVE  MsgInvFor(S \cup {mm}, m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 391, character 77:
+[ERROR]: 2/166 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '252,285p'"
+   252	                                         /\ m2.val = v,
+   253	                          \A m2 \in S : m2.type \in {"1b", "2b"} /\ m2.acc = a
+   254	                                          => b >= m2.bal
+   255	          PROVE StateInv(S \cup {[type |-> "2b", bal |-> b, val |-> v, acc |-> a]})
+   256	    OBVIOUS
+   257	  <1>2. DEFINE mm == [type |-> "2b", bal |-> b, val |-> v, acc |-> a]
+   258	  <1>3. TypeOKS(S \cup {mm})
+   259	    BY <1>1 DEF StateInv, TypeOKS, Messages, Ballots, mm
+   260	  <1>4. MsgInvS(S \cup {mm})
+   261	  PROOF
+   262	    <2>1. SUFFICES ASSUME NEW m \in S \cup {mm}
+   263	            PROVE MsgInvFor(S \cup {mm}, m)
+   264	      BY DEF MsgInvS
+   265	    <2>2. CASE m \in S
+   266	      BY <1>1, <2>2 DEF StateInv, MsgInvS, MsgInvFor,
+   267	                          VotedForInS, WontVoteInS, SafeAtS, mm
+   268	    <2>3. CASE m = mm
+   269	      BY <1>1, <2>3 DEF mm, MsgInvFor, VotedForInS
+   270	    <2>4. QED
+   271	      BY <2>2, <2>3, SMT
+   272	  <1>5. QED
+   273	    BY <1>3, <1>4 DEF StateInv
+   274	
+   275	-----------------------------------------------------------------------------
+   276	
+   277	LEMMA InitInv == Init => Inv
+   278	PROOF
+   279	  BY SMT DEF Init, Inv, TypeOK, MsgInv, Messages, VotedForIn, SafeAt, WontVoteIn
+   280	
+   281	LEMMA Phase1aInv == \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+   282	PROOF
+   283	  <1>1. SUFFICES ASSUME NEW b \in Ballots, Inv, Phase1a(b)
+   284	          PROVE Inv'
+   285	    OBVIOUS
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg -n "CASE m.type" PaxosHistVar_Invariant.tla'
+200:      <3>1. CASE m.type = "1b"
+204:      <3>2. CASE m.type = "2a"
+208:      <3>3. CASE m.type = "2b"
+211:      <3>4. CASE m.type # "1b" /\ m.type # "2a" /\ m.type # "2b"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '188,218p'"
+   188	    OBVIOUS
+   189	  <1>2. DEFINE mm == [type |-> "1b", bal |-> b,
+   190	                       maxVBal |-> mb, maxVal |-> mv, acc |-> a]
+   191	  <1>3. TypeOKS(S \cup {mm})
+   192	    BY <1>1 DEF StateInv, TypeOKS, Messages, Ballots, mm
+   193	  <1>4. MsgInvS(S \cup {mm})
+   194	  PROOF
+   195	    <2>1. SUFFICES ASSUME NEW m \in S \cup {mm}
+   196	            PROVE MsgInvFor(S \cup {mm}, m)
+   197	      BY DEF MsgInvS
+   198	    <2>2. CASE m \in S
+   199	    PROOF
+   200	      <3>1. CASE m.type = "1b"
+   201	        BY <1>1, <2>2, <3>1, SMTT(20)
+   202	           DEF StateInv, MsgInvS, MsgInvFor,
+   203	               VotedForInS, WontVoteInS, SafeAtS, mm
+   204	      <3>2. CASE m.type = "2a"
+   205	        BY <1>1, <2>2, <3>2, SMTT(20)
+   206	           DEF StateInv, MsgInvS, MsgInvFor,
+   207	               VotedForInS, WontVoteInS, SafeAtS, mm
+   208	      <3>3. CASE m.type = "2b"
+   209	        BY <1>1, <2>2, <3>3
+   210	           DEF StateInv, MsgInvS, MsgInvFor, VotedForInS, mm
+   211	      <3>4. CASE m.type # "1b" /\ m.type # "2a" /\ m.type # "2b"
+   212	        BY <3>4 DEF MsgInvFor
+   213	      <3>5. QED
+   214	        BY <3>1, <3>2, <3>3, <3>4
+   215	    <2>3. CASE m = mm
+   216	      BY <1>1, <2>3 DEF mm, MsgInvFor, VotedForInS, WontVoteInS, SafeAtS
+   217	    <2>4. QED
+   218	      BY <2>2, <2>3, SMT
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '244,286p'"
+   244	PROOF
+   245	  <1>1. SUFFICES ASSUME NEW S, NEW a, NEW b, NEW v,
+   246	                          StateInv(S),
+   247	                          a \in Acceptors,
+   248	                          b \in Ballots,
+   249	                          v \in Values,
+   250	                          \E m2 \in S : /\ m2.type = "2a"
+   251	                                         /\ m2.bal = b
+   252	                                         /\ m2.val = v,
+   253	                          \A m2 \in S : m2.type \in {"1b", "2b"} /\ m2.acc = a
+   254	                                          => b >= m2.bal
+   255	          PROVE StateInv(S \cup {[type |-> "2b", bal |-> b, val |-> v, acc |-> a]})
+   256	    OBVIOUS
+   257	  <1>2. DEFINE mm == [type |-> "2b", bal |-> b, val |-> v, acc |-> a]
+   258	  <1>3. TypeOKS(S \cup {mm})
+   259	    BY <1>1 DEF StateInv, TypeOKS, Messages, Ballots, mm
+   260	  <1>4. MsgInvS(S \cup {mm})
+   261	  PROOF
+   262	    <2>1. SUFFICES ASSUME NEW m \in S \cup {mm}
+   263	            PROVE MsgInvFor(S \cup {mm}, m)
+   264	      BY DEF MsgInvS
+   265	    <2>2. CASE m \in S
+   266	    PROOF
+   267	      <3>1. CASE m.type = "1b"
+   268	        BY <1>1, <2>2, <3>1, SMTT(20)
+   269	           DEF StateInv, MsgInvS, MsgInvFor,
+   270	               VotedForInS, WontVoteInS, SafeAtS, mm
+   271	      <3>2. CASE m.type = "2a"
+   272	        BY <1>1, <2>2, <3>2, SMTT(20)
+   273	           DEF StateInv, MsgInvS, MsgInvFor,
+   274	               VotedForInS, WontVoteInS, SafeAtS, mm
+   275	      <3>3. CASE m.type = "2b"
+   276	        BY <1>1, <2>2, <3>3
+   277	           DEF StateInv, MsgInvS, MsgInvFor, VotedForInS, mm
+   278	      <3>4. CASE m.type # "1b" /\ m.type # "2a" /\ m.type # "2b"
+   279	        BY <3>4 DEF MsgInvFor
+   280	      <3>5. QED
+   281	        BY <3>1, <3>2, <3>3, <3>4
+   282	    <2>3. CASE m = mm
+   283	      BY <1>1, <2>3 DEF mm, MsgInvFor, VotedForInS
+   284	    <2>4. QED
+   285	      BY <2>2, <2>3, SMT
+   286	  <1>5. QED
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 359, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                    
+... (truncated) ...
+                => (\E m2 \in S :
+                              /\ m2.type = "2a"
+                              /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  MsgInvS(S) == \A m \in S : MsgInvFor(S, m),
+                  StateInv(S) == TypeOKS(S) /\ MsgInvS(S),
+                  NEW CONSTANT S,
+                  NEW CONSTANT a,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  mm == [type |-> "2b", bal |-> b, val |-> v, acc |-> a],
+                  NEW CONSTANT m \in 
+                  S \cup {mm},
+                  <1>1 ,
+                  <2>2 ,
+                  <3>1 ,
+                  SMTT(20) 
+           PROVE  MsgInvFor(S \cup {mm}, m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 405, character 77:
+[ERROR]: 3/184 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The remaining Phase2b proof is down to preservation of old 1b and 2a message clauses when a new 2b vote is added. I’m isolating those as standalone lemmas so the prover sees only the relevant clause instead of the whole state invariant.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 377, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                    
+... (truncated) ...
+                /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  SMTT(20) 
+           PROVE  \A S, aa, bb, vv, m :
+                     (/\ MsgInvFor(S, m)
+                      /\ m \in S
+                      /\ m.type = "1b"
+                      /\ \A m2 \in S :
+                            m2.type \in {"1b", "2b"} /\ m2.acc = aa
+                            => bb >= m2.bal)
+                     => MsgInvFor(S
+                                  \cup 
+                                  {[type |-> "2b", 
+                                   bal |-> bb, 
+                                   val |-> vv, 
+                                   acc |-> aa]},
+                                  m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 423, character 77:
+[ERROR]: 3/188 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 387, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                          /\ Send([type |-> "2a", bal |-> b, val |-> v]),
+                  VotedForIn(a, v, b) ==
+                    \E m \in sent :
+                       /\ m.type = "2b"
+... (truncated) ...
+a \in Acceptors
+                      /\ bb \in Ballots
+                      /\ vv \in Values
+                      /\ \A m2 \in S :
+                            m2.type \in {"1b", "2b"} /\ m2.acc = aa
+                            => bb >= m2.bal)
+                     => MsgInvFor(S
+                                  \cup 
+                                  {[type |-> "2b", 
+                                   bal |-> bb, 
+                                   val |-> vv, 
+                                   acc |-> aa]},
+                                  m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 433, character 77:
+[ERROR]: 2/188 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] Only the 2a safety clause remains for adding a 2b. I’m making the monotonicity argument explicit: old votes persist, old “won’t vote” facts persist except at the exact new vote slot, and that exact slot could not have been a “won’t vote” slot under the Phase2b promise condition.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 445, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                          /\ Send([type |-> "2a", bal |-> b, val |-> v]),
+                  VotedForIn(a
+... (truncated) ...
+         VotedForInS(S, a, v, b) ==
+                    \E m \in S :
+                       /\ m.type = "2b" /\ m.val = v /\ m.bal = b
+                          /\ m.acc = a,
+                  WontVoteInS(S, a, b) ==
+                    /\ \A v \in Values : ~VotedForInS(S, a, v, b)
+                    /\ \E m \in S :
+                          m.type \in {"1b", "2b"} /\ m.acc = a /\ m.bal > b,
+                  SMT 
+           PROVE  \A S, aa, bb :
+                     (\A m2 \in S :
+                         m2.type \in {"1b", "2b"} /\ m2.acc = aa
+                         => bb >= m2.bal)
+                     => ~WontVoteInS(S, aa, bb)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 491, character 77:
+[ER(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+ROR]: 3/223 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 451, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                    
+... (truncated) ...
+                (/\ MsgInvFor(S, m)
+                      /\ TypeOKS(S)
+                      /\ m \in S
+                      /\ m.type = "2a"
+                      /\ aa \in Acceptors
+                      /\ bb \in Ballots
+                      /\ vv \in Values
+                      /\ \A m2 \in S :
+                            m2.type \in {"1b", "2b"} /\ m2.acc = aa
+                            => bb >= m2.bal)
+                     => MsgInvFor(S
+                                  \cup 
+                                  {[type |-> "2b", 
+                                   bal |-> bb, 
+                                   val |-> vv, 
+                                   acc |-> aa]},
+                                  m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 497, character 77:
+[ERROR]: 2/223 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+File "./PaxosHistVar_Invariant.tla", line 340, characters 14-17:
+Error: Operator "<1>2" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__P_anon.anon#usable in file "src/proof/p_anon.ml", line 234, characters 20-70
+Called from Tlapm_lib__P_visit.map#proof in file "src/proof/p_visit.ml", line 26, characters 12-30
+Called from Tlapm_lib__P_anon.anon#step in file "src/proof/p_anon.ml", line 101, characters 12-30
+Called from Tlapm_lib__P_visit.map#steps in file "src/proof/p_visit.ml", line 35, characters 24-40
+Called from Tlapm_lib__P_visit.map#steps in file "src/proof/p_visit.ml", line 36, characters 25-43
+Called from Tlapm_lib__P_visit.map#steps in file "src/proof/p_visit.ml", line 36, characters 25-43
+Called from Tlapm_lib__P_visit.map#steps in file "src/proof/p_visit.ml", line 36, characters 25-43
+Called from Tlapm_lib__P_anon.anon#proof in file "src/proof/p_anon.ml", line 63, characters 27-47
+Called from Tlapm_lib__M_elab.normalize.spin.map_proof in file "src/module/m_elab.ml", line 1142, characters 21-48
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '328,365p'"
+   328	                          aa \in Acceptors,
+   329	                          bb \in Ballots,
+   330	                          vv \in Values,
+   331	                          \A m2 \in S : m2.type \in {"1b", "2b"} /\ m2.acc = aa
+   332	                                          => bb >= m2.bal
+   333	          PROVE MsgInvFor(S \cup {[type |-> "2b", bal |-> bb, val |-> vv, acc |-> aa]}, m)
+   334	    OBVIOUS
+   335	  <1>2. DEFINE mm == [type |-> "2b", bal |-> bb, val |-> vv, acc |-> aa]
+   336	          SS == S \cup {mm}
+   337	  <1>3. SafeAtS(S, m.val, m.bal)
+   338	    BY <1>1 DEF MsgInvFor
+   339	  <1>4. SafeAtS(SS, m.val, m.bal)
+   340	    BY <1>1, <1>2, <1>3, SafeAtAdd2bPreserve
+   341	  <1>5. \A m2 \in SS : (m2.type = "2a" /\ m2.bal = m.bal) => m2 = m
+   342	  PROOF
+   343	    <2>1. SUFFICES ASSUME NEW m2 \in SS,
+   344	                            m2.type = "2a" /\ m2.bal = m.bal
+   345	            PROVE m2 = m
+   346	      OBVIOUS
+   347	    <2>2. CASE m2 \in S
+   348	      BY <1>1, <2>1, <2>2 DEF MsgInvFor
+   349	    <2>3. CASE m2 = mm
+   350	      BY <1>2, <2>1, <2>3 DEF mm
+   351	    <2>4. QED
+   352	      BY <1>2, <2>1, <2>2, <2>3, SMT
+   353	  <1>6. QED
+   354	    BY <1>1, <1>2, <1>4, <1>5 DEF MsgInvFor
+   355	
+   356	LEMMA Add2bStateInv ==
+   357	  \A S, a, b, v :
+   358	    /\ StateInv(S)
+   359	    /\ a \in Acceptors
+   360	    /\ b \in Ballots
+   361	    /\ v \in Values
+   362	    /\ \E m2 \in S : /\ m2.type = "2a"
+   363	                      /\ m2.bal = b
+   364	                      /\ m2.val = v
+   365	    /\ \A m2 \in S : m2.type \in {"1b", "2b"} /\ m2.acc = a => b >= m2.bal
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 480, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Send(m) == sent' = sent \cup {m},
+                  Phase2a(b) ==
+                    /\ ~(\E m \in sent : m.type = "2a" /\ m.bal = b)
+                    /\ \E v \in Values, 
+                          Q \in Quorums,
+                          S
+                          \in SUBSET {m \in sent :
+                                   m.type = "1b" /\ m.bal = b} :
+                          /\ \A a \in Q : \E m \in S : m.acc = a
+                          /\ \/ \A m \in S : m.maxVBal = -1
+                             \/ \E c \in 0..b - 1 :
+                                   /\ \A m \in S : m.maxVBal =< c
+                                   /\ \E m \in S :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v
+                    
+... (truncated) ...
+m.bal - 1 :
+                                   ~(\E v \in Values :
+                                   VotedForIn(m.acc, v, b)))
+                       /\ m.type = "2a"
+                          => (/\ SafeAt(m.val, m.bal)
+                              /\ \A m2 \in sent :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m)
+                       /\ m.type = "2b"
+                          => (\E m2 \in sent :
+                                 /\ m2.type = "2a"
+                                 /\ m2.bal = m.bal
+                                 /\ m2.val = m.val),
+                  Inv == TypeOK /\ MsgInv,
+                  SMTT(20) 
+           PROVE  \A b \in Ballots : Inv /\ Phase2a(b) => Inv'
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 526, character 77:
+[ERROR]: 1/244 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] Phase2a is the only remaining case. I’m splitting it into two parts: adding a safe 2a message preserves the existing invariant, and the Phase2a quorum/max-vote rule establishes the required `SafeAt` fact.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 461, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                          bal : Ballots, 
+                          maxVBal : Ballots \cup {-1},
+                          maxVal : Values \cup {None}, 
+                          acc : Acceptors]
+                    \cup [type : {"2a"}, bal : Ballots, val : Values]
+                    \cup [type : {"2b"}, 
+                          bal : Ballots, 
+                          val : Values, 
+                          acc : Acceptors],
+                  VotedForInS(S, a, v, b) ==
+                    \E m \in S :
+                       /\ m.type = "2b" /\ m.val = v /\ m.bal = b
+                          /\ m.acc = a,
+                  WontVoteInS(S, a, b) ==
+            
+... (truncated) ...
+                => (/\ SafeAtS(S, m.val, m.bal)
+                              /\ (\A m2 \in S :
+                                   m2.type = "2a" /\ m2.bal = m.bal => m2 = m))
+                    /\ m.type = "2b"
+                       => (\E m2 \in S :
+                              /\ m2.type = "2a"
+                              /\ m2.bal = m.bal
+                              /\ m2.val = m.val),
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  mm == [type |-> "2a", bal |-> b, val |-> v],
+                  NEW CONSTANT m \in 
+                  S \cup {mm},
+                  <1>1 ,
+                  <2>3 
+           PROVE  MsgInvFor(S \cup {mm}, m)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 602, character 77:
+[ERROR]: 2/285 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 474, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  Ballots == Nat,
+                  NEW VARIABLE sent,
+                  Messages ==
+                    [type : {"1a"}, bal : Ballots]
+                    \cup [type : {"1b"}, 
+                          bal : Ballots, 
+                          maxVBal : Ballots \cup {-1},
+                          maxVal : Values \cup {None}, 
+                          acc : Acceptors]
+                    \cup [type : {"2a"}, bal : Ballots, val : Values]
+                    \cup [type : {"2b"}, 
+                          bal : Ballots, 
+                          val : Values, 
+                          acc : Acceptors],
+                  VotedForInS(S, a, v, b) ==
+                    \E m \in S :
+                       /\ m.type = "2b" /\ m.val = v /\ m.bal = b
+                          /\ m.acc = a,
+                  WontVoteInS(S, a, b) ==
+            
+... (truncated) ...
+ MsgInvS(S),
+                  SMTT(20) 
+           PROVE  \A S, b, v, Q, R :
+                     (/\ StateInv(S)
+                      /\ b \in Ballots
+                      /\ v \in Values
+                      /\ Q \in Quorums
+                      /\ R \in SUBSET {m \in S : m.type = "1b" /\ m.bal = b}
+                      /\ \A a \in Q : \E m \in R : m.acc = a
+                      /\ \/ \A m \in R : m.maxVBal = -1
+                         \/ \E c \in 0..b - 1 :
+                               /\ \A m \in R : m.maxVBal =< c
+                               /\ \E m \in R :
+                                   /\ m.maxVBal = c
+                                   /\ m.maxVal = v)
+                     => SafeAtS(S, v, b)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 615, character 77:
+[ERROR]: 1/293 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '480,525p'"
+   480	      <3>3. QED
+   481	        BY <2>3, <3>1, <3>2 DEF mm, MsgInvFor
+   482	    <2>4. QED
+   483	      BY <2>2, <2>3, SMT
+   484	  <1>5. QED
+   485	    BY <1>3, <1>4 DEF StateInv
+   486	
+   487	LEMMA Phase2aSafe ==
+   488	  \A S, b, v, Q, R :
+   489	    /\ StateInv(S)
+   490	    /\ b \in Ballots
+   491	    /\ v \in Values
+   492	    /\ Q \in Quorums
+   493	    /\ R \in SUBSET {m \in S : m.type = "1b" /\ m.bal = b}
+   494	    /\ \A a \in Q : \E m \in R : m.acc = a
+   495	    /\ \/ \A m \in R : m.maxVBal = -1
+   496	       \/ \E c \in 0..b-1 :
+   497	            /\ \A m \in R : m.maxVBal =< c
+   498	            /\ \E m \in R : /\ m.maxVBal = c
+   499	                            /\ m.maxVal = v
+   500	    => SafeAtS(S, v, b)
+   501	PROOF
+   502	  BY SMTT(20) DEF StateInv, TypeOKS, MsgInvS, MsgInvFor,
+   503	                  VotedForInS, WontVoteInS, SafeAtS, Messages, Ballots
+   504	
+   505	-----------------------------------------------------------------------------
+   506	
+   507	LEMMA InitInv == Init => Inv
+   508	PROOF
+   509	  BY SMT DEF Init, Inv, TypeOK, MsgInv, Messages, VotedForIn, SafeAt, WontVoteIn
+   510	
+   511	LEMMA Phase1aInv == \A b \in Ballots : Inv /\ Phase1a(b) => Inv'
+   512	PROOF
+   513	  <1>1. SUFFICES ASSUME NEW b \in Ballots, Inv, Phase1a(b)
+   514	          PROVE Inv'
+   515	    OBVIOUS
+   516	  <1>2. StateInv(sent)
+   517	    BY <1>1, InvIsStateInv
+   518	  <1>3. sent' = sent \cup {[type |-> "1a", bal |-> b]}
+   519	    BY <1>1 DEF Phase1a, Send
+   520	  <1>4. StateInv(sent \cup {[type |-> "1a", bal |-> b]})
+   521	    BY <1>1, <1>2, Add1aStateInv
+   522	  <1>5. StateInv(sent')
+   523	    BY <1>3, <1>4
+   524	  <1>6. QED
+   525	    BY <1>5, InvPrimeIsStateInv
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 616, characters 11-12:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  NEW CONSTANT Q,
+                  NEW CONSTANT R,
+                  NEW CONSTANT b2 \in 
+                  0..b - 1,
+                  NEW CONSTANT c \in 
+                  0..b - 1,
+                  NEW CONSTANT mx \in R,
+                  NEW CONSTANT a \in Q,
+                  NEW CONSTANT m \in R,
+                  <1>2 ,
+                  <2>1 ,
+                  <2>7 ,
+                  <4>3 ,
+                  SMT 
+           PROVE  b2 \in m.maxVBal + 1..m.bal - 1
+File "./PaxosHistVar_Invariant.tla", line 581, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+          
+... (truncated) ...
+  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  NEW CONSTANT Q,
+                  NEW CONSTANT R,
+                  NEW CONSTANT b2 \in 
+                  0..b - 1,
+                  NEW CONSTANT a \in Q,
+                  NEW CONSTANT m \in R,
+                  <1>1 ,
+                  <3>3 ,
+                  <3>4 ,
+                  OneBImpliesWont 
+           PROVE  WontVoteInS(S, a, b2)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 764, character 77:
+[ERROR]: 3/422 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba PaxosHistVar_Invariant.tla | sed -n '528,622p'"
+   528	        BY <1>1, <3>1
+   529	      <3>3. /\ m \in S
+   530	             /\ m.type = "1b"
+   531	             /\ m.bal = b
+   532	             /\ m.maxVBal = -1
+   533	        BY <1>1, <1>3, <3>2
+   534	      <3>4. b2 \in m.maxVBal+1..m.bal-1
+   535	        BY <1>2, <3>3, SMT
+   536	      <3>5. QED
+   537	        BY <1>1, <3>3, <3>4, OneBImpliesWont
+   538	    <2>2. QED
+   539	      BY <1>1, <2>1
+   540	  <1>4. CASE \E c \in 0..b-1 :
+   541	                 /\ \A m \in R : m.maxVBal =< c
+   542	                 /\ \E m \in R : /\ m.maxVBal = c
+   543	                                 /\ m.maxVal = v
+   544	  PROOF
+   545	    <2>1. PICK c \in 0..b-1 :
+   546	             /\ \A m \in R : m.maxVBal =< c
+   547	             /\ \E m \in R : /\ m.maxVBal = c
+   548	                             /\ m.maxVal = v
+   549	      BY <1>4
+   550	    <2>2. PICK mx \in R : /\ mx.maxVBal = c
+   551	                           /\ mx.maxVal = v
+   552	      BY <2>1
+   553	    <2>3. VotedForInS(S, mx.acc, v, c)
+   554	      BY <1>1, <2>1, <2>2, SMT
+   555	         DEF StateInv, MsgInvS, MsgInvFor
+   556	    <2>4. SafeAtS(S, v, c)
+   557	      BY <1>1, <2>3, VoteImpliesSafeAt
+   558	    <2>5. CASE b2 < c
+   559	    PROOF
+   560	      <3>1. b2 \in 0..c-1
+   561	        BY <1>2, <2>1, <2>5, SMT
+   562	      <3>2. QED
+   563	        BY <2>4, <3>1 DEF SafeAtS
+   564	    <2>6. CASE b2 = c
+   565	    PROOF
+   566	      <3>1. \A a \in Q : VotedForInS(S, a, v, b2) \/ WontVoteInS(S, a, b2)
+   567	     
+... (truncated) ...
+2)
+   583	            BY <1>1, <4>2, <4>3, <5>1, OneBImpliesWont
+   584	          <5>3. QED
+   585	            BY <5>2
+   586	        <4>5. CASE m.maxVBal = c
+   587	        PROOF
+   588	          <5>1. VotedForInS(S, a, m.maxVal, c)
+   589	            BY <1>1, <4>2, <4>3, <4>5, SMT
+   590	               DEF StateInv, MsgInvS, MsgInvFor
+   591	          <5>2. m.maxVal = v
+   592	            BY <1>1, <2>3, <5>1, VoteValueUnique
+   593	          <5>3. VotedForInS(S, a, v, b2)
+   594	            BY <2>6, <5>1, <5>2
+   595	          <5>4. QED
+   596	            BY <5>3
+   597	        <4>6. QED
+   598	          BY <4>3, <4>4, <4>5, SMT
+   599	      <3>2. QED
+   600	        BY <1>1, <3>1
+   601	    <2>7. CASE b2 > c
+   602	    PROOF
+   603	      <3>1. \A a \in Q : WontVoteInS(S, a, b2)
+   604	      PROOF
+   605	        <4>1. SUFFICES ASSUME NEW a \in Q
+   606	                PROVE WontVoteInS(S, a, b2)
+   607	          OBVIOUS
+   608	        <4>2. PICK m \in R : m.acc = a
+   609	          BY <1>1, <4>1
+   610	        <4>3. /\ m \in S
+   611	               /\ m.type = "1b"
+   612	               /\ m.bal = b
+   613	               /\ m.maxVBal =< c
+   614	          BY <1>1, <2>1, <4>2
+   615	        <4>4. b2 \in m.maxVBal+1..m.bal-1
+   616	          BY <1>2, <2>1, <2>7, <4>3, SMT
+   617	        <4>5. QED
+   618	          BY <1>1, <4>2, <4>3, <4>4, OneBImpliesWont
+   619	      <3>2. QED
+   620	        BY <1>1, <3>1
+   621	    <2>8. QED
+   622	      BY <1>2, <2>1, <2>5, <2>6, <2>7, SMT
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+File "./PaxosHistVar_Invariant.tla", line 616, characters 11-12:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  NEW CONSTANT Q,
+                  NEW CONSTANT R,
+                  NEW CONSTANT b2 \in 
+                  0..b - 1,
+                  NEW CONSTANT c \in 
+                  0..b - 1,
+                  NEW CONSTANT mx \in R,
+                  NEW CONSTANT a \in Q,
+                  NEW CONSTANT m \in R,
+                  <1>1 ,
+                  <1>2 ,
+                  <2>1 ,
+                  <2>7 ,
+                  <4>3 ,
+                  SMTT(20) ,
+                  SimpleArithmetic 
+           PROVE  b2 \in m.maxVBal + 1..m.bal - 1
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 581, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW 
+... (truncated) ...
+
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  NEW CONSTANT Q,
+                  NEW CONSTANT R,
+                  NEW CONSTANT b2 \in 
+                  0..b - 1,
+                  NEW CONSTANT c \in 
+                  0..b - 1,
+                  NEW CONSTANT mx \in R,
+                  NEW CONSTANT a \in Q,
+                  NEW CONSTANT m \in R,
+                  <1>1 ,
+                  <1>2 ,
+                  <2>1 ,
+                  <2>6 ,
+                  <4>3 ,
+                  <4>4 ,
+                  SMTT(20) ,
+                  SimpleArithmetic 
+           PROVE  b2 \in m.maxVBal + 1..m.bal - 1
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 764, character 77:
+[ERROR]: 2/427 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 618, characters 11-12:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW CONSTANT Values,
+                  NEW CONSTANT Quorums,
+                  QuorumAssumption ==
+                    /\ Quorums \subseteq SUBSET Acceptors
+                    /\ \A Q1, Q2 \in Quorums : Q1 \cap Q2 # {},
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  NEW CONSTANT Q,
+                  NEW CONSTANT R,
+                  NEW CONSTANT b2 \in 
+                  0..b - 1,
+                  NEW CONSTANT c \in 
+                  0..b - 1,
+                  NEW CONSTANT mx \in R,
+                  NEW CONSTANT a \in Q,
+                  NEW CONSTANT m \in R,
+                  <1>1 ,
+                  <1>2 ,
+                  <2>1 ,
+                  <2>7 ,
+                  <4>3 ,
+                  SMTT(20) ,
+                  SimpleArithmetic 
+           PROVE  b2 \in m.maxVBal + 1..m.bal - 1
+File "./PaxosHistVar_Invariant.tla", line 582, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Acceptors,
+                  NEW 
+... (truncated) ...
+
+                  NEW VARIABLE sent,
+                  NEW CONSTANT S,
+                  NEW CONSTANT b,
+                  NEW CONSTANT v,
+                  NEW CONSTANT Q,
+                  NEW CONSTANT R,
+                  NEW CONSTANT b2 \in 
+                  0..b - 1,
+                  NEW CONSTANT c \in 
+                  0..b - 1,
+                  NEW CONSTANT mx \in R,
+                  NEW CONSTANT a \in Q,
+                  NEW CONSTANT m \in R,
+                  <1>1 ,
+                  <1>2 ,
+                  <2>1 ,
+                  <2>6 ,
+                  <4>3 ,
+                  <4>4 ,
+                  SMTT(20) ,
+                  SimpleArithmetic 
+           PROVE  b2 \in m.maxVBal + 1..m.bal - 1
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 766, character 77:
+[ERROR]: 2/427 obligations failed.
+There were backend errors processing module `"PaxosHistVar_Invariant"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib PaxosHistVar_Invariant.tla'
+(* loading fingerprints in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "./PaxosHistVar_Invariant.tla", line 1, character 1 to line 788, character 77:
+[INFO]: All 429 obligations proved.
+[EXIT 0]
+
+[AGENT] `tlapm` now proves all obligations. I’m running the required level-2 checker next to catch any illegal edits or proof-form restrictions.
+
+[CMD] /bin/bash -lc './check_proof_bin PaxosHistVar_Invariant.tla --level 2'
+Checking: PaxosHistVar_Invariant.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/PaxosHistVar_Invariant.tlaps/PaxosHistVar_Invariant.thy" *)
+(* fingerprints written in ".tlacache/PaxosHistVar_Invariant.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_zng99sov/PaxosHistVar_Invariant.tla", line 1, character 1 to line 788, character 77:
+[INFO]: All 429 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_PaxosHistVar_Invariant_gwiuskdz/PaxosHistVar_Invariant.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof in [PaxosHistVar_Invariant.tla](/tmp/codex_bench_PaxosHistVar_Invariant_gwiuskdz/PaxosHistVar_Invariant.tla).
+
+Verification passed:
+
+```text
+tlapm: All 429 obligations proved.
+./check_proof_bin PaxosHistVar_Invariant.tla --level 2: PASS
+```
+
+No cheating was detected by the checker.

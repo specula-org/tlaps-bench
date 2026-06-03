@@ -1,0 +1,523 @@
+Benchmark: Euclid/Euclid_Correctness.tla
+Time: 152s
+Tokens: 1,042,324 input / 5,039 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and nearby files first, then iterate with TLAPS and the provided checker until the target proof passes.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Euclid_Correctness.tla"
+-------------------- MODULE Euclid_Correctness --------------------
+EXTENDS Integers, TLAPS
+-------------------------------------------------------
+p | q == \E d \in 1..q : q = p * d
+Divisors(q) == {d \in 1..q : d | q}
+Maximum(S) == CHOOSE x \in S : \A y \in S : x \geq y
+GCD(p,q) == Maximum(Divisors(p) \cap Divisors(q))
+Number == Nat \ {0}
+-------------------------------------------------------
+CONSTANTS M, N
+VARIABLES x, y
+
+ASSUME NumberAssumption == M \in Number /\ N \in Number
+-------------------------------------------------------
+Init == (x = M) /\ (y = N)
+
+Next == \/ /\ x < y
+           /\ y' = y - x
+           /\ x' = x
+        \/ /\ y < x
+           /\ x' = x-y
+           /\ y' = y
+
+Spec == Init /\ [][Next]_<<x,y>>
+-------------------------------------------------------
+ResultCorrect == (x = y) => x = GCD(M, N)
+
+-------------------------------------------------------
+USE DEF Number
+
+-------------------------------------------------------
+AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
+AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
+AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
+-------------------------------------------------------
+-------------------------------------------------------
+THEOREM Correctness == Spec => []ResultCorrect
+PROOF OBVIOUS
+=======================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "ls -la /home/ubuntu/.tlapm/lib/tlapm/stdlib | sed -n '1,160p'"
+total 412
+drwxr-xr-x 1 ubuntu ubuntu    706 May 24 09:16 .
+drwxr-xr-x 1 ubuntu ubuntu    120 Apr 14 16:04 ..
+-rw-r--r-- 1 ubuntu ubuntu  13796 Apr 14 16:04 BagsTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   9417 Apr 14 16:04 BagsTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   7554 Apr 14 16:04 Bags.tla
+-rw-r--r-- 1 ubuntu ubuntu 110320 Apr 14 16:04 CommunityModules.jar
+-rw-r--r-- 1 ubuntu ubuntu   1302 Apr 14 16:04 FiniteSets.tla
+-rw-r--r-- 1 ubuntu ubuntu  42189 Apr 14 16:04 FiniteSetTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  19668 Apr 14 16:04 FiniteSetTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   2753 Apr 14 16:04 Folds.tla
+-rw-r--r-- 1 ubuntu ubuntu  11385 Apr 14 16:04 Functions.tla
+-rw-r--r-- 1 ubuntu ubuntu  43420 Apr 14 16:04 FunctionTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu  20232 Apr 14 16:04 NaturalsInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   8950 Apr 14 16:04 NaturalsInduction.tla
+-rw-r--r-- 1 ubuntu ubuntu    841 Apr 14 16:04 RealTime.tla
+-rw-r--r-- 1 ubuntu ubuntu  15285 Apr 14 16:04 SequenceTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  10510 Apr 14 16:04 SequenceTheorems.tla
+drwxrwxr-x 1 ubuntu ubuntu     28 May 24 09:16 .tlacache
+-rw-r--r-- 1 ubuntu ubuntu  24588 Apr 14 16:04 TLAPS.tla
+-rw-r--r-- 1 ubuntu ubuntu  31327 Apr 14 16:04 WellFoundedInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  16058 Apr 14 16:04 WellFoundedInduction.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_Euclid_Correctness_19vogh06
+check_proof_bin
+GCD.tla
+Euclid_Correctness.tla
+[EXIT 0]
+
+[AGENT] The module is small and already gives the arithmetic facts as axioms, so the proof should be an invariant proof rather than a number-theory proof. I’m checking the local dependency and TLAPS library syntax now so the proof matches what this TLAPS install accepts.
+
+[CMD] /bin/bash -lc "sed -n '1,240p' GCD.tla"
+--------------------------- MODULE GCD ---------------------------
+EXTENDS Integers
+------------------------------------------------------------------
+Divides(p, n) == \E q \in Int : n = p * q
+DivisorsOf(n) == {p \in Int : Divides(p, n)}
+
+SetMax(S) == CHOOSE i \in S : \A j \in S : i >= j
+
+GCD(m, n) == SetMax(DivisorsOf(m) \cap DivisorsOf(n))
+-----------------------------------------------------------------------------
+THEOREM GCD1 == \A m \in Nat \ {0} : GCD(m, m) = m
+  PROOF OMITTED
+
+------------------------------------------------------------------
+THEOREM GCD2 == \A m, n \in Nat \ {0} : GCD(m, n) = GCD(n, m)
+  PROOF OMITTED
+
+------------------------------------------------------------------
+THEOREM GCD3 == \A m, n \in Nat \ {0} : 
+                    (n > m) => (GCD(m, n) = GCD(m, n-m))
+  PROOF OMITTED
+
+===================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,260p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+                                             *)
+(* This pragma bypasses Zenon and uses Isabelle's built-in theorem        *)
+(* prover, Blast. It is almost never better than Zenon by itself, but     *)
+(* becomes very useful in combination with the Auto pragma above. The     *)
+(* AutoBlast pragma first attempts Auto and then uses Blast to prove what *)
+(* Auto could not prove. (There is currently no way to use Zenon on the   *)
+(* results left over from Auto.)                                          *)
+(**************************************************************************)
+Blast == TRUE (*{ by (prover:"isabelle"; tactic:"blast") }*)
+SlowBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:120) }*)
+SlowerBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:480) }*)
+SlowestBlast == TRUE (*{ by (prover:"isabelle"; tactic:"blast"; timeout:960) }*)
+
+AutoBlast == TRUE (*{ by (prover:"isabelle"; tactic:"auto, blast") }*)
+
+
+(**************************************************************************)
+(* Backend pragmas: multi-back-ends                                       *)
+(*                                                                        *)
+(* These pragmas just run a bunch of back-ends one after the other in the *)
+(* hope that one will succeed. This saves time and effort for the user at *)
+(* the expense of computation time.                                       *)
+(**************************************************************************)
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Euclid_Correctness.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Euclid_Correctness.tlaps/Euclid_Correctness.thy" *)
+File "./Euclid_Correctness.tla", line 38, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME Number == Nat \ {0},
+                  NEW CONSTANT M,
+                  NEW CONSTANT N,
+                  NEW VARIABLE x,
+                  NEW VARIABLE y,
+                  NumberAssumption == M \in Number /\ N \in Number,
+                  GCDProperty1 == \A p \in Number : GCD(p, p) = p,
+                  GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p),
+                  GCDProperty3 ==
+                    \A p, q \in Number : p < q => GCD(p, q) = GCD(p, q - p)
+           PROVE  Spec => []ResultCorrect
+File "./Euclid_Correctness.tla", line 1, character 1 to line 39, character 55:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Euclid_Correctness"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* fingerprints written in ".tlacache/Euclid_Correctness.tlaps/fingerprints" *)
+[EXIT 3]
+
+[CMD] /bin/bash -lc "rg \"THEOREM|\\[\\]\\|WF_|ENABLED|INV\" /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla'"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_SurjCardinalityBound ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_CardinalityType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Bijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_SameCardinalityBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_SurjSameCardinalityImpliesInj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_EmptySet ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_AddElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_RemoveElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Singleton ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Subset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Surjection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Image ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Injection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_PigeonHole ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Interval ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_BoundedSetOfNaturals ==
+/home
+... (truncated) ...
+OfSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SubSeqRecursive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SubSeqOfSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM ConcatAdjacentSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SubSeqOfConcat1 ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SubSeqOfConcat2 ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM AppendProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM AppendIsConcat ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM HeadTailAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM AppendInjective ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SequenceEmptyOrAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SequencesInductionAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SequencesInductionTail ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM RangeOfSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM RangeEquality ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM SeqOfRange ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:THEOREM RangeConcatenation ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '260,620p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+(**************************************************************************)
+
+(* CVC3 goes first because it's bundled with TLAPS, then the other SMT
+   solvers are unlikely to succeed if CVC3 fails, so we run zenon and
+   Isabelle before them. *)
+AllProvers == TRUE (*{
+    by (prover:"cvc33")
+    by (prover:"zenon")
+    by (prover:"isabelle"; tactic:"auto")
+    by (prover:"spass")
+    by (prover:"smt3")
+    by (prover:"yices3")
+    by (prover:"verit")
+    by (prover:"z33")
+    by (prover:"isabelle"; tactic:"force")
+    by (prover:"isabelle"; tactic:"(auto intro: setEqualI)")
+    by (prover:"isabelle"; tactic:"clarsimp auto?")
+    by (prover:"isabelle"; tactic:"clarsimp")
+    by (prover:"isabelle"; tactic:"auto, blast")
+  }*)
+AllProversT(X) == TRUE (*{
+    by (prover:"cvc33"; timeout:@)
+    by (prover:"zenon"; timeout:@)
+    by (prover:"isabelle"; tactic:"auto"; timeout:@)
+    by (prover:"spass"; timeout:@)
+    by (prover:"smt3"; timeout:@)
+    by (prover:"yices3"; timeout:@)
+    by (prover:"verit"; timeout:@)
+    by (prover:"z33"; timeout:@)
+    by (prover:"isabelle"; tactic:"force"; timeout:@)
+    by (prover:"isabelle"; tactic:"(auto intro: setEqualI)"; timeout:@)
+    by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:@)
+    by (prover:"isabelle"; tactic:"clarsimp"; timeout:@)
+    by (prover:"isabelle"; tactic:"auto, blast"; timeout:@)
+  }*)
+
+AllSMT == TRUE (*{
+    by (prover:"cvc33")
+    by (prover:"smt3")
+    by (prover:"yices3")
+    by (prover:"verit")
+    by (prover
+... (truncated) ...
+~EM)
+
+
+(***************************************************************************)
+(* The following rule is a special case of the general temporal logic      *)
+(* proof rule STL4 from the paper "The Temporal Logic of Actions".  The    *)
+(* general rule is for arbitrary temporal formulas F and G, but it cannot  *)
+(* yet be handled by TLAPS.                                                *)
+(***************************************************************************)
+THEOREM RuleInvImplication ==
+  ASSUME STATE F, STATE G,
+         F => G
+  PROVE  []F => []G
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following rule is a special case of rule TLA2 from the paper "The   *)
+(* Temporal Logic of Actions".                                             *)
+(***************************************************************************)
+THEOREM RuleStepSimulation ==
+  ASSUME STATE I, STATE f, STATE g,
+         ACTION M, ACTION N,
+         I /\ I' /\ [M]_f => [N]_g
+  PROVE  []I /\ [][M]_f => [][N]_g
+PROOF OMITTED
+
+(***************************************************************************)
+(* The following may be used to invoke a decision procedure for            *)
+(* propositional temporal logic.                                           *)
+(***************************************************************************)
+PropositionalTemporalLogic == TRUE
+=============================================================================
+[EXIT 0]
+
+[AGENT] I’m going to add a compact invariant (`IndInv`) plus small lemmas for positive subtraction and each Euclid step. That keeps the temporal proof separate from the arithmetic/GCD cases, which tends to be much easier for TLAPS to discharge.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Euclid_Correctness.tla'
+File "./Euclid_Correctness.tla", line 80, character 9:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_proof in file "src/proof/p_parser.ml", line 84, characters 27-57
+Called from Tlapm_lib__P_parser.toplevel in file "src/proof/p_parser.ml", line 230, characters 8-39
+Called from Tlapm_lib__Pco.Make.(<$>).(fun) in file "src/pars/pco.ml", line 427, characters 31-36
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 377, characters 30-46
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(<|>).(fun) in file "src/pars/pco.ml", line 387, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/
+... (truncated) ...
+file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.execute in file "src/pars/pco.ml", line 246, characters 14-25
+Called from Tlapm_lib__M_save.really_parse_file in file "src/module/m_save.ml", line 84, characters 14-61
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba Euclid_Correctness.tla | sed -n '35,95p'"
+    35	-------------------------------------------------------
+    36	-------------------------------------------------------
+    37	IndInv == /\ x \in Number
+    38	          /\ y \in Number
+    39	          /\ GCD(x, y) = GCD(M, N)
+    40	
+    41	THEOREM PositiveDifference ==
+    42	  \A p, q \in Number : p < q => q - p \in Number
+    43	PROOF
+    44	  BY SMT DEF Number
+    45	
+    46	THEOREM InitImpliesIndInv ==
+    47	  Init => IndInv
+    48	PROOF
+    49	  BY NumberAssumption DEF Init, IndInv
+    50	
+    51	THEOREM StepPreservesIndInv ==
+    52	  IndInv /\ [Next]_<<x, y>> => IndInv'
+    53	PROOF
+    54	  <1>1. ASSUME IndInv, [Next]_<<x, y>>
+    55	        PROVE  IndInv'
+    56	    <2>1. CASE Next
+    57	      <3>1. CASE /\ x < y
+    58	                  /\ y' = y - x
+    59	                  /\ x' = x
+    60	        <4>1. y - x \in Number
+    61	          BY <1>1, <3>1, PositiveDifference DEF IndInv
+    62	        <4>2. GCD(x', y') = GCD(M, N)
+    63	          BY <1>1, <3>1, GCDProperty3 DEF IndInv
+    64	        <4>3. QED
+    65	          BY <1>1, <3>1, <4>1, <4>2 DEF IndInv
+    66	      <3>2. CASE /\ y < x
+    67	                  /\ x' = x-y
+    68	                  /\ y' = y
+    69	        <4>1. x - y \in Number
+    70	          BY <1>1, <3>2, PositiveDifference DEF IndInv
+    71	        <4>2. GCD(x', y') = GCD(M, N)
+    72	          BY <1>1, <3>2, <4>1, GCDProperty2, GCDProperty3 DEF IndInv
+    73	        <4>3. QED
+    74	          BY <1>1, <3>2, <4>1, <4>2 DEF IndInv
+    75	      <3>3. QED
+    76	        BY <2>1, <3>1, <3>2 DEF Next
+    77	    <2>2. CASE <<x, y>>' = <<x, y>>
+    78	      BY <1>1 DEF IndInv
+    79	    <2>3. QED
+    80	      BY <1>1, <2>1, <2>2 DEF action
+    81	
+    82	THEOREM IndInvImpliesResultCorrect ==
+    83	  IndInv => ResultCorrect
+    84	PROOF
+    85	  BY GCDProperty1 DEF IndInv, ResultCorrect
+    86	
+    87	THEOREM Correctness == Spec => []ResultCorrect
+    88	PROOF
+    89	  BY InitImpliesIndInv, StepPreservesIndInv, IndInvImpliesResultCorrect, PTL DEF Spec
+    90	=======================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Euclid_Correctness.tla'
+File "./Euclid_Correctness.tla", line 80, characters 31-36:
+Error: Operator "action" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__E_anon.anon#expr in file "src/expr/e_anon.ml", line 308, characters 22-63
+Called from Tlapm_lib__P_anon.anon#usable.usdef in file "src/proof/p_anon.ml", line 222, characters 29-49
+Called from Stdlib__List.rev_map.rmap_f in file "list.ml", line 105, characters 22-25
+Called from Tlapm_lib__Ext.List.map in file "src/util/ext.ml", line 48, characters 22-37
+Called from Tlapm_lib__P_anon.anon#usable in file "src/proof/p_anon.ml", line 236, characters 32-74
+Called from Tlapm_lib__P_visit.map#proof in file "src/proof/p_visit.ml", line 26, characters 12-30
+Called from Tlapm_lib__P_anon.anon#proof in file "src/proof/p_anon.ml", line 68, characters 22-56
+Called from Tlapm_lib__P_anon.anon#step in file "src/proof/p_anon.ml", line 101, characters 12-30
+Called from Tlapm_lib__P_visit.map#steps in file "src/proof/p_visit.ml", line 35, characters 24-40
+Called from Tlapm_lib__P_anon.anon#proof in file "src/proof/p_anon.ml", line 63, characters 27-47
+Called from Tlapm_lib__M_elab.normalize.spin.map_proof in file "src/module/m_elab.ml", line 1142, characters 21-48
+Called from Tlapm_lib__M_elab.normalize in file "src/module/m_elab.ml", line 1274, characters 12-66
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 321, characters 29-68
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Euclid_Correctness.tla'
+(* loading fingerprints in ".tlacache/Euclid_Correctness.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+File "./Euclid_Correctness.tla", line 78, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME Number == Nat \ {0},
+                  NEW CONSTANT M,
+                  NEW CONSTANT N,
+                  NEW VARIABLE x,
+                  NEW VARIABLE y,
+                  NumberAssumption == M \in Number /\ N \in Number,
+                  GCDProperty1 == \A p \in Number : GCD(p, p) = p,
+                  GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p),
+                  GCDProperty3 ==
+                    \A p, q \in Number : p < q => GCD(p, q) = GCD(p, q - p),
+                  IndInv ==
+                    /\ x \in Number
+                    /\ y \in Number
+                    /\ GCD(x, y) = GCD(M, N),
+                  <1>1 
+           PROVE  IndInv'
+File "./Euclid_Correctness.tla", line 1, character 1 to line 93, character 55:
+[ERROR]: 1/51 obligations failed.
+There were backend errors processing module `"Euclid_Correctness"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+
+(* created new ".tlacache/Euclid_Correctness.tlaps/Euclid_Correctness.thy" *)
+(* fingerprints written in ".tlacache/Euclid_Correctness.tlaps/fingerprints" *)
+[EXIT 3]
+
+[AGENT] The first run got through most obligations; the only failing piece is the stuttering branch, where TLAPS is not automatically decomposing tuple equality into component equalities. I’m tightening that branch rather than changing the invariant.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Euclid_Correctness.tla'
+(* loading fingerprints in ".tlacache/Euclid_Correctness.tlaps/fingerprints" *)
+(* created new ".tlacache/Euclid_Correctness.tlaps/Euclid_Correctness.thy" *)
+(* fingerprints written in ".tlacache/Euclid_Correctness.tlaps/fingerprints" *)
+File "./Euclid_Correctness.tla", line 1, character 1 to line 93, character 55:
+[INFO]: All 53 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves the module. I’m running the required `check_proof_bin` validation next to make sure the edits comply with the benchmark constraints.
+
+[CMD] /bin/bash -lc './check_proof_bin Euclid_Correctness.tla --level 2'
+Checking: Euclid_Correctness.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Euclid_Correctness.tlaps/Euclid_Correctness.thy" *)
+(* fingerprints written in ".tlacache/Euclid_Correctness.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_q4qac1b6/Euclid_Correctness.tla", line 1, character 1 to line 93, character 55:
+[INFO]: All 53 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Euclid_Correctness_19vogh06/Euclid_Correctness.result
+[EXIT 0]
+
+[AGENT] Implemented the TLAPS proof in [Euclid_Correctness.tla](/tmp/codex_bench_Euclid_Correctness_19vogh06/Euclid_Correctness.tla).
+
+Added:
+- `IndInv` as the inductive invariant
+- helper lemmas for positive subtraction, initialization, step preservation, and result correctness
+- a temporal proof of `Correctness` using `PTL`
+
+Verification passed:
+
+```text
+./check_proof_bin Euclid_Correctness.tla --level 2
+PASS — all obligations proved
+```

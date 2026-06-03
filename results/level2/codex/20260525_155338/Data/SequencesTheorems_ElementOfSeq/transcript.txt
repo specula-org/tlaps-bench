@@ -1,0 +1,476 @@
+Benchmark: Data/SequencesTheorems_ElementOfSeq.tla
+Time: 96s
+Tokens: 491,275 input / 3,179 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ module and nearby files first, then I’ll iterate with `tlapm` and the provided checker until the proof passes.
+
+[CMD] /bin/bash -lc "sed -n '1,220p' SequencesTheorems_ElementOfSeq.tla"
+-------------------------- MODULE SequencesTheorems_ElementOfSeq -------------------------
+
+EXTENDS Integers, Sequences, TLAPS
+
+AXIOM SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+AXIOM LenDef == \A S : \A seq \in Seq(S) :
+                     /\ Len(seq) \in Nat 
+                     /\ DOMAIN seq = 1..Len(seq)
+
+AXIOM HeadDef == \A s : Head(s) = s[1]
+AXIOM TailDef == \A s : Tail(s) = [i \in 1..(Len(s)-1) |-> s[i+1]]
+
+AXIOM SubSeqDef ==
+        \A s, m, n : SubSeq(s, m, n) = [i \in 1..(1+n-m) |-> s[i+m-1]]
+
+------------------------------------------------------------------
+THEOREM ElementOfSeq ==
+   ASSUME NEW S, NEW seq \in Seq(S),
+          NEW n \in 1..Len(seq)
+   PROVE  seq[n] \in S
+PROOF OBVIOUS
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_SequencesTheorems_ElementOfSeq_07sf69um
+check_proof_bin
+Sets.tla
+SequencesTheorems_ElementOfSeq.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "ls -la /home/ubuntu/.tlapm/lib/tlapm/stdlib | sed -n '1,120p'"
+total 412
+drwxr-xr-x 1 ubuntu ubuntu    706 May 24 09:16 .
+drwxr-xr-x 1 ubuntu ubuntu    120 Apr 14 16:04 ..
+-rw-r--r-- 1 ubuntu ubuntu  13796 Apr 14 16:04 BagsTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   9417 Apr 14 16:04 BagsTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   7554 Apr 14 16:04 Bags.tla
+-rw-r--r-- 1 ubuntu ubuntu 110320 Apr 14 16:04 CommunityModules.jar
+-rw-r--r-- 1 ubuntu ubuntu   1302 Apr 14 16:04 FiniteSets.tla
+-rw-r--r-- 1 ubuntu ubuntu  42189 Apr 14 16:04 FiniteSetTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  19668 Apr 14 16:04 FiniteSetTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu   2753 Apr 14 16:04 Folds.tla
+-rw-r--r-- 1 ubuntu ubuntu  11385 Apr 14 16:04 Functions.tla
+-rw-r--r-- 1 ubuntu ubuntu  43420 Apr 14 16:04 FunctionTheorems.tla
+-rw-r--r-- 1 ubuntu ubuntu  20232 Apr 14 16:04 NaturalsInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu   8950 Apr 14 16:04 NaturalsInduction.tla
+-rw-r--r-- 1 ubuntu ubuntu    841 Apr 14 16:04 RealTime.tla
+-rw-r--r-- 1 ubuntu ubuntu  15285 Apr 14 16:04 SequenceTheorems_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  10510 Apr 14 16:04 SequenceTheorems.tla
+drwxrwxr-x 1 ubuntu ubuntu     28 May 24 09:16 .tlacache
+-rw-r--r-- 1 ubuntu ubuntu  24588 Apr 14 16:04 TLAPS.tla
+-rw-r--r-- 1 ubuntu ubuntu  31327 Apr 14 16:04 WellFoundedInduction_proofs.tla
+-rw-r--r-- 1 ubuntu ubuntu  16058 Apr 14 16:04 WellFoundedInduction.tla
+[EXIT 0]
+
+[AGENT] The theorem reduces to a function-domain fact: `seq` belongs to one of the function sets `[1..k -> S]`, and `n` is in its domain via `LenDef`, so `seq[n]` should be in `S`. I’m checking the available library facts and syntax so the final proof is acceptable to TLAPS, not just mathematically obvious.
+
+[CMD] /bin/bash -lc "sed -n '1,260p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla"
+------------------------------ MODULE Functions -----------------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Notions about functions including injection, surjection, and bijection.*)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS Integers, Folds
+
+(***************************************************************************)
+(* Restriction of a function to a set (should be a subset of the domain).  *)
+(***************************************************************************)
+Restrict(f,S) == [ x \in S |-> f[x] ]
+
+(***************************************************************************)
+(* Restriction of a function to the subset of its domain satisfying a      *)
+(* test predicate.                                                         *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*   (LET f == (0 :> "a" @@ 1 :> "b" @@ 2 :> "c")                          *)
+(*    IN  RestrictDomain(f, LAMBDA x : x \in {0,2}))                       *)
+(*   = (0 :> "a" @@ 2 :> "c")                                              *)
+(******************************
+... (truncated) ...
+*********************************************************************)
+(* Special case of the above where indices = DOMAIN fun. In other words,   *)
+(* the values f[i] for all i \in DOMAIN fun, are combined using the binary *)
+(* operator op, in an unspecified order.                                   *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*  FoldFunction(LAMBDA x,y: {x} \cup y, {}, <<1,2,1>>) = {1,2}            *)
+(***************************************************************************)
+FoldFunction(op(_,_), base, fun) ==
+  FoldFunctionOnSet(op, base, fun, DOMAIN fun)
+
+(***************************************************************************)
+(* Sum the values f[i] for i \in indices, a subset of DOMAIN f.            *)
+(*                                                                         *)
+(* Example:                                                                *)
+(*  SumFunctionOnSet(<<4,5,6>>, {1,2}) = 9                                 *)
+(*  SumFunction(<<4,5,6>>) = 15                                            *)
+(***************************************************************************)
+SumFunctionOnSet(fun, indices) == FoldFunctionOnSet(+, 0, fun, indices)
+SumFunction(fun) == SumFunctionOnSet(fun, DOMAIN fun)
+
+=============================================================================
+\* Created Thu Apr 11 10:30:48 PDT 2013 by tomr
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' Sets.tla"
+-------------------------------- MODULE Sets --------------------------------
+EXTENDS Integers, NaturalsInduction, TLAPS
+
+IsBijection(f, S, T) == /\ f \in [S -> T]
+                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
+                        /\ \A y \in T : \E x \in S : f[x] = y
+
+IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
+
+CONSTANT Cardinality(_)
+AXIOM CardinalityAxiom ==
+         \A S : IsFiniteSet(S) =>
+           \A n : (n = Cardinality(S)) <=>
+                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
+-----------------------------------------------------------------------------
+
+THEOREM CardinalityInNat == \A S : IsFiniteSet(S) => Cardinality(S) \in Nat
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityZero ==
+           /\ IsFiniteSet({})
+           /\ Cardinality({}) = 0
+           /\ \A S : IsFiniteSet(S) /\ (Cardinality(S)=0) => (S = {})
+  PROOF OMITTED
+
+THEOREM CardinalityPlusOne ==
+    ASSUME NEW S, IsFiniteSet(S),
+           NEW x, x \notin S
+    PROVE  /\ IsFiniteSet(S \cup {x})
+           /\ Cardinality(S \cup {x}) = Cardinality(S) + 1
+  PROOF OMITTED
+
+------------------------------------------------------------------
+
+THEOREM CardinalityOne == \A m : /\ IsFiniteSet({m})
+                                 /\ Cardinality({m}) = 1
+  PROOF OMITTED
+
+THEOREM CardinalityTwo == \A m, p : m # p => 
+                              /\ IsFiniteSet({m,p})
+                             
+... (truncated) ...
+iteSet(TT), S \subseteq TT
+  PROVE  /\ IsFiniteSet(S)
+         /\ Cardinality(S) \leq Cardinality(TT)
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM CardinalityUnion ==
+          \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) =>
+                      /\ IsFiniteSet(S \cup T)
+                      /\ IsFiniteSet(S \cap T)
+                      /\ Cardinality(S \cup T) =
+                              Cardinality(S) + Cardinality(T)
+                              - Cardinality(S \cap T)  
+  PROOF OMITTED
+
+-----------------------------------------------------------------------------
+
+THEOREM PigeonHole ==
+            \A S, T : /\ IsFiniteSet(S)
+                      /\ IsFiniteSet(T)
+                      /\ Cardinality(T) < Cardinality(S)
+                      => \A f \in [S -> T] :
+                           \E x, y \in S : x # y /\ f[x] = f[y]
+  PROOF OMITTED
+
+-------------------------------------------------------
+
+THEOREM \A S, T , f :  /\ IsFiniteSet(S)
+                       /\ f \in [S -> T]
+                       /\ \A y \in T : \E x \in S : y = f[x]
+                       => /\ IsFiniteSet(T)
+                          /\ Cardinality(T) \leq Cardinality(S)
+PROOF OMITTED
+
+THEOREM ProductFinite ==
+     \A S, T : IsFiniteSet(S) /\ IsFiniteSet(T) => IsFiniteSet(S \X T)
+PROOF OMITTED
+
+THEOREM SubsetsFinite == \A S : IsFiniteSet(S) => IsFiniteSet(SUBSET S)
+PROOF OMITTED
+=============================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla"
+-------------------------- MODULE SequenceTheorems --------------------------
+(***************************************************************************)
+(* This module contains theorems about operations on sequences.            *)
+(***************************************************************************)
+EXTENDS Sequences, Functions
+LOCAL INSTANCE NaturalsInduction
+LOCAL INSTANCE TLAPS
+
+
+(***************************************************************************)
+(* Elementary properties about Seq(S)                                      *)
+(***************************************************************************)
+
+LEMMA SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+
+THEOREM SeqMonotonic ==
+  ASSUME NEW S, NEW T, NEW seq \in Seq(S),
+         S \subseteq T
+  PROVE  seq \in Seq(T)
+
+THEOREM ElementOfSeq ==
+   ASSUME NEW S, NEW seq \in Seq(S),
+          NEW n \in 1..Len(seq)
+   PROVE  seq[n] \in S
+
+THEOREM EmptySeq ==
+   ASSUME NEW S
+   PROVE /\ << >> \in Seq(S)
+         /\ Len(<< >>) = 0
+         /\ \A seq \in Seq(S) : (seq # << >>) => (Len(seq) \in Nat \ {0})
+
+THEOREM LenProperties ==
+  ASSUME NEW S, NEW seq \in Seq(S)
+  PROVE  /\ Len(seq) \in Nat
+         /\ seq \in [1..Len(seq) -> S]
+         /\ DOMAIN seq = 1 .. Len(seq)
+
+THEOREM IsASeq ==
+  ASSUME NEW n \in Nat, NEW e(_), NEW S,
+         \A i \in 1..n : e(i) \in S
+  PROVE  [i \in 1..n |-> e(i)] \in Seq(S)
+
+THEOREM ExceptSeq ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW i \in 1 .. Len(seq), NEW e \in S
+  PR
+... (truncated) ...
+(seq)+1
+         /\ \A i \in 1.. Len(seq) : Append(seq, elt)[i] = seq[i]
+         /\ Append(seq, elt)[Len(seq)+1] = elt
+         /\ Range(Append(seq, elt)) = Range(seq) \cup {elt}
+
+THEOREM AppendIsConcat ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt \in S
+  PROVE  Append(seq, elt) = seq \o <<elt>>
+
+THEOREM HeadTailAppend ==
+  ASSUME NEW S, NEW seq \in Seq(S), NEW elt
+  PROVE  /\ Head(Append(seq, elt)) = IF seq = <<>> THEN elt ELSE Head(seq)
+         /\ Tail(Append(seq, elt)) = IF seq = <<>> THEN <<>> ELSE Append(Tail(seq), elt)
+
+THEOREM AppendInjective ==
+  ASSUME NEW S, NEW e \in S, NEW s \in Seq(S), NEW f \in S, NEW t \in Seq(S)
+  PROVE  Append(s,e) = Append(t,f) <=> s = t /\ e = f
+
+THEOREM SequenceEmptyOrAppend ==
+  ASSUME NEW S, NEW seq \in Seq(S), seq # << >>
+  PROVE \E s \in Seq(S), elt \in S : seq = Append(s, elt)
+
+(***************************************************************************)
+(* Inductive reasoning for sequences                                       *)
+(***************************************************************************)
+
+THEOREM SequencesInductionAppend ==
+  ASSUME NEW P(_), NEW S,
+         P(<< >>),
+         \A s \in Seq(S), e \in S : P(s) => P(Append(s,e))
+  PROVE  \A seq \in Seq(S) : P(seq)
+
+THEOREM SequencesInductionTail ==
+  ASSUME NEW S,  NEW P(_),
+         P(<< >>),
+         \A s \in Seq(S) : (s # << >>) /\ P(Tail(s)) => P(s)
+  PROVE  \A s \in Seq(S) : P(s)
+
+
+(***************************************************************************)
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "THEOREM|LEMMA" /home/ubuntu/.tlapm/lib/tlapm/stdlib/Functions.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla /home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla'
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:LEMMA SeqDef == \A S : Seq(S) = UNION {[1..n -> S] : n \in Nat}
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SeqMonotonic ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ElementOfSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM EmptySeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM LenProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM IsASeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ExceptSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SeqEqual ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ConcatProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ConcatEmptySeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ConcatEqualIffEmpty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ConcatAssociative ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ConcatSimplifications ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqEmpty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqRange ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM HeadTailProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTh
+... (truncated) ...
+HEOREM SumFunctionOnSetNonempty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetAddIndex ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetRemoveIndex ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetExcept ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetDisjointUnion ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionNatOnSubset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetZero ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetMonotonic ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionOnSetStrictlyMonotonic ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionNat ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionInt ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionEmpty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionNonempty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionExcept ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionZero ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionMonotonic ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FunctionTheorems.tla:THEOREM SumFunctionStrictlyMonotonic ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib SequencesTheorems_ElementOfSeq.tla'
+(* created new ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/SequencesTheorems_ElementOfSeq.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/fingerprints" *)
+File "./SequencesTheorems_ElementOfSeq.tla", line 1, character 1 to line 36, character 77:
+[INFO]: All 1 obligation proved.
+[EXIT 0]
+
+[CMD] /bin/bash -lc './check_proof_bin SequencesTheorems_ElementOfSeq.tla --level 2'
+Checking: SequencesTheorems_ElementOfSeq.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/SequencesTheorems_ElementOfSeq.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_1r6frw9a/SequencesTheorems_ElementOfSeq.tla", line 1, character 1 to line 36, character 77:
+[INFO]: All 1 obligation proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SequencesTheorems_ElementOfSeq_07sf69um/SequencesTheorems_ElementOfSeq.result
+[EXIT 0]
+
+[AGENT] The initial checker currently passes even with the placeholder, but the request is to replace it with an explicit proof. I’m going to make the theorem proof spell out the two facts TLAPS needs: the sequence domain from `LenDef`, and membership in the corresponding function set from `SeqDef`.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib SequencesTheorems_ElementOfSeq.tla'
+(* loading fingerprints in ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/fingerprints" *)
+(* created new ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/SequencesTheorems_ElementOfSeq.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/fingerprints" *)
+File "./SequencesTheorems_ElementOfSeq.tla", line 1, character 1 to line 42, character 77:
+[INFO]: All 8 obligations proved.
+[EXIT 0]
+
+[AGENT] The explicit proof verifies with TLAPS. I’m running the requested checker now because it also enforces the task constraints, not just proof validity.
+
+[CMD] /bin/bash -lc './check_proof_bin SequencesTheorems_ElementOfSeq.tla --level 2'
+Checking: SequencesTheorems_ElementOfSeq.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/SequencesTheorems_ElementOfSeq.thy" *)
+(* fingerprints written in ".tlacache/SequencesTheorems_ElementOfSeq.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_gtd4ziww/SequencesTheorems_ElementOfSeq.tla", line 1, character 1 to line 42, character 77:
+[INFO]: All 8 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_SequencesTheorems_ElementOfSeq_07sf69um/SequencesTheorems_ElementOfSeq.result
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git diff -- SequencesTheorems_ElementOfSeq.tla'
+diff --git a/SequencesTheorems_ElementOfSeq.tla b/SequencesTheorems_ElementOfSeq.tla
+index 95a95c7..02e41ce 100644
+--- a/SequencesTheorems_ElementOfSeq.tla
++++ b/SequencesTheorems_ElementOfSeq.tla
+@@ -19,7 +19,13 @@ THEOREM ElementOfSeq ==
+    ASSUME NEW S, NEW seq \in Seq(S),
+           NEW n \in 1..Len(seq)
+    PROVE  seq[n] \in S
+-PROOF OBVIOUS
++PROOF
++  <1>1. Len(seq) \in Nat /\ DOMAIN seq = 1..Len(seq)
++    BY LenDef
++  <1>2. seq \in [1..Len(seq) -> S]
++    BY <1>1, SeqDef
++  <1>3. QED
++    BY <1>1, <1>2
+ 
+ ------------------------------------------------------------------
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba SequencesTheorems_ElementOfSeq.tla | sed -n '12,34p'"
+    12	AXIOM TailDef == \A s : Tail(s) = [i \in 1..(Len(s)-1) |-> s[i+1]]
+    13	
+    14	AXIOM SubSeqDef ==
+    15	        \A s, m, n : SubSeq(s, m, n) = [i \in 1..(1+n-m) |-> s[i+m-1]]
+    16	
+    17	------------------------------------------------------------------
+    18	THEOREM ElementOfSeq ==
+    19	   ASSUME NEW S, NEW seq \in Seq(S),
+    20	          NEW n \in 1..Len(seq)
+    21	   PROVE  seq[n] \in S
+    22	PROOF
+    23	  <1>1. Len(seq) \in Nat /\ DOMAIN seq = 1..Len(seq)
+    24	    BY LenDef
+    25	  <1>2. seq \in [1..Len(seq) -> S]
+    26	    BY <1>1, SeqDef
+    27	  <1>3. QED
+    28	    BY <1>1, <1>2
+    29	
+    30	------------------------------------------------------------------
+    31	
+    32	------------------------------------------------------------------
+    33	
+    34	------------------------------------------------------------------
+[EXIT 0]
+
+[AGENT] Replaced `PROOF OBVIOUS` in [SequencesTheorems_ElementOfSeq.tla](/tmp/codex_bench_SequencesTheorems_ElementOfSeq_07sf69um/SequencesTheorems_ElementOfSeq.tla:22) with a hierarchical TLAPS proof using `LenDef` and `SeqDef`.
+
+Verified:
+
+```text
+/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib SequencesTheorems_ElementOfSeq.tla
+./check_proof_bin SequencesTheorems_ElementOfSeq.tla --level 2
+```
+
+Checker result: `PASS — all obligations proved`.

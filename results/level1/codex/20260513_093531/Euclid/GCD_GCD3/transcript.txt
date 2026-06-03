@@ -1,0 +1,1234 @@
+Benchmark: Euclid/GCD_GCD3.tla
+Time: 158s
+Tokens: 870,494 input / 6,854 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and checker, then iteratively patch only the placeholder proof.
+
+[CMD] /bin/bash -lc "ls && sed -n '1,260p' GCD_GCD3.tla && sed -n '1,220p' check_proof.py"
+GCD_GCD3.tla
+cheating_detection.py
+check_proof.py
+--------------------------- MODULE GCD_GCD3 ---------------------------
+EXTENDS Integers
+------------------------------------------------------------------
+Divides(p, n) == \E q \in Int : n = p * q
+DivisorsOf(n) == {p \in Int : Divides(p, n)}
+
+SetMax(S) == CHOOSE i \in S : \A j \in S : i >= j
+
+GCD(m, n) == SetMax(DivisorsOf(m) \cap DivisorsOf(n))
+-----------------------------------------------------------------------------
+THEOREM GCD1 == \A m \in Nat \ {0} : GCD(m, m) = m
+  PROOF OMITTED
+
+------------------------------------------------------------------
+THEOREM GCD2 == \A m, n \in Nat \ {0} : GCD(m, n) = GCD(n, m)
+  PROOF OMITTED
+
+------------------------------------------------------------------
+THEOREM GCD3 == \A m, n \in Nat \ {0} : 
+                    (n > m) => (GCD(m, n) = GCD(m, n-m))
+PROOF OBVIOUS
+
+===================================================================#!/usr/bin/env python3
+"""
+Check a single TLAPS benchmark proof for correctness and cheating.
+
+Designed for AI agents to get quick feedback during proof writing.
+
+Usage:
+    python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+
+Output:
+    - Raw tlapm output (preserved verbatim)
+    - Cheating check (compares against main branch)
+    - Summary verdict: PASS / FAIL / CHEATING
+
+Exit codes:
+    0 = PASS
+    1 = FAIL (proof doesn't verify)
+    2 = CHEATING (tampering detected)
+    3 = ERROR (could not run chec
+... (truncated) ...
+ parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '220,520p' check_proof.py && find /tmp/codex_bench_GCD_GCD3_r8j4wz51 -name AGENTS.md -print"
+        # Copy dependency files from the same directory
+        bench_dir = os.path.dirname(filepath)
+        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+            dep_basename = os.path.basename(dep_file)
+            if dep_basename != basename:
+                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+
+        cmd = [tlapm_path, '-I', tlapm_lib, tmp_file]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=args.timeout,
+                cwd=tmp_dir
+            )
+            tlapm_output = result.stdout + result.stderr
+            tlapm_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            tlapm_output = f"TIMEOUT after {args.timeout}s"
+            tlapm_exit = -1
+        except Exception as e:
+            tlapm_output = f"ERROR: {e}"
+            tlapm_exit = -2
+
+        for line in tlapm_output.split('\n'):
+            emit(line)
+        tlapm_passed = (tlapm_exit == 0)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- Step 2: Cheating check ---
+    emit()
+    emit("=" * 60)
+    emit("CHEATING CHECK")
+    emit("=" * 60)
+
+    cheating_issues = check_cheating(filepath)
+    real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
+    warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
+
+    # Check for empty PROOF blocks and 0-obligation (independent of git comparison)
+    if tlapm_passed:
+      
+... (truncated) ...
+      for ci in detect_empty_proof(clean):
+                    real_issues.append((po_line + (ci.line or 0), ci.description))
+                for ci in detect_zero_total_obligations(tlapm_output):
+                    real_issues.append((0, ci.description))
+
+    for line_num, desc in warnings:
+        emit(f"  WARNING: {desc}")
+
+    if real_issues:
+        for line_num, desc in real_issues:
+            emit(f"  Line {line_num}: {desc}")
+    else:
+        emit("  No cheating detected.")
+
+    # --- Step 3: Verdict ---
+    emit()
+    emit("=" * 60)
+    emit("VERDICT")
+    emit("=" * 60)
+
+    if real_issues:
+        verdict = "CHEATING"
+        exit_code = 2
+        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+    elif tlapm_passed:
+        verdict = "PASS"
+        exit_code = 0
+        emit(f"  ✅ PASS — all obligations proved")
+    else:
+        verdict = "FAIL"
+        exit_code = 1
+        # Extract obligation summary
+        m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
+        if m:
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
+        elif "TIMEOUT" in tlapm_output:
+            emit(f"  ❌ FAIL — timeout after {args.timeout}s")
+        else:
+            emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+
+    # Write result file
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(output_lines) + '\n')
+    emit(f"\nResult written to: {output_path}")
+
+    sys.exit(exit_code)
+
+
+if __name__ == '__main__':
+    main()
+[EXIT 0]
+
+[AGENT] I’ve got the target theorem; now I’ll inspect the integer library facts TLAPS can use.
+
+[CMD] /bin/bash -lc "grep -R \"THEOREM\\|LEMMA\\|ASSUME\\|AXIOM\" -n /opt/tlapm15/lib/tlaps/Integers.tla /opt/tlapm15/lib/tlaps/Naturals.tla 2>/dev/null | head -200 && sed -n '1,240p' /opt/tlapm15/lib/tlaps/Integers.tla"
+sed: can't read /opt/tlapm15/lib/tlaps/Integers.tla: No such file or directory
+[EXIT 2]
+
+[CMD] /bin/bash -lc "find /opt/tlapm15/lib/tlaps -maxdepth 2 -type f | sed -n '1,120p'"
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla
+/opt/tlapm15/lib/tlaps/zenon_focal.v
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla
+/opt/tlapm15/lib/tlaps/zenon_induct.v
+/opt/tlapm15/lib/tlaps/SequenceTheorems.tla
+/opt/tlapm15/lib/tlaps/un-inst
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems.tla
+/opt/tlapm15/lib/tlaps/RealTime.tla
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla
+/opt/tlapm15/lib/tlaps/TLA+/README.html
+/opt/tlapm15/lib/tlaps/TLA+/Tuples.thy
+/opt/tlapm15/lib/tlaps/TLA+/Zenon.thy
+/opt/tlapm15/lib/tlaps/TLA+/Functions.thy
+/opt/tlapm15/lib/tlaps/TLA+/FixedPoints.thy
+/opt/tlapm15/lib/tlaps/TLA+/Peano.thy
+/opt/tlapm15/lib/tlaps/TLA+/ROOT.ML
+/opt/tlapm15/lib/tlaps/TLA+/Strings.thy
+/opt/tlapm15/lib/tlaps/TLA+/NatDivision.thy
+/opt/tlapm15/lib/tlaps/TLA+/simplifier_setup.ML
+/opt/tlapm15/lib/tlaps/TLA+/SetTheory.thy
+/opt/tlapm15/lib/tlaps/TLA+/CaseExpressions.thy
+/opt/tlapm15/lib/tlaps/TLA+/SMT.thy
+/opt/tlapm15/lib/tlaps/TLA+/Constant.thy
+/opt/tlapm15/lib/tlaps/TLA+/PredicateLogic.thy
+/opt/tlapm15/lib/tlaps/TLA+/Makefile
+/opt/tlapm15/lib/tlaps/TLA+/NatArith.thy
+/opt/tlapm15/lib/tlaps/TLA+/Integers.thy
+/opt/tlapm15/lib/tlaps/TLA+/NatOrderings.thy
+/opt/tlapm15/lib/tlaps/SequencesExt.tla
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla
+/opt/tlapm15/lib/tlaps/WellFoundedInduction.tla
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla
+/opt/tlapm15/lib/tlaps/Bags.tla
+/opt/tlapm15/lib/tlaps/zenon.v
+/opt/tlapm15/lib/tlaps/TLAPS.tla
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/CONTRIBUTORS
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/ANNOUNCE
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/NEWS
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/build
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/README.TLAPS
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/COPYRIGHT
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/README
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/Isabelle
+/opt/tlapm15/lib/tlaps/Functions.tla
+/opt/tlapm15/lib/tlaps/zenon_coqbool.v
+/opt/tlapm15/lib/tlaps/zenon_equiv.v
+/opt/tlapm15/lib/tlaps/FunctionTheorems.tla
+/opt/tlapm15/lib/tlaps/bin/translate
+/opt/tlapm15/lib/tlaps/bin/z3
+/opt/tlapm15/lib/tlaps/bin/zenon
+/opt/tlapm15/lib/tlaps/bin/ls4
+/opt/tlapm15/lib/tlaps/bin/ptl_to_trp
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla
+/opt/tlapm15/lib/tlaps/FiniteSets.tla
+/opt/tlapm15/lib/tlaps/NaturalsInduction.tla
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla
+[EXIT 0]
+
+[CMD] /bin/bash -lc "ls /opt/tlapm15/lib/tlaps | grep -E 'Integer|Natural|TLC|Finite' && grep -R \"Divides\\|SetMax\\|CHOOSE\\|Nat\" -n /opt/tlapm15/lib/tlaps/*.tla | head -200"
+FiniteSetTheorems.tla
+FiniteSetTheorems_proofs.tla
+FiniteSets.tla
+NaturalsInduction.tla
+NaturalsInduction_proofs.tla
+/opt/tlapm15/lib/tlaps/Bags.tla:15:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/Bags.tla:21:  B \in [DOMAIN B -> {n \in Nat : n > 0}]
+/opt/tlapm15/lib/tlaps/Bags.tla:62:        (* that f is a Nat-valued function and that f[x] equals 0 for all *)
+/opt/tlapm15/lib/tlaps/Bags.tla:66:               LET elt == CHOOSE e \in S : TRUE
+/opt/tlapm15/lib/tlaps/Bags.tla:101:                                   ELSE CHOOSE r \in Range1 :
+/opt/tlapm15/lib/tlaps/Bags.tla:105:                      ELSE LET x == CHOOSE x \in DOMAIN BB : TRUE
+/opt/tlapm15/lib/tlaps/Bags.tla:115:        UNION {[SB -> {n \in Nat : n > 0}] : SB \in SUBSET BagToSet(B)}  
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:13:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:75:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW m \in Nat
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:154:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW m \in Nat, m <= n
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:192:(* Given Bag B and Natural n, CopiesIn(e, Scaling(n, B))=n*CopiesIn(e, B)  *)
+/opt/tlapm15/lib/tlaps/BagsTheorems.tla:196:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW e
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:16:LOCAL INSTANCE Naturals
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:82:  ASSUME NEW B, IsABag(B), NEW n \in Nat, NEW m \in Nat
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:189:  ASSUME NEW B, IsABag(
+... (truncated) ...
+Fun_ExistsBijEquiv
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:836:(* For any set S, given n, m \in Nat such that bijections exist from 1..n  *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:841:THEOREM Fun_NatBijSame ==
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:843:         NEW n \in Nat, ExistsBijection(1..n,S),
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:844:         NEW m \in Nat, ExistsBijection(1..m,S)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:846:BY Fun_NatInjLeq, Fun_ExistsBijEquiv, Fun_ExistsBijTransitive
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:857:THEOREM Fun_NatBijEmpty ==
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:876:THEOREM Fun_NatBijSingleton ==
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:889:(* If there exists a bijection from 1..m to S (for some m \in Nat), then   *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:890:(* there exists a bijection from 1..n to T (for some n \in Nat), where T   *)
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:895:THEOREM Fun_NatBijSubset ==
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:896:  ASSUME NEW S, NEW m \in Nat, ExistsBijection(1..m,S),
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:898:  PROVE  \E n \in Nat : ExistsBijection(1..n,T) /\ n \leq m
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:900:<1>1. CASE T = {}  BY <1>1, Fun_NatBijEmpty
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:905:  <2>. QED  BY <2>2, Fun_NatSurjImpliesNatBij
+[EXIT 0]
+
+[AGENT] I’ll try a direct set-extensionality proof first, using arithmetic obligations for divisibility.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: GCD_GCD3.tla
+@@
+ THEOREM GCD3 == \\A m, n \\in Nat \\ {0} : 
+                     (n > m) => (GCD(m, n) = GCD(m, n-m))
+-PROOF OBVIOUS
++PROOF
++  <1>1. SUFFICES ASSUME NEW m \\in Nat \\ {0}, NEW n \\in Nat \\ {0}, n > m
++                  PROVE GCD(m, n) = GCD(m, n-m)
++    OBVIOUS
++  <1>2. DivisorsOf(m) \\cap DivisorsOf(n) = DivisorsOf(m) \\cap DivisorsOf(n-m)
++    PROOF
++      <2>1. \\A p : p \\in DivisorsOf(m) \\cap DivisorsOf(n)
++                    <=> p \\in DivisorsOf(m) \\cap DivisorsOf(n-m)
++        PROOF
++          <3>1. ASSUME NEW p, p \\in DivisorsOf(m) \\cap DivisorsOf(n)
++                PROVE p \\in DivisorsOf(m) \\cap DivisorsOf(n-m)
++            PROOF
++              <4>1. p \\in DivisorsOf(m) /\\ p \\in DivisorsOf(n) BY <3>1
++              <4>2. PICK q \\in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
++              <4>3. PICK r \\in Int : n = p * r BY <4>1 DEF DivisorsOf, Divides
++              <4>4. n - m = p * (r - q) BY <4>2, <4>3
++              <4>5. r - q \\in Int BY <4>2, <4>3
++              <4>6. p \\in DivisorsOf(n-m) BY <4>4, <4>5 DEF DivisorsOf, Divides
++              <4>7. QED BY <4>1, <4>6
++            QED
++          <3>2. ASSUME NEW p, p \\in DivisorsOf(m) \\cap DivisorsOf(n-m)
++                PROVE p \\in DivisorsOf(m) \\cap DivisorsOf(n)
++            PROOF
++              <4>1. p \\in DivisorsOf(m) /\\ p \\in DivisorsOf(n-m) BY <3>2
++              <4>2. PICK q \\in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
++              <4>3. PICK r \\in Int : n - m = p * r BY <4>1 DEF DivisorsOf, Divides
++              <4>4. n = p * (q + r) BY <4>2, <4>3
++              <4>5. q + r \\in Int BY <4>2, <4>3
++              <4>6. p \\in DivisorsOf(n) BY <4>4, <4>5 DEF DivisorsOf, Divides
++              <4>7. QED BY <4>1, <4>6
++            QED
++          <3> QED BY <3>1, <3>2
++        QED
++      <2> QED BY <2>1
++    QED
++  <1> QED BY <1>2 DEF GCD
++QED
+ 
+ ===================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla"
+File "./GCD_GCD3.tla", line 39, character 27:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 1
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first draft hit a proof-grammar issue; I’m tightening the step syntax before checking obligations.
+
+[CMD] /bin/bash -lc "nl -ba GCD_GCD3.tla | sed -n '1,120p'"
+     1	--------------------------- MODULE GCD_GCD3 ---------------------------
+     2	EXTENDS Integers
+     3	------------------------------------------------------------------
+     4	Divides(p, n) == \E q \in Int : n = p * q
+     5	DivisorsOf(n) == {p \in Int : Divides(p, n)}
+     6	
+     7	SetMax(S) == CHOOSE i \in S : \A j \in S : i >= j
+     8	
+     9	GCD(m, n) == SetMax(DivisorsOf(m) \cap DivisorsOf(n))
+    10	-----------------------------------------------------------------------------
+    11	THEOREM GCD1 == \A m \in Nat \ {0} : GCD(m, m) = m
+    12	  PROOF OMITTED
+    13	
+    14	------------------------------------------------------------------
+    15	THEOREM GCD2 == \A m, n \in Nat \ {0} : GCD(m, n) = GCD(n, m)
+    16	  PROOF OMITTED
+    17	
+    18	------------------------------------------------------------------
+    19	THEOREM GCD3 == \A m, n \in Nat \ {0} : 
+    20	                    (n > m) => (GCD(m, n) = GCD(m, n-m))
+    21	PROOF
+    22	  <1>1. SUFFICES ASSUME NEW m \in Nat \ {0}, NEW n \in Nat \ {0}, n > m
+    23	                  PROVE GCD(m, n) = GCD(m, n-m)
+    24	    OBVIOUS
+    25	  <1>2. DivisorsOf(m) \cap DivisorsOf(n) = DivisorsOf(m) \cap DivisorsOf(n-m)
+    26	    PROOF
+    27	      <2>1. \A p : p \in DivisorsOf(m) \cap DivisorsOf(n)
+    28	                    <=> p \in DivisorsOf(m) \cap DivisorsOf(n-m)
+    29	        PROOF
+    30	          <3>1. ASSUME NEW p, p \in DivisorsOf(m) \cap DivisorsOf(n)
+    31	                PROVE p \in DivisorsOf(m) \cap DivisorsOf(n-m)
+    32	            PROOF
+    33	              <4>1. p \in DivisorsOf(m) /\ p \in DivisorsOf(n) BY <3>1
+    34	              <4>2. PICK q \in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
+    35	              <4>3. PICK r \in Int : n = p * r BY <4>1 DEF DivisorsOf, Divides
+    36	              <4>4. n - m = p * (r - q) BY <4>2, <4>3
+    37	              <4>5. r - q \in Int BY <4>2, <4>3
+    38	              <4>6. p \in DivisorsOf(n-m) BY <4>4, <4>5 DEF DivisorsOf, Divides
+    39	              <4>7. QED BY <4>1, <4>6
+    40	            QED
+    41	          <3>2. ASSUME NEW p, p \in DivisorsOf(m) \cap DivisorsOf(n-m)
+    42	                PROVE p \in DivisorsOf(m) \cap DivisorsOf(n)
+    43	            PROOF
+    44	              <4>1. p \in DivisorsOf(m) /\ p \in DivisorsOf(n-m) BY <3>2
+    45	              <4>2. PICK q \in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
+    46	              <4>3. PICK r \in Int : n - m = p * r BY <4>1 DEF DivisorsOf, Divides
+    47	              <4>4. n = p * (q + r) BY <4>2, <4>3
+    48	              <4>5. q + r \in Int BY <4>2, <4>3
+    49	              <4>6. p \in DivisorsOf(n) BY <4>4, <4>5 DEF DivisorsOf, Divides
+    50	              <4>7. QED BY <4>1, <4>6
+    51	            QED
+    52	          <3> QED BY <3>1, <3>2
+    53	        QED
+    54	      <2> QED BY <2>1
+    55	    QED
+    56	  <1> QED BY <1>2 DEF GCD
+    57	QED
+    58	
+    59	===================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/<4>7\\. QED/<4> QED/g; s/<3> QED/<3> QED/g; s/<2> QED/<2> QED/g; s/<1> QED/<1> QED/g' GCD_GCD3.tla
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla"
+File "./GCD_GCD3.tla", line 39, character 25:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 1
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] I found the parser mismatch: TLAPS wants labeled QEDs only in this proof structure.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: GCD_GCD3.tla
+@@
+               <4>5. r - q \\in Int BY <4>2, <4>3
+               <4>6. p \\in DivisorsOf(n-m) BY <4>4, <4>5 DEF DivisorsOf, Divides
+               <4> QED BY <4>1, <4>6
+-            QED
+           <3>2. ASSUME NEW p, p \\in DivisorsOf(m) \\cap DivisorsOf(n-m)
+                 PROVE p \\in DivisorsOf(m) \\cap DivisorsOf(n)
+             PROOF
+@@
+               <4>5. q + r \\in Int BY <4>2, <4>3
+               <4>6. p \\in DivisorsOf(n) BY <4>4, <4>5 DEF DivisorsOf, Divides
+               <4> QED BY <4>1, <4>6
+-            QED
+           <3> QED BY <3>1, <3>2
+-        QED
+       <2> QED BY <2>1
+-    QED
+   <1> QED BY <1>2 DEF GCD
+-QED
+ 
+ ===================================================================
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla"
+** Unexpanded symbols: CONSTANT_DivisorsOf_, CONSTANT_SetMax_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/GCD_GCD3.tlaps/GCD_GCD3.thy" *)
+(* fingerprints written in ".tlacache/GCD_GCD3.tlaps/fingerprints" *)
+File "./GCD_GCD3.tla", line 48, characters 41-42:
+[ERROR]: Could not prove or check:
+           ASSUME Divides(p, n) == \E q \in Int : n = p * q,
+                  DivisorsOf(n) == {p \in Int : Divides(p, n)},
+                  NEW CONSTANT m \in 
+                  Nat \ {0},
+                  NEW CONSTANT n \in 
+                  Nat \ {0},
+                  NEW CONSTANT p,
+                  NEW CONSTANT q \in Int,
+                  NEW CONSTANT r \in Int,
+                  <
+... (truncated) ...
+Of(n) == {p \in Int : Divides(p, n)},
+                  NEW CONSTANT m \in 
+                  Nat \ {0},
+                  NEW CONSTANT n \in 
+                  Nat \ {0},
+                  NEW CONSTANT p,
+                  NEW CONSTANT q \in Int,
+                  NEW CONSTANT r \in Int,
+                  <4>4 ,
+                  <4>5 
+           PROVE  p \in DivisorsOf(n - m)
+File "./GCD_GCD3.tla", line 36, characters 41-42:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT m \in 
+                  Nat \ {0},
+                  NEW CONSTANT n \in 
+                  Nat \ {0},
+                  NEW CONSTANT p,
+                  NEW CONSTANT q \in Int,
+                  NEW CONSTANT r \in Int,
+                  <4>2 ,
+                  <4>3 
+           PROVE  n - m = p * (r - q)
+File "./GCD_GCD3.tla", line 1, character 1 to line 54, character 67:
+[ERROR]: 4/44 obligations failed.
+There were backend errors processing module `"GCD_GCD3"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The proof shape is accepted; remaining failures are arithmetic and witness expansion details, so I’ll make those explicit.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: GCD_GCD3.tla
+@@
+               <4>1. p \\in DivisorsOf(m) /\\ p \\in DivisorsOf(n) BY <3>1
+-              <4>2. PICK q \\in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
+-              <4>3. PICK r \\in Int : n = p * r BY <4>1 DEF DivisorsOf, Divides
+-              <4>4. n - m = p * (r - q) BY <4>2, <4>3
+-              <4>5. r - q \\in Int BY <4>2, <4>3
+-              <4>6. p \\in DivisorsOf(n-m) BY <4>4, <4>5 DEF DivisorsOf, Divides
+-              <4> QED BY <4>1, <4>6
++              <4>2. p \\in Int BY <4>1 DEF DivisorsOf
++              <4>3. PICK q \\in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
++              <4>4. PICK r \\in Int : n = p * r BY <4>1 DEF DivisorsOf, Divides
++              <4>5. n - m = p * (r - q) BY <4>2, <4>3, <4>4, Isa
++              <4>6. r - q \\in Int BY <4>3, <4>4, Isa
++              <4>7. Divides(p, n-m) BY <4>5, <4>6 DEF Divides
++              <4>8. p \\in DivisorsOf(n-m) BY <4>2, <4>7 DEF DivisorsOf
++              <4> QED BY <4>1, <4>8
+@@
+               <4>1. p \\in DivisorsOf(m) /\\ p \\in DivisorsOf(n-m) BY <3>2
+-              <4>2. PICK q \\in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
+-              <4>3. PICK r \\in Int : n - m = p * r BY <4>1 DEF DivisorsOf, Divides
+-              <4>4. n = p * (q + r) BY <4>2, <4>3
+-              <4>5. q + r \\in Int BY <4>2, <4>3
+-              <4>6. p \\in DivisorsOf(n) BY <4>4, <4>5 DEF DivisorsOf, Divides
+-              <4> QED BY <4>1, <4>6
++              <4>2. p \\in Int BY <4>1 DEF DivisorsOf
++              <4>3. PICK q \\in Int : m = p * q BY <4>1 DEF DivisorsOf, Divides
++              <4>4. PICK r \\in Int : n - m = p * r BY <4>1 DEF DivisorsOf, Divides
++              <4>5. n = p * (q + r) BY <4>2, <4>3, <4>4, Isa
++              <4>6. q + r \\in Int BY <4>3, <4>4, Isa
++              <4>7. Divides(p, n) BY <4>5, <4>6 DEF Divides
++              <4>8. p \\in DivisorsOf(n) BY <4>2, <4>7 DEF DivisorsOf
++              <4> QED BY <4>1, <4>8
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla"
+File "./GCD_GCD3.tla", line 37, characters 62-64:
+Error: Operator "Isa" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 187, characters 14-47
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] `Isa` isn’t available as a named fact here; I’ll use backend pragmas instead.
+
+[CMD] /bin/bash -lc "grep -R \"BY .*Isa\\|BY .*Isabelle\\|PROOF.*BY\" -n /opt/tlapm15/lib/tlaps/*.tla | head -100"
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:148:      <3> QED BY Isa, <3>1, <3>2, NatInduction
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:200:      <3> QED BY Isa, <3>1, <3>2, NatInduction
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:567:    BY <1>3, FS_RemoveElement, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:571:<1>4. QED  BY <1>2, <1>3, NatInduction, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:608:  BY <1>1, PreImageWellFounded, NatLessThanWellFounded, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:639:<1>3. \A T \in SubS : P(T)  BY ONLY <1>1, <1>2, WFInduction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:663:  <2>1. IsFiniteSet(S \cup (A \cup {x}))  BY P(A), FS_AddElement, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:686:<1>. P(T)  BY <1>1, <1>2, FS_Induction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:785:  BY <1>2, FS_Union, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:787:<1>. P(S)  BY <1>1, <1>2, FS_Induction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:825:    BY <1>2, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:836:    BY <2>2, <2>4, P(A), FS_Union, Isa
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:841:<1>. P(T)  BY <1>1, <1>2, FS_Induction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:873:  <2>3. SUBSET (A \cup {x}) = (SUBSET A) \cup Ax  BY <1>2, Isa
+/opt/tlapm15/lib/tlaps/FiniteSet
+... (truncated) ...
+("blast") DEF WFDefOn
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:370:    BY IsaM("blast")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:376:    BY IsaM("blast")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:493:    BY ONLY <2>1, IsWellFoundedOn(R, S), WFInduction, IsaM("auto")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:534:  BY <1>1, Isa DEF OpToRel
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:545:    BY ONLY f \in [Nat -> Nat], Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:547:    BY Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:549:    <3>1. f[1] < f[0]  BY Isa DEF OpToRel
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:555:    <3>. QED  BY <3>3, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:561:    BY ONLY <1>3, GeneralNatInduction, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:587:  BY Isa DEF PreImage
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:671:      BY <2>1, <3>1, PreImageWellFounded, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:681:        BY Isa DEF LexProductOrdering
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:693:            BY <3>0, <5>2, IsaM("force")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:704:        BY Isa DEF PreImage
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:724:          BY <4>2, <5>2, Isa
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:734:  BY <1>1, <1>2, NatInduction, Isa
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '100,170p' /opt/tlapm15/lib/tlaps/TLAPS.tla && grep -R \"THEOREM Isa\\|AXIOM Isa\\|Isa ==\" -n /opt/tlapm15/lib/tlaps/*.tla | head -20"
+(* Seperated Normal Form (TRP++ format) and checks for unsatisfiability   *)
+(**************************************************************************)
+
+LS4 == TRUE (*{ by (prover: "ls4") }*)
+LS4T(X) == TRUE (*{ by (prover: "ls4"; timeout:@) }*)
+PTL == TRUE (*{ by (prover: "ls4") }*)
+
+(**************************************************************************)
+(* Backend pragma: Zenon with different timeouts (default is 10 seconds)  *)
+(*                                                                        *)
+(**************************************************************************)
+
+Zenon == TRUE (*{ by (prover:"zenon") }*)
+ZenonT(X) == TRUE (*{ by (prover:"zenon"; timeout:@) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle with different timeouts and tactics     *)
+(*  (default is 30 seconds/auto)                                    *)
+(********************************************************************)
+
+Isa == TRUE (*{ by (prover:"isabelle") }*)
+IsaT(X) ==  TRUE (*{ by (prover:"isabelle"; timeout:@) }*)
+IsaM(X) ==  TRUE (*{ by (prover:"isabelle"; tactic:@) }*)
+IsaMT(X,Y) ==  TRUE (*{ by (prover:"isabelle"; tactic:@; timeout:@) }*)
+
+(***************************************************************************)
+(* The following theorem expresses the (useful implication of the) law of  *)
+(* set extensionality, which can be written as                             *)
+(*                                                 
+... (truncated) ...
+eded to deduce NotInSetS \notin SetS from    *)
+(* the definition                                                          *)
+(*                                                                         *)
+(*   NotInSetS == CHOOSE v : v \notin SetS                                 *)
+(***************************************************************************)
+THEOREM NoSetContainsEverything == \A S : \E x : x \notin S
+OBVIOUS (*{by (isabelle "(auto intro: inIrrefl)")}*)
+-----------------------------------------------------------------------------
+
+
+
+(********************************************************************)
+(********************************************************************)
+(********************************************************************)
+
+
+(********************************************************************)
+(* Old versions of Zenon and Isabelle pragmas below                 *)
+(* (kept for compatibility)                                         *)
+(********************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: Zenon with different timeouts (default is 10 seconds)  *)
+(*                                                                        *)
+(**************************************************************************)
+
+/opt/tlapm15/lib/tlaps/TLAPS.tla:120:Isa == TRUE (*{ by (prover:"isabelle") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:301:AllIsa == TRUE (*{
+[EXIT 0]
+
+[CMD] /bin/bash -lc "grep -R \"INSTANCE TLAPS\\|EXTENDS .*TLAPS\" -n /opt/tlapm15/lib/tlaps/*.tla | head -50 && grep -R \"by (prover:\\\"isabelle\\\"\" -n /opt/tlapm15/lib/tlaps/*.tla | head -20"
+/opt/tlapm15/lib/tlaps/Bags.tla:11:EXTENDS TLC, TLAPS,
+/opt/tlapm15/lib/tlaps/FunctionTheorems_proofs.tla:9:EXTENDS Functions, Integers, NaturalsInduction, WellFoundedInduction, TLAPS
+/opt/tlapm15/lib/tlaps/NaturalsInduction_proofs.tla:15:EXTENDS Integers, TLAPS
+/opt/tlapm15/lib/tlaps/SequenceTheorems.tla:7:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/SequenceTheorems_proofs.tla:8:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems.tla:10:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:10:LOCAL INSTANCE TLAPS
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:21:EXTENDS NaturalsInduction, TLAPS
+/opt/tlapm15/lib/tlaps/TLAPS.tla:120:Isa == TRUE (*{ by (prover:"isabelle") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:121:IsaT(X) ==  TRUE (*{ by (prover:"isabelle"; timeout:@) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:122:IsaM(X) ==  TRUE (*{ by (prover:"isabelle"; tactic:@) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:123:IsaMT(X,Y) ==  TRUE (*{ by (prover:"isabelle"; tactic:@; timeout:@) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:138:           (*{ by (prover:"isabelle"; tactic:"(auto intro: setEqualI)")}*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:185:Auto == TRUE (*{ by (prover:"isabelle"; tactic:"auto") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:186:SlowAuto == TRUE (*{ by (prover:"isabelle"; tactic:"auto"; timeout:120) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:187:SlowerAuto == TRUE (*{ by (prover:"isabelle"; tactic:"auto"; timeout:480) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:188:SlowestAuto == TRUE (*{ by (prover:"isabelle"; tactic:"auto"; timeout:960) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:196:Force == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:197:SlowForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:120) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:198:SlowerForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:480) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:199:SlowestForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:960) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:210:    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:212:    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:120) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:214:    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:480) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:216:    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?"; timeout:960) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:218:Simplification == TRUE (*{ by (prover:"isabelle"; tactic:"clarsimp") }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:220:    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:120) }*)
+/opt/tlapm15/lib/tlaps/TLAPS.tla:222:    (*{ by (prover:"isabelle"; tactic:"clarsimp"; timeout:480) }*)
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'grep -R "BY .*{ by" -n /opt/tlapm15/lib/tlaps/*.tla | head -50 && grep -R "OBVIOUS.*prover" -n /opt/tlapm15/lib/tlaps/*.tla | head -50'
+[EXIT 0]
+
+[AGENT] I’ll add the TLAPS library locally in the replacement section so backend hints are legal.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: GCD_GCD3.tla
+@@
+ THEOREM GCD3 == \\A m, n \\in Nat \\ {0} : 
+                     (n > m) => (GCD(m, n) = GCD(m, n-m))
++LOCAL INSTANCE TLAPS
+ PROOF
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla"
+File "./GCD_GCD3.tla", line 21, character 21
+Unexpected keyword PROOF
+File "<unknown>":
+Error: Could not parse "./GCD_GCD3.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] That placement is invalid; I’m backing it out and switching to built-in arithmetic facts instead.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: GCD_GCD3.tla
+@@
+ THEOREM GCD3 == \\A m, n \\in Nat \\ {0} : 
+                     (n > m) => (GCD(m, n) = GCD(m, n-m))
+-LOCAL INSTANCE TLAPS
+ PROOF
+*** End Patch
+PATCH
+grep -n \"THEOREM\\|LEMMA\\|ASSUME\\|AXIOM\\|Int\" /opt/tlapm15/lib/tlaps/TLA+/Integers.thy | head -200"
+Success. Updated the following files:
+M GCD_GCD3.tla
+1:(*  Title:      Integers.thy
+10:header {* The Integers as a superset of natural numbers *}
+12:theory Integers
+126:subsection {* The set of Integers *}
+128:definition Int
+129:where "Int \<equiv> Nat \<union> {-.n : n \<in> Nat}"
+131:lemma natInInt [simp]: "n \<in> Nat \<Longrightarrow> n \<in> Int"
+132:by (simp add: Int_def)
+134:lemma intDisj: "n \<in> Int \<Longrightarrow> n \<in> Nat \<or> n \<in> {-.n : n \<in> Nat}"
+135:by (auto simp: Int_def)
+137:lemma negint_eq_int [simp]: "-.n \<in> Int = (n \<in> Int)"
+138:unfolding Int_def by force
+140:lemma intCases [case_names Positive Negative, cases set: Int]:
+141:  assumes n: "n \<in> Int"
+145:using assms unfolding Int_def by auto
+147:-- {* Integer cases over two parameters *}
+149:  assumes m: "m \<in> Int" and n: "n \<in> Int"
+165:  assumes m: "m \<in> Int" and n: "n \<in> Int" and p: "p \<in> Int"
+193:lemma int_eq_negint_is_0 [simp]: "n \<in> Int \<Longrightarrow> n = -.n = (n = 0)"
+196:lemma intNotNatIsNeg: "\<lbrakk>n \<notin> Nat; n \<in> Int\<rbrakk> \<Longrightarrow> \<exists>k \<in> Nat: n = -.k"
+197:unfolding Int_def by auto
+199:lemma intNotNatIsNegNat: "\<lbrakk>n \<notin> Nat; n \<in> Int\<rbrakk> \<Longrightarrow> -.n \<in> Nat"
+200:unfolding Int_def by auto
+246:lemma intIsPos_isNat: "n \<in> Int \<Longrightarrow> isPos(n) \<Longrightarrow> n \<in> Nat"
+250:  assumes n: "n \<in> Int" shows "(-.n \<in> Nat) = FALSE \<Longrightarrow> n \<in> Nat"
+263:lemma isNeg_dic
+... (truncated) ...
+a \<in> Int; b \<in> Int\<rbrakk> \<Longrightarrow> a * b \<in> Int"
+734:lemma mult_0_right_int [simp]: "a \<in> Int \<Longrightarrow> a * 0 = 0"
+737:lemma mult_0_left_int [simp]: "a \<in> Int \<Longrightarrow> 0 * a = 0"
+742:lemma mult_commute_int: "\<lbrakk>a \<in> Int; b \<in> Int\<rbrakk> \<Longrightarrow> a * b = b * a"
+747:lemma mult_1_right_int [simp]: "a \<in> Int \<Longrightarrow> a * 1 = a"
+750:lemma mult_1_left_int [simp]: "a \<in> Int \<Longrightarrow> 1 * a = a"
+756:  assumes m: "m \<in> Int" and n: "n \<in> Int" and p: "p \<in> Int"
+789:  assumes m: "m \<in> Int" and n: "n \<in> Int" and p: "p \<in> Int"
+829:  assumes m: "m \<in> Int" and n: "n \<in> Int" and p: "p \<in> Int"
+846:  assumes m: "m \<in> Int" and n: "n \<in> Int"
+851:  assumes m: "m \<in> Int" and n: "n \<in> Int"
+866:where int_diff_def: "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> m - n = m + -.n"
+868:lemma diffIsInt [simp]: -- {* Closure *}
+869:  "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> m - n \<in> Int" 
+872:lemma diff_neg_is_add [simp]: "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> m - -.n = m + n"
+875:lemma diff_0_right_int [simp]: "m \<in> Int \<Longrightarrow> m - 0 = m"
+878:lemma diff_0_left_int [simp]: "n \<in> Int \<Longrightarrow> 0 - n = -.n"
+881:lemma diff_self_eq_0_int [simp]: "m \<in> Int \<Longrightarrow> m - m = 0"
+884:lemma neg_diff_is_diff [simp]: "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> -.(m - n) = n - m"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '680,860p' /opt/tlapm15/lib/tlaps/TLA+/Integers.thy"
+      apply(simp only: minus_sym)
+      apply(rule adiff_add_assoc6, simp_all)
+      apply(rule adiff_add_assoc3, simp_all)
+    apply(rule nat_leq_cases[of "m + n" p], simp_all)
+      apply(simp only: minus_sym)
+      apply(rule adiff_add_assoc7[symmetric], simp_all)
+      apply(simp add: add_commute_nat[of "n -- p" m])
+      apply(rule adiff_add_assoc[symmetric], simp+)
+done
+
+lemma add_assoc_int: 
+  assumes m: "m \<in> Int" and n: "n \<in> Int" and p: "p \<in> Int"
+  shows "m + (n + p) = (m + n) + p"
+using m n p 
+by (rule intCases3, 
+    auto simp: add_assoc_nat int_add_assoc1 int_add_assoc2 int_add_assoc3
+               int_add_assoc4 int_add_assoc5 int_add_assoc6)
+
+text {* Minus sign distributes over addition *}
+
+lemma minus_distrib_pn_int [simp]:
+  "m \<in> Nat \<Longrightarrow> n \<in> Nat \<Longrightarrow> -.(m + -.n) = -.m + n"
+apply(simp add: add_commute_int[of "-.m" n])
+apply(rule nat_leq_cases[of n m], simp_all)
+done
+
+lemma minus_distrib_np_int [simp]:
+  "m \<in> Nat \<Longrightarrow> n \<in> Nat \<Longrightarrow> -.(-.m + n) = m + -.n"
+by(simp add: add_commute_int)
+
+lemma int_add_minus_distrib [simp]:
+  assumes m: "m \<in> Int" and n: "n \<in> Int"
+  shows "-.(m + n) = -.m + -.n"
+by (rule intCases2[OF m n], simp_all)
+
+
+subsection {* Multiplication of integers *}
+
+axiomatization where
+  int_mult_pn_def: "\<lbrakk>a \<in> Nat; b \<in> Nat\<rbrakk> \<Longrightarrow> a * -.b = -.(a * b)"
+and
+  int_mult_np_def: "\<lbrakk>a \<in> Nat; b \<in> Nat\<rbrakk> \<Longrightarro
+... (truncated) ...
+of "-.m" n])
+apply(rule nat_leq_cases[OF n m])
+  apply(rule nat_leq_cases[of "n * p" "m * p"])
+  apply (auto simp: adiff_mult_distrib_nat int_mult_def dest: nat_leq_antisym)
+done
+
+lemma distrib_right_int:
+  assumes m: "m \<in> Int" and n: "n \<in> Int" and p: "p \<in> Int"
+  shows "(m + n) * p = (m * p + n * p)"
+apply(rule intCases3[OF m n p], 
+  simp_all only: int_mult_def int_add_nn_def int_mult_nn_def addIsNat)
+      apply(rule add_mult_distrib_right_nat, assumption+)
+      apply(simp only: int_add_nn_def multIsNat add_mult_distrib_right_nat)
+      apply(rule pnp_distrib_right_nat, assumption+)
+      apply(rule pnn_distrib_right_nat, assumption+)
+      apply(simp add: add_commute_int, rule pnp_distrib_right_nat, assumption+)
+      apply(rule npn_distrib_right_nat, assumption+)
+      apply(simp only: int_add_nn_def multIsNat add_mult_distrib_right_nat)
+      apply(simp only: add_mult_distrib_right_nat)
+done
+
+text {* Minus sign distributes over multiplication *}
+
+lemma minus_mult_left_int:
+  assumes m: "m \<in> Int" and n: "n \<in> Int"
+  shows "-.(m * n) = -.m * n"
+by (rule intCases2[OF m n], simp_all add: int_mult_def)
+
+lemma minus_mult_right_int:
+  assumes m: "m \<in> Int" and n: "n \<in> Int"
+  shows "-.(m * n) = m * -.n"
+by (rule intCases2[OF m n], simp_all add: int_mult_def)
+
+
+subsection {* Difference of integers *}
+
+text {*
+  Difference over integers is simply defined as addition of the complement.
+  Note that this difference, noted @{text "-"}, is different from the
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '860,940p' /opt/tlapm15/lib/tlaps/TLA+/Integers.thy"
+  Note that this difference, noted @{text "-"}, is different from the
+  difference over natural numbers, noted @{text "--"}, even for two natural
+  numbers, because the latter cuts off at $0$.
+*}
+
+definition diff          (infixl "-" 65)
+where int_diff_def: "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> m - n = m + -.n"
+
+lemma diffIsInt [simp]: -- {* Closure *}
+  "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> m - n \<in> Int" 
+by (simp add: int_diff_def)
+
+lemma diff_neg_is_add [simp]: "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> m - -.n = m + n"
+by (simp add: int_diff_def)
+
+lemma diff_0_right_int [simp]: "m \<in> Int \<Longrightarrow> m - 0 = m"
+by (simp add: int_diff_def)
+
+lemma diff_0_left_int [simp]: "n \<in> Int \<Longrightarrow> 0 - n = -.n"
+by (simp add: int_diff_def)
+
+lemma diff_self_eq_0_int [simp]: "m \<in> Int \<Longrightarrow> m - m = 0"
+by (simp add: int_diff_def)
+
+lemma neg_diff_is_diff [simp]: "\<lbrakk>m \<in> Int; n \<in> Int\<rbrakk> \<Longrightarrow> -.(m - n) = n - m"
+using assms by (simp add: int_diff_def add_commute_int)
+
+lemma diff_nat_is_add_neg: "\<lbrakk>m \<in> Nat; n \<in> Nat\<rbrakk> \<Longrightarrow> m - n = m + -.n"
+by (simp add: int_diff_def)
+
+(**
+lemma diff_neg_nat_is_add [simp]: "\<lbrakk>m \<in> Nat; n \<in> Nat\<rbrakk> \<Longrightarrow> m - -.n = m + n"
+by simp
+**)
+
+end
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,120p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+UE (*{ by (prover: "spass") }*)
+SpassT(X) == TRUE (*{ by (prover:"spass"; timeout:@) }*)
+
+(**************************************************************************)
+(* Backend pragma: The PTL propositional linear time temporal logic       *)
+(* prover.  It currently is the LS4 backend.                              *)
+(*                                                                        *)
+(* This method translates the negetation of the proof obligation to       *)
+(* Seperated Normal Form (TRP++ format) and checks for unsatisfiability   *)
+(**************************************************************************)
+
+LS4 == TRUE (*{ by (prover: "ls4") }*)
+LS4T(X) == TRUE (*{ by (prover: "ls4"; timeout:@) }*)
+PTL == TRUE (*{ by (prover: "ls4") }*)
+
+(**************************************************************************)
+(* Backend pragma: Zenon with different timeouts (default is 10 seconds)  *)
+(*                                                                        *)
+(**************************************************************************)
+
+Zenon == TRUE (*{ by (prover:"zenon") }*)
+ZenonT(X) == TRUE (*{ by (prover:"zenon"; timeout:@) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle with different timeouts and tactics     *)
+(*  (default is 30 seconds/auto)                                    *)
+(********************************************************************)
+
+Isa == TRUE (*{ by (prover:"isabelle") }*)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: GCD_GCD3.tla
+@@
+-              <4>5. n - m = p * (r - q) BY <4>2, <4>3, <4>4, Isa
+-              <4>6. r - q \\in Int BY <4>3, <4>4, Isa
++              <4>5. n - m = p * (r - q) BY <4>2, <4>3, <4>4
++              <4>6. r - q \\in Int BY <4>3, <4>4
+@@
+-              <4>5. n = p * (q + r) BY <4>2, <4>3, <4>4, Isa
+-              <4>6. q + r \\in Int BY <4>3, <4>4, Isa
++              <4>5. n = p * (q + r) BY <4>2, <4>3, <4>4
++              <4>6. q + r \\in Int BY <4>3, <4>4
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla"
+(* loading fingerprints in ".tlacache/GCD_GCD3.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_Divides_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+(* created new ".tlacache/GCD_GCD3.tlaps/GCD_GCD3.thy" *)
+(* fingerprints written in ".tlacache/GCD_GCD3.tlaps/fingerprints" *)
+File "./GCD_GCD3.tla", line 1, character 1 to line 58, character 67:
+[INFO]: All 56 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves all obligations; I’ll run the required checker to confirm legality and final PASS.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py GCD_GCD3.tla'
+Checking: GCD_GCD3.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/GCD_GCD3.tlaps/GCD_GCD3.thy" *)
+(* fingerprints written in ".tlacache/GCD_GCD3.tlaps/fingerprints" *)
+** Unexpanded symbols: CONSTANT_DivisorsOf_, CONSTANT_SetMax_
+
+** Unexpanded symbols: CONSTANT_GCD_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_DivisorsOf_
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: CONSTANT_Divides_
+
+File "/tmp/tlaps_check_rmc99viq/GCD_GCD3.tla", line 1, character 1 to line 58, character 67:
+[INFO]: All 56 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_GCD_GCD3_r8j4wz51/GCD_GCD3.result
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for `GCD3` in `GCD_GCD3.tla:21`.
+
+- Proves equality of divisor intersections by set extensionality.
+- Handles both divisibility directions with explicit integer witnesses.
+- Leaves all prior declarations, theorem statements, and omitted proofs unchanged.
+- Verified with `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps GCD_GCD3.tla`.
+- Required checker passes: `python3 check_proof.py GCD_GCD3.tla` reports `PASS`.

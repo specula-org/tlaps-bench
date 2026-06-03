@@ -1,0 +1,1280 @@
+Benchmark: Allocator/Allocator_NextMutex.tla
+Time: 355s
+Tokens: 3,207,915 input / 15,356 output
+============================================================
+
+[AGENT] I’ll inspect the module and local files first, then run TLAPS to see the exact failing obligations. After that I’ll add only helper definitions/lemmas above the theorem and iterate against both `tlapm` and the provided checker.
+
+[CMD] /bin/bash -lc 'pwd && rg --files'
+/tmp/codex_bench_Allocator_NextMutex_pmdl0ese
+Allocator_NextMutex.tla
+check_proof_bin
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'ls -la'
+total 8028
+drwx------ 1 ubuntu ubuntu      84 May 25 15:53 .
+drwxrwxrwt 1 root   root    102870 May 25 15:53 ..
+-rw-rw-r-- 1 ubuntu ubuntu    1625 May 25 12:50 Allocator_NextMutex.tla
+-rwxr-xr-x 1 ubuntu ubuntu 7473264 May 23 03:25 check_proof_bin
+drwxrwxr-x 1 ubuntu ubuntu     144 May 25 15:53 .git
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,240p' Allocator_NextMutex.tla"
+-------------------------- MODULE Allocator_NextMutex -----------------------------
+
+CONSTANTS
+  Client,     
+  Resource    
+
+VARIABLES
+  unsat,       
+  alloc        
+
+TypeInvariant ==
+  /\ unsat \in [Client -> SUBSET Resource]
+  /\ alloc \in [Client -> SUBSET Resource]
+
+-------------------------------------------------------------------------
+
+available == Resource \ (UNION {alloc[c] : c \in Client})
+
+Request(c,S) ==
+  /\ unsat[c] = {} /\ alloc[c] = {}
+  /\ S # {} /\ unsat' = [unsat EXCEPT ![c] = S]
+  /\ UNCHANGED alloc
+
+Allocate(c,S) ==
+  /\ S # {} /\ S \subseteq available \cap unsat[c]
+  /\ alloc' = [alloc EXCEPT ![c] = alloc[c] \cup S]
+  /\ unsat' = [unsat EXCEPT ![c] = unsat[c] \ S]
+
+Return(c,S) ==
+  /\ S # {} /\ S \subseteq alloc[c]
+  /\ alloc' = [alloc EXCEPT ![c] = alloc[c] \ S]
+  /\ UNCHANGED unsat
+
+Next ==
+  \E c \in Client, S \in SUBSET Resource :
+     Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
+
+-------------------------------------------------------------------------
+
+-------------------------------------------------------------------------
+
+Mutex ==
+  \A c1,c2 \in Client : \A r \in Resource :
+     r \in alloc[c1] \cap alloc[c2] => c1 = c2
+
+-------------------------------------------------------------------------
+
+-------------------------------------------------------------------------
+
+-------------------------------------------------------------------------
+
+-------------------------------------------------------------------------
+
+THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+PROOF OBVIOUS
+
+=========================================================================
+[EXIT 0]
+
+[AGENT] The module is small: `Next` is an existential over three actions, and only `Allocate` can add to `alloc`. I’m going to verify the baseline failure and then build the proof around a per-action preservation argument.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 55, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc
+           PROVE  TypeInvariant /\ Mutex /\ Next => Mutex'
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 57, character 73:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"Allocator_NextMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "rg \"THEOREM|LEMMA|PROOF\" /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -80"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:LEMMA TwoExpLemma ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:PROOF OMITTED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:LEMMA FS_NatSurjection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:LEMMA FS_NatBijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:LEMMA FS_CountingElements ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:PROOF
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_SurjCardinalityBound ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_CardinalityType ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Bijection ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_SameCardinalityBij ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_SurjSameCardinalityImpliesInj ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_EmptySet ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_AddElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_RemoveElement ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Singleton ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:THEOREM FS_Subset ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib
+... (truncated) ...
+enceTheorems.tla:THEOREM SubSeqProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqEmpty ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqRange ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM HeadTailProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM TailIsSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqRestrict ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM HeadTailOfSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqRecursive ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqOfSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM ConcatAdjacentSubSeq ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqOfConcat1 ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SubSeqOfConcat2 ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM AppendProperties ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM AppendIsConcat ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM HeadTailAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM AppendInjective ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SequenceEmptyOrAppend ==
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems.tla:THEOREM SequencesInductionAppend ==
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg \"PICK|SUFFICES|CASE\" /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -120"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:  <2>1. PICK Q \in Seq(S) : \A s \in S : \E i \in 1..Len(Q) : Q[i] = s
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:  <2>1. PICK M \in [1..n -> S] : \A t \in S : \E s \in 1..n : M[s] = t
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:        <4>4. PICK t \in T : t = CHOOSE x : x \in T  BY <4>2
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE SZ[T] = fn(SZ,T)  BY Zenon DEF SZ
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:    <2>2. PICK i \in Nat : ExistsBijection(1..i,T) BY Fun_NatBijSubset
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:        <4>7. PICK t \in T : t = CHOOSE x : x \in T  BY <4>6
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:    <2> SUFFICES ASSUME NEW T \in SUBSET S  PROVE CS1
+... (truncated) ...
+\in R
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:  <2>1. CASE m>0 /\ n>0
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:  <2>2. CASE m=0
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/BagsTheorems_proofs.tla:  <2>3. CASE n=0
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:<1>. SUFFICES \A k \in Nat : Q(k)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>. PICK seq \in Seq(S), e \in S : s = Append(seq,e) /\ Len(seq) = n
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:<1>. SUFFICES \A k \in Nat : Q(k)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>. SUFFICES ASSUME NEW s \in Seq(S), Len(s) = n+1
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>1. SUFFICES ASSUME NEW i \in 1 .. Len(s2)
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>1. SUFFICES ASSUME NEW i \in DOMAIN t, NEW j \in DOMAIN t, t[i] = t[j]
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>1. PICK i \in DOMAIN s : s[i] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>2. PICK j \in DOMAIN t : t[j] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>1. PICK i \in DOMAIN seq : seq[i] = e
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  <2>1. PICK i \in 2 .. Len(seq) : seq[i] = e
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git diff -- Allocator_NextMutex.tla'
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg \"BY .*SMT|OBVIOUS|DEF .*SMT|SMT\" /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -120"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:              OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:          OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:              OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:              OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:      <4>. QED  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:      <4>. QED  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:<1>1. Q(0)  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:<1>1. Q(0)  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:<1>2. \A n \in Nat : Q(n) => Q(n+1)  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:    <3>1. gg[n][i] = Def(g[n-1],i)  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:        <5>1. h[n][i] = Def(g[n-1], i)  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:    <3>0. Q(0)  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla:        OBVI
+... (truncated) ...
+lapm/stdlib/SequenceTheorems_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/SequenceTheorems_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:  OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:    OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:      OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:      OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:        OBVIOUS
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/WellFoundedInduction_proofs.tla:          OBVIOUS
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '1,220p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla"
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                                        *)
+(* This method exists under this name for historical reasons.             *)
+(**************************************************************************)
+
+SimpleArithmetic == TRUE (*{ by (prover:"smt3") }*)
+
+
+(**************************************************************************)
+(* Backend pragma:
+... (truncated) ...
+480) }*)
+SlowestAuto == TRUE (*{ by (prover:"isabelle"; tactic:"auto"; timeout:960) }*)
+
+(********************************************************************)
+(* Backend pragma: Isabelle's "force" tactic                        *)
+(*                                                                  *)
+(* This pragma bypasses Zenon. It is useful in situations involving *)
+(* quantifier reasoning.                                            *)
+(********************************************************************)
+Force == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)
+SlowForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:120) }*)
+SlowerForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:480) }*)
+SlowestForce == TRUE (*{ by (prover:"isabelle"; tactic:"force"; timeout:960) }*)
+
+(***********************************************************************)
+(* Backend pragma: Isabelle's "simplification" tactics                 *)
+(*                                                                     *)
+(* These tactics simplify the goal before running one of the automated *)
+(* tactics. They are often necessary for obligations involving record  *)
+(* or tuple projections. Use the SimplfyAndSolve tactic unless you're  *)
+(* sure you can get away with just Simplification                      *)
+(***********************************************************************)
+SimplifyAndSolve        == TRUE
+    (*{ by (prover:"isabelle"; tactic:"clarsimp auto?") }*)
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'head -60 /home/ubuntu/.tlapm/lib/tlapm/stdlib/NaturalsInduction_proofs.tla && head -30 /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla'
+---------------------- MODULE NaturalsInduction_proofs ----------------------
+(***************************************************************************)
+(* This module contains useful theorems for inductive proofs and recursive *)
+(* definitions over the naturals.                                          *)
+(*                                                                         *)
+(* Some of the statements of the theorems are decomposed in terms of       *)
+(* definitions.  This is done for two reasons:                             *)
+(*                                                                         *)
+(*  - It makes it easier for the backends to instantiate the theorems      *)
+(*    when those definitions are not expanded.                             *)
+(*                                                                         *)
+(*  - It can be convenient when writing proofs to use those definitions    *)
+(*    rather than having to write out their expansions.                    *)
+(***************************************************************************)
+EXTENDS Integers, TLAPS
+
+(***************************************************************************)
+(* The following is the simple statement of inductions over the naturals.  *)
+(* For predicates P defined by a moderately complex operator, it is often  *)
+(* useful to hide the operator definition before using this theorem. That  *)
+(* is, you first define a suitable operator P (not necessarily by that 
+... (truncated) ...
+VIOUS
+<1>2. \A n \in Nat : Q(n) => Q(n+1)  OBVIOUS
+<1>3. \A n \in Nat : Q(n)  BY <1>1, <1>2, NatInduction, Isa
+<1>4. QED BY <1>3
+---------------------- MODULE FiniteSetTheorems_proofs ----------------------
+(***************************************************************************)
+(* `^{\large\bf \vspace{12pt}                                              *)
+(*  Facts about finite sets and their cardinality.                         *)
+(*  Originally contributed by Tom Rodeheffer, MSR.                         *)
+(*  \vspace{12pt}}^'                                                       *)
+(***************************************************************************)
+
+EXTENDS
+  FiniteSets,
+  Sequences,
+  FunctionTheorems,
+  WellFoundedInduction,
+  TLAPS
+
+(***************************************************************************)
+(* Arithmetic lemma that is currently not proved.                          *)
+(***************************************************************************)
+LEMMA TwoExpLemma ==
+  ASSUME NEW n \in Nat
+  PROVE  /\ 2^0 = 1
+         /\ 2^(n+1) = 2^n + 2^n
+PROOF OMITTED
+
+
+(***************************************************************************)
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* A set S is finite iff there exists a natural number n such that there   *)
+(* exist a surjection (or a bijection) from 1..n to S.                     *)
+[EXIT 0]
+
+[AGENT] I’m going to add a small decomposition proof rather than try to force the whole implication through one backend call. The key helper fact is that `S \subseteq available` means no current client has any resource in `S`; that is exactly what the allocate case needs.
+
+[CMD] /bin/bash -lc 'nl -ba Allocator_NextMutex.tla'
+     1	-------------------------- MODULE Allocator_NextMutex -----------------------------
+     2	
+     3	CONSTANTS
+     4	  Client,     
+     5	  Resource    
+     6	
+     7	VARIABLES
+     8	  unsat,       
+     9	  alloc        
+    10	
+    11	TypeInvariant ==
+    12	  /\ unsat \in [Client -> SUBSET Resource]
+    13	  /\ alloc \in [Client -> SUBSET Resource]
+    14	
+    15	-------------------------------------------------------------------------
+    16	
+    17	available == Resource \ (UNION {alloc[c] : c \in Client})
+    18	
+    19	Request(c,S) ==
+    20	  /\ unsat[c] = {} /\ alloc[c] = {}
+    21	  /\ S # {} /\ unsat' = [unsat EXCEPT ![c] = S]
+    22	  /\ UNCHANGED alloc
+    23	
+    24	Allocate(c,S) ==
+    25	  /\ S # {} /\ S \subseteq available \cap unsat[c]
+    26	  /\ alloc' = [alloc EXCEPT ![c] = alloc[c] \cup S]
+    27	  /\ unsat' = [unsat EXCEPT ![c] = unsat[c] \ S]
+    28	
+    29	Return(c,S) ==
+    30	  /\ S # {} /\ S \subseteq alloc[c]
+    31	  /\ alloc' = [alloc EXCEPT ![c] = alloc[c] \ S]
+    32	  /\ UNCHANGED unsat
+    33	
+    34	Next ==
+    35	  \E c \in Client, S \in SUBSET Resource :
+    36	     Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
+    37	
+    38	-------------------------------------------------------------------------
+    39	
+    40	-------------------------------------------------------------------------
+    41	
+    42	Mutex ==
+    43	  \A c1,c2 \in Client : \A r \in Resource :
+    44	     r \in alloc[c1] \cap alloc[c2] => c1 = c2
+    45	
+    46	-------------------------------------------------------------------------
+    47	
+    48	-------------------------------------------------------------------------
+    49	
+    50	-------------------------------------------------------------------------
+    51	
+    52	-------------------------------------------------------------------------
+    53	
+    54	THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+    55	PROOF OBVIOUS
+    56	
+    57	=========================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+File "./Allocator_NextMutex.tla", line 106, character 7:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_proof in file "src/proof/p_parser.ml", line 84, characters 27-57
+Called from Tlapm_lib__P_parser.toplevel in file "src/proof/p_parser.ml", line 230, characters 8-39
+Called from Tlapm_lib__Pco.Make.(<$>).(fun) in file "src/pars/pco.ml", line 427, characters 31-36
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 377, characters 30-46
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(<|>).(fun) in file "src/pars/pco.ml", line 387, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pc
+... (truncated) ...
+file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.execute in file "src/pars/pco.ml", line 246, characters 14-25
+Called from Tlapm_lib__M_save.really_parse_file in file "src/module/m_save.ml", line 84, characters 14-61
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba Allocator_NextMutex.tla | sed -n '90,125p'"
+    90	         Mutex,
+    91	         Return(c,S)
+    92	  PROVE  Mutex'
+    93	PROOF
+    94	<1>1. alloc' = [alloc EXCEPT ![c] = alloc[c] \ S]
+    95	  BY DEF Return
+    96	<1>2. \A d \in Client : alloc'[d] \subseteq alloc[d]
+    97	  PROOF
+    98	  <2>1. SUFFICES ASSUME NEW d \in Client
+    99	                 PROVE  alloc'[d] \subseteq alloc[d]
+   100	    OBVIOUS
+   101	  <2>2. CASE d = c
+   102	    BY <1>1, <2>1
+   103	  <2>3. CASE d # c
+   104	    BY <1>1, <2>1
+   105	  <2>4. QED
+   106	    BY <2>2, <2>3
+   107	  QED
+   108	<1>3. SUFFICES ASSUME NEW c1 \in Client,
+   109	                      NEW c2 \in Client,
+   110	                      NEW r \in Resource,
+   111	                      r \in alloc'[c1] \cap alloc'[c2]
+   112	               PROVE  c1 = c2
+   113	  BY DEF Mutex
+   114	<1>4. r \in alloc[c1] /\ r \in alloc[c2]
+   115	  BY <1>2, <1>3
+   116	<1>5. QED
+   117	  BY <1>3, <1>4 DEF Mutex
+   118	
+   119	LEMMA AllocatePreservesMutex ==
+   120	  ASSUME NEW c \in Client,
+   121	         NEW S \in SUBSET Resource,
+   122	         Mutex,
+   123	         Allocate(c,S)
+   124	  PROVE  Mutex'
+   125	PROOF
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg '"'^'"\\s*QED"'$|''^'"\\s*QED' /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -40"
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n '"'^'"\\s*QED\\s*"'$'"' Allocator_NextMutex.tla"
+107:  QED
+156:    QED
+171:    QED
+178:    QED
+181:  QED
+203:  QED
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba Allocator_NextMutex.tla | sed -n '140,210p'"
+   140	<1>6. CASE c1 # c2
+   141	  PROOF
+   142	  <2>1. CASE c1 = c
+   143	    PROOF
+   144	    <3>1. c2 # c
+   145	      BY <1>6, <2>1
+   146	    <3>2. r \in alloc[c] \/ r \in S
+   147	      BY <1>1, <1>4, <2>1
+   148	    <3>3. r \in alloc[c2]
+   149	      BY <1>1, <1>4, <3>1
+   150	    <3>4. CASE r \in alloc[c]
+   151	      BY <1>4, <2>1, <3>3, <3>4 DEF Mutex
+   152	    <3>5. CASE r \in S
+   153	      BY <1>3, <1>4, <3>3, <3>5 DEF Fresh
+   154	    <3>6. QED
+   155	      BY <3>2, <3>4, <3>5
+   156	    QED
+   157	  <2>2. CASE c2 = c
+   158	    PROOF
+   159	    <3>1. c1 # c
+   160	      BY <1>6, <2>2
+   161	    <3>2. r \in alloc[c] \/ r \in S
+   162	      BY <1>1, <1>4, <2>2
+   163	    <3>3. r \in alloc[c1]
+   164	      BY <1>1, <1>4, <3>1
+   165	    <3>4. CASE r \in alloc[c]
+   166	      BY <1>4, <2>2, <3>3, <3>4 DEF Mutex
+   167	    <3>5. CASE r \in S
+   168	      BY <1>3, <1>4, <3>3, <3>5 DEF Fresh
+   169	    <3>6. QED
+   170	      BY <3>2, <3>4, <3>5
+   171	    QED
+   172	  <2>3. CASE c1 # c /\ c2 # c
+   173	    PROOF
+   174	    <3>1. r \in alloc[c1] /\ r \in alloc[c2]
+   175	      BY <1>1, <1>4, <2>3
+   176	    <3>2. QED
+   177	      BY <1>4, <1>6, <3>1 DEF Mutex
+   178	    QED
+   179	  <2>4. QED
+   180	    BY <2>1, <2>2, <2>3
+   181	  QED
+   182	
+   183	-------------------------------------------------------------------------
+   184	
+   185	THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+   186	PROOF
+   187	<1>1. ASSUME TypeInvariant /\ Mutex /\ Next
+   188	      PROVE  Mutex'
+   189	  PROOF
+   190	  <2>1. Mutex
+   191	    BY <1>1
+   192	  <2>2. PICK c \in Client, S \in SUBSET Resource :
+   193	            Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
+   194	    BY <1>1 DEF Next
+   195	  <2>3. CASE Request(c,S)
+   196	    BY <2>1, <2>2, <2>3, RequestPreservesMutex
+   197	  <2>4. CASE Allocate(c,S)
+   198	    BY <2>1, <2>2, <2>4, AllocatePreservesMutex
+   199	  <2>5. CASE Return(c,S)
+   200	    BY <2>1, <2>2, <2>5, ReturnPreservesMutex
+   201	  <2>6. QED
+   202	    BY <2>2, <2>3, <2>4, <2>5
+   203	  QED
+   204	<1>2. QED
+   205	  BY <1>1
+   206	
+   207	=========================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+File "./Allocator_NextMutex.tla", line 94, characters 1-49:
+Error: extra step(s) after finished proof
+ tlapm ending abnormally with Failure("Proof.Parser.toplevel")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__Pco.Make.(<$>).(fun) in file "src/pars/pco.ml", line 427, characters 31-36
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 377, characters 30-46
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(<|>).(fun) in file "src/pars/pco.ml", line 387, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlin
+... (truncated) ...
+file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.execute in file "src/pars/pco.ml", line 246, characters 14-25
+Called from Tlapm_lib__M_save.really_parse_file in file "src/module/m_save.ml", line 84, characters 14-61
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba Allocator_NextMutex.tla | sed -n '70,110p'"
+    70	<1>4. alloc[c] \in {alloc[d] : d \in Client}
+    71	  BY <1>1
+    72	<1>5. QED
+    73	  BY <1>3, <1>4
+    74	
+    75	LEMMA RequestPreservesMutex ==
+    76	  ASSUME NEW c \in Client,
+    77	         NEW S \in SUBSET Resource,
+    78	         Mutex,
+    79	         Request(c,S)
+    80	  PROVE  Mutex'
+    81	PROOF
+    82	<1>1. alloc' = alloc
+    83	  BY DEF Request
+    84	<1>2. QED
+    85	  BY <1>1 DEF Mutex
+    86	
+    87	LEMMA ReturnPreservesMutex ==
+    88	  ASSUME NEW c \in Client,
+    89	         NEW S \in SUBSET Resource,
+    90	         Mutex,
+    91	         Return(c,S)
+    92	  PROVE  Mutex'
+    93	PROOF
+    94	<1>1. alloc' = [alloc EXCEPT ![c] = alloc[c] \ S]
+    95	  BY DEF Return
+    96	<1>2. \A d \in Client : alloc'[d] \subseteq alloc[d]
+    97	  PROOF
+    98	  <2>1. SUFFICES ASSUME NEW d \in Client
+    99	                 PROVE  alloc'[d] \subseteq alloc[d]
+   100	    OBVIOUS
+   101	  <2>2. CASE d = c
+   102	    BY <1>1, <2>1
+   103	  <2>3. CASE d # c
+   104	    BY <1>1, <2>1
+   105	  <2>4. QED
+   106	    BY <2>2, <2>3
+   107	  <2>. QED
+   108	<1>3. SUFFICES ASSUME NEW c1 \in Client,
+   109	                      NEW c2 \in Client,
+   110	                      NEW r \in Resource,
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"PROVE.*\\nPROOF|"'^PROOF$" /home/ubuntu/.tlapm/lib/tlapm/stdlib/*.tla | head -60'
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n '"'^PROOF$|''^PROOF '"' /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -80"
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:23:PROOF OMITTED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla:73:PROOF
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:450:PROOF OMITTED
+/home/ubuntu/.tlapm/lib/tlapm/stdlib/TLAPS.tla:461:PROOF OMITTED
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '62,90p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla"
+(* `.  .'                                                                  *)
+(*                                                                         *)
+(* If there exists n \in Nat such that a bijection exists from 1..n to S,  *)
+(* then Cardinality(S) = n.                                                *)
+(*                                                                         *)
+(* `.  .'                                                                  *)
+(***************************************************************************)
+
+LEMMA FS_CountingElements ==
+  ASSUME NEW S, NEW n \in Nat, ExistsBijection(1..n,S)
+  PROVE  Cardinality(S) = n
+PROOF
+  <1> DEFINE
+    (***********************************************************************)
+    (* Size of set T.                                                      *)
+    (***********************************************************************)
+    Size(T)  == CHOOSE i \in Nat : ExistsBijection(1..i,T)
+
+    (***********************************************************************)
+    (* Size function for subsets of S.                                     *)
+    (***********************************************************************)
+    SZ       == [ T \in SUBSET S |-> Size(T) ]
+
+    (***********************************************************************)
+    (* Formula part of the CS property for element T.                      *)
+    (***********************************************************************)
+    fn(CS,T) == IF T = {} THEN 0 ELSE 1 + CS[T \ {CHOOSE x : x \in T}]
+
+    (***********************************************************************)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '90,150p' /home/ubuntu/.tlapm/lib/tlapm/stdlib/FiniteSetTheorems_proofs.tla"
+    (***********************************************************************)
+    (* The CS property.                                                    *)
+    (***********************************************************************)
+    IsCS(CS) == CS = [T \in SUBSET S |-> fn(CS,T)]
+
+    (***********************************************************************)
+    (* CS function for subsets of S.  Since this is defined as CHOOSE      *)
+    (* something that satisfies the CS property, we do not know that the   *)
+    (* CS function actually satisfies the CS property until we know that   *)
+    (* there exists something that satisfies the CS property.              *)
+    (***********************************************************************)
+    CS       == CHOOSE CS : IsCS(CS)
+
+  <1> HIDE DEF SZ, CS, fn
+
+
+  (*************************************************************************)
+  (* The SZ function satisfies the CS property.                            *)
+  (*************************************************************************)
+  <1>1. IsCS(SZ)
+    (***********************************************************************)
+    (* Use induction on the size of T to show that the values match at     *)
+    (* each T \in SUBSET S.                                                *)
+    (***********************************************************************)
+    <2> DEFINE
+      Prop(i) == \A T \in SUBSET S : ExistsBijection(1..i,T) => SZ[T] = fn(SZ,T)
+
+    <2>1. \A i \in N
+... (truncated) ...
+       (*******************************************************************)
+        <4>1. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1..0,T)
+                       PROVE  SZ[T] = fn(SZ,T)
+              OBVIOUS
+        <4>2. Size(T) = 0  BY <4>1, Fun_NatBijSame
+        <4>3. T = {}  BY <4>1, Fun_NatBijEmpty
+        <4>4. SZ[T] = 0  BY <4>2, Zenon  DEF SZ
+        <4>5. fn(SZ,T) = 0  BY <4>3  DEF fn
+        <4> QED BY <4>4, <4>5
+
+      <3>2. ASSUME NEW i \in Nat, Prop(i)  PROVE Prop(i+1)
+        (*******************************************************************)
+        (* Inductive step.                                                 *)
+        (*******************************************************************)
+        <4>. SUFFICES ASSUME NEW T \in SUBSET S, ExistsBijection(1 .. i+1,T)
+                      PROVE  SZ[T] = fn(SZ,T)
+          OBVIOUS
+        <4>1. ~ExistsBijection(1..0,T)  BY Fun_NatBijSame, Z3
+        <4>2. T # {}  BY <4>1, Fun_NatBijEmpty
+        <4>3. Size(T) = i+1  BY Fun_NatBijSame
+        <4>4. PICK t \in T : t = CHOOSE x : x \in T  BY <4>2
+        <4>. DEFINE U == T \ {t}
+        <4>5. ExistsBijection(1..i,U)  BY Fun_NatBijSubElem, Z3
+        <4>6. SZ[U] = fn(SZ,U)  BY <4>5, <3>2
+        <4>7. SZ[U] = i  BY <4>5, Fun_NatBijSame DEF SZ
+        <4>8. fn(SZ,T) = 1 + SZ[U]  BY <4>2, <4>4 DEF fn
+        <4>9. fn(SZ,T) = i+1  BY <4>7, <4>8
+        <4>10. SZ[T] = i+1  BY <4>3, Zenon  DEF SZ
+        <4>. QED  BY <4>9, <4>10
+      <3> HIDE DEF Prop
+[EXIT 0]
+
+[CMD] /bin/bash -lc "rg -n \"CASE .*\\n\\s*PROOF\" /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -20"
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg -n -U "CASE [''^'"\\n]+\\n\\s*PROOF\" /home/ubuntu/.tlapm/lib/tlapm/stdlib -g '*.tla' | head -20"
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+File "./Allocator_NextMutex.tla", line 94, characters 1-49:
+Error: extra step(s) after finished proof
+ tlapm ending abnormally with Failure("Proof.Parser.toplevel")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__Pco.Make.(<$>).(fun) in file "src/pars/pco.ml", line 427, characters 31-36
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 377, characters 30-46
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(<|>).(fun) in file "src/pars/pco.ml", line 387, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlin
+... (truncated) ...
+file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.execute in file "src/pars/pco.ml", line 246, characters 14-25
+Called from Tlapm_lib__M_save.really_parse_file in file "src/module/m_save.ml", line 84, characters 14-61
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "rg -n \"<\\d+>\\d+\\. QED|<\\d+>\\. QED\" Allocator_NextMutex.tla"
+72:<1>5. QED
+84:<1>2. QED
+104:  <2>4. QED
+106:  <2>. QED
+115:<1>5. QED
+151:    <3>6. QED
+153:    <3>. QED
+165:    <3>6. QED
+167:    <3>. QED
+171:    <3>2. QED
+173:    <3>. QED
+174:  <2>4. QED
+176:  <2>. QED
+195:  <2>6. QED
+197:  <2>. QED
+198:<1>2. QED
+[EXIT 0]
+
+[CMD] /bin/bash -lc "nl -ba Allocator_NextMutex.tla | sed -n '60,205p'"
+    60	  PROVE  Fresh(S)
+    61	PROOF
+    62	<1>1. SUFFICES ASSUME NEW c \in Client,
+    63	                      NEW r \in S
+    64	               PROVE  r \notin alloc[c]
+    65	  BY DEF Fresh
+    66	<1>2. r \in Resource
+    67	  BY <1>1
+    68	<1>3. r \notin UNION {alloc[d] : d \in Client}
+    69	  BY <1>1, <1>2 DEF available
+    70	<1>4. alloc[c] \in {alloc[d] : d \in Client}
+    71	  BY <1>1
+    72	<1>. QED
+    73	  BY <1>3, <1>4
+    74	
+    75	LEMMA RequestPreservesMutex ==
+    76	  ASSUME NEW c \in Client,
+    77	         NEW S \in SUBSET Resource,
+    78	         Mutex,
+    79	         Request(c,S)
+    80	  PROVE  Mutex'
+    81	PROOF
+    82	<1>1. alloc' = alloc
+    83	  BY DEF Request
+    84	<1>. QED
+    85	  BY <1>1 DEF Mutex
+    86	
+    87	LEMMA ReturnPreservesMutex ==
+    88	  ASSUME NEW c \in Client,
+    89	         NEW S \in SUBSET Resource,
+    90	         Mutex,
+    91	         Return(c,S)
+    92	  PROVE  Mutex'
+    93	PROOF
+    94	<1>1. alloc' = [alloc EXCEPT ![c] = alloc[c] \ S]
+    95	  BY DEF Return
+    96	<1>2. \A d \in Client : alloc'[d] \subseteq alloc[d]
+    97	  <2>1. SUFFICES ASSUME NEW d \in Client
+    98	                 PROVE  alloc'[d] \subseteq alloc[d]
+    99	    OBVIOUS
+   100	  <2>2. CASE d = c
+   101	    BY <1>1, <2>1
+   102	  <2>3. CASE d # c
+   103	    BY <1>1, <2>1
+   104	  <2>. QED
+   105	    BY <2>2, <2>3
+   106	  <2>. QED
+   107	<1>3. SUFFICES ASSUME NEW c1 \in Client,
+   108	                      NEW c2 \in Client,
+   109	             
+... (truncated) ...
+ BY <1>1, <1>4, <2>2
+   159	    <3>3. r \in alloc[c1]
+   160	      BY <1>1, <1>4, <3>1
+   161	    <3>4. CASE r \in alloc[c]
+   162	      BY <1>4, <2>2, <3>3, <3>4 DEF Mutex
+   163	    <3>5. CASE r \in S
+   164	      BY <1>3, <1>4, <3>3, <3>5 DEF Fresh
+   165	    <3>. QED
+   166	      BY <3>2, <3>4, <3>5
+   167	    <3>. QED
+   168	  <2>3. CASE c1 # c /\ c2 # c
+   169	    <3>1. r \in alloc[c1] /\ r \in alloc[c2]
+   170	      BY <1>1, <1>4, <2>3
+   171	    <3>. QED
+   172	      BY <1>4, <1>6, <3>1 DEF Mutex
+   173	    <3>. QED
+   174	  <2>. QED
+   175	    BY <2>1, <2>2, <2>3
+   176	  <2>. QED
+   177	
+   178	-------------------------------------------------------------------------
+   179	
+   180	THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+   181	PROOF
+   182	<1>1. ASSUME TypeInvariant /\ Mutex /\ Next
+   183	      PROVE  Mutex'
+   184	  <2>1. Mutex
+   185	    BY <1>1
+   186	  <2>2. PICK c \in Client, S \in SUBSET Resource :
+   187	            Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
+   188	    BY <1>1 DEF Next
+   189	  <2>3. CASE Request(c,S)
+   190	    BY <2>1, <2>2, <2>3, RequestPreservesMutex
+   191	  <2>4. CASE Allocate(c,S)
+   192	    BY <2>1, <2>2, <2>4, AllocatePreservesMutex
+   193	  <2>5. CASE Return(c,S)
+   194	    BY <2>1, <2>2, <2>5, ReturnPreservesMutex
+   195	  <2>. QED
+   196	    BY <2>2, <2>3, <2>4, <2>5
+   197	  <2>. QED
+   198	<1>. QED
+   199	  BY <1>1
+   200	
+   201	=========================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+File "./Allocator_NextMutex.tla", line 171, character 7:
+Error: Unexpected end of (sub)proof at level 1 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_steps in file "src/proof/p_parser.ml", line 145, characters 33-52
+Called from Tlapm_lib__P_parser.to_proof in file "src/proof/p_parser.ml", line 84, characters 27-57
+Called from Tlapm_lib__P_parser.toplevel in file "src/proof/p_parser.ml", line 230, characters 8-39
+Called from Tlapm_lib__Pco.Make.(<$>).(fun) in file "src/pars/pco.ml", line 427, characters 31-36
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 377, characters 30-46
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/p
+... (truncated) ...
+file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.withloc.(fun) in file "src/pars/pco.ml", line 445, characters 16-27
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.(>>+).(fun) in file "src/pars/pco.ml", line 374, characters 17-28
+Called from Tlapm_lib__Pco.Make.exec in file "src/pars/pco.ml" (inlined), line 243, characters 26-32
+Called from Tlapm_lib__Pco.Make.execute in file "src/pars/pco.ml", line 246, characters 14-25
+Called from Tlapm_lib__M_save.really_parse_file in file "src/module/m_save.ml", line 84, characters 14-61
+Called from Tlapm_lib__M_save.clocking in file "src/module/m_save.ml", line 24, characters 18-22
+Called from Tlapm_lib.read_new_modules.(fun) in file "src/tlapm_lib.ml", line 505, characters 8-57
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 564, characters 20-43
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba Allocator_NextMutex.tla | sed -n '158,180p'"
+   158	      BY <1>1, <1>4, <3>1
+   159	    <3>4. CASE r \in alloc[c]
+   160	      BY <1>4, <2>2, <3>3, <3>4 DEF Mutex
+   161	    <3>5. CASE r \in S
+   162	      BY <1>3, <1>4, <3>3, <3>5 DEF Fresh
+   163	    <3>. QED
+   164	      BY <3>2, <3>4, <3>5
+   165	  <2>3. CASE c1 # c /\ c2 # c
+   166	    <3>1. r \in alloc[c1] /\ r \in alloc[c2]
+   167	      BY <1>1, <1>4, <2>3
+   168	    <3>. QED
+   169	      BY <1>4, <1>6, <3>1 DEF Mutex
+   170	  <2>. QED
+   171	    BY <2>1, <2>2, <2>3
+   172	
+   173	-------------------------------------------------------------------------
+   174	
+   175	THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+   176	PROOF
+   177	<1>1. ASSUME TypeInvariant /\ Mutex /\ Next
+   178	      PROVE  Mutex'
+   179	  <2>1. Mutex
+   180	    BY <1>1
+[EXIT 0]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+(* loading fingerprints in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 167, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT c \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  Mutex ,
+                  Allocate(c, S) ,
+                  NEW CONSTANT c1 \in Client,
+                  NEW CONSTANT c2 \in Client,
+                  NEW CONSTANT r \in Resource,
+                  <1>1 ,
+                  <1>4 ,
+                  <2>3 
+           PROVE  r \in alloc[c1] /\ r \in alloc[c2]
+File "./Allocator_NextMutex.tla", line 158, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+           
+... (truncated) ...
+    Return(c, S) ,
+                  NEW CONSTANT d \in Client,
+                  <1>1 ,
+                  <2>1 
+           PROVE  (alloc')[d] \subseteq alloc[d]
+File "./Allocator_NextMutex.tla", line 101, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT c \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  Mutex ,
+                  Return(c, S) ,
+                  NEW CONSTANT d \in Client,
+                  <1>1 ,
+                  <2>1 
+           PROVE  (alloc')[d] \subseteq alloc[d]
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 197, character 73:
+[ERROR]: 7/131 obligations failed.
+There were backend errors processing module `"Allocator_NextMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[AGENT] The proof now parses; the remaining failures are proving obligations rather than syntax. I’m going to look at the failed obligations and tighten the lemmas so the backend has smaller, explicit facts to discharge.
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+(* loading fingerprints in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 169, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT c \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  TypeInvariant ,
+                  Mutex ,
+                  Allocate(c, S) ,
+                  NEW CONSTANT c1 \in Client,
+                  NEW CONSTANT c2 \in Client,
+                  NEW CONSTANT r \in Resource,
+                  <1>1 ,
+                  <1>4 ,
+                  <2>3 
+           PROVE  r \in alloc[c1] /\ r \in alloc[c2]
+File "./Allocator_NextMutex.tla", line 160, characters 7-8:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+               
+... (truncated) ...
+   NEW CONSTANT d \in Client,
+                  <1>1 ,
+                  <2>1 
+           PROVE  (alloc')[d] \subseteq alloc[d]
+File "./Allocator_NextMutex.tla", line 102, characters 5-6:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Client,
+                  NEW CONSTANT Resource,
+                  NEW VARIABLE unsat,
+                  NEW VARIABLE alloc,
+                  NEW CONSTANT c \in Client,
+                  NEW CONSTANT S \in 
+                  SUBSET Resource,
+                  TypeInvariant ,
+                  Mutex ,
+                  Return(c, S) ,
+                  NEW CONSTANT d \in Client,
+                  <1>1 ,
+                  <2>1 
+           PROVE  (alloc')[d] \subseteq alloc[d]
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 201, character 73:
+[ERROR]: 7/135 obligations failed.
+There were backend errors processing module `"Allocator_NextMutex"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", line 448, characters 12-77
+Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 577, characters 23-43
+Called from Stdlib__List.fold_left in file "list.ml", line 123, characters 24-34
+Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 580, characters 13-40
+Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 592, characters 8-59
+[EXIT 3]
+
+[CMD] /bin/bash -lc '/home/ubuntu/.tlapm/bin/tlapm -I /home/ubuntu/.tlapm/lib/tlapm/stdlib Allocator_NextMutex.tla'
+(* loading fingerprints in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "./Allocator_NextMutex.tla", line 1, character 1 to line 201, character 73:
+[INFO]: All 135 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS now proves all obligations. I’m running the repository’s checker next because it enforces the extra constraints on what was allowed to change.
+
+[CMD] /bin/bash -lc './check_proof_bin Allocator_NextMutex.tla --level 2'
+Checking: Allocator_NextMutex.tla
+tlapm: /home/ubuntu/.tlapm/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Allocator_NextMutex.tlaps/Allocator_NextMutex.thy" *)
+(* fingerprints written in ".tlacache/Allocator_NextMutex.tlaps/fingerprints" *)
+File "/tmp/tlaps_check_a17nwqag/Allocator_NextMutex.tla", line 1, character 1 to line 201, character 73:
+[INFO]: All 135 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_Allocator_NextMutex_pmdl0ese/Allocator_NextMutex.result
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git diff -- Allocator_NextMutex.tla'
+diff --git a/Allocator_NextMutex.tla b/Allocator_NextMutex.tla
+index 1dfe72b..d1ab75b 100644
+--- a/Allocator_NextMutex.tla
++++ b/Allocator_NextMutex.tla
+@@ -51,7 +51,151 @@ Mutex ==
+ 
+ -------------------------------------------------------------------------
+ 
++Fresh(S) ==
++  \A c \in Client : \A r \in S : r \notin alloc[c]
++
++LEMMA AvailableFresh ==
++  ASSUME NEW S \in SUBSET Resource,
++         S \subseteq available
++  PROVE  Fresh(S)
++PROOF
++<1>1. SUFFICES ASSUME NEW c \in Client,
++                      NEW r \in S
++               PROVE  r \notin alloc[c]
++  BY DEF Fresh
++<1>2. r \in Resource
++  BY <1>1
++<1>3. r \notin UNION {alloc[d] : d \in Client}
++  BY <1>1, <1>2 DEF available
++<1>4. alloc[c] \in {alloc[d] : d \in Client}
++  BY <1>1
++<1>. QED
++  BY <1>3, <1>4
++
++LEMMA RequestPreservesMutex ==
++  ASSUME NEW c \in Client,
++         NEW S \in SUBSET Resource,
++         Mutex,
++         Request(c,S)
++  PROVE  Mutex'
++PROOF
++<1>1. alloc' = alloc
++  BY DEF Request
++<1>. QED
++  BY <1>1 DEF Mutex
++
++LEMMA ReturnPreservesMutex ==
++  ASSUME NEW c \in Client,
++         NEW S \in SUBSET Resource,
++         TypeInvariant,
++         Mutex,
++         Return(c,S)
++  PROVE  Mutex'
++PROOF
++<1>1. alloc' = [alloc EXCEPT ![c] = alloc[c] \ S]
++  BY DEF Return
++<1>2. \A d \in Client : alloc'[d] \subseteq alloc[d]
++  <2>1. SUFFICES ASSUME NEW d \in Client
++                 PROVE  alloc'[d] \subseteq alloc[d]
++    OBVIOUS
++  <2>2. CASE d = c
++    BY <1>1, <2>1 DEF TypeInvariant
++  <2>3. CASE d
+... (truncated) ...
+>3, <3>5 DEF Fresh
++    <3>. QED
++      BY <3>2, <3>4, <3>5
++  <2>2. CASE c2 = c
++    <3>1. c1 # c
++      BY <1>6, <2>2
++    <3>2. r \in alloc[c] \/ r \in S
++      BY <1>1, <1>4, <2>2 DEF TypeInvariant
++    <3>3. r \in alloc[c1]
++      BY <1>1, <1>4, <3>1 DEF TypeInvariant
++    <3>4. CASE r \in alloc[c]
++      BY <1>4, <2>2, <3>3, <3>4 DEF Mutex
++    <3>5. CASE r \in S
++      BY <1>3, <1>4, <3>3, <3>5 DEF Fresh
++    <3>. QED
++      BY <3>2, <3>4, <3>5
++  <2>3. CASE c1 # c /\ c2 # c
++    <3>1. r \in alloc[c1] /\ r \in alloc[c2]
++      BY <1>1, <1>4, <2>3 DEF TypeInvariant
++    <3>. QED
++      BY <1>4, <1>6, <3>1 DEF Mutex
++  <2>. QED
++    BY <2>1, <2>2, <2>3
++<1>. QED
++  BY <1>5, <1>6
++
++-------------------------------------------------------------------------
++
+ THEOREM NextMutex == TypeInvariant /\ Mutex /\ Next => Mutex'
+-PROOF OBVIOUS
++PROOF
++<1>1. ASSUME TypeInvariant /\ Mutex /\ Next
++      PROVE  Mutex'
++  <2>1. Mutex
++    BY <1>1
++  <2>1a. TypeInvariant
++    BY <1>1
++  <2>2. PICK c \in Client, S \in SUBSET Resource :
++            Request(c,S) \/ Allocate(c,S) \/ Return(c,S)
++    BY <1>1 DEF Next
++  <2>3. CASE Request(c,S)
++    BY <2>1, <2>2, <2>3, RequestPreservesMutex
++  <2>4. CASE Allocate(c,S)
++    BY <2>1, <2>1a, <2>2, <2>4, AllocatePreservesMutex
++  <2>5. CASE Return(c,S)
++    BY <2>1, <2>1a, <2>2, <2>5, ReturnPreservesMutex
++  <2>. QED
++    BY <2>2, <2>3, <2>4, <2>5
++<1>. QED
++  BY <1>1
+ 
+ =========================================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'git status --short'
+ M Allocator_NextMutex.tla
+?? .tlacache/
+?? Allocator_NextMutex.result
+?? check_proof_bin
+[EXIT 0]
+
+[AGENT] Implemented the TLAPS proof in [Allocator_NextMutex.tla](/tmp/codex_bench_Allocator_NextMutex_pmdl0ese/Allocator_NextMutex.tla).
+
+Added helper lemmas for:
+- resources fresh from `available`
+- `Request`, `Return`, and `Allocate` preserving `Mutex`
+
+Verification passed:
+
+```text
+./check_proof_bin Allocator_NextMutex.tla --level 2
+PASS — all obligations proved
+```

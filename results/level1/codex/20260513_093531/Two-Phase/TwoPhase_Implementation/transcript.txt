@@ -1,0 +1,1253 @@
+Benchmark: Two-Phase/TwoPhase_Implementation.tla
+Time: 200s
+Tokens: 941,897 input / 8,115 output
+============================================================
+
+[AGENT] I’ll inspect the TLA+ file and checker, then iteratively patch only the final proof.
+
+[CMD] /bin/bash -lc "ls && sed -n '1,260p' TwoPhase_Implementation.tla && sed -n '1,220p' check_proof.py"
+Alternate.tla
+TwoPhase_Implementation.tla
+cheating_detection.py
+check_proof.py
+---------------------- MODULE TwoPhase_Implementation -----------------------
+(***************************************************************************)
+(* This module specifies the two-phase handshake, which is a simple but    *)
+(* very important hardware protocol by which a Producer process and a      *)
+(* Consumer process alternately perform actions, with the Producer going   *)
+(* first.  The system is pictured as follows:                              *)
+(*                                                                         *)
+(* `.                                                                      *)
+(*     ------------           p          ------------                      *)
+(*    |            | -----------------> |            |                     *)
+(*    |  Producer  |                    |  Consumer  |                     *)
+(*    |            | <----------------- |            |                     *)
+(*     ------------           c          ------------    .'                *)
+(*                                                                         *)
+(*                                                                         *)
+(* In the spec, we represent the Producer and Consumer actions the way we  *)
+(* represented the actions A_0 and A_1 of the Alternate specification.  We *)
+(* then show that this specification implements the Alternate              *)
+(* specification 
+... (truncated) ...
+ parser.parse_args()
+
+    filepath = os.path.abspath(args.file)
+    if not os.path.isfile(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(3)
+
+    # Set up output: write to file and stdout
+    output_path = args.output
+    if output_path is None:
+        output_path = os.path.splitext(filepath)[0] + '.result'
+
+    # Collect all output lines, print at end and write to file
+    output_lines = []
+
+    def emit(line=""):
+        output_lines.append(line)
+        print(line)
+
+    # Find tlapm
+    tlapm_path = args.tlapm or find_tlapm()
+    if not tlapm_path:
+        emit("ERROR: tlapm not found. Use --tlapm to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(output_lines) + '\n')
+        sys.exit(3)
+
+    emit(f"Checking: {os.path.relpath(filepath)}")
+    emit(f"tlapm: {tlapm_path}")
+    emit()
+
+    # --- Step 1: Run tlapm ---
+    emit("=" * 60)
+    emit("TLAPM OUTPUT")
+    emit("=" * 60)
+
+    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    try:
+        basename = os.path.basename(filepath)
+        tmp_file = os.path.join(tmp_dir, basename)
+        shutil.copy2(filepath, tmp_file)
+
+        # Copy dependency files from the same directory
+[EXIT 0]
+
+[AGENT] I found the module; next I’ll focus on the final theorem and available lemmas.
+
+[CMD] /bin/bash -lc "sed -n '80,240p' TwoPhase_Implementation.tla && tail -n 120 TwoPhase_Implementation.tla && sed -n '220,420p' check_proof.py"
+(* library is unlikely ever to contain all the simple mathematical         *)
+(* theoresm that you'll ever need.                                         *)
+(*                                                                         *)
+(* We are primarily interested in making the Proof System useful to people *)
+(* who want to prove things about algorithms and systems, not for those    *)
+(* who want to prove theorems of mathematics.  (We hope that the Proof     *)
+(* System will be good for doing those proofs too, but we are not doing    *)
+(* anything special to achieve this.)  We expect that most users will      *)
+(* simply assume these mathematical facts.  However, it's dangerous to     *)
+(* assume the truth of a theorem without checking it in some way.  It's    *)
+(* easy to make a mistake and write a false theorem, and assuming a false  *)
+(* theorem could allow you to prove other false theorems.  So, you should  *)
+(* use the TLC model checker to check any fact that you assume.  In most   *)
+(* cases, TLC won't be able to check the actual theorem.  But it should be *)
+(* able to do a good enough job to catch errors.  For example, TLC can't   *)
+(* check that a theorem is true for all integers.  However, in practice we *)
+(* expect that you will be able to check it for a large enough subset of   *)
+(* the integers to gain sufficient confidence that the theorem really is   *)
+(* true.  In this case, TLC could check the actual theorem.                *)
+(*****************
+... (truncated) ...
+      for ci in detect_empty_proof(clean):
+                    real_issues.append((po_line + (ci.line or 0), ci.description))
+                for ci in detect_zero_total_obligations(tlapm_output):
+                    real_issues.append((0, ci.description))
+
+    for line_num, desc in warnings:
+        emit(f"  WARNING: {desc}")
+
+    if real_issues:
+        for line_num, desc in real_issues:
+            emit(f"  Line {line_num}: {desc}")
+    else:
+        emit("  No cheating detected.")
+
+    # --- Step 3: Verdict ---
+    emit()
+    emit("=" * 60)
+    emit("VERDICT")
+    emit("=" * 60)
+
+    if real_issues:
+        verdict = "CHEATING"
+        exit_code = 2
+        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+    elif tlapm_passed:
+        verdict = "PASS"
+        exit_code = 0
+        emit(f"  ✅ PASS — all obligations proved")
+    else:
+        verdict = "FAIL"
+        exit_code = 1
+        # Extract obligation summary
+        m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
+        if m:
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
+        elif "TIMEOUT" in tlapm_output:
+            emit(f"  ❌ FAIL — timeout after {args.timeout}s")
+        else:
+            emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+
+    # Write result file
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(output_lines) + '\n')
+    emit(f"\nResult written to: {output_path}")
+
+    sys.exit(exit_code)
+
+
+if __name__ == '__main__':
+    main()
+[EXIT 0]
+
+[AGENT] The final theorem refines to `Alternate`; I’ll inspect that dependency now.
+
+[CMD] /bin/bash -lc 'cat Alternate.tla && /opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla'
+(* created new ".tlacache/Alternate.tlaps/Alternate.thy" *)
+(* fingerprints written in ".tlacache/Alternate.tlaps/fingerprints" *)
+File "./Alternate.tla", line 1, character 1 to line 33, character 76:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: TEMPORAL_Spec_, TEMPORAL_A!Spec_
+
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+File "./TwoPhase_Implementation.tla", line 105, characters 7-13:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT XInit
+                  (_),
+                  NEW CONSTANT XAct(_, _, _),
+                  NEW VARIABLE p,
+                  NEW VARIABLE c,
+                  NEW VARIABLE x
+           PROVE  Spec => A!Spec
+File "./TwoPhase_Implementation.tla", line 1, character 1 to line 107, character 62:
+[ERROR]: 1/1 obligation failed.
+There were backend errors processing module `"TwoPhase_Implementation"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Now I’m checking TLAPS temporal proof rules available in the standard library.
+
+[CMD] /bin/bash -lc "rg \"STL|INV|WF|\\[\\]\\[|Spec\" /opt/tlapm15/lib/tlaps -n | head -n 200 && sed -n '1,420p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:625:THEOREM FS_WFInduction ==
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:639:<1>3. \A T \in SubS : P(T)  BY ONLY <1>1, <1>2, WFInduction, IsaM("blast")
+/opt/tlapm15/lib/tlaps/emacs/tla-mode/tla-mode.el:39:    "CASE" "EXTENDS" "SF_" "WF_"
+/opt/tlapm15/lib/tlaps/TLA+/examples/AtomicBakeryG.thy:173:definition Spec where
+/opt/tlapm15/lib/tlaps/TLA+/examples/AtomicBakeryG.thy:174:  "Spec \<equiv> Init \<and> []([Next]_{vars})" 
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:80:THEOREM WFMin ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:118:THEOREM MinWF ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:135:(* The two following lemmas are simple consequences of theorem WFMin.      *)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:142:  BY WFMin, IsaM("blast")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:153:  BY WFMin, IsaM("blast")
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:160:LEMMA WFSetLessThanIrreflexive ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:179:THEOREM WFInduction ==
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:190:  BY <1>1, WFMin, Zenon
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:195:(* Theorem WFInductiveDef below justifies recursive definitions based on a *)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:201:WFDefOn(R, S, Def(_,_)) == 
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:210:WFInductiveDe
+... (truncated) ...
+             PROVE  []P /\ [][A]_f => []Q /\ [][B]_g
+
+THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+                           I /\ [N]_F => I'
+                    PROVE  I /\ [][N]_F => []I
+
+THEOREM RuleINV2 == ASSUME STATE I, STATE f, ACTION N
+                    PROVE  []I => ([][N]_f <=> [][N /\ I /\ I']_f)
+
+THEOREM RuleWF1 == ASSUME STATE P, STATE Q, STATE f, ACTION N, ACTION A,
+                          P /\ [N]_f => (P' \/ Q'),
+                          P /\ <<N /\ A>>_f => Q',
+                          P => ENABLED <<A>>_f
+                   PROVE  [][N]_f /\ WF_f(A) => (P ~> Q)
+
+THEOREM RuleSF1 == ASSUME STATE P, STATE Q, STATE f,
+                          ACTION N, ACTION A, TEMPORAL F,
+                          P /\ [N]_f => (P' \/ Q'),
+                          P /\ <<N /\ A>>_f => Q',
+                          []P /\ [][N]_f /\ []F => <> ENABLED <<A>>_f
+                   PROVE  [][N]_f /\ SF_f(A) /\ []F => (P ~> Q)
+
+(***************************************************************************)
+(* The rules WF2 and SF2 in "The Temporal Logic of Actions" are obtained   *)
+(* from the following two rules by the following substitutions: `.         *)
+(*                                                                         *)
+(*          ___        ___         _______________                         *)
+(*      M <- M ,   g <- g ,  EM <- ENABLED <<M>>_g       .'                *)
+(***************************************************************************)
+[EXIT 0]
+
+[CMD] /bin/bash -lc "grep -n \"PTL\\|INV\\|RuleINV\" -n /opt/tlapm15/lib/tlaps/TLAPS.tla | head -n 80 && sed -n '1,160p' /opt/tlapm15/lib/tlaps/TLAPS.tla"
+96:(* Backend pragma: The PTL propositional linear time temporal logic       *)
+105:PTL == TRUE (*{ by (prover: "ls4") }*)
+365:the PTL decision procedure, and their formulation is unsound for the semantics
+394:THEOREM RuleINV1 == ASSUME STATE I, STATE F,  ACTION N,
+398:THEOREM RuleINV2 == ASSUME STATE I, STATE f, ACTION N
+------------------------------- MODULE TLAPS --------------------------------
+
+(* Backend pragmas. *)
+
+
+(***************************************************************************)
+(* Each of these pragmas can be cited with a BY or a USE.  The pragma that *)
+(* is added to the context of an obligation most recently is the one whose *)
+(* effects are triggered.                                                  *)
+(***************************************************************************)
+
+(***************************************************************************)
+(* The following pragmas should be used only as a last resource.  They are *)
+(* dependent upon the particular backend provers, and are unlikely to have *)
+(* any effect if the set of backend provers changes.  Moreover, they are   *)
+(* meaningless to a reader of the proof.                                   *)
+(***************************************************************************)
+
+
+(**************************************************************************)
+(* Backend pragma: use the SMT solver for arithmetic.                     *)
+(*                                                       
+... (truncated) ...
+sually counterproductive to include        *)
+(* theorem SetExtensionality in a BY clause for the Zenon or Isabelle      *)
+(* backends. Instead, use the pragma IsaWithSetExtensionality to instruct  *)
+(* the Isabelle backend to use the rule of set extensionality.             *)
+(***************************************************************************)
+IsaWithSetExtensionality == TRUE
+           (*{ by (prover:"isabelle"; tactic:"(auto intro: setEqualI)")}*)
+
+THEOREM SetExtensionality == \A S,T : (\A x : x \in S <=> x \in T) => S = T
+OBVIOUS
+
+(***************************************************************************)
+(* The following theorem is needed to deduce NotInSetS \notin SetS from    *)
+(* the definition                                                          *)
+(*                                                                         *)
+(*   NotInSetS == CHOOSE v : v \notin SetS                                 *)
+(***************************************************************************)
+THEOREM NoSetContainsEverything == \A S : \E x : x \notin S
+OBVIOUS (*{by (isabelle "(auto intro: inIrrefl)")}*)
+-----------------------------------------------------------------------------
+
+
+
+(********************************************************************)
+(********************************************************************)
+(********************************************************************)
+
+
+(********************************************************************)
+[EXIT 0]
+
+[AGENT] I’ll patch in small state/action lemmas plus a PTL final step.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: TwoPhase_Implementation.tla
+@@
+ THEOREM Implementation == Spec => A"'!Spec
+-PROOF OBVIOUS
++PROOF
++  <1>1. Init => A!Init
++    BY DEF Init, A!Init, vBar
++  <1>2. Init => Inv
++    BY DEF Init, Inv
++  <1>3. Inv /'"\\ [Next]_<<p, c, x>> => Inv'
++  PROOF
++    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
++          PROVE  Inv'
++    PROOF
++      <3>1. CASE Next
++      PROOF
++        <4>1. CASE ProducerStep
++          BY <2>1, <3>1, Mod2 DEF Inv, ProducerStep
++        <4>2. CASE ConsumerStep
++          BY <2>1, <3>1, Mod2 DEF Inv, ConsumerStep
++        <4>3. QED BY <3>1, <4>1, <4>2 DEF Next
++      END PROOF
++      <3>2. CASE UNCHANGED <<p, c, x>>
++        BY <2>1, <3>2 DEF Inv
++      <3>3. QED BY <2>1, <3>1, <3>2 DEF Action
++    END PROOF
++    <2>2. QED BY <2>1
++  END PROOF
++  <1>4. Inv /\\ [Next]_<<p, c, x>> => [A"'!Next]_<<vBar, x>>
++  PROOF
++    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
++          PROVE  [A!Next]_<<vBar, x>>
++    PROOF
++      <3>1. CASE Next
++      PROOF
++        <4>1. CASE ProducerStep
++        PROOF
++          <5>1. vBar = 0
++            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
++          <5>2. vBar'"' = 1
++            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
++          <5>3. A"'!Next
++            BY <4>1, <5>1, <5>2 DEF A!Next
++          <5>4. QED BY <5>3 DEF Action
++        END PROOF
++        <4>2. CASE ConsumerStep
++        PROOF
++          <5>1. vBar = 1
++            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
++          <5>2. vBar'"' = 0
++            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
++          <5>3. A"'!Next
++            BY <4>2, <5>1, <5>2 DEF A!Next
++          <5>4. QED BY <5>3 DEF Action
++        END PROOF
++        <4>3. QED BY <3>1, <4>1, <4>2 DEF Next
++      END PROOF
++      <3>2. CASE UNCHANGED <<p, c, x>>
++      PROOF
++        <4>1. UNCHANGED <<vBar, x>>
++          BY <3>2 DEF vBar
++        <4>2. QED BY <4>1 DEF Action
++      END PROOF
++      <3>3. QED BY <2>1, <3>1, <3>2 DEF Action
++    END PROOF
++    <2>2. QED BY <2>1
++  END PROOF
++  <1>5. QED BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, A!Spec
++END PROOF
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla'
+File "./TwoPhase_Implementation.tla", line 121, character 21:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The first proof shape had a parser issue; I’m locating the bad nested case.
+
+[CMD] /bin/bash -lc "nl -ba TwoPhase_Implementation.tla | sed -n '95,190p'"
+    95	(* check that a theorem is true for all integers.  However, in practice we *)
+    96	(* expect that you will be able to check it for a large enough subset of   *)
+    97	(* the integers to gain sufficient confidence that the theorem really is   *)
+    98	(* true.  In this case, TLC could check the actual theorem.                *)
+    99	(***************************************************************************)
+   100	THEOREM Mod2 == \A i \in {0,1} : /\ (i + 1) % 2 = 1 - i
+   101	                                 /\ (i + 0) % 2 = i
+   102	  PROOF OMITTED
+   103	
+   104	THEOREM Implementation == Spec => A!Spec
+   105	PROOF
+   106	  <1>1. Init => A!Init
+   107	    BY DEF Init, A!Init, vBar
+   108	  <1>2. Init => Inv
+   109	    BY DEF Init, Inv
+   110	  <1>3. Inv /\ [Next]_<<p, c, x>> => Inv'
+   111	  PROOF
+   112	    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+   113	          PROVE  Inv'
+   114	    PROOF
+   115	      <3>1. CASE Next
+   116	      PROOF
+   117	        <4>1. CASE ProducerStep
+   118	          BY <2>1, <3>1, Mod2 DEF Inv, ProducerStep
+   119	        <4>2. CASE ConsumerStep
+   120	          BY <2>1, <3>1, Mod2 DEF Inv, ConsumerStep
+   121	        <4>3. QED BY <3>1, <4>1, <4>2 DEF Next
+   122	      END PROOF
+   123	      <3>2. CASE UNCHANGED <<p, c, x>>
+   124	        BY <2>1, <3>2 DEF Inv
+   125	      <3>3. QED BY <2>1, <3>1, <3>2 DEF Action
+   126	    END PROOF
+   127	    <2>2. QED BY <2>1
+   128	  END PROOF
+   129	  <1>4. Inv /\ [Next]_<<p, c, x>> => [A!Next]_<
+... (truncated) ...
+  132	          PROVE  [A!Next]_<<vBar, x>>
+   133	    PROOF
+   134	      <3>1. CASE Next
+   135	      PROOF
+   136	        <4>1. CASE ProducerStep
+   137	        PROOF
+   138	          <5>1. vBar = 0
+   139	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+   140	          <5>2. vBar' = 1
+   141	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+   142	          <5>3. A!Next
+   143	            BY <4>1, <5>1, <5>2 DEF A!Next
+   144	          <5>4. QED BY <5>3 DEF Action
+   145	        END PROOF
+   146	        <4>2. CASE ConsumerStep
+   147	        PROOF
+   148	          <5>1. vBar = 1
+   149	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+   150	          <5>2. vBar' = 0
+   151	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+   152	          <5>3. A!Next
+   153	            BY <4>2, <5>1, <5>2 DEF A!Next
+   154	          <5>4. QED BY <5>3 DEF Action
+   155	        END PROOF
+   156	        <4>3. QED BY <3>1, <4>1, <4>2 DEF Next
+   157	      END PROOF
+   158	      <3>2. CASE UNCHANGED <<p, c, x>>
+   159	      PROOF
+   160	        <4>1. UNCHANGED <<vBar, x>>
+   161	          BY <3>2 DEF vBar
+   162	        <4>2. QED BY <4>1 DEF Action
+   163	      END PROOF
+   164	      <3>3. QED BY <2>1, <3>1, <3>2 DEF Action
+   165	    END PROOF
+   166	    <2>2. QED BY <2>1
+   167	  END PROOF
+   168	  <1>5. QED BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, A!Spec
+   169	END PROOF
+   170	
+   171	==============================================================
+[EXIT 0]
+
+[AGENT] I’ll align the proof syntax with TLAPS examples for `CASE` steps.
+
+[CMD] /bin/bash -lc "rg \"CASE .*\\n\\s+BY|CASE\" /opt/tlapm15/lib/tlaps/*_proofs.tla -n | head -n 80"
+rg: the literal "\n" is not allowed in a regex
+
+Consider enabling multiline mode with the --multiline flag (or -U for short).
+When multiline mode is enabled, new line characters can be matched.
+[EXIT 0]
+
+[CMD] /bin/bash -lc 'rg "CASE" /opt/tlapm15/lib/tlaps -n | head -n 120'
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:98:  <2>1. CASE m>0 /\ n>0
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:100:  <2>2. CASE m=0
+/opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla:102:  <2>3. CASE n=0
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:434:      <4>1. CASE <<i,j>> \in TransitiveClosureOn(R,S)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:448:    <3>1. CASE <<y,j>> \in TransitiveClosureOn(R,S)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:624:  <2>1. CASE << t[1], x1 >> \in R1
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:626:  <2>2. CASE t[1] = x1 /\ << t[2], x2 >> \in R2
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:685:        <5>1. CASE j \in 1..m
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:690:        <5>2. CASE j = m+1
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:705:      <4>1. CASE << g(x)[1], g(y)[1] >> \in LPO(m)
+/opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla:717:      <4>2. CASE g(x)[1] = g(y)[1] /\ << g(x)[2], g(y)[2] >> \in R
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:797:  <2>1. CASE seq = <<>>
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:799:  <2>2. CASE seq # <<>>
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:845:  <2>1. CASE seq = <<>>
+/opt/tlapm15/lib/tlaps/SequencesExtTheorems_proofs.tla:847:  <2>2. CASE seq # <<>>
+/opt/tlapm15/lib/tlaps/FiniteSetTheorems_proofs.tla:293:  <2>2. CASE i < j  BY <2>1, <2>2
+/opt/tlapm15/lib/tlaps/FiniteSet
+... (truncated) ...
+OMATCHCASE : flags
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/polyml-5.4.0/polyml.5.4/mlsource/extra/Win/Examples/mlEdit.sml:450:                        if FindReplaceFlags.anySet(flags, FindReplaceFlags.FR_MATCHCASE)
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/scala-2.8.1.final/misc/scala-tool-support/geshi/scala.php:48:	'CASE_KEYWORDS' => GESHI_CAPS_NO_CHANGE,
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/scala-2.8.1.final/misc/scala-tool-support/geshi/scala.php:90:	'CASE_SENSITIVE' => array(
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/scala-2.8.1.final/misc/scala-tool-support/geshi/scala-alt.php:56:	'CASE_KEYWORDS' => GESHI_CAPS_NO_CHANGE,
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/scala-2.8.1.final/misc/scala-tool-support/geshi/scala-alt.php:99:	'CASE_SENSITIVE' => array(
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/polyml-5.4.0/polyml.5.4/mlsource/extra/Win/Original/ConstTypeFct.ML:4583:    val ES_UPPERCASE                                 = W (hex "0x0008")
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/polyml-5.4.0/polyml.5.4/mlsource/extra/Win/Original/ConstTypeFct.ML:4584:    val ES_LOWERCASE                                 = W (hex "0x0010")
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/polyml-5.4.0/polyml.5.4/mlsource/extra/Win/Combobox.sml:38:        and CBS_UPPERCASE: flags and CBS_LOWERCASE: flags
+/opt/tlapm15/lib/tlaps/Isabelle2011-1/contrib/polyml-5.4.0/polyml.5.4/mlsource/extra/Win/Combobox.sml:78:        val CBS_UPPERCASE         = fromWord 0wx2000
+[EXIT 0]
+
+[CMD] /bin/bash -lc "sed -n '88,108p' /opt/tlapm15/lib/tlaps/BagsTheorems_proofs.tla && sed -n '428,454p' /opt/tlapm15/lib/tlaps/WellFoundedInduction_proofs.tla"
+        /\ n>0 => DOMAIN(Scaling(n, B)) = DOMAIN B
+<1>1. IsABag(Scaling(n, B))
+  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+<1>2. Scaling(n, EmptyBag)=EmptyBag
+  BY DEF IsABag, Scaling, EmptyBag, SetToBag
+<1>3. Scaling(0, B)=EmptyBag
+  BY DEF Scaling 
+<1>4. Scaling(1, B)= B
+  BY DEF Scaling, IsABag                
+<1>5. Scaling(n*m, B) = Scaling(n, Scaling(m, B))
+  <2>1. CASE m>0 /\ n>0
+    BY <2>1, n*m > 0 DEF Scaling, IsABag
+  <2>2. CASE m=0
+    BY <2>2, <1>2, <1>3 DEF Scaling
+  <2>3. CASE n=0
+    BY <2>3 DEF Scaling
+  <2>. QED  BY <2>1, <2>2, <2>3
+<1>6. n>0 => DOMAIN Scaling(n, B)=DOMAIN B
+  BY DEF Scaling                   
+<1> QED  BY <1>1, <1>2, <1>3, <1>4, <1>5, <1>6
+
+               <<x,k>> \in TransitiveClosureOn(R,S)
+        PROVE  FALSE
+    <3>1. PICK j \in S : /\ <<j,x>> \in R
+                         /\ i=j \/ <<i,j>> \in TransitiveClosureOn(R,S)
+      BY <2>1, TransitiveClosureChopLast, Zenon
+    <3>2. j \in TT
+      <4>1. CASE <<i,j>> \in TransitiveClosureOn(R,S)
+        BY <3>1, <4>1, <2>1, RTCTC, Zenon
+      <4>2. QED
+        BY <3>1, <4>1
+    <3>3. QED
+      BY <3>1, <3>2, <1>1, Zenon
+  <2>2. QED
+    BY <2>1, Zenon
+<1>3. ASSUME NEW y \in T, <<y,x>> \in TransitiveClosureOn(R, S)
+      PROVE  FALSE
+  <2>1. PICK j \in S : /\ <<j,x>> \in R
+                       /\ y=j \/ <<y,j>> \in TransitiveClosureOn(R,S)
+    BY <1>3, TransitiveClosureChopLast
+  <2>2. j \in TT
+    <3>1. CASE <<y,j>> \in TransitiveClosureOn(R,S)
+      BY <1>2, <3>1, <2>1, TransitiveClosureThm
+    <3>2. QED
+      BY <2>1, <3>1
+  <2>3. QED
+    BY <2>1, <2>2, <1>1, Zenon
+<1> QED
+[EXIT 0]
+
+[AGENT] The issue is QED step syntax; I’ll fix those and rerun TLAPS.
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/<4>3\\. QED/<4>. QED/g; s/<3>3\\. QED/<3>. QED/g; s/<2>2\\. QED/<2>. QED/g; s/<5>4\\. QED/<5>. QED/g; s/<4>2\\. QED/<4>. QED/g; s/<1>5\\. QED/<1>. QED/g' TwoPhase_Implementation.tla
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla"
+File "./TwoPhase_Implementation.tla", line 121, character 20:
+Error: Unexpected end of (sub)proof at level 3 before QED step
+
+ tlapm ending abnormally with Failure("Proof.Parser")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.to_step in file "p_parser.ml", line 185, characters 20-50
+Called from P_parser.to_steps in file "p_parser.ml", line 137, characters 14-41
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_steps in file "p_parser.ml", line 141, characters 33-52
+Called from P_parser.to_proof in file "p_parser.ml", line 80, characters 27-57
+Called from P_parser.toplevel in file "p_parser.ml", line 211, characters 8-39
+Called from Pco.Make.(<$>).(fun) in file "pco.ml", line 429, characters 31-36
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 379, characters 30-46
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line
+... (truncated) ...
+2
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.withloc.(fun) in file "pco.ml", line 447, characters 16-27
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.(>>+).(fun) in file "pco.ml", line 376, characters 17-28
+Called from Pco.Make.exec in file "pco.ml" (inlined), line 245, characters 26-32
+Called from Pco.Make.execute in file "pco.ml", line 248, characters 14-25
+Called from M_save.really_parse_file in file "m_save.ml", line 50, characters 12-59
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[CMD] /bin/bash -lc "nl -ba TwoPhase_Implementation.tla | sed -n '112,126p' | cat -A"
+   112^I    <2>1. ASSUME Inv, [Next]_<<p, c, x>>$
+   113^I          PROVE  Inv'$
+   114^I    PROOF$
+   115^I      <3>1. CASE Next$
+   116^I      PROOF$
+   117^I        <4>1. CASE ProducerStep$
+   118^I          BY <2>1, <3>1, Mod2 DEF Inv, ProducerStep$
+   119^I        <4>2. CASE ConsumerStep$
+   120^I          BY <2>1, <3>1, Mod2 DEF Inv, ConsumerStep$
+   121^I        <4>. QED BY <3>1, <4>1, <4>2 DEF Next$
+   122^I      END PROOF$
+   123^I      <3>2. CASE UNCHANGED <<p, c, x>>$
+   124^I        BY <2>1, <3>2 DEF Inv$
+   125^I      <3>. QED BY <2>1, <3>1, <3>2 DEF Action$
+   126^I    END PROOF$
+[EXIT 0]
+
+[AGENT] I’ll switch to TLAPS’s implicit subproof style used by bundled proofs.
+
+[CMD] /bin/bash -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('TwoPhase_Implementation.tla')
+s=p.read_text()
+start=s.index('THEOREM Implementation ==')
+end=s.index('\\n==============================================================', start)
+proof='''THEOREM Implementation == Spec => A"'!Spec
+PROOF
+  <1>1. Init => A!Init
+    BY DEF Init, A!Init, vBar
+  <1>2. Init => Inv
+    BY DEF Init, Inv
+  <1>3. Inv /'"\\\\ [Next]_<<p, c, x>> => Inv'
+    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+          PROVE  Inv'
+      <3>1. CASE Next
+        <4>1. CASE ProducerStep
+          BY <2>1, <3>1, Mod2 DEF Inv, ProducerStep
+        <4>2. CASE ConsumerStep
+          BY <2>1, <3>1, Mod2 DEF Inv, ConsumerStep
+        <4>. QED BY <3>1, <4>1, <4>2 DEF Next
+      <3>2. CASE UNCHANGED <<p, c, x>>
+        BY <2>1, <3>2 DEF Inv
+      <3>. QED BY <2>1, <3>1, <3>2 DEF Action
+    <2>. QED BY <2>1
+  <1>4. Inv /\\\\ [Next]_<<p, c, x>> => [A"'!Next]_<<vBar, x>>
+    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+          PROVE  [A!Next]_<<vBar, x>>
+      <3>1. CASE Next
+        <4>1. CASE ProducerStep
+          <5>1. vBar = 0
+            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+          <5>2. vBar'"' = 1
+            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+          <5>3. A"'!Next
+            BY <4>1, <5>1, <5>2 DEF A!Next
+          <5>. QED BY <5>3 DEF Action
+        <4>2. CASE ConsumerStep
+          <5>1. vBar = 1
+            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+          <5>2. vBar'"' = 0
+            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+          <5>3. A"'!Next
+            BY <4>2, <5>1, <5>2 DEF A!Next
+          <5>. QED BY <5>3 DEF Action
+        <4>. QED BY <3>1, <4>1, <4>2 DEF Next
+      <3>2. CASE UNCHANGED <<p, c, x>>
+        <4>1. UNCHANGED <<vBar, x>>
+          BY <3>2 DEF vBar
+        <4>. QED BY <4>1 DEF Action
+      <3>. QED BY <2>1, <3>1, <3>2 DEF Action
+    <2>. QED BY <2>1
+  <1>. QED BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, A!Spec
+END PROOF
+'"'''
+p.write_text(s[:start]+proof+s[end:])
+PY
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla"
+File "./TwoPhase_Implementation.tla", line 151, character 4
+Unexpected keyword PROOF
+File "<unknown>":
+Error: Could not parse "./TwoPhase_Implementation.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from M_save.clocking in file "m_save.ml", line 25, characters 16-20
+Called from Tlapm.read_new_modules.(fun) in file "tlapm.ml", line 455, characters 8-112
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 490, characters 20-43
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] That parser style can’t end with `END`; I’ll normalize to a numbered QED proof block.
+
+[CMD] /bin/bash -lc "nl -ba TwoPhase_Implementation.tla | sed -n '104,158p'"
+   104	THEOREM Implementation == Spec => A!Spec
+   105	PROOF
+   106	  <1>1. Init => A!Init
+   107	    BY DEF Init, A!Init, vBar
+   108	  <1>2. Init => Inv
+   109	    BY DEF Init, Inv
+   110	  <1>3. Inv /\ [Next]_<<p, c, x>> => Inv'
+   111	    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+   112	          PROVE  Inv'
+   113	      <3>1. CASE Next
+   114	        <4>1. CASE ProducerStep
+   115	          BY <2>1, <3>1, Mod2 DEF Inv, ProducerStep
+   116	        <4>2. CASE ConsumerStep
+   117	          BY <2>1, <3>1, Mod2 DEF Inv, ConsumerStep
+   118	        <4>. QED BY <3>1, <4>1, <4>2 DEF Next
+   119	      <3>2. CASE UNCHANGED <<p, c, x>>
+   120	        BY <2>1, <3>2 DEF Inv
+   121	      <3>. QED BY <2>1, <3>1, <3>2 DEF Action
+   122	    <2>. QED BY <2>1
+   123	  <1>4. Inv /\ [Next]_<<p, c, x>> => [A!Next]_<<vBar, x>>
+   124	    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+   125	          PROVE  [A!Next]_<<vBar, x>>
+   126	      <3>1. CASE Next
+   127	        <4>1. CASE ProducerStep
+   128	          <5>1. vBar = 0
+   129	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+   130	          <5>2. vBar' = 1
+   131	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+   132	          <5>3. A!Next
+   133	            BY <4>1, <5>1, <5>2 DEF A!Next
+   134	          <5>. QED BY <5>3 DEF Action
+   135	        <4>2. CASE ConsumerStep
+   136	          <5>1. vBar = 1
+   137	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+   138	          <5>2. vBar' = 0
+   139	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+   140	          <5>3. A!Next
+   141	            BY <4>2, <5>1, <5>2 DEF A!Next
+   142	          <5>. QED BY <5>3 DEF Action
+   143	        <4>. QED BY <3>1, <4>1, <4>2 DEF Next
+   144	      <3>2. CASE UNCHANGED <<p, c, x>>
+   145	        <4>1. UNCHANGED <<vBar, x>>
+   146	          BY <3>2 DEF vBar
+   147	        <4>. QED BY <4>1 DEF Action
+   148	      <3>. QED BY <2>1, <3>1, <3>2 DEF Action
+   149	    <2>. QED BY <2>1
+   150	  <1>. QED BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, A!Spec
+   151	END PROOF
+   152	
+   153	==============================================================
+[EXIT 0]
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/\\nEND PROOF\\n/\\n/' TwoPhase_Implementation.tla
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla"
+(* created new ".tlacache/Alternate.tlaps/Alternate.thy" *)
+(* fingerprints written in ".tlacache/Alternate.tlaps/fingerprints" *)
+File "./Alternate.tla", line 1, character 1 to line 33, character 76:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+File "./TwoPhase_Implementation.tla", line 121, characters 40-45:
+Error: Operator "Action" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 4")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from E_anon.anon#expr in file "e_anon.ml", line 226, characters 17-35
+Called from P_visit.map#usable.usdef in file "p_visit.ml", line 178, characters 21-62
+Called from Stdlib__list.rev_map.rmap_f in file "list.ml", line 103, characters 22-25
+Called from Ext.List.map in file "ext.ml" (inlined), line 44, characters 22-37
+Called from P_visit.map#usable in file "p_visit.ml", line 188, characters 26-50
+Called from P_visit.map#proof in file "p_visit.ml", line 33, characters 12-30
+Called from P_anon.anon#proof in file "p_anon.ml", line 68, characters 22-56
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from P_anon.anon#step in file "p_anon.ml", line 101, characters 12-30
+Called from P_visit.map#steps in file "p_visit.ml", line 42, characters 24-40
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_visit.map#steps in file "p_visit.ml", line 43, characters 25-43
+Called from P_anon.anon#proof in file "p_anon.ml", line 63, characters 27-47
+Called from M_elab.normalize.spin.map_proof in file "m_elab.ml", line 1323, characters 21-48
+Called from M_elab.normalize in file "m_elab.ml", line 1457, characters 12-66
+Called from Tlapm.process_module in file "tlapm.ml", line 293, characters 29-68
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The parser is happy now; I’ll remove an invalid built-in expansion name and rerun.
+
+[CMD] /bin/bash -lc "perl -0pi -e 's/ DEF Action//g' TwoPhase_Implementation.tla
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla"
+(* created new ".tlacache/Alternate.tlaps/Alternate.thy" *)
+(* fingerprints written in ".tlacache/Alternate.tlaps/fingerprints" *)
+File "./Alternate.tla", line 1, character 1 to line 33, character 76:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_ProducerStep_, ACTION_ConsumerStep_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_Next_, STATE_Inv_, ACTION_A!Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_Next_, STATE_Inv_, ACTION_A!Next_
+
+** Unexpanded symbols: ACTION_ProducerStep_, STATE_vBar_, ACTION_ConsumerStep_, ACTION_A!Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_A!Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_ProducerStep_, STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_A!Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_Cons
+... (truncated) ...
+       Inv == p \in {0, 1} /\ c \in {0, 1},
+                  <2>1 ,
+                  <3>1 ,
+                  Mod2 
+           PROVE  Inv'
+File "./TwoPhase_Implementation.tla", line 115, characters 11-12:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT XInit
+                  (_),
+                  NEW CONSTANT XAct(_, _, _),
+                  NEW VARIABLE p,
+                  NEW VARIABLE c,
+                  NEW VARIABLE x,
+                  ProducerStep ==
+                    /\ p = c
+                    /\ XAct(0, x, x')
+                    /\ p' = (p + 1) % 2
+                    /\ c' = c,
+                  Inv == p \in {0, 1} /\ c \in {0, 1},
+                  <2>1 ,
+                  <3>1 ,
+                  Mod2 
+           PROVE  Inv'
+File "./TwoPhase_Implementation.tla", line 1, character 1 to line 152, character 62:
+[ERROR]: 4/71 obligations failed.
+There were backend errors processing module `"TwoPhase_Implementation"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] Only arithmetic/action details remain; I’ll make those obligations more explicit.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: TwoPhase_Implementation.tla
+@@
+       <3>1. CASE Next
+         <4>1. CASE ProducerStep
+-          BY <2>1, <3>1, Mod2 DEF Inv, ProducerStep
++          <5>1. p' \\in {0,1}
++            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep
++          <5>2. c' \\in {0,1}
++            BY <2>1, <4>1 DEF Inv, ProducerStep
++          <5>. QED BY <5>1, <5>2 DEF Inv
+         <4>2. CASE ConsumerStep
+-          BY <2>1, <3>1, Mod2 DEF Inv, ConsumerStep
++          <5>1. p' \\in {0,1}
++            BY <2>1, <4>2 DEF Inv, ConsumerStep
++          <5>2. c' \\in {0,1}
++            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep
++          <5>. QED BY <5>1, <5>2 DEF Inv
+@@
+           <5>3. A"'!Next
+-            BY <4>1, <5>1, <5>2 DEF A!Next
++            BY <4>1, <5>1, <5>2, Mod2 DEF A!Next
+@@
+           <5>3. A!Next
+-            BY <4>2, <5>1, <5>2 DEF A!Next
++            BY <4>2, <5>1, <5>2, Mod2 DEF A!Next
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla'
+(* created new ".tlacache/Alternate.tlaps/Alternate.thy" *)
+(* fingerprints written in ".tlacache/Alternate.tlaps/fingerprints" *)
+File "./Alternate.tla", line 1, character 1 to line 33, character 76:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_ProducerStep_, STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_ConsumerStep_
+
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+File "./TwoPhase_Implementation.tla", line 149, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT XInit
+                  (_),
+                  NEW CONSTANT XAct(_, _, _),
+                  NEW VARIABLE p,
+                  NEW VARIABLE c,
+                  NEW VARIABLE x,
+                  A!Next == vBar' = (vBar + 1) % 2 /\ XAct(vBar, x, x'),
+                  <4>2 ,
+                  <5>1 ,
+                  <5>2 ,
+                  Mod2 
+           PROVE  A!Next
+File "./TwoPhase_Implementation.tla", line 141, characters 13-14:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT XInit
+                  (_),
+                  NEW CONSTANT XAct(_, _, _),
+                  NEW VARIABLE p,
+                  NEW VARIABLE c,
+                  NEW VARIABLE x,
+                  A!Next == vBar' = (vBar + 1) % 2 /\ XAct(vBar, x, x'),
+                  <4>1 ,
+                  <5>1 ,
+                  <5>2 ,
+                  Mod2 
+           PROVE  A!Next
+File "./TwoPhase_Implementation.tla", line 1, character 1 to line 160, character 62:
+[ERROR]: 2/85 obligations failed.
+There were backend errors processing module `"TwoPhase_Implementation"`.
+ tlapm ending abnormally with Failure("backend errors: there are unproved obligations")
+Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33
+Called from Tlapm.process_module in file "tlapm.ml", line 408, characters 12-77
+Called from Tlapm.main.f in file "tlapm.ml", line 503, characters 23-43
+Called from Stdlib__list.fold_left in file "list.ml", line 121, characters 24-34
+Called from Tlapm.main in file "tlapm.ml", line 506, characters 13-40
+Called from Tlapm.init in file "tlapm.ml", line 518, characters 8-33
+[EXIT 3]
+
+[AGENT] The transition obligations need explicit conjunct proofs; I’ll split them out.
+
+[CMD] /bin/bash -lc "apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: TwoPhase_Implementation.tla
+@@
+           <5>2. vBar' = 1
+             BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+           <5>3. A"'!Next
+-            BY <4>1, <5>1, <5>2, Mod2 DEF A!Next
++            <6>1. vBar'"' = (vBar + 1) % 2
++              BY <5>1, <5>2, Mod2
++            <6>2. XAct(vBar, x, x')
++              BY <4>1, <5>1 DEF ProducerStep
++            <6>. QED BY <6>1, <6>2 DEF A"'!Next
+@@
+           <5>2. vBar'"' = 0
+             BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+           <5>3. A"'!Next
+-            BY <4>2, <5>1, <5>2, Mod2 DEF A!Next
++            <6>1. vBar'"' = (vBar + 1) % 2
++              BY <5>1, <5>2, Mod2
++            <6>2. XAct(vBar, x, x')
++              BY <4>2, <5>1 DEF ConsumerStep
++            <6>. QED BY <6>1, <6>2 DEF A"'!Next
+*** End Patch
+PATCH
+/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla'
+(* created new ".tlacache/Alternate.tlaps/Alternate.thy" *)
+(* fingerprints written in ".tlacache/Alternate.tlaps/fingerprints" *)
+File "./Alternate.tla", line 1, character 1 to line 33, character 76:
+[INFO]: All 0 obligation proved.
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+(* loading fingerprints in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+File "./TwoPhase_Implementation.tla", line 1, character 1 to line 168, character 62:
+[INFO]: All 95 obligations proved.
+[EXIT 0]
+
+[AGENT] TLAPS passes; I’ll run the required checker for the final verdict.
+
+[CMD] /bin/bash -lc 'python3 check_proof.py TwoPhase_Implementation.tla'
+Checking: TwoPhase_Implementation.tla
+tlapm: /opt/tlapm15/bin/tlapm
+
+============================================================
+TLAPM OUTPUT
+============================================================
+(* created new ".tlacache/Alternate.tlaps/Alternate.thy" *)
+(* fingerprints written in ".tlacache/Alternate.tlaps/fingerprints" *)
+(* created new ".tlacache/TLAPS.tlaps/TLAPS.thy" *)
+(* fingerprints written in ".tlacache/TLAPS.tlaps/fingerprints" *)
+(* created new ".tlacache/TwoPhase_Implementation.tlaps/TwoPhase_Implementation.thy" *)
+(* fingerprints written in ".tlacache/TwoPhase_Implementation.tlaps/fingerprints" *)
+File "./Alternate.tla", line 1, character 1 to line 33, character 76:
+[INFO]: All 0 obligation proved.
+File "/opt/tlapm15/lib/tlaps/TLAPS.tla", line 1, character 1 to line 362, character 77:
+[INFO]: All 0 obligation proved.
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_Next_, STATE_Inv_
+
+** Unexpanded symbols: ACTION_ProducerStep_, ACTION_ConsumerStep_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ---
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_Next_, STATE_Inv_, ACTION_A!Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_Next_, STATE_Inv_, ACTION_A!Next_
+
+** Unexpanded symbols: ACTION_ProducerStep_, STATE_vBar_, ACTION_ConsumerStep_, ACTION_A!Next_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_A!Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_A!Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: ACTION_Next_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_
+
+** Unexpanded symbols: STATE_vBar_, ACTION_A!Next_
+
+** Unexpanded symbols: ---
+
+File "/tmp/tlaps_check_fceyjgky/TwoPhase_Implementation.tla", line 1, character 1 to line 168, character 62:
+[INFO]: All 95 obligations proved.
+
+
+============================================================
+CHEATING CHECK
+============================================================
+  No cheating detected.
+
+============================================================
+VERDICT
+============================================================
+  ✅ PASS — all obligations proved
+
+Result written to: /tmp/codex_bench_TwoPhase_Implementation_2njrm91d/TwoPhase_Implementation.result
+[EXIT 0]
+
+[AGENT] The checker passed. I’ll capture the final changed region for a concise summary.
+
+[CMD] /bin/bash -lc "nl -ba TwoPhase_Implementation.tla | sed -n '100,170p'"
+   100	THEOREM Mod2 == \A i \in {0,1} : /\ (i + 1) % 2 = 1 - i
+   101	                                 /\ (i + 0) % 2 = i
+   102	  PROOF OMITTED
+   103	
+   104	THEOREM Implementation == Spec => A!Spec
+   105	PROOF
+   106	  <1>1. Init => A!Init
+   107	    BY DEF Init, A!Init, vBar
+   108	  <1>2. Init => Inv
+   109	    BY DEF Init, Inv
+   110	  <1>3. Inv /\ [Next]_<<p, c, x>> => Inv'
+   111	    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+   112	          PROVE  Inv'
+   113	      <3>1. CASE Next
+   114	        <4>1. CASE ProducerStep
+   115	          <5>1. p' \in {0,1}
+   116	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep
+   117	          <5>2. c' \in {0,1}
+   118	            BY <2>1, <4>1 DEF Inv, ProducerStep
+   119	          <5>. QED BY <5>1, <5>2 DEF Inv
+   120	        <4>2. CASE ConsumerStep
+   121	          <5>1. p' \in {0,1}
+   122	            BY <2>1, <4>2 DEF Inv, ConsumerStep
+   123	          <5>2. c' \in {0,1}
+   124	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep
+   125	          <5>. QED BY <5>1, <5>2 DEF Inv
+   126	        <4>. QED BY <3>1, <4>1, <4>2 DEF Next
+   127	      <3>2. CASE UNCHANGED <<p, c, x>>
+   128	        BY <2>1, <3>2 DEF Inv
+   129	      <3>. QED BY <2>1, <3>1, <3>2
+   130	    <2>. QED BY <2>1
+   131	  <1>4. Inv /\ [Next]_<<p, c, x>> => [A!Next]_<<vBar, x>>
+   132	    <2>1. ASSUME Inv, [Next]_<<p, c, x>>
+   133	          PROVE  [A!Next]_<<vBar, x>>
+   134	      <3>1. CASE Next
+   135	        <4>1. CASE ProducerStep
+   136	          <5>1. vBar = 0
+   137	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+   138	          <5>2. vBar' = 1
+   139	            BY <2>1, <4>1, Mod2 DEF Inv, ProducerStep, vBar
+   140	          <5>3. A!Next
+   141	            <6>1. vBar' = (vBar + 1) % 2
+   142	              BY <5>1, <5>2, Mod2
+   143	            <6>2. XAct(vBar, x, x')
+   144	              BY <4>1, <5>1 DEF ProducerStep
+   145	            <6>. QED BY <6>1, <6>2 DEF A!Next
+   146	          <5>. QED BY <5>3
+   147	        <4>2. CASE ConsumerStep
+   148	          <5>1. vBar = 1
+   149	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+   150	          <5>2. vBar' = 0
+   151	            BY <2>1, <4>2, Mod2 DEF Inv, ConsumerStep, vBar
+   152	          <5>3. A!Next
+   153	            <6>1. vBar' = (vBar + 1) % 2
+   154	              BY <5>1, <5>2, Mod2
+   155	            <6>2. XAct(vBar, x, x')
+   156	              BY <4>2, <5>1 DEF ConsumerStep
+   157	            <6>. QED BY <6>1, <6>2 DEF A!Next
+   158	          <5>. QED BY <5>3
+   159	        <4>. QED BY <3>1, <4>1, <4>2 DEF Next
+   160	      <3>2. CASE UNCHANGED <<p, c, x>>
+   161	        <4>1. UNCHANGED <<vBar, x>>
+   162	          BY <3>2 DEF vBar
+   163	        <4>. QED BY <4>1
+   164	      <3>. QED BY <2>1, <3>1, <3>2
+   165	    <2>. QED BY <2>1
+   166	  <1>. QED BY <1>1, <1>2, <1>3, <1>4, PTL DEF Spec, A!Spec
+   167	
+   168	==============================================================
+[EXIT 0]
+
+[AGENT] Implemented a complete TLAPS proof for the final theorem.
+
+**Changed**
+- Replaced `PROOF OBVIOUS` with a structured proof at `TwoPhase_Implementation.tla:104`.
+- Proved initial-state refinement, invariant initialization/preservation, next-step refinement, and used `PTL` for the temporal conclusion.
+- Left preceding statements and `PROOF OMITTED` lemmas unchanged.
+
+**Verified**
+- `/opt/tlapm15/bin/tlapm -I /opt/tlapm15/lib/tlaps TwoPhase_Implementation.tla` proves all obligations.
+- `python3 check_proof.py TwoPhase_Implementation.tla` reports `PASS — all obligations proved`.
