@@ -27,12 +27,6 @@ vars == << pc, service, next_ticket, m >>
 
 PC == {"Idle", "Waiting", "Critical"}
 
-TypeOK ==
-  /\ pc \in [Thread -> PC]
-  /\ service \in Nat
-  /\ next_ticket \in Nat
-  /\ m \in [Thread -> Nat]
-
 Init ==
   /\ pc = [t \in Thread |-> "Idle"]
   /\ service = 0
