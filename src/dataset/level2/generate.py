@@ -538,8 +538,194 @@ def cross_dir_dedup(target_paths, audit_writer, preferred_dir='Data'):
     return removed
 
 
+# ---------------------------------------------------------------------------
+# Shared-model emission (closure(Spec) model + EXTENDS tasks). Opt-in via
+# --shared-model. De-duplicates the spec that self-contained tasks inline:
+# one `<Module>.tla` model per output dir, each spec-based task EXTENDS it. The
+# grader already copies co-located *.tla, so EXTENDS resolves with no grader
+# change. Certified sound (obligation-set equivalence) — see tmp/split_poc.
+# ---------------------------------------------------------------------------
+_BARE_DECL = re.compile(r'^[ \t]*(CONSTANTS?|VARIABLES?)[ \t]*,?[ \t]*$', re.M)
+_EXTENDS_START = re.compile(r'^EXTENDS\b')
+
+
+def _model_closure(dump, seed):
+    adj = {}
+    for o in dump['operators']:
+        adj.setdefault(o['name'], set()).update(o.get('references', []))
+    for i in dump['instances']:
+        if i.get('name'):
+            adj.setdefault(i['name'], set()).update(i.get('references', []))
+    out, stack = set(), list(seed)
+    while stack:
+        n = stack.pop()
+        if n in out:
+            continue
+        out.add(n)
+        stack.extend(r for r in adj.get(n, ()) if r not in out)
+    return out
+
+
+def compute_model_set(dump, targets):
+    """Leak-free shared base = closure of the GOAL spec(s) only, intersected
+    with every spec-goal's reachable set. Seeded ONLY from the `lhs_spec_ref` of
+    emitted targets (NOT all spec_formulas) so an inductive-invariant spec like
+    `ISpec`/`LiveSpec` can't drag `Inv` into the model. The intersection drops
+    anything a task is meant to hide; what remains is the common state machine,
+    provably free of inductive invariants/proofs."""
+    spec_formulas = dump.get('spec_formulas', [])
+    main_specs = {t['shape'].get('lhs_spec_ref') for t in targets
+                  if t['shape'].get('lhs_spec_ref') in spec_formulas}
+    if not main_specs:
+        return set(), main_specs
+    seed = set(main_specs)
+    for a in dump['assumes']:
+        seed.update(a.get('references', []))
+    reachable = {id(t): compute_reachable(dump, t) for t in targets}
+    model = _model_closure(dump, seed)
+    for t in targets:
+        if t['shape'].get('lhs_spec_ref') in main_specs:
+            model &= reachable[id(t)]
+    return model, main_specs
+
+
+def _decl_edits(dump):
+    """Delete CONSTANT/VARIABLE/ASSUME declarations (one per distinct loc) —
+    they come via EXTENDS in the task/model-extending file."""
+    seen, edits = set(), []
+    for e in (list(dump.get('constants', [])) + list(dump.get('variables', []))
+              + list(dump.get('assumes', []))):
+        loc = e.get('loc')
+        if not loc:
+            continue
+        key = (loc['line_start'], loc['line_end'])
+        if key in seen:
+            continue
+        seen.add(key)
+        edits.append((loc['line_start'], loc['line_end'], ''))
+    return edits
+
+
+def _rewrite_extends_line(text, module):
+    """Replace the (possibly multi-line) EXTENDS statement with `EXTENDS <module>`."""
+    lines = text.split('\n')
+    out, i, done = [], 0, False
+    while i < len(lines):
+        if not done and _EXTENDS_START.match(lines[i]):
+            j = i
+            while lines[j].rstrip().endswith(','):
+                j += 1
+            out.append(f'EXTENDS {module}')
+            i = j + 1
+            done = True
+            continue
+        out.append(lines[i])
+        i += 1
+    return '\n'.join(out)
+
+
+def _sm_tidy(text):
+    """Drop stranded pure-dash `----` dividers and collapse blank runs."""
+    text = re.sub(r'(?m)^-{4,}[ \t]*$\n?', '', text)
+    return re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', text)
+
+
+def _rename_header(text, new_name):
+    # Rename the FIRST `---- MODULE X ----` line wherever it is — a leading blank
+    # line or comment can precede it (e.g. BPConProof), so don't require it to be
+    # the first output line, else the rename silently no-ops and the task module
+    # name collides with the co-located model.
+    out, done = [], False
+    for line in text.splitlines(keepends=True):
+        if not done:
+            m = MODULE_HEADER.match(line)
+            if m:
+                out.append(f"{m.group(1)}{new_name}{m.group(3)}\n")
+                done = True
+                continue
+        out.append(line)
+    return ''.join(out)
+
+
+def build_model(source_lines, dump, model_set):
+    """Proof-free shared model (delete-from-source, preserves declaration order
+    so an ASSUME/AXIOM that references a later operator still resolves)."""
+    edits = []
+    for t in dump['theorems']:
+        edits.append((t['loc']['line_start'], t['loc']['line_end'], ''))
+    for o in dump['operators']:
+        if o['name'] not in model_set:
+            edits.append((o['loc']['line_start'], o['loc']['line_end'], ''))
+    for inst in dump['instances']:
+        if inst.get('name') and inst['name'] not in model_set:
+            edits.append((inst['loc']['line_start'], inst['loc']['line_end'], ''))
+    return _sm_tidy(strip_comments(apply_edits(source_lines, edits)))
+
+
+def build_benchmark_extends(source_lines, dump, target_thm, bench_module_name,
+                            reachable, model_set, module):
+    """Like build_benchmark, but the spec lives in the EXTENDS'd model: also
+    delete model operators + the CONSTANT/VARIABLE/ASSUME decls, and rewrite the
+    EXTENDS line to `EXTENDS <module>`."""
+    edits = list(_decl_edits(dump))
+    tid = id(target_thm)
+    for t in dump['theorems']:
+        if id(t) == tid:
+            ploc = t['proof_loc']
+            edits.append((ploc['line_start'], ploc['line_end'], 'PROOF OBVIOUS\n'))
+        else:
+            loc = t['loc']
+            edits.append((loc['line_start'], loc['line_end'], ''))
+    for o in dump['operators']:
+        if o['name'] in model_set or o['name'] not in reachable:
+            edits.append((o['loc']['line_start'], o['loc']['line_end'], ''))
+    for inst in dump['instances']:
+        if inst.get('name') and (inst['name'] in model_set
+                                 or inst['name'] not in reachable):
+            edits.append((inst['loc']['line_start'], inst['loc']['line_end'], ''))
+    text = apply_edits(source_lines, edits)
+    text = strip_comments(text)
+    text = _strip_bare_decls(text)
+    text = _rewrite_extends_line(text, module)
+    text = _rename_header(text, bench_module_name)
+    return _sm_tidy(text)
+
+
+def _strip_bare_decls(text):
+    return _BARE_DECL.sub('', text)
+
+
+def compute_sibling_deps(targets):
+    """Map output-subdir -> set of local module names that a SIBLING source file
+    EXTENDS or INSTANCEs. Such a module must stay FULL (a stripped shared model
+    can't serve as an EXTENDS/INSTANCE target — e.g. BPConProof INSTANCEs
+    VoteProof, so VoteProof must keep all 55 ops, not its 17-op spec model)."""
+    by_subdir = {}
+    for path, subdir in targets:
+        key = subdir if subdir is not None else os.path.splitext(os.path.basename(path))[0]
+        by_subdir.setdefault(key, []).append(path)
+    result = {}
+    for key, paths in by_subdir.items():
+        stems = {os.path.splitext(os.path.basename(p))[0] for p in paths}
+        deps = set()
+        for p in paths:
+            try:
+                content = open(p, encoding='utf-8').read()
+            except OSError:
+                continue
+            self_stem = os.path.splitext(os.path.basename(p))[0]
+            for ext in parse_extends(content):
+                if ext in stems and ext != self_stem:
+                    deps.add(ext)
+            for _, inst_mod in parse_instances(content):
+                if inst_mod in stems and inst_mod != self_stem:
+                    deps.add(inst_mod)
+        result[key] = deps
+    return result
+
+
 def process_file(source_path, audit_writer, output_root, module_subdir=None,
-                 generated_paths=None):
+                 generated_paths=None, shared_model=False, skip_model_modules=()):
     """Generate L2 benchmarks for one source .tla file. Returns count emitted.
 
     If `generated_paths` is a list, each generated target benchmark path is
@@ -666,6 +852,25 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
     out_dir = os.path.join(output_root, module_subdir or module)
     os.makedirs(out_dir, exist_ok=True)
 
+    # Shared-model mode: emit one proof-free `<module>.tla` model and have
+    # spec-based tasks EXTEND it instead of inlining the spec. A module that a
+    # sibling depends on stays full (self-contained tasks) so the sibling's
+    # EXTENDS/INSTANCE still resolves.
+    model_set, main_specs = (set(), set())
+    if shared_model and module in skip_model_modules:
+        audit_writer.write(
+            f"[level2-audit] {source_path}: module {module} is a local dependency "
+            f"of a sibling — kept full (no shared model)\n")
+    if shared_model and module not in skip_model_modules:
+        targets = [entry[0] for entry in top_level]
+        model_set, main_specs = compute_model_set(dump, targets)
+        if model_set:
+            model_text = build_model(source_lines, dump, model_set)
+            model_path = os.path.join(out_dir, f"{module}.tla")
+            with open(model_path, 'w', encoding='utf-8') as f:
+                f.write(model_text)
+            print(f"  generated model: {os.path.relpath(model_path, PROJECT_ROOT)}")
+
     base_module = os.path.splitext(os.path.basename(source_path))[0]
     used_names = set()
     count = 0
@@ -706,7 +911,16 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
         bench_file = os.path.join(out_dir, f"{bench_module_name}.tla")
 
         reachable = compute_reachable(dump, target_thm)
-        bench_text = build_benchmark(source_lines, dump, target_thm, bench_module_name, reachable)
+        # Spec-based targets EXTEND the shared model; non-spec lemmas stay
+        # self-contained (the model would over-expose context they hide).
+        is_spec = target_thm['shape'].get('lhs_spec_ref') in main_specs
+        if shared_model and model_set and is_spec:
+            bench_text = build_benchmark_extends(
+                source_lines, dump, target_thm, bench_module_name,
+                reachable, model_set, module)
+        else:
+            bench_text = build_benchmark(source_lines, dump, target_thm,
+                                         bench_module_name, reachable)
         with open(bench_file, 'w', encoding='utf-8') as f:
             f.write(bench_text)
         copy_deps(dump, source_path, out_dir, reachable)
@@ -728,6 +942,11 @@ def main():
                         help='Glob-ish substring to limit which source files we process')
     parser.add_argument('files', nargs='*',
                         help='Specific .tla files to process (overrides --source-dir scan)')
+    parser.add_argument('--shared-model', action='store_true',
+                        help='Emit one proof-free <Module>.tla model per output dir '
+                             'and have spec-based tasks EXTEND it instead of inlining '
+                             'the spec (de-duplicates the spec; grader resolves the '
+                             'co-located model automatically).')
     args = parser.parse_args()
 
     output_root = os.path.abspath(args.output_dir)
@@ -753,15 +972,20 @@ def main():
                     subdir = os.path.splitext(fname)[0]
                 targets.append((full, subdir))
 
+    sibling_deps = compute_sibling_deps(targets) if args.shared_model else {}
+
     total = 0
     generated_paths = []
     with open(audit_path, 'w', encoding='utf-8') as audit_writer:
         for path, subdir in targets:
             print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
+            key = subdir if subdir is not None else os.path.splitext(os.path.basename(path))[0]
             try:
                 total += process_file(path, audit_writer, output_root,
                                       module_subdir=subdir,
-                                      generated_paths=generated_paths)
+                                      generated_paths=generated_paths,
+                                      shared_model=args.shared_model,
+                                      skip_model_modules=sibling_deps.get(key, set()))
             except Exception as e:
                 audit_writer.write(f"[level2-audit] {path}: ERROR {e!r}\n")
                 print(f"  ERROR: {e}", file=sys.stderr)
