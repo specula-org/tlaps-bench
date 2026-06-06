@@ -1,17 +1,6 @@
 ------------------------------ MODULE AddTwo_Even --------------------------------
 
-EXTENDS Naturals, TLAPS
-
-VARIABLE x
-
-vars == << x >>
-
-Init == 
-        /\ x = 0
-
-Next == x' = x + 2
-
-Spec == Init /\ [][Next]_vars
+EXTENDS AddTwo
 
 a|b == \E c \in Nat : a*c = b
 

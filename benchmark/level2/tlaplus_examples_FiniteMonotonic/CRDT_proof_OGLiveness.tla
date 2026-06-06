@@ -1,21 +1,10 @@
 ------------------------------- MODULE CRDT_proof_OGLiveness ---------------------------------
-EXTENDS CRDT, Functions, NaturalsInduction, FunctionTheorems, TLAPS
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-OGSpec ==
-  /\ [](TypeOK /\ Safety)
-  /\ [][\E n, o \in Node : Gossip(n,o)]_vars
-  /\ [](\A n, o \in Node : WF_vars(Gossip(n,o)))
+EXTENDS CRDT_proof
 
 THEOREM OGLiveness == OGSpec => <>(\A n, o \in Node : counter[n] = counter[o])
 PROOF OBVIOUS
 
 =============================================================================
-
------------------------------------------------------------------------------
 
 LEMMA EnabledGossip ==
   ASSUME NEW n \in Node, NEW o \in Node, TypeOK
