@@ -1013,7 +1013,170 @@ def process_module_dir(module_dir_name):
     return benchmark_count
 
 
+# ---------------------------------------------------------------------------
+# Shared-model L1 (opt-in via --shared-model). Reuses the certified L2 dump
+# engine (src/dataset/level2/generate.py) for the model extraction + helpers,
+# and adds an L1-specific task builder. Default (no flag) keeps the regex path.
+# ---------------------------------------------------------------------------
+def _load_l2_engine():
+    """Load the L2 generator as the shared-model engine. L2 does
+    `from generate import ...` expecting THIS module's helpers, so alias us as
+    `generate` first."""
+    import sys
+    import importlib.util
+    sys.modules.setdefault('generate', sys.modules.get('__main__', sys.modules[__name__]))
+    path = os.path.join(os.path.dirname(__file__), '..', 'level2', 'generate.py')
+    spec = importlib.util.spec_from_file_location('l2_sm_engine', path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules['l2_sm_engine'] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _is_structured_proof(sm, t, lines):
+    """True iff the proof is a real structured/BY proof (not OBVIOUS/OMITTED).
+    Strips comments first so `OBVIOUS (*{hint}*)` is seen as OBVIOUS."""
+    ploc = t.get('proof_loc')
+    if not (ploc and ploc.get('line_start', -1) > 0):
+        return False
+    body = ''.join(lines[ploc['line_start'] - 1: ploc['line_end']])
+    body = sm.strip_comments(body).strip()
+    if body.startswith('PROOF'):
+        body = body[5:].lstrip()
+    return body not in ('OMITTED', 'OBVIOUS', '')
+
+
+def _proof_edit(source_lines, ploc, keyword):
+    """An apply_edits tuple that replaces a proof body with `keyword`, PRESERVING
+    any statement text that shares the proof's first line. One-line lemmas like
+    `LEMMA X == s  BY DEF Y` put the proof (col 41) on the statement line (cols
+    1-40); a whole-line replace would delete the statement and leave a stray
+    `PROOF OMITTED`."""
+    line = source_lines[ploc['line_start'] - 1]
+    col = ploc.get('column_start', 1)
+    prefix = line[:col - 1].rstrip()
+    repl = (prefix + '\n  ' + keyword + '\n') if prefix else (keyword + '\n')
+    return (ploc['line_start'], ploc['line_end'], repl)
+
+
+def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name,
+                  model_set, module):
+    """L1 task: keep ALL scaffolding (Inv etc.), admit STRUCTURED preceding
+    proofs as PROOF OMITTED (keep OBVIOUS verbatim → it still emits an
+    obligation), stub the target PROOF OBVIOUS, drop later theorems, keep
+    comments. If model_set is non-empty, EXTEND the shared model (delete its ops
+    + the inherited decls); else stay self-contained."""
+    use_model = bool(model_set)
+    edits = list(sm._decl_edits(dump)) if use_model else []
+    tid = id(target_thm)
+    tstart = target_thm['loc']['line_start']
+    for t in dump['theorems']:
+        loc, ploc = t['loc'], t.get('proof_loc')
+        has_body = ploc and ploc.get('line_start', -1) > 0
+        if id(t) == tid:
+            if has_body:
+                edits.append(_proof_edit(source_lines, ploc, 'PROOF OBVIOUS'))
+        elif loc['line_start'] < tstart:
+            if has_body and _is_structured_proof(sm, t, source_lines):
+                edits.append(_proof_edit(source_lines, ploc, 'PROOF OMITTED'))
+        else:
+            edits.append((loc['line_start'], loc['line_end'], ''))
+    if use_model:
+        for o in dump['operators']:
+            if o['name'] in model_set:
+                edits.append((o['loc']['line_start'], o['loc']['line_end'], ''))
+        for inst in dump['instances']:
+            if inst.get('name') and inst['name'] in model_set:
+                edits.append((inst['loc']['line_start'], inst['loc']['line_end'], ''))
+    text = sm.apply_edits(source_lines, edits)
+    if use_model:
+        text = sm._strip_bare_decls(text)
+        text = sm._rewrite_extends_line(text, module)
+    text = sm._rename_header(text, bench_module_name)
+    return sm._sm_tidy(text)
+
+
+def generate_shared_model_l1(output_root=None):
+    """Dump-based L1 generation: one shared `<Module>.tla` per output dir +
+    EXTENDS-based L1 tasks. Mirrors the L2 shared-model layout."""
+    import sys
+    import shutil
+    sm = _load_l2_engine()
+    output_root = output_root or BENCHMARK_DIR
+
+    if os.path.exists(output_root):
+        shutil.rmtree(output_root)
+    os.makedirs(output_root, exist_ok=True)
+
+    targets = []
+    for f in sorted(glob.glob(os.path.join(SOURCE_ROOT, '**', '*.tla'), recursive=True)):
+        if '.tlaps' in f:
+            continue
+        subdir = os.path.relpath(f, SOURCE_ROOT).split(os.sep)[0]
+        targets.append((f, subdir))
+    sibling_deps = sm.compute_sibling_deps(targets)
+
+    total = 0
+    for path, subdir in targets:
+        try:
+            dump = sm.dump_sany(path)
+        except Exception as e:
+            print(f"  SANY failed on {path}: {e}", file=sys.stderr)
+            continue
+        module = dump['module']
+        with open(path, encoding='utf-8') as fh:
+            lines = fh.readlines()
+        # L1 targets: NAMED theorems with a structured proof.
+        l1_targets = [t for t in dump['theorems']
+                      if t.get('name') and _is_structured_proof(sm, t, lines)]
+        if not l1_targets:
+            continue
+        out_dir = os.path.join(output_root, subdir)
+        os.makedirs(out_dir, exist_ok=True)
+
+        model_set = set()
+        if module not in sibling_deps.get(subdir, set()):
+            model_set, _ = sm.compute_model_set(dump, l1_targets)
+            if model_set:
+                model_text = sm.build_model(lines, dump, model_set)
+                with open(os.path.join(out_dir, f"{module}.tla"), 'w') as f:
+                    f.write(model_text)
+
+        base = os.path.splitext(os.path.basename(path))[0]
+        used = {}
+        reachable_all = {i['name'] for i in dump['instances'] if i.get('name')}
+        for t in l1_targets:
+            name = f"{base}_{t['name']}"
+            if name in used:
+                used[name] += 1
+                bench = f"{name}_{used[name]}"
+            else:
+                used[name] = 0
+                bench = name
+            text = build_l1_task(sm, lines, dump, t, bench, model_set, module)
+            with open(os.path.join(out_dir, f"{bench}.tla"), 'w') as f:
+                f.write(text)
+            total += 1
+            print(f"  generated: {os.path.relpath(os.path.join(out_dir, bench+'.tla'), PROJECT_ROOT)}")
+        sm.copy_deps(dump, path, out_dir, reachable_all)
+    print(f"\nTotal L1 benchmarks (shared-model): {total}")
+    return total
+
+
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='Generate L1 benchmarks.')
+    parser.add_argument('--shared-model', action='store_true',
+                        help='Emit one proof-free <Module>.tla model per output dir '
+                             'and have tasks EXTEND it instead of inlining the spec.')
+    parser.add_argument('--output-dir', default=None,
+                        help='Output directory (default: benchmark/level1)')
+    args = parser.parse_args()
+
+    if args.shared_model:
+        generate_shared_model_l1(output_root=args.output_dir)
+        return
+
     # Clean benchmark dir
     if os.path.exists(BENCHMARK_DIR):
         import shutil
