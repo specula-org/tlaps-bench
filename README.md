@@ -74,6 +74,54 @@ Four benchmarks triggered anti-pattern detection — all are interesting case st
 
 Full results are in `results/codex/20260513_093531/`, with per-benchmark directories containing `benchmark.tla`, `solution.tla`, `codex_output.jsonl`, `transcript.txt`, and `check.result`.
 
+## Codex (GPT-5.5) Results — Level 2
+
+Level 2 strips every supporting lemma and proof scaffold, so the agent must invent the
+whole proof structure from scratch (see the Level 2 generator below). We evaluated
+[OpenAI Codex CLI](https://github.com/openai/codex) with GPT-5.5 on all 210 Level-2
+benchmarks, fully automated (`codex exec`, no human guidance) against tlapm and the
+stripped benchmark file. Numbers below are aggregated across runs (2026-05 to 2026-06);
+per-run summaries and full solutions live in the private results repo.
+
+| Metric | Result |
+|--------|--------|
+| Pass | **189 / 210** (90.0%) |
+| Fail | 21 |
+| Cheating (detected) | 0 |
+| Proof obligations proved | 11,840+ |
+
+### Failed Benchmarks
+
+| Benchmark | Obligations | Notes |
+|-----------|-------------|-------|
+| Paxos/Paxos_Consistent | 1/1 failed | Monolithic consistency theorem; top-level obligation unproved |
+| Paxos/Paxos_Invariant | 1/1 failed | Phase1b/2b inductive invariant intractable |
+| Paxos/Paxos_Refinement | 1/1 failed | Refinement mapping to Consensus unproved |
+| ByzantinePaxos/BPConProof_Inv | 1/1 failed | Byzantine Paxos main invariant |
+| ByzantinePaxos/BPConProof_P_Spec | 1/1 failed | Byzantine Paxos spec-level proof |
+| ByzantinePaxos/VoteProof_Liveness | 1/1 failed | Voting liveness theorem |
+| ByzantinePaxos/VoteProof_VT2 | 1/1 failed | Voting theorem VT2 |
+| byzpaxos/BPConProof_Invariance | 7/617 failed | Byzantine Paxos invariance (617 obligations) |
+| byzpaxos/BPConProof_P_Spec | 16/119 failed | Byzantine Paxos P-spec |
+| byzpaxos/VoteProof_VT3 | 3/128 failed | Voting theorem VT3 |
+| TencentPaxos/TPaxosWithProof_Consistent | 5/107 failed | TencentPaxos consistency |
+| TencentPaxos/TPaxosWithProof_Invariant | 4/156 failed | TencentPaxos invariant |
+| barriers/Barriers_Invariant | 7/411 failed | Barrier inductive invariant |
+| barriers/Barriers_FlushInvariant | 12/351 failed | Barrier flush invariant |
+| barriers/Barriers_B_Spec | 3/139 failed | Stuck on inductive step `IndInv /\ [Next]_vars => IndInv'` (4h rerun still failed) |
+| MultiCarElevator/Elevator_proof_SafetyCorrect | 10/137 failed | Stuck on `PeopleWaiting = WaitingAt` equivalence lemma (4h rerun still failed) |
+| ewd998/EWD998_proof_TerminationDetectionInv | 5/443 failed | Termination-detection invariant |
+| lamport_mutex/LamportMutex_proofs_BoundedNetworkInv | 6/180 failed | Bounded-network invariant |
+| locks_auxiliary_vars/LockHS_P_Spec | 6/72 failed | Handshake-lock refinement |
+| Bakery-Boulangerie/Boulanger_MutualExclusion | 11/222 failed | Boulangerie mutual exclusion |
+| ivy_examples_tlb | 8/98 failed | TLB shootdown safety |
+
+Failures concentrate in the hardest theorem classes — Byzantine/Tencent Paxos, barrier
+and termination-detection inductive invariants, liveness, and refinement. Two tasks that
+once hit the agent time limit (Elevator, Barriers_B_Spec) were re-run with a 4 h budget
+and still failed, self-terminating well within the limit — these are model-limited, not
+time-limited.
+
 ## Repo layout
 
 ```
