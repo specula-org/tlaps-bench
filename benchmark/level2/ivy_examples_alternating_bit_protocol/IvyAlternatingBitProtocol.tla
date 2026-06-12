@@ -1,31 +1,9 @@
------------------- MODULE ivy_examples_alternating_bit_protocol ------------------
+------------------ MODULE IvyAlternatingBitProtocol ------------------
 EXTENDS Naturals, Sequences, TLAPS
-
-(***************************************************************************)
-(* TLA+ translation of Ivy's examples/liveness/alternating_bit_protocol.ivy *)
-(*                                                                         *)
-(* The Ivy model uses an uninterpreted, totally ordered index type with a  *)
-(* zero and successor operation.  This TLA+ model follows the convention   *)
-(* used by the other Ivy translations in this repository: indices are Nat, *)
-(* zero is 0, and successor is +1.                                         *)
-(*                                                                         *)
-(* Ivy also models data and ack channels through a reusable FIFO module    *)
-(* whose messages have immutable fields.  Here, data messages are TLA+     *)
-(* records [value |-> v, bit |-> b], ack messages are just booleans, and   *)
-(* the channels are sequences ordered from oldest at Head to newest at the *)
-(* tail.  The drop actions remove an arbitrary sequence element.           *)
-(*                                                                         *)
-(* Ivy states fairness using transient event flags: sender_scheduled,      *)
-(* receiver_scheduled, data_sent, data_received, ack_sent, and             *)
-(* ack_received.  This module omits those transient flags and states the   *)
-(* corresponding assumptions directly: weak fairness for the two scheduled *)
-(* endpoint actions, and strong fairness for channel receives.             *)
-(***************************************************************************)
 
 CONSTANTS Value, Bot
 
 DataValue == Value \ {Bot}
-DataPacket == [value : DataValue, bit : BOOLEAN]
 
 ASSUME ValueAssumption ==
   /\ Bot \in Value
@@ -138,29 +116,5 @@ Spec ==
   /\ WF_vars(ReceiverSendAck)
   /\ SF_vars(ReceiverReceiveData)
   /\ SF_vars(SenderReceiveAck)
-
-ReceiverValuesFromSender ==
-  \A i \in Nat :
-    receiver_array[i] # Bot => receiver_array[i] = sender_array[i]
-
-THEOREM Safety == SafetySpec => []ReceiverValuesFromSender
-  PROOF OBVIOUS
-
-(***************************************************************************)
-(* Temporal property corresponding to Ivy's liveness property.             *)
-(*                                                                         *)
-(* Ivy proves that, under endpoint scheduling fairness and channel         *)
-(* fairness, every generated sender-array entry is eventually present in   *)
-(* the corresponding receiver-array entry.  In TLA+, the fairness          *)
-(* assumptions are the conjuncts in Spec, so the conclusion is stated      *)
-(* directly as a leads-to property for each index.                         *)
-(***************************************************************************)
-
-DataDelivery ==
-  \A i \in Nat :
-    (sender_array[i] # Bot) ~> (receiver_array[i] # Bot)
-
-THEOREM Liveness == Spec => DataDelivery
-  PROOF OBVIOUS
 
 =============================================================================

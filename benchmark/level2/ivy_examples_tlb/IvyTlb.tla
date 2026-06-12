@@ -1,22 +1,5 @@
---------------------------- MODULE ivy_examples_tlb ---------------------------
+--------------------------- MODULE IvyTlb ---------------------------
 EXTENDS TLAPS
-
-(***************************************************************************)
-(* TLA+ translation of Ivy's examples/liveness/tlb.ivy.                    *)
-(*                                                                         *)
-(* The Ivy model encodes the program counter with one relation per         *)
-(* location, has a transient scheduled(P) relation for scheduler fairness, *)
-(* and contains a large liveness-to-safety proof block.  This module keeps *)
-(* the protocol state and temporal property, but follows the same TLA+     *)
-(* conventions used by ivy_examples_ticket:                                *)
-(*                                                                         *)
-(*  - pc is a single function from processors to named locations;          *)
-(*  - Ivy's transient scheduled(P) relation is omitted;                    *)
-(*  - no-op busy-wait iterations are represented by stuttering through     *)
-(*    [][Next]_vars;                                                       *)
-(*  - fairness is stated directly on processor steps, with strong fairness *)
-(*    on the two lock-acquisition actions that Ivy calls out explicitly.   *)
-(***************************************************************************)
 
 CONSTANTS Processor, PMap, PageEntry
 
@@ -59,16 +42,6 @@ ResponderRefreshTlb == "ResponderRefreshTlb"
 ResponderClearActionNeeded == "ResponderClearActionNeeded"
 ResponderUnlockAction == "ResponderUnlockAction"
 ResponderReactivate == "ResponderReactivate"
-
-Location ==
-  { Boot, MainCheck, MainChoose, MainHandleInterrupt,
-    InitiatorDeactivate, InitiatorLockPmap, InitiatorForSend,
-    InitiatorCheckCpuPmap, InitiatorLockAction, InitiatorSetActionNeeded,
-    InitiatorUnlockAction, InitiatorInterrupt, InitiatorWaitForQuiescence,
-    InitiatorUpdateEntry, InitiatorMaybeRefreshOwnTlb, InitiatorUnlockPmap,
-    InitiatorReactivate, ResponderCheck, ResponderDeactivate,
-    ResponderLockAction, ResponderRefreshTlb, ResponderClearActionNeeded,
-    ResponderUnlockAction, ResponderReactivate }
 
 Init ==
   /\ pc = [p \in Processor |-> Boot]
@@ -367,20 +340,5 @@ Spec ==
   /\ \A p \in Processor : WF_vars(Step(p))
   /\ \A p \in Processor : SF_vars(AcquirePmapLock(p))
   /\ \A p \in Processor : SF_vars(AcquireResponderActionLock(p))
-
-NoError ==
-  ~error
-
-ProcessorMakesProgress(p) ==
-  pc[p] \in {MainCheck, ResponderClearActionNeeded}
-
-NonStarvation ==
-  \A p \in Processor : TRUE ~> ProcessorMakesProgress(p)
-
-THEOREM Safety == SafetySpec => []NoError
-  PROOF OBVIOUS
-
-THEOREM Liveness == Spec => NonStarvation
-  PROOF OBVIOUS
 
 =============================================================================
