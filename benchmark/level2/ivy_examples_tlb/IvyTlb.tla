@@ -299,8 +299,11 @@ ReactivateResponder(p) ==
   /\ UNCHANGED << userpmap, writepmap, actionlock, actionneeded, interrupt,
                   currentcpu, plock, tlb, pentry, todo, error >>
 
+BootStep(p) ==
+  \E m \in PMap : BootProcessor(p, m)
+
 Step(p) ==
-  \/ \E m \in PMap : BootProcessor(p, m)
+  \/ BootStep(p)
   \/ MainCheckTlb(p)
   \/ ChooseInitiator(p)
   \/ SkipInitiator(p)
@@ -338,6 +341,7 @@ SafetySpec ==
 Spec ==
   /\ SafetySpec
   /\ \A p \in Processor : WF_vars(Step(p))
+  /\ \A p \in Processor : SF_vars(BootStep(p))
   /\ \A p \in Processor : SF_vars(AcquirePmapLock(p))
   /\ \A p \in Processor : SF_vars(AcquireResponderActionLock(p))
 
