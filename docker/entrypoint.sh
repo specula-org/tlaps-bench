@@ -2,48 +2,60 @@
 set -e
 
 # ============================================================
-# Network firewall: whitelist-only outbound access
-# Only allow DNS + OpenAI / Azure OpenAI / Anthropic / GitHub Copilot
-# *inference* APIs. Everything else — including github.com and
-# api.github.com (repos/web) — is blocked to prevent data leakage/cheating.
+# Network firewall: whitelist-only outbound access.
+# Allows DNS + OpenAI / Azure OpenAI / Anthropic inference APIs only;
+# github.com and api.github.com (repos/web) are blocked to prevent
+# data leakage/cheating.
+#
+# Exception: the copilot backend. The Copilot CLI must reach api.github.com
+# (OAuth token exchange + user validation) and inference hosts behind a
+# rotating CDN that IP-whitelisting cannot reliably allow, so the firewall is
+# skipped for copilot runs. Set DISABLE_FIREWALL=1 to force-skip it for any
+# backend.
 # ============================================================
+case " $* " in
+    *"--backend copilot"*|*" copilot "*) DISABLE_FIREWALL="${DISABLE_FIREWALL:-1}" ;;
+esac
 
-# Allow loopback
-iptables -A OUTPUT -o lo -j ACCEPT
+if [ "${DISABLE_FIREWALL:-0}" = "1" ]; then
+    echo "[entrypoint] ============================================================"
+    echo "[entrypoint] WARNING: outbound network firewall is DISABLED for this run."
+    echo "[entrypoint] The copilot backend needs api.github.com (token exchange/"
+    echo "[entrypoint] validation) plus CDN-rotating inference hosts, which an IP"
+    echo "[entrypoint] whitelist cannot reliably allow, so outbound network is left"
+    echo "[entrypoint] UNRESTRICTED."
+    echo "[entrypoint] ============================================================"
+else
+    # Allow loopback
+    iptables -A OUTPUT -o lo -j ACCEPT
 
-# Allow established connections (replies to our requests)
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    # Allow established connections (replies to our requests)
+    iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-# Allow DNS (needed to resolve API hostnames)
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+    # Allow DNS (needed to resolve API hostnames)
+    iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+    iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
-# Whitelist API domains by resolving their IPs
-# OpenAI API (codex backend) + Anthropic API (claude_code backend)
-#   + GitHub Copilot inference API (copilot backend).
-# NB: only the *inference* hosts are whitelisted — github.com and
-# api.github.com are intentionally NOT allowed, so the agent cannot reach
-# GitHub repos/web (anti-cheating). The Copilot host varies by plan, so all
-# three are listed; the copilot backend runs --no-auto-update so it never
-# needs api.github.com for a release check.
-API_HOSTS="api.openai.com api.anthropic.com api.githubcopilot.com api.business.githubcopilot.com api.enterprise.githubcopilot.com"
+    # Whitelist inference API domains by resolving their IPs.
+    API_HOSTS="api.openai.com api.anthropic.com"
 
-# Azure OpenAI (if AZURE_OPENAI_HOST is set)
-if [ -n "${AZURE_OPENAI_HOST:-}" ]; then
-    API_HOSTS="$API_HOSTS $AZURE_OPENAI_HOST"
-fi
+    # Azure OpenAI (if AZURE_OPENAI_HOST is set)
+    if [ -n "${AZURE_OPENAI_HOST:-}" ]; then
+        API_HOSTS="$API_HOSTS $AZURE_OPENAI_HOST"
+    fi
 
-for host in $API_HOSTS; do
-    for ip in $(dig +short "$host" 2>/dev/null | grep -E '^[0-9]'); do
-        iptables -A OUTPUT -d "$ip" -p tcp --dport 443 -j ACCEPT
-        echo "[entrypoint] Allowed: $host -> $ip"
+    for host in $API_HOSTS; do
+        for ip in $(dig +short "$host" 2>/dev/null | grep -E '^[0-9]'); do
+            iptables -A OUTPUT -d "$ip" -p tcp --dport 443 -j ACCEPT
+            echo "[entrypoint] Allowed: $host -> $ip"
+        done
     done
-done
 
-# Drop everything else
-iptables -A OUTPUT -j DROP
+    # Drop everything else
+    iptables -A OUTPUT -j DROP
 
-echo "[entrypoint] Firewall configured: only API endpoints allowed, all other traffic blocked"
+    echo "[entrypoint] Firewall configured: only API endpoints allowed, all other traffic blocked"
+fi
 
 # Fix bench user UID/GID to match host (avoids permission issues on mounted volumes)
 HOST_UID="${HOST_UID:-1000}"
