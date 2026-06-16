@@ -92,7 +92,8 @@ def check(ctx: CheckContext) -> list[Issue]:
         source = ""
         if src_path:
             try:
-                source = open(src_path, encoding="utf-8", errors="ignore").read()
+                with open(src_path, encoding="utf-8", errors="ignore") as _sf:
+                    source = _sf.read()
             except OSError:
                 source = ""
         for t in module.theorems:

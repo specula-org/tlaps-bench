@@ -1,7 +1,5 @@
 """Agent backend registry."""
 
-from typing import Optional
-
 from .base import AgentBackend
 from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend

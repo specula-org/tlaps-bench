@@ -56,7 +56,7 @@ def dump_raw(tla_path: str, timeout: int = 180) -> dict:
     try:
         return json.loads(out[idx + len(_MARKER):])
     except json.JSONDecodeError as e:
-        raise SanyError(f"Could not parse SANY dump for {tla_path}: {e}")
+        raise SanyError(f"Could not parse SANY dump for {tla_path}: {e}") from e
 
 
 def dump(tla_path: str, timeout: int = 180) -> Module:

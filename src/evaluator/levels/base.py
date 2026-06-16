@@ -25,7 +25,7 @@ _TOP_LEVEL_GOAL = re.compile(r'^[ \t]*(THEOREM|LEMMA|COROLLARY|PROPOSITION)\b',
                              re.MULTILINE)
 
 
-class Level(ABC):
+class Level(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; subclasses set class attrs
     name: str = ""
     level_number: int = 0
     description: str = ""

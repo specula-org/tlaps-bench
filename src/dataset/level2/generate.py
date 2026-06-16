@@ -481,7 +481,7 @@ def copy_deps(dump, source_path, out_dir, reachable):
         direct_deps.append(mod)
 
     copied = []
-    for mod, dep_path in _gather_local_deps(direct_deps, src_dir):
+    for _mod, dep_path in _gather_local_deps(direct_deps, src_dir):
         with open(dep_path, encoding='utf-8') as f:
             dep_text = f.read()
         dep_lines = dep_text.split('\n')
@@ -711,7 +711,8 @@ def compute_sibling_deps(targets):
         deps = set()
         for p in paths:
             try:
-                content = open(p, encoding='utf-8').read()
+                with open(p, encoding="utf-8") as _f:
+                    content = _f.read()
             except OSError:
                 continue
             self_stem = os.path.splitext(os.path.basename(p))[0]

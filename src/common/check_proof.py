@@ -41,7 +41,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Also expose the repo `src/` so the SANY gate can `import tlacheck`/`tlacore`
 # when running from source (frozen builds bundle them directly).
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import contextlib
 
 from cheating_detection import (
@@ -66,13 +66,13 @@ def _descendant_pids(root_pid):
     matters, which holds as long as we snapshot before any kills land.
     """
     parents = {}
-    for entry in os.listdir('/proc'):
+    for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
         try:
-            with open(f'/proc/{entry}/status') as f:
+            with open(f"/proc/{entry}/status") as f:
                 for line in f:
-                    if line.startswith('PPid:'):
+                    if line.startswith("PPid:"):
                         parents[int(entry)] = int(line.split()[1])
                         break
         except (FileNotFoundError, PermissionError, ProcessLookupError):
@@ -109,8 +109,12 @@ def run_killgroup(cmd, timeout, cwd):
     `bash_process` wrapper, and any z3 they hold.
     """
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        cwd=cwd, start_new_session=True,
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        start_new_session=True,
     )
     try:
         out, err = proc.communicate(timeout=timeout)
@@ -130,10 +134,10 @@ def run_killgroup(cmd, timeout, cwd):
 def find_tlapm():
     """Find tlapm binary."""
     candidates = [
-        '/opt/tlapm/bin/tlapm',
-        os.path.expanduser('~/.tlapm/bin/tlapm'),
-        '/tmp/tlapm/bin/tlapm',
-        shutil.which('tlapm'),
+        "/opt/tlapm/bin/tlapm",
+        os.path.expanduser("~/.tlapm/bin/tlapm"),
+        "/tmp/tlapm/bin/tlapm",
+        shutil.which("tlapm"),
     ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
@@ -149,7 +153,7 @@ def find_tlapm_lib(tlapm_path):
     does NOT directly contain the .tla files.
     """
     base = os.path.dirname(os.path.dirname(tlapm_path))
-    for sub in ['lib/tlapm/stdlib', 'lib/tlaps', 'lib/tlapm', 'lib']:
+    for sub in ["lib/tlapm/stdlib", "lib/tlaps", "lib/tlapm", "lib"]:
         path = os.path.join(base, sub)
         if os.path.isdir(path):
             return path
@@ -185,8 +189,7 @@ def find_community_lib(filepath):
 def get_main_version(filepath):
     """Get the file content from the main/master branch."""
     repo_root = subprocess.run(
-        ['git', 'rev-parse', '--show-toplevel'],
-        capture_output=True, text=True, cwd=os.path.dirname(filepath) or '.'
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, cwd=os.path.dirname(filepath) or "."
     ).stdout.strip()
 
     if not repo_root:
@@ -194,11 +197,8 @@ def get_main_version(filepath):
 
     rel_path = os.path.relpath(filepath, repo_root)
 
-    for branch in ['main', 'master']:
-        result = subprocess.run(
-            ['git', 'show', f'{branch}:{rel_path}'],
-            capture_output=True, text=True, cwd=repo_root
-        )
+    for branch in ["main", "master"]:
+        result = subprocess.run(["git", "show", f"{branch}:{rel_path}"], capture_output=True, text=True, cwd=repo_root)
         if result.returncode == 0:
             return result.stdout
 
@@ -208,7 +208,7 @@ def get_main_version(filepath):
 def find_proof_obvious_line(lines):
     """Find the line number (0-indexed) of 'PROOF OBVIOUS' in the file."""
     for i in range(len(lines) - 1, -1, -1):
-        if lines[i].strip() == 'PROOF OBVIOUS':
+        if lines[i].strip() == "PROOF OBVIOUS":
             return i
     return None
 
@@ -232,10 +232,10 @@ def check_cheating(filepath, level: int = 1):
         issues.append((0, "WARNING: Could not retrieve main branch version for comparison"))
         return issues
 
-    main_lines = main_content.split('\n')
+    main_lines = main_content.split("\n")
     with open(filepath) as f:
         current_content = f.read()
-    current_lines = current_content.split('\n')
+    current_lines = current_content.split("\n")
 
     # Find PROOF OBVIOUS in main version - this is the boundary
     po_line = find_proof_obvious_line(main_lines)
@@ -244,7 +244,9 @@ def check_cheating(filepath, level: int = 1):
         return issues
 
     if level == 1 and len(current_lines) < po_line:
-        issues.append((len(current_lines), f"File truncated: preamble had {po_line} lines, file has {len(current_lines)}"))
+        issues.append(
+            (len(current_lines), f"File truncated: preamble had {po_line} lines, file has {len(current_lines)}")
+        )
         return issues
 
     # 1. Preamble modification — L1 only.
@@ -258,7 +260,7 @@ def check_cheating(filepath, level: int = 1):
     # L1: only the proof section can plausibly contain it (and must not).
     # L2: scan the whole current file — the agent may add proofs anywhere.
     if level == 1:
-        proof_section = '\n'.join(current_lines[po_line:])
+        proof_section = "\n".join(current_lines[po_line:])
         for ci in detect_proof_omitted(proof_section):
             issues.append((po_line + (ci.line or 0), ci.description))
     else:
@@ -272,22 +274,20 @@ def check_cheating(filepath, level: int = 1):
     # 4. Dependency file modification (shared module)
     bench_dir = os.path.dirname(filepath)
     repo_root = subprocess.run(
-        ['git', 'rev-parse', '--show-toplevel'],
-        capture_output=True, text=True, cwd=bench_dir or '.'
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, cwd=bench_dir or "."
     ).stdout.strip()
 
     if repo_root:
         dep_files = {}
-        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+        for dep_file in glob.glob(os.path.join(bench_dir, "*.tla")):
             if os.path.abspath(dep_file) == os.path.abspath(filepath):
                 continue
             dep_basename = os.path.basename(dep_file)
             dep_rel = os.path.relpath(dep_file, repo_root)
             dep_main = None
-            for branch in ['main', 'master']:
+            for branch in ["main", "master"]:
                 r = subprocess.run(
-                    ['git', 'show', f'{branch}:{dep_rel}'],
-                    capture_output=True, text=True, cwd=repo_root
+                    ["git", "show", f"{branch}:{dep_rel}"], capture_output=True, text=True, cwd=repo_root
                 )
                 if r.returncode == 0:
                     dep_main = r.stdout
@@ -305,17 +305,19 @@ def check_cheating(filepath, level: int = 1):
 
 
 def _git_root(path):
-    r = subprocess.run(['git', 'rev-parse', '--show-toplevel'],
-                       capture_output=True, text=True,
-                       cwd=os.path.dirname(os.path.abspath(path)) or '.')
+    r = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        cwd=os.path.dirname(os.path.abspath(path)) or ".",
+    )
     return r.stdout.strip() if r.returncode == 0 else None
 
 
 def _git_root_commit(repo_root):
     """The earliest (root) commit — the runner seeds it with the pristine
     benchmark, so it is a tamper-resistant baseline even if the agent commits."""
-    r = subprocess.run(['git', 'rev-list', '--max-parents=0', 'HEAD'],
-                       capture_output=True, text=True, cwd=repo_root)
+    r = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True, cwd=repo_root)
     if r.returncode != 0:
         return None
     commits = r.stdout.split()
@@ -341,39 +343,38 @@ def _reconstruct_from_git(filepath, target_name):
         return None, None, []
     bench_dir = os.path.dirname(os.path.abspath(filepath))
     rel_dir = os.path.relpath(bench_dir, repo_root)
-    tree = '' if rel_dir == '.' else rel_dir
-    spec = f'{root_commit}:{tree}' if tree else f'{root_commit}:'
-    ls = subprocess.run(['git', 'ls-tree', '--name-only', spec],
-                        capture_output=True, text=True, cwd=repo_root)
+    tree = "" if rel_dir == "." else rel_dir
+    spec = f"{root_commit}:{tree}" if tree else f"{root_commit}:"
+    ls = subprocess.run(["git", "ls-tree", "--name-only", spec], capture_output=True, text=True, cwd=repo_root)
     if ls.returncode != 0:
         return None, None, []
-    orig_tlas = [n for n in ls.stdout.split('\n') if n.endswith('.tla')]
+    orig_tlas = [n for n in ls.stdout.split("\n") if n.endswith(".tla")]
     if not orig_tlas:
         return None, None, []
 
-    sol_dir = tempfile.mkdtemp(prefix='tlck_sol_')
-    bench_canon = tempfile.mkdtemp(prefix='tlck_bench_')
+    sol_dir = tempfile.mkdtemp(prefix="tlck_sol_")
+    bench_canon = tempfile.mkdtemp(prefix="tlck_bench_")
     cleanup = [sol_dir, bench_canon]
 
     for name in orig_tlas:
-        path_in_tree = f'{tree}/{name}' if tree else name
-        show = subprocess.run(['git', 'show', f'{root_commit}:{path_in_tree}'],
-                              capture_output=True, text=True, cwd=repo_root)
+        path_in_tree = f"{tree}/{name}" if tree else name
+        show = subprocess.run(
+            ["git", "show", f"{root_commit}:{path_in_tree}"], capture_output=True, text=True, cwd=repo_root
+        )
         if show.returncode == 0:
-            with open(os.path.join(bench_canon, name), 'w') as f:
+            with open(os.path.join(bench_canon, name), "w") as f:
                 f.write(show.stdout)
 
-    for dep in glob.glob(os.path.join(bench_dir, '*.tla')):
+    for dep in glob.glob(os.path.join(bench_dir, "*.tla")):
         shutil.copy2(dep, os.path.join(sol_dir, os.path.basename(dep)))
-    orig_target = os.path.join(bench_canon, target_name + '.tla')
+    orig_target = os.path.join(bench_canon, target_name + ".tla")
     if os.path.exists(orig_target):
-        shutil.copy2(orig_target, os.path.join(sol_dir, 'benchmark.tla'))
+        shutil.copy2(orig_target, os.path.join(sol_dir, "benchmark.tla"))
 
     return sol_dir, bench_canon, cleanup
 
 
-def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed,
-                        benchmark_dir=None):
+def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, benchmark_dir=None):
     """Run the compiled-in SANY + incomplete-proof cheat engine.
 
     Folds CHEATING and INCOMPLETE findings into one list — any of them must fail
@@ -398,10 +399,15 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed,
                 return [], "no git baseline available"
             sol_dir = os.path.dirname(os.path.abspath(filepath))
         summary = parse_summary(summary_output) if summary_output else None
-        ctx = build_context(sol_dir, target_name, benchmark_dir=bench,
-                            summary=summary, tlapm_passed=tlapm_passed,
-                            tlapm_fallback=True,
-                            compute_summary=(summary is None))
+        ctx = build_context(
+            sol_dir,
+            target_name,
+            benchmark_dir=bench,
+            summary=summary,
+            tlapm_passed=tlapm_passed,
+            tlapm_fallback=True,
+            compute_summary=(summary is None),
+        )
         res = evaluate(ctx)
     except Exception as e:
         return [], f"tlacheck error: {e}"
@@ -409,22 +415,24 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed,
         for d in cleanup:
             shutil.rmtree(d, ignore_errors=True)
 
-    return ([str(i) for i in res.cheating_issues]
-            + [str(i) for i in res.incomplete_issues]), ""
+    return ([str(i) for i in res.cheating_issues] + [str(i) for i in res.incomplete_issues]), ""
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Check a single TLAPS benchmark proof')
-    parser.add_argument('file', help='Path to the benchmark .tla file')
-    parser.add_argument('--level', type=int, default=1, choices=[1, 2],
-                        help='Benchmark level — controls cheating rules (default: 1)')
-    parser.add_argument('--tlapm', default=None, help='Path to tlapm binary')
-    parser.add_argument('--tlapm-lib', default=None, help='Path to tlapm lib directory')
-    parser.add_argument('--timeout', type=int, default=600, help='Timeout in seconds')
-    parser.add_argument('--output', '-o', default=None, help='Write results to this file (default: <input>.result)')
-    parser.add_argument('--benchmark-dir', default=None,
-                        help='Canonical benchmark/<level>/<module>/ dir (provenance '
-                             'oracle; defaults to git-root reconstruction)')
+    parser = argparse.ArgumentParser(description="Check a single TLAPS benchmark proof")
+    parser.add_argument("file", help="Path to the benchmark .tla file")
+    parser.add_argument(
+        "--level", type=int, default=1, choices=[1, 2], help="Benchmark level — controls cheating rules (default: 1)"
+    )
+    parser.add_argument("--tlapm", default=None, help="Path to tlapm binary")
+    parser.add_argument("--tlapm-lib", default=None, help="Path to tlapm lib directory")
+    parser.add_argument("--timeout", type=int, default=600, help="Timeout in seconds")
+    parser.add_argument("--output", "-o", default=None, help="Write results to this file (default: <input>.result)")
+    parser.add_argument(
+        "--benchmark-dir",
+        default=None,
+        help="Canonical benchmark/<level>/<module>/ dir (provenance oracle; defaults to git-root reconstruction)",
+    )
     args = parser.parse_args()
 
     filepath = os.path.abspath(args.file)
@@ -435,7 +443,7 @@ def main():
     # Set up output: write to file and stdout
     output_path = args.output
     if output_path is None:
-        output_path = os.path.splitext(filepath)[0] + '.result'
+        output_path = os.path.splitext(filepath)[0] + ".result"
 
     # Collect all output lines, print at end and write to file
     output_lines = []
@@ -448,15 +456,15 @@ def main():
     tlapm_path = args.tlapm or find_tlapm()
     if not tlapm_path:
         emit("ERROR: tlapm not found. Use --tlapm to specify path.")
-        with open(output_path, 'w') as f:
-            f.write('\n'.join(output_lines) + '\n')
+        with open(output_path, "w") as f:
+            f.write("\n".join(output_lines) + "\n")
         sys.exit(3)
 
     tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
     if not tlapm_lib:
         emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
-        with open(output_path, 'w') as f:
-            f.write('\n'.join(output_lines) + '\n')
+        with open(output_path, "w") as f:
+            f.write("\n".join(output_lines) + "\n")
         sys.exit(3)
 
     emit(f"Checking: {os.path.relpath(filepath)}")
@@ -468,7 +476,7 @@ def main():
     emit("TLAPM OUTPUT")
     emit("=" * 60)
 
-    tmp_dir = tempfile.mkdtemp(prefix='tlaps_check_')
+    tmp_dir = tempfile.mkdtemp(prefix="tlaps_check_")
     try:
         basename = os.path.basename(filepath)
         tmp_file = os.path.join(tmp_dir, basename)
@@ -476,7 +484,7 @@ def main():
 
         # Copy dependency files from the same directory
         bench_dir = os.path.dirname(filepath)
-        for dep_file in glob.glob(os.path.join(bench_dir, '*.tla')):
+        for dep_file in glob.glob(os.path.join(bench_dir, "*.tla")):
             dep_basename = os.path.basename(dep_file)
             if dep_basename != basename:
                 shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
@@ -497,9 +505,9 @@ def main():
             tlapm_output = f"ERROR: {e}"
             tlapm_exit = -2
 
-        for line in tlapm_output.split('\n'):
+        for line in tlapm_output.split("\n"):
             emit(line)
-        tlapm_passed = (tlapm_exit == 0)
+        tlapm_passed = tlapm_exit == 0
 
         # Run --summary to detect missing proofs (e.g. bare QED)
         summary_output = ""
@@ -529,17 +537,17 @@ def main():
     # Check for empty PROOF blocks and 0-obligation (independent of git comparison)
     if tlapm_passed:
         with open(filepath) as f:
-            cur_lines = f.read().split('\n')
+            cur_lines = f.read().split("\n")
 
         if args.level == 1:
             # L1: PROOF OBVIOUS in main is the boundary; slice current at the
             # same index because the preamble is required to be unchanged.
             main_content = get_main_version(filepath)
             if main_content:
-                main_lines = main_content.split('\n')
+                main_lines = main_content.split("\n")
                 po_line = find_proof_obvious_line(main_lines)
                 if po_line is not None:
-                    proof_section = '\n'.join(cur_lines[po_line:])
+                    proof_section = "\n".join(cur_lines[po_line:])
                     clean = strip_comments(proof_section)
                     for ci in detect_empty_proof(clean):
                         real_issues.append((po_line + (ci.line or 0), ci.description))
@@ -551,7 +559,7 @@ def main():
             # L2: the agent may grow the preamble (new lemmas above target),
             # so there's no stable boundary. Scan the whole file; the bare-QED
             # check via --summary below catches what detect_missing_proof did.
-            clean = strip_comments('\n'.join(cur_lines))
+            clean = strip_comments("\n".join(cur_lines))
             for ci in detect_empty_proof(clean):
                 real_issues.append((ci.line or 0, ci.description))
             for ci in detect_zero_total_obligations(tlapm_output):
@@ -561,8 +569,8 @@ def main():
         # the last THEOREM/LEMMA in the file for both levels).
         if summary_output:
             target_line = None
-            for li, l in enumerate(cur_lines):
-                if re.match(r'^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\b', l.strip()):
+            for li, line in enumerate(cur_lines):
+                if re.match(r"^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\b", line.strip()):
                     target_line = li + 1  # 1-indexed
             for ci in detect_missing_proofs_summary(summary_output, target_line):
                 real_issues.append((0, ci.description))
@@ -573,14 +581,14 @@ def main():
     # gets the same verdict the grader does. Any finding fails the run.
     target_name = os.path.splitext(os.path.basename(filepath))[0]
     engine_issues, engine_reason = run_tlacheck_engine(
-        filepath, target_name, summary_output, tlapm_passed,
-        benchmark_dir=args.benchmark_dir)
+        filepath, target_name, summary_output, tlapm_passed, benchmark_dir=args.benchmark_dir
+    )
     if engine_reason:
         warnings.append((0, f"semantic engine skipped ({engine_reason})"))
     for desc in engine_issues:
         real_issues.append((0, desc))
 
-    for line_num, desc in warnings:
+    for _line_num, desc in warnings:
         emit(f"  WARNING: {desc}")
 
     if real_issues:
@@ -604,7 +612,7 @@ def main():
     else:
         exit_code = 1
         # Extract obligation summary
-        m = re.search(r'(\d+)/(\d+) obligation', tlapm_output)
+        m = re.search(r"(\d+)/(\d+) obligation", tlapm_output)
         if m:
             emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
         elif "TIMEOUT" in tlapm_output:
@@ -613,12 +621,12 @@ def main():
             emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
 
     # Write result file
-    with open(output_path, 'w') as f:
-        f.write('\n'.join(output_lines) + '\n')
+    with open(output_path, "w") as f:
+        f.write("\n".join(output_lines) + "\n")
     emit(f"\nResult written to: {output_path}")
 
     sys.exit(exit_code)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

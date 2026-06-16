@@ -740,9 +740,7 @@ def main():
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
             futures = {executor.submit(run_single_benchmark, item): item for item in work_items}
-            done_count = 0
-            for future in as_completed(futures):
-                done_count += 1
+            for done_count, future in enumerate(as_completed(futures), start=1):
                 r = future.result()
                 results.append(r)
                 icon = icons.get(r['check_verdict'], '❓')

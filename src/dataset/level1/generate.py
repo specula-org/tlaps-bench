@@ -638,7 +638,7 @@ def merge_files(files_by_module, dep_graph, target_module):
         header_lines.append(f'EXTENDS {extends_str}')
 
     result_lines = header_lines + merged_body_lines + ['=' * 40]
-    return [l + '\n' for l in result_lines], target_module
+    return [ln + "\n" for ln in result_lines], target_module
 
 
 def strip_all_proofs(lines, theorems):
@@ -702,7 +702,7 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
     if isinstance(lines_or_content, str):
         lines = lines_or_content.split('\n')
     else:
-        lines = [l.rstrip('\n') for l in lines_or_content]
+        lines = [ln.rstrip("\n") for ln in lines_or_content]
 
     # We'll rebuild the file by going through lines and replacing theorem sections
     result = []
@@ -754,7 +754,7 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
 
         # Check if this line is inside a theorem range (shouldn't happen, but safety)
         inside = False
-        for idx, (start, end) in thm_ranges.items():
+        for _idx, (start, end) in thm_ranges.items():
             if start < i <= end:
                 inside = True
                 break
@@ -780,7 +780,7 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
         i += 1
 
     # Ensure module ends with ====
-    if not any(re.match(r'^={3,}', l.strip()) for l in result[-3:] if l.strip()):
+    if not any(re.match(r"^={3,}", ln.strip()) for ln in result[-3:] if ln.strip()):
         result.append('=' * 40)
 
     # Remove comment blocks containing proof steps (e.g. <1>2.)
@@ -941,7 +941,7 @@ def process_module_dir(module_dir_name):
             extends_graph[mod_name] = all_extends_deps
 
             merged_lines, _ = merge_files(files_by_module, extends_graph, mod_name)
-            work_lines = [l.rstrip('\n') for l in merged_lines]
+            work_lines = [ln.rstrip("\n") for ln in merged_lines]
             theorems = parse_theorems(work_lines)
             if not theorems or not any(t.has_proof for t in theorems):
                 continue
