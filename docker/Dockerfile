@@ -15,8 +15,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install agent CLIs (codex for OpenAI, claude code for Anthropic)
-RUN npm install -g @openai/codex @anthropic-ai/claude-code && npm cache clean --force
+# Install agent CLIs (codex for OpenAI, claude code for Anthropic, copilot for GitHub)
+RUN npm install -g @openai/codex @anthropic-ai/claude-code @github/copilot && npm cache clean --force
 
 # Install tlapm 1.6 pre-release (rolling, last refreshed upstream 2026-04-14).
 # Tarball top-level dir is `tlapm/`, so extracting into /opt/ produces /opt/tlapm/.

@@ -4,12 +4,12 @@ Run an agent CLI on TLAPS benchmarks to attempt automated proof writing.
 
 For each benchmark:
 1. Creates an isolated workspace (fresh git repo with only benchmark files)
-2. Runs the chosen backend (codex / claude_code) with a proof-writing prompt
+2. Runs the chosen backend (codex / claude_code / copilot) with a proof-writing prompt
 3. Validates the result with the level's checker
 4. Saves all outputs
 
 Usage:
-    python3 runner.py [--backend codex|claude_code] [--level level1|level2] \\
+    python3 runner.py [--backend codex|claude_code|copilot] [--level level1|level2] \\
                       [--model NAME] [--jobs N] [--filter PATTERN] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """

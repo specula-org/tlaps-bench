@@ -5,10 +5,12 @@ from typing import Optional
 from .base import AgentBackend
 from .codex import CodexBackend
 from .claude_code import ClaudeCodeBackend
+from .copilot import CopilotBackend
 
 _REGISTRY = {
     CodexBackend.name: CodexBackend,
     ClaudeCodeBackend.name: ClaudeCodeBackend,
+    CopilotBackend.name: CopilotBackend,
 }
 
 

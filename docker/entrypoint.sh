@@ -3,8 +3,9 @@ set -e
 
 # ============================================================
 # Network firewall: whitelist-only outbound access
-# Only allow DNS + OpenAI / Azure OpenAI / Anthropic API
-# Everything else (GitHub, Google, etc.) is blocked
+# Only allow DNS + OpenAI / Azure OpenAI / Anthropic / GitHub Copilot
+# *inference* APIs. Everything else — including github.com and
+# api.github.com (repos/web) — is blocked to prevent data leakage/cheating.
 # ============================================================
 
 # Allow loopback
@@ -19,7 +20,13 @@ iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
 # Whitelist API domains by resolving their IPs
 # OpenAI API (codex backend) + Anthropic API (claude_code backend)
-API_HOSTS="api.openai.com api.anthropic.com"
+#   + GitHub Copilot inference API (copilot backend).
+# NB: only the *inference* hosts are whitelisted — github.com and
+# api.github.com are intentionally NOT allowed, so the agent cannot reach
+# GitHub repos/web (anti-cheating). The Copilot host varies by plan, so all
+# three are listed; the copilot backend runs --no-auto-update so it never
+# needs api.github.com for a release check.
+API_HOSTS="api.openai.com api.anthropic.com api.githubcopilot.com api.business.githubcopilot.com api.enterprise.githubcopilot.com"
 
 # Azure OpenAI (if AZURE_OPENAI_HOST is set)
 if [ -n "${AZURE_OPENAI_HOST:-}" ]; then
@@ -60,6 +67,16 @@ if [ -f /mnt/codex-config.toml ]; then
     mkdir -p /home/bench/.codex
     cp /mnt/codex-config.toml /home/bench/.codex/config.toml
     chown -R bench:bench /home/bench/.codex
+fi
+
+# GitHub Copilot CLI config (copilot backend): if mounted, install it so the
+# CLI picks up the stored OAuth token / PAT without setting an env var. This
+# mirrors the codex-config mount above. Use either this OR
+# COPILOT_GITHUB_TOKEN — not both needed.
+if [ -f /mnt/copilot-config.json ]; then
+    mkdir -p /home/bench/.copilot
+    cp /mnt/copilot-config.json /home/bench/.copilot/config.json
+    chown -R bench:bench /home/bench/.copilot
 fi
 
 # Drop privileges and exec the command as bench user
