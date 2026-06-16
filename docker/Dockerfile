@@ -37,10 +37,9 @@ RUN curl -fsSL -o /tmp/community.tar.gz \
     && cp /tmp/CommunityModules-202604221529/modules/*.tla /opt/tlapm/lib/tlapm/stdlib/ \
     && rm -rf /tmp/community.tar.gz /tmp/CommunityModules-202604221529
 
-# Lock down tlapm: prevent AI from tampering with library files
-# Remove write permission — bench user cannot restore (not owner, no sudo)
-# chattr +i is applied at container start in entrypoint.sh (needs CAP_LINUX_IMMUTABLE)
-RUN chmod -R a-w /opt/tlapm
+# Lock down tlapm so the unprivileged bench user cannot tamper with the
+# library: root-owned and read-only for everyone.
+RUN chown -R root:root /opt/tlapm && chmod -R a-w /opt/tlapm
 
 # Remove sudo
 RUN apt-get purge -y sudo 2>/dev/null; rm -f /usr/bin/sudo /usr/sbin/sudo; true
