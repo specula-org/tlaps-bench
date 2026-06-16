@@ -39,6 +39,9 @@ import argparse
 import glob
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Also expose the repo `src/` so the SANY gate can `import tlacheck`/`tlacore`
+# when running from source (frozen builds bundle them directly).
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from cheating_detection import (
     detect_proof_omitted, detect_extra_axioms,
     detect_preamble_modification, detect_empty_proof,
@@ -300,6 +303,115 @@ def check_cheating(filepath, level: int = 1):
     return issues
 
 
+def _git_root(path):
+    r = subprocess.run(['git', 'rev-parse', '--show-toplevel'],
+                       capture_output=True, text=True,
+                       cwd=os.path.dirname(os.path.abspath(path)) or '.')
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _git_root_commit(repo_root):
+    """The earliest (root) commit — the runner seeds it with the pristine
+    benchmark, so it is a tamper-resistant baseline even if the agent commits."""
+    r = subprocess.run(['git', 'rev-list', '--max-parents=0', 'HEAD'],
+                       capture_output=True, text=True, cwd=repo_root)
+    if r.returncode != 0:
+        return None
+    commits = r.stdout.split()
+    return commits[-1] if commits else None
+
+
+def _reconstruct_from_git(filepath, target_name):
+    """Reconstruct the pristine benchmark from the git root commit.
+
+    Each agent workspace is seeded with one commit holding the original
+    benchmark files. We materialize two temp dirs the tlacheck engine consumes:
+      benchmark_dir — git-root versions of every .tla beside the target (the
+                      authoritative provenance / GIVEN modules).
+      solution_dir  — the agent's CURRENT .tla files, plus benchmark.tla set to
+                      the git-root version of the target (the baseline).
+    Returns (solution_dir, benchmark_dir, [tmpdirs]) or (None, None, []).
+    """
+    repo_root = _git_root(filepath)
+    if not repo_root:
+        return None, None, []
+    root_commit = _git_root_commit(repo_root)
+    if not root_commit:
+        return None, None, []
+    bench_dir = os.path.dirname(os.path.abspath(filepath))
+    rel_dir = os.path.relpath(bench_dir, repo_root)
+    tree = '' if rel_dir == '.' else rel_dir
+    spec = f'{root_commit}:{tree}' if tree else f'{root_commit}:'
+    ls = subprocess.run(['git', 'ls-tree', '--name-only', spec],
+                        capture_output=True, text=True, cwd=repo_root)
+    if ls.returncode != 0:
+        return None, None, []
+    orig_tlas = [n for n in ls.stdout.split('\n') if n.endswith('.tla')]
+    if not orig_tlas:
+        return None, None, []
+
+    sol_dir = tempfile.mkdtemp(prefix='tlck_sol_')
+    bench_canon = tempfile.mkdtemp(prefix='tlck_bench_')
+    cleanup = [sol_dir, bench_canon]
+
+    for name in orig_tlas:
+        path_in_tree = f'{tree}/{name}' if tree else name
+        show = subprocess.run(['git', 'show', f'{root_commit}:{path_in_tree}'],
+                              capture_output=True, text=True, cwd=repo_root)
+        if show.returncode == 0:
+            with open(os.path.join(bench_canon, name), 'w') as f:
+                f.write(show.stdout)
+
+    for dep in glob.glob(os.path.join(bench_dir, '*.tla')):
+        shutil.copy2(dep, os.path.join(sol_dir, os.path.basename(dep)))
+    orig_target = os.path.join(bench_canon, target_name + '.tla')
+    if os.path.exists(orig_target):
+        shutil.copy2(orig_target, os.path.join(sol_dir, 'benchmark.tla'))
+
+    return sol_dir, bench_canon, cleanup
+
+
+def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed,
+                        benchmark_dir=None):
+    """Run the compiled-in SANY + incomplete-proof cheat engine.
+
+    Folds CHEATING and INCOMPLETE findings into one list — any of them must fail
+    the run. On any internal error returns ([], reason) so the engine never
+    spuriously fails an otherwise-valid proof. ``benchmark_dir`` (when the runner
+    supplies the canonical read-only module dir) is the tamper-proof provenance
+    oracle; otherwise we reconstruct it from the git root commit.
+    """
+    try:
+        from tlacheck.context import build_context
+        from tlacheck.engine import evaluate
+        from tlacore.tlapm.summary import parse_summary
+    except Exception as e:
+        return [], f"tlacheck import failed: {e}"
+
+    cleanup = []
+    try:
+        sol_dir, git_bench, cleanup = _reconstruct_from_git(filepath, target_name)
+        bench = benchmark_dir or git_bench
+        if sol_dir is None:
+            if benchmark_dir is None:
+                return [], "no git baseline available"
+            sol_dir = os.path.dirname(os.path.abspath(filepath))
+        summary = parse_summary(summary_output) if summary_output else None
+        ctx = build_context(sol_dir, target_name, benchmark_dir=bench,
+                            summary=summary, tlapm_passed=tlapm_passed,
+                            tlapm_fallback=True,
+                            compute_summary=(summary is None))
+        res = evaluate(ctx)
+    except Exception as e:
+        return [], f"tlacheck error: {e}"
+    finally:
+        for d in cleanup:
+            shutil.rmtree(d, ignore_errors=True)
+
+    return ([str(i) for i in res.cheating_issues]
+            + [str(i) for i in res.incomplete_issues]), ""
+
+
 def main():
     parser = argparse.ArgumentParser(description='Check a single TLAPS benchmark proof')
     parser.add_argument('file', help='Path to the benchmark .tla file')
@@ -309,6 +421,9 @@ def main():
     parser.add_argument('--tlapm-lib', default=None, help='Path to tlapm lib directory')
     parser.add_argument('--timeout', type=int, default=600, help='Timeout in seconds')
     parser.add_argument('--output', '-o', default=None, help='Write results to this file (default: <input>.result)')
+    parser.add_argument('--benchmark-dir', default=None,
+                        help='Canonical benchmark/<level>/<module>/ dir (provenance '
+                             'oracle; defaults to git-root reconstruction)')
     args = parser.parse_args()
 
     filepath = os.path.abspath(args.file)
@@ -450,6 +565,19 @@ def main():
                     target_line = li + 1  # 1-indexed
             for ci in detect_missing_proofs_summary(summary_output, target_line):
                 real_issues.append((0, ci.description))
+
+    # --- SANY semantic engine (compiled-in): extra axioms, weakened/modified
+    # statements, dependency tampering, smuggled modules, AND bare-QED holes in
+    # ANY helper lemma (not just the target). Runs on every check so the agent
+    # gets the same verdict the grader does. Any finding fails the run.
+    target_name = os.path.splitext(os.path.basename(filepath))[0]
+    engine_issues, engine_reason = run_tlacheck_engine(
+        filepath, target_name, summary_output, tlapm_passed,
+        benchmark_dir=args.benchmark_dir)
+    if engine_reason:
+        warnings.append((0, f"semantic engine skipped ({engine_reason})"))
+    for desc in engine_issues:
+        real_issues.append((0, desc))
 
     for line_num, desc in warnings:
         emit(f"  WARNING: {desc}")

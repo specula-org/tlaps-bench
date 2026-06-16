@@ -99,6 +99,7 @@ def build_context(solution_dir: str, target_name: str, *,
                   tlapm_output: str = "", tlapm_passed: bool = False,
                   solution_file: str | None = None,
                   tlapm_fallback: bool = False,
+                  compute_summary: bool = False,
                   fallback_timeout: float = 600) -> CheckContext:
     """Parse the solution + baseline + agent-created modules and assemble a context.
 
@@ -153,6 +154,13 @@ def build_context(solution_dir: str, target_name: str, *,
             summaries["__baseline__"] = _safe_summary(base_path, solution_dir, fallback_timeout)
         for name, path in prov.agent_created.items():
             summaries[name] = _safe_summary(path, solution_dir, fallback_timeout)
+
+    # When SANY parsed the solution, the structural rules don't need tlapm, but
+    # the incomplete_proof rule still does (it reads tlapm's --summary to see a
+    # bare QED buried inside a structured proof). Compute it on demand unless the
+    # caller already supplied a parsed summary.
+    if sany_ok and compute_summary and summary is None:
+        summary = _safe_summary(sol_path, solution_dir, fallback_timeout)
 
     return CheckContext(
         target_name=target_name,

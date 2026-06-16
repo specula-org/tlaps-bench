@@ -41,42 +41,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
 
 
-def run_tlacheck_gate(result_dir, target_name, benchmark_dir, *, tlapm_passed=True):
-    """SANY-based cheat gate — the authoritative cheating check.
-
-    The compiled ``check_proof_bin`` runs only the legacy regex / ``--summary``
-    checks in ``cheating_detection.py``, which miss a whole class of cheats: a
-    proofless helper theorem (``THEOREM X == <goal>`` with no proof, admitted as
-    an axiom) cited by the target's ``BY X``, and smuggled auxiliary modules.
-    The ``tlacheck`` library (SANY semantic model, with a ``tlapm --summary``
-    fallback when SANY is stricter than tlapm) catches these. We run it here, on
-    the host where Java/SANY is available, and let a CHEATING finding override a
-    binary PASS.
-
-    Returns ``(is_cheating, detail)``. On ANY internal error returns
-    ``(False, "<reason>")`` so the gate never spuriously fails a run — the binary
-    verdict (which still carries the cheap checks) stands.
-    """
-    src = os.path.join(REPO_ROOT, 'src')
-    if src not in sys.path:
-        sys.path.insert(0, src)
-    try:
-        from tlacheck.context import build_context
-        from tlacheck.engine import evaluate
-    except Exception as e:
-        return False, f"tlacheck import failed: {e}"
-    try:
-        ctx = build_context(result_dir, target_name, benchmark_dir=benchmark_dir,
-                            tlapm_passed=tlapm_passed, tlapm_fallback=True)
-        res = evaluate(ctx)
-    except Exception as e:
-        return False, f"tlacheck error: {e}"
-    cheating = res.cheating_issues
-    if cheating:
-        return True, "; ".join(str(i) for i in cheating)
-    return False, ""
-
-
 def resolve_paths():
     """Return (benchmark_root, checker_binary) based on environment.
 
@@ -456,12 +420,10 @@ def run_single_benchmark(item: WorkItem):
                             'GIT_COMMITTER_NAME': 'bench',
                             'GIT_COMMITTER_EMAIL': 'bench@bench'})
 
-        # Copy checker binary AFTER the initial commit so it's not in the baseline
+        # The cheat checker is the baked, root-owned, read-only binary on PATH
+        # (/usr/local/bin/check_proof_bin in docker). It is NEVER copied into the
+        # agent-writable workspace, so the agent cannot swap it to fake a verdict.
         checker_bin = level.checker_binary_path()
-        check_bin_name = os.path.basename(checker_bin)
-        check_bin_dest = os.path.join(workspace, check_bin_name)
-        shutil.copy2(checker_bin, check_bin_dest)
-        os.chmod(check_bin_dest, 0o755)
 
         # Archive the original benchmark
         shutil.copy2(item.benchmark_path, os.path.join(result_dir, 'benchmark.tla'))
@@ -490,6 +452,12 @@ def run_single_benchmark(item: WorkItem):
         _to = item.timeout if item.timeout and item.timeout > 0 else None
         timed_out = {'v': False}
         proc = None
+        # Make `check_proof_bin` resolvable on PATH for the agent's self-check
+        # without a writable workspace copy. In docker it already lives in
+        # /usr/local/bin; on host we prepend the repo root (where the binary is).
+        agent_env = dict(os.environ)
+        checker_dir = os.path.dirname(os.path.abspath(checker_bin))
+        agent_env['PATH'] = checker_dir + os.pathsep + agent_env.get('PATH', '')
         try:
             with open(agent_jsonl, 'w') as jsonl_f:
                 proc = subprocess.Popen(
@@ -499,6 +467,7 @@ def run_single_benchmark(item: WorkItem):
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=workspace,
+                    env=agent_env,
                     start_new_session=True,  # own process group / session
                 )
 
@@ -571,9 +540,13 @@ def run_single_benchmark(item: WorkItem):
         if os.path.isfile(result_file):
             shutil.copy2(result_file, os.path.join(result_dir, 'agent_check.result'))
 
-        # Run our own checker via the level
+        # Run our own checker via the level. The compiled binary now runs the
+        # full cheat engine (legacy regex + SANY semantic + incomplete-proof)
+        # inline, so a single invocation produces the authoritative verdict.
         check_result_path = os.path.join(result_dir, 'check.result')
-        cmd = level.checker_command(workspace, basename, check_result_path, item.check_timeout)
+        cmd = level.checker_command(workspace, basename, check_result_path,
+                                    item.check_timeout,
+                                    benchmark_dir=os.path.dirname(item.benchmark_path))
         try:
             check_proc = subprocess.run(
                 cmd,
@@ -606,19 +579,6 @@ def run_single_benchmark(item: WorkItem):
         except Exception as e:
             result['check_verdict'] = 'ERROR'
             result['error'] = str(e)
-
-        # SANY-based cheat gate (authoritative). Only a binary PASS can hide a
-        # cheat that tlapm "proved" — run tlacheck and downgrade PASS->CHEATING
-        # if it finds a proofless-helper axiom or smuggled module the legacy
-        # checker missed.
-        if result['check_verdict'] == 'PASS':
-            is_cheat, detail = run_tlacheck_gate(
-                result_dir, name_no_ext, os.path.dirname(item.benchmark_path))
-            with open(os.path.join(result_dir, 'tlacheck.txt'), 'w') as f:
-                f.write(f"cheating: {is_cheat}\n{detail}\n")
-            if is_cheat:
-                result['check_verdict'] = 'CHEATING'
-                result['tlacheck'] = detail
 
     finally:
         shutil.rmtree(workspace, ignore_errors=True)

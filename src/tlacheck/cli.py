@@ -21,17 +21,16 @@ import sys
 
 from .context import build_context
 from .engine import run_rules
-from .rules import incomplete_proof
 from .issue import Severity
 
 
 def audit_one(solution_dir: str, target: str, benchmark_dir: str | None,
               with_summary: bool = False) -> list:
-    ctx = build_context(solution_dir, target, benchmark_dir=benchmark_dir)
-    issues = run_rules(ctx)
-    if with_summary and ctx.summary is not None:
-        issues.extend(incomplete_proof.check(ctx))
-    return issues
+    # incomplete_proof is wired into the engine rule sets; it only fires when a
+    # tlapm --summary is available, so request one when --summary was passed.
+    ctx = build_context(solution_dir, target, benchmark_dir=benchmark_dir,
+                        compute_summary=with_summary)
+    return run_rules(ctx)
 
 
 def _infer(bdir: str, benchmark_root: str | None):

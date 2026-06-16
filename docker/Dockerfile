@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates git python3 \
     libstdc++6 libgmp10 make \
+    default-jre-headless \
     iptables iproute2 dnsutils gosu \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,14 +42,46 @@ RUN curl -fsSL -o /tmp/community.tar.gz \
 # library: root-owned and read-only for everyone.
 RUN chown -R root:root /opt/tlapm && chmod -R a-w /opt/tlapm
 
+# ------------------------------------------------------------------
+# Cheat checker (compiled binary) + SANY assets, all baked in so the
+# cheat-detection logic is never exposed as source the agent could read.
+# Layout under /opt/sany matches run.sh's REPO_ROOT math
+# (sany-dump/../../.. == /opt/sany), so tla2tools.jar + community resolve.
+# ------------------------------------------------------------------
+COPY check_proof_bin /usr/local/bin/check_proof_bin
+COPY lib/tla2tools.jar /opt/sany/lib/tla2tools.jar
+COPY lib/community /opt/sany/lib/community
+COPY src/dataset/sany-dump /opt/sany/src/dataset/sany-dump
+
+# DumpSemantics is precompiled on the host (docker/build.sh runs sany-dump/build.sh)
+# and the .class files are COPY'd in via the sany-dump dir above. The image ships
+# only a JRE (no javac), so fail loudly if the precompiled class is missing, then
+# stamp the .class files as newer than the .java (touch -c never creates files) so
+# run.sh's `-nt` staleness check stays false and never tries to recompile.
+RUN test -f /opt/sany/src/dataset/sany-dump/build/DumpSemantics.class \
+      || { echo "ERROR: precompiled DumpSemantics.class missing from build context." >&2; \
+           echo "       Build via 'bash docker/build.sh' (needs host javac) so the JRE-only image works." >&2; \
+           exit 1; } \
+    && touch -c /opt/sany/src/dataset/sany-dump/build/*.class
+
+# SANY gate wiring (consumed by tlacore inside check_proof_bin).
+ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
+    TLAPS_LIB=/opt/tlapm/lib/tlapm/stdlib \
+    COMMUNITY_LIB=/opt/sany/lib/community
+
+# Lock down the checker + SANY assets: root-owned, read + execute only.
+RUN chmod 0755 /usr/local/bin/check_proof_bin \
+    && chown -R root:root /usr/local/bin/check_proof_bin /opt/sany \
+    && chmod -R a-w /opt/sany
+
 # Remove sudo
 RUN apt-get purge -y sudo 2>/dev/null; rm -f /usr/bin/sudo /usr/sbin/sudo; true
 
 # Create unprivileged user (remove default ubuntu user first to free UID 1000)
 RUN userdel -r ubuntu 2>/dev/null || true; useradd -m -s /bin/bash -u 1000 bench
 
-# Copy entrypoint
-COPY entrypoint.sh /entrypoint.sh
+# Copy entrypoint (build context is the repo root)
+COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 WORKDIR /home/bench

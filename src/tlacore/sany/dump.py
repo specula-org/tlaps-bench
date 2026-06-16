@@ -23,11 +23,15 @@ from typing import Optional
 from ..model import Module
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# run.sh currently lives under the existing sany-dump location; we shell out to
-# it rather than duplicating the build/launch logic. (A later cleanup may move
-# the Java + scripts under this package and drop this indirection.)
+# run.sh lives under the sany-dump location; we shell out to it rather than
+# duplicating the build/launch logic. The path is overridable via SANY_RUN_SH so
+# a frozen (PyInstaller) build — where __file__ points into the bundle, not the
+# repo — can point at the run.sh baked into the image.
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
-_RUN_SH = os.path.join(_REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
+_RUN_SH = os.environ.get(
+    "SANY_RUN_SH",
+    os.path.join(_REPO_ROOT, "src", "dataset", "sany-dump", "run.sh"),
+)
 
 _MARKER = "--- BEGIN SANY-DUMP JSON ---"
 

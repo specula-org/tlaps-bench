@@ -7,7 +7,7 @@ from .issue import Issue
 from .verdict import Result, decide
 from .rules import (
     admitted_statement, smuggled_module, extra_axiom, dependency_modified,
-    admitted_fallback,
+    admitted_fallback, incomplete_proof,
 )
 
 # SANY-based structural rules — precise, fast, used when Java SANY parsed the
@@ -17,6 +17,7 @@ SANY_RULES = [
     smuggled_module,
     extra_axiom,
     dependency_modified,
+    incomplete_proof,   # bare-QED / missing step inside a structured proof
 ]
 
 # tlapm-authoritative fallback — used when Java SANY refused the solution.
@@ -24,6 +25,7 @@ SANY_RULES = [
 FALLBACK_RULES = [
     admitted_fallback,
     dependency_modified,   # pure byte-compare, parser-independent
+    incomplete_proof,      # consumes the fallback tlapm --summary accounting
 ]
 
 

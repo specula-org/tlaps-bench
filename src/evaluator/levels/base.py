@@ -88,11 +88,18 @@ class Level(ABC):
         )
 
     def checker_command(self, workspace: str, benchmark_basename: str,
-                        output_path: str, timeout: int) -> list[str]:
-        return [
-            os.path.join(workspace, os.path.basename(self._checker_binary)),
+                        output_path: str, timeout: int,
+                        benchmark_dir: str | None = None) -> list[str]:
+        cmd = [
+            self._checker_binary,
             os.path.join(workspace, benchmark_basename),
             '--level', str(self.level_number),
             '--output', output_path,
             '--timeout', str(timeout),
         ]
+        # Grading passes the canonical read-only module dir so the semantic
+        # engine's provenance is tamper-proof (the agent's own self-check falls
+        # back to git-root reconstruction inside its workspace).
+        if benchmark_dir:
+            cmd += ['--benchmark-dir', benchmark_dir]
+        return cmd
