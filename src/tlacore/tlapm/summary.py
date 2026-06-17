@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 
 from .invoke import run_killgroup
-from .locate import resolve, find_community_lib
+from .locate import find_community_lib, resolve
 
 
 @dataclass
@@ -38,8 +38,7 @@ class Summary:
 
 _OBL = re.compile(r"obligations_count\s*=\s*(\d+)")
 _MISS_TOP = re.compile(r"^\s*missing_proofs_count\s*=\s*(\d+)", re.MULTILINE)
-_SECTION = re.compile(
-    r"----\s+incomplete proof of theorem at line (\d+),\s*character \d+\s*----")
+_SECTION = re.compile(r"----\s+incomplete proof of theorem at line (\d+),\s*character \d+\s*----")
 _MISS_LOC = re.compile(r"missing_proof_\d+\s+at\s+line\s+(\d+)")
 
 
@@ -67,8 +66,9 @@ def parse_summary(output: str) -> Summary:
     return s
 
 
-def run_summary(tla_path: str, cwd: str, *, tlapm: str | None = None,
-                tlapm_lib: str | None = None, timeout: float = 600) -> Summary:
+def run_summary(
+    tla_path: str, cwd: str, *, tlapm: str | None = None, tlapm_lib: str | None = None, timeout: float = 600
+) -> Summary:
     """Run ``tlapm --summary`` on ``tla_path`` and return the parsed summary."""
     tlapm, tlapm_lib = resolve(tlapm, tlapm_lib)
     cmd = [tlapm, "--summary", "-I", tlapm_lib]

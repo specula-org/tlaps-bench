@@ -11,11 +11,10 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from tlacore.model import Module
 from tlacore.provenance import Provenance, classify
-from tlacore.sany.dump import try_dump, try_dump_normalized
+from tlacore.sany.dump import try_dump_normalized
 from tlacore.source import slice_loc
 from tlacore.tlapm.summary import Summary, run_summary
 
@@ -28,21 +27,21 @@ def _norm(text: str) -> str:
 
 @dataclass
 class CheckContext:
-    target_name: str                       # benchmark module name
-    solution_dir: str                      # result dir holding the submission
-    solution: Optional[Module]             # parsed solution module (None if SANY failed)
-    baseline: Optional[Module]             # parsed benchmark.tla (given baseline)
+    target_name: str  # benchmark module name
+    solution_dir: str  # result dir holding the submission
+    solution: Module | None  # parsed solution module (None if SANY failed)
+    baseline: Module | None  # parsed benchmark.tla (given baseline)
     provenance: Provenance
-    benchmark_dir: Optional[str] = None    # canonical benchmark/<level>/<module>/
-    solution_source: str = ""              # raw text of the solution file
-    baseline_source: str = ""              # raw text of benchmark.tla
-    sany_ok: bool = True                   # did Java SANY parse the solution?
+    benchmark_dir: str | None = None  # canonical benchmark/<level>/<module>/
+    solution_source: str = ""  # raw text of the solution file
+    baseline_source: str = ""  # raw text of benchmark.tla
+    sany_ok: bool = True  # did Java SANY parse the solution?
     # tlapm authoritative fallback (used when sany_ok is False): tlapm's own
     # parser accepts everything it considers valid, so --summary works where
     # Java SANY (stricter) refuses. Keyed: "" = solution, mod name = agent module.
     summaries: dict = field(default_factory=dict)
     agent_modules: dict[str, Module] = field(default_factory=dict)  # name -> parsed
-    summary: Optional[Summary] = None
+    summary: Summary | None = None
     tlapm_output: str = ""
     tlapm_passed: bool = False
 
@@ -93,13 +92,19 @@ class CheckContext:
         return _norm(slice_loc(self.solution_source, assume.loc)) if assume.loc else ""
 
 
-def build_context(solution_dir: str, target_name: str, *,
-                  benchmark_dir: str | None = None,
-                  summary: Optional[Summary] = None,
-                  tlapm_output: str = "", tlapm_passed: bool = False,
-                  solution_file: str | None = None,
-                  tlapm_fallback: bool = False,
-                  fallback_timeout: float = 600) -> CheckContext:
+def build_context(
+    solution_dir: str,
+    target_name: str,
+    *,
+    benchmark_dir: str | None = None,
+    summary: Summary | None = None,
+    tlapm_output: str = "",
+    tlapm_passed: bool = False,
+    solution_file: str | None = None,
+    tlapm_fallback: bool = False,
+    compute_summary: bool = False,
+    fallback_timeout: float = 600,
+) -> CheckContext:
     """Parse the solution + baseline + agent-created modules and assemble a context.
 
     ``benchmark_dir`` is the canonical ``benchmark/<level>/<module>/`` directory
@@ -122,14 +127,14 @@ def build_context(solution_dir: str, target_name: str, *,
     sany_ok = solution is not None
 
     base_path = os.path.join(solution_dir, "benchmark.tla")
-    baseline = (try_dump_normalized(base_path, dep_dirs=dep_dirs)
-                if os.path.exists(base_path) else None)
+    baseline = try_dump_normalized(base_path, dep_dirs=dep_dirs) if os.path.exists(base_path) else None
 
     def _read(p):
         try:
             return open(p, encoding="utf-8", errors="ignore").read()
         except OSError:
             return ""
+
     solution_source = _read(sol_path)
     baseline_source = _read(base_path) if os.path.exists(base_path) else ""
 
@@ -153,6 +158,13 @@ def build_context(solution_dir: str, target_name: str, *,
             summaries["__baseline__"] = _safe_summary(base_path, solution_dir, fallback_timeout)
         for name, path in prov.agent_created.items():
             summaries[name] = _safe_summary(path, solution_dir, fallback_timeout)
+
+    # When SANY parsed the solution, the structural rules don't need tlapm, but
+    # the incomplete_proof rule still does (it reads tlapm's --summary to see a
+    # bare QED buried inside a structured proof). Compute it on demand unless the
+    # caller already supplied a parsed summary.
+    if sany_ok and compute_summary and summary is None:
+        summary = _safe_summary(sol_path, solution_dir, fallback_timeout)
 
     return CheckContext(
         target_name=target_name,

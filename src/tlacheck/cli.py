@@ -21,17 +21,14 @@ import sys
 
 from .context import build_context
 from .engine import run_rules
-from .rules import incomplete_proof
 from .issue import Severity
 
 
-def audit_one(solution_dir: str, target: str, benchmark_dir: str | None,
-              with_summary: bool = False) -> list:
-    ctx = build_context(solution_dir, target, benchmark_dir=benchmark_dir)
-    issues = run_rules(ctx)
-    if with_summary and ctx.summary is not None:
-        issues.extend(incomplete_proof.check(ctx))
-    return issues
+def audit_one(solution_dir: str, target: str, benchmark_dir: str | None, with_summary: bool = False) -> list:
+    # incomplete_proof is wired into the engine rule sets; it only fires when a
+    # tlapm --summary is available, so request one when --summary was passed.
+    ctx = build_context(solution_dir, target, benchmark_dir=benchmark_dir, compute_summary=with_summary)
+    return run_rules(ctx)
 
 
 def _infer(bdir: str, benchmark_root: str | None):
@@ -53,10 +50,10 @@ def main(argv=None):
     ap.add_argument("--target", help="benchmark module name (else inferred)")
     ap.add_argument("--benchmark-dir", help="canonical benchmark/<level>/<module>/ dir")
     ap.add_argument("--scan", help="recursively audit all benchmark dirs under this path")
-    ap.add_argument("--benchmark-root", default="benchmark",
-                    help="root of canonical benchmarks (for --scan provenance)")
-    ap.add_argument("--summary", action="store_true",
-                    help="also run tlapm --summary for incomplete-proof detection")
+    ap.add_argument(
+        "--benchmark-root", default="benchmark", help="root of canonical benchmarks (for --scan provenance)"
+    )
+    ap.add_argument("--summary", action="store_true", help="also run tlapm --summary for incomplete-proof detection")
     args = ap.parse_args(argv)
 
     targets = []

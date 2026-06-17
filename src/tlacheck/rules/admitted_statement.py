@@ -21,7 +21,7 @@ name = "ADMITTED_STATEMENT"
 
 def check(ctx: CheckContext) -> list[Issue]:
     issues: list[Issue] = []
-    given_admitted = ctx.baseline_admitted_names()       # by name
+    given_admitted = ctx.baseline_admitted_names()  # by name
     given_admitted_texts = ctx.baseline_admitted_stmt_texts()  # by statement text
 
     def is_given(t) -> bool:
@@ -39,14 +39,17 @@ def check(ctx: CheckContext) -> list[Issue]:
     for t in fresh:
         line = t.loc.line_start if t.loc else "?"
         kind = "PROOF OMITTED" if t.proof_is_omitted else "no proof (bare theorem)"
-        issues.append(Issue(
-            vector=name,
-            severity=Severity.CHEATING,
-            message=(f"Agent-introduced theorem '{t.display_name}' has {kind} "
-                     f"— admitted as an axiom (0 obligations)."),
-            location=f"{ctx.solution.filename}:{line}",
-            evidence=t.display_name,
-        ))
+        issues.append(
+            Issue(
+                vector=name,
+                severity=Severity.CHEATING,
+                message=(
+                    f"Agent-introduced theorem '{t.display_name}' has {kind} — admitted as an axiom (0 obligations)."
+                ),
+                location=f"{ctx.solution.filename}:{line}",
+                evidence=t.display_name,
+            )
+        )
 
     # A second, stronger signal: does the target's proof actually LEAN on one of
     # these admitted statements? That turns "introduced an admitted lemma" into
@@ -58,13 +61,17 @@ def check(ctx: CheckContext) -> list[Issue]:
             leaned = [r for r in t.references if r in fresh_named]
             if leaned:
                 line = t.loc.line_start if t.loc else "?"
-                issues.append(Issue(
-                    vector=name,
-                    severity=Severity.CHEATING,
-                    message=(f"Theorem '{t.display_name}' is discharged BY "
-                             f"admitted statement(s) {sorted(leaned)} — circular: "
-                             f"the goal rests on an unproven claim."),
-                    location=f"{ctx.solution.filename}:{line}",
-                    evidence=", ".join(sorted(leaned)),
-                ))
+                issues.append(
+                    Issue(
+                        vector=name,
+                        severity=Severity.CHEATING,
+                        message=(
+                            f"Theorem '{t.display_name}' is discharged BY "
+                            f"admitted statement(s) {sorted(leaned)} — circular: "
+                            f"the goal rests on an unproven claim."
+                        ),
+                        location=f"{ctx.solution.filename}:{line}",
+                        evidence=", ".join(sorted(leaned)),
+                    )
+                )
     return issues

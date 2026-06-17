@@ -166,9 +166,13 @@ python3 src/evaluator/runner.py --level level2 --jobs 40 --timeout 7200
 # Claude Code backend on L1 (override the default model if you like)
 python3 src/evaluator/runner.py --backend claude_code --jobs 40
 python3 src/evaluator/runner.py --backend claude_code --model claude-sonnet-4-6 --jobs 40
+
+# GitHub Copilot CLI backend on L1 (override the default model if you like)
+python3 src/evaluator/runner.py --backend copilot --jobs 40
+python3 src/evaluator/runner.py --backend copilot --model gpt-5.5 --jobs 40
 ```
 
-Requires: tlapm 1.6 pre-release at `~/.tlapm/` (or `/tmp/tlapm/` as a host-only fallback the runner will copy on first use) and the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex) for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for `--backend claude_code`.
+Requires: tlapm 1.6 pre-release at `~/.tlapm/` (or `/tmp/tlapm/` as a host-only fallback the runner will copy on first use) and the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex) for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for `--backend claude_code`, [GitHub Copilot CLI](https://github.com/github/copilot-cli) for `--backend copilot`.
 
 ### Usage monitoring & quota gate (Claude Max)
 
@@ -206,6 +210,7 @@ cd docker && bash build.sh
 # Set the API key(s) your chosen backend needs:
 #   OPENAI_API_KEY (or AZURE_OPENAI_API_KEY + AZURE_OPENAI_HOST) for codex
 #   ANTHROPIC_API_KEY                                            for claude_code
+#   COPILOT_GITHUB_TOKEN (or GH_TOKEN / GITHUB_TOKEN)            for copilot
 docker-compose run bench python3 /scripts/runner.py --jobs 40                       # L1 + codex
 docker-compose run bench python3 /scripts/runner.py --backend claude_code --level level2 --jobs 40
 ```

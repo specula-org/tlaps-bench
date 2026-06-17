@@ -29,15 +29,19 @@ def check(ctx: CheckContext) -> list[Issue]:
         if not (os.path.exists(sol_f) and os.path.exists(can_f)):
             continue
         try:
-            a = open(sol_f, encoding="utf-8", errors="ignore").read()
-            b = open(can_f, encoding="utf-8", errors="ignore").read()
+            with open(sol_f, encoding="utf-8", errors="ignore") as _sf:
+                a = _sf.read()
+            with open(can_f, encoding="utf-8", errors="ignore") as _cf:
+                b = _cf.read()
         except OSError:
             continue
         if a != b:
-            issues.append(Issue(
-                vector=name,
-                severity=Severity.CHEATING,
-                message=f"Given dependency '{mod}.tla' was modified — not allowed.",
-                location=f"{mod}.tla",
-            ))
+            issues.append(
+                Issue(
+                    vector=name,
+                    severity=Severity.CHEATING,
+                    message=f"Given dependency '{mod}.tla' was modified — not allowed.",
+                    location=f"{mod}.tla",
+                )
+            )
     return issues

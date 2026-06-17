@@ -19,7 +19,6 @@ Key signals the checker relies on:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -30,23 +29,25 @@ class Loc:
     column_end: int
 
     @classmethod
-    def parse(cls, d: Optional[dict]) -> Optional["Loc"]:
+    def parse(cls, d: dict | None) -> Loc | None:
         if not d:
             return None
         return cls(
-            d.get("line_start", 0), d.get("column_start", 0),
-            d.get("line_end", 0), d.get("column_end", 0),
+            d.get("line_start", 0),
+            d.get("column_start", 0),
+            d.get("line_end", 0),
+            d.get("column_end", 0),
         )
 
 
 @dataclass
 class Theorem:
-    name: Optional[str]            # None for unnamed THEOREM ... (e.g. the target)
-    loc: Optional[Loc]
-    statement_loc: Optional[Loc]
-    proof_loc: Optional[Loc]       # None => no proof clause at all (bare theorem)
-    proof_is_omitted: bool         # True => PROOF OMITTED
-    references: list[str]          # theorem/lemma names cited by BY/USE/DEFS
+    name: str | None  # None for unnamed THEOREM ... (e.g. the target)
+    loc: Loc | None
+    statement_loc: Loc | None
+    proof_loc: Loc | None  # None => no proof clause at all (bare theorem)
+    proof_is_omitted: bool  # True => PROOF OMITTED
+    references: list[str]  # theorem/lemma names cited by BY/USE/DEFS
     statement_references: list[str]
     shape: dict
     raw: dict = field(default_factory=dict, repr=False)
@@ -68,7 +69,7 @@ class Theorem:
         return f"<unnamed L{line}>"
 
     @classmethod
-    def parse(cls, d: dict) -> "Theorem":
+    def parse(cls, d: dict) -> Theorem:
         return cls(
             name=d.get("name"),
             loc=Loc.parse(d.get("loc")),
@@ -84,13 +85,13 @@ class Theorem:
 
 @dataclass
 class Assumption:
-    name: Optional[str]
-    is_axiom: bool                 # True => AXIOM, False => ASSUME/ASSUMPTION
-    loc: Optional[Loc]
+    name: str | None
+    is_axiom: bool  # True => AXIOM, False => ASSUME/ASSUMPTION
+    loc: Loc | None
     references: list[str]
 
     @classmethod
-    def parse(cls, d: dict) -> "Assumption":
+    def parse(cls, d: dict) -> Assumption:
         return cls(
             name=d.get("name"),
             is_axiom=bool(d.get("is_axiom", False)),
@@ -101,13 +102,13 @@ class Assumption:
 
 @dataclass
 class Instance:
-    name: Optional[str]            # e.g. "C" in `C == INSTANCE Consensus`
-    module: Optional[str]          # the instantiated module name
-    loc: Optional[Loc]
+    name: str | None  # e.g. "C" in `C == INSTANCE Consensus`
+    module: str | None  # the instantiated module name
+    loc: Loc | None
     references: list[str]
 
     @classmethod
-    def parse(cls, d: dict) -> "Instance":
+    def parse(cls, d: dict) -> Instance:
         return cls(
             name=d.get("name"),
             module=d.get("module"),
@@ -119,13 +120,13 @@ class Instance:
 @dataclass
 class Operator:
     name: str
-    loc: Optional[Loc]
+    loc: Loc | None
     is_spec_formula: bool
-    body_kind: Optional[str]
+    body_kind: str | None
     references: list[str]
 
     @classmethod
-    def parse(cls, d: dict) -> "Operator":
+    def parse(cls, d: dict) -> Operator:
         return cls(
             name=d.get("name"),
             loc=Loc.parse(d.get("loc")),
@@ -138,19 +139,20 @@ class Operator:
 @dataclass
 class Symbol:
     """A CONSTANT or VARIABLE declaration."""
+
     name: str
-    loc: Optional[Loc]
+    loc: Loc | None
 
     @classmethod
-    def parse(cls, d: dict) -> "Symbol":
+    def parse(cls, d: dict) -> Symbol:
         return cls(name=d.get("name"), loc=Loc.parse(d.get("loc")))
 
 
 @dataclass
 class Module:
     name: str
-    source_file: Optional[str]
-    filename: Optional[str]
+    source_file: str | None
+    filename: str | None
     line_start: int
     line_end: int
     extends: list[str]
@@ -164,7 +166,7 @@ class Module:
     raw: dict = field(default_factory=dict, repr=False)
 
     @classmethod
-    def parse(cls, d: dict) -> "Module":
+    def parse(cls, d: dict) -> Module:
         return cls(
             name=d.get("module"),
             source_file=d.get("source_file"),

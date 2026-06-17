@@ -12,6 +12,7 @@ PPid-chain descendants *before* killing and SIGKILL each one, leaves-first.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -54,25 +55,23 @@ def run_killgroup(cmd: list[str], timeout: float, cwd: str) -> tuple[str, str, i
     ``subprocess.TimeoutExpired`` after cleanup.
     """
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        cwd=cwd, start_new_session=True,
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        start_new_session=True,
     )
     try:
         out, err = proc.communicate(timeout=timeout)
         return out, err, proc.returncode
     except subprocess.TimeoutExpired:
         escapees = _descendant_pids(proc.pid)
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
         for pid in escapees:
-            try:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        try:
+        with contextlib.suppress(Exception):
             proc.communicate(timeout=10)
-        except Exception:
-            pass
         raise

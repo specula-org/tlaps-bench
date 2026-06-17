@@ -20,32 +20,57 @@ from dataclasses import dataclass, field
 
 # Standard library / prover modules — never agent-created, never scanned.
 STDLIB = {
-    "Integers", "Naturals", "Reals", "Sequences", "FiniteSets", "Bags",
-    "TLC", "TLAPS", "RealTime", "Folds", "Functions", "Json",
-    "FiniteSetTheorems", "FunctionTheorems", "SequenceTheorems",
-    "NaturalsInduction", "WellFoundedInduction", "BagsTheorems",
+    "Integers",
+    "Naturals",
+    "Reals",
+    "Sequences",
+    "FiniteSets",
+    "Bags",
+    "TLC",
+    "TLAPS",
+    "RealTime",
+    "Folds",
+    "Functions",
+    "Json",
+    "FiniteSetTheorems",
+    "FunctionTheorems",
+    "SequenceTheorems",
+    "NaturalsInduction",
+    "WellFoundedInduction",
+    "BagsTheorems",
     "CommunityModules",
     # Vendored CommunityModules (lib/community/) the tlaplus/Examples imports
     # EXTEND by individual module name. Kept in sync with COMMUNITY_MODULES in
     # src/dataset/level1/generate.py.
-    "SequencesExt", "SequencesExtTheorems", "FiniteSetsExt", "FunctionsExt",
-    "BagsExt", "Relation", "Graphs", "GraphsExt", "Combinatorics",
-    "DyadicRationals", "Bitwise", "Statistics", "VectorClocks", "IOUtils",
-    "CSV", "SVG", "TLCExt", "Randomization",
+    "SequencesExt",
+    "SequencesExtTheorems",
+    "FiniteSetsExt",
+    "FunctionsExt",
+    "BagsExt",
+    "Relation",
+    "Graphs",
+    "GraphsExt",
+    "Combinatorics",
+    "DyadicRationals",
+    "Bitwise",
+    "Statistics",
+    "VectorClocks",
+    "IOUtils",
+    "CSV",
+    "SVG",
+    "TLCExt",
+    "Randomization",
 }
 
 
 def _module_names(tla_dir: str) -> set[str]:
-    return {
-        os.path.splitext(os.path.basename(f))[0]
-        for f in glob.glob(os.path.join(tla_dir, "*.tla"))
-    }
+    return {os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(tla_dir, "*.tla"))}
 
 
 @dataclass
 class Provenance:
-    target: str                       # the benchmark module name (e.g. "VoteProof_Liveness")
-    given: set[str] = field(default_factory=set)        # module names provided by the benchmark
+    target: str  # the benchmark module name (e.g. "VoteProof_Liveness")
+    given: set[str] = field(default_factory=set)  # module names provided by the benchmark
     agent_created: dict[str, str] = field(default_factory=dict)  # name -> .tla path
 
     def is_given(self, module_name: str) -> bool:
@@ -55,8 +80,7 @@ class Provenance:
         return module_name in self.agent_created
 
 
-def classify(solution_dir: str, target_name: str,
-             benchmark_dir: str | None = None) -> Provenance:
+def classify(solution_dir: str, target_name: str, benchmark_dir: str | None = None) -> Provenance:
     """Classify the .tla files in ``solution_dir`` as given vs agent-created.
 
     Args:

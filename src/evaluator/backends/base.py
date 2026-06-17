@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
 
 
 class AgentBackend(ABC):
@@ -22,10 +21,10 @@ class AgentBackend(ABC):
         """
 
     @abstractmethod
-    def parse_output(self, jsonl_path: str) -> Tuple[str, int, int]:
+    def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         """Parse the backend's stdout dump into (transcript, input_tokens, output_tokens)."""
 
-    def check_auth(self) -> Optional[str]:
+    def check_auth(self) -> str | None:
         """Verify the agent CLI can authenticate.
 
         Returns None if auth looks OK, or a human-readable error string that

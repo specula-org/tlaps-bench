@@ -11,5 +11,4 @@ from ..issue import Issue
 class Rule(Protocol):
     name: str
 
-    def check(self, ctx: CheckContext) -> list[Issue]:
-        ...
+    def check(self, ctx: CheckContext) -> list[Issue]: ...

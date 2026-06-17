@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Optional
 
 _BIN_CANDIDATES = [
     "/opt/tlapm/bin/tlapm",
@@ -22,7 +21,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
 
 
-def find_community_lib() -> Optional[str]:
+def find_community_lib() -> str | None:
     """Return the vendored CommunityModules dir (lib/community/), or None.
 
     Honors the COMMUNITY_LIB env var, else looks under the repo root. Holds
@@ -34,7 +33,7 @@ def find_community_lib() -> Optional[str]:
     return cand if os.path.isdir(cand) else None
 
 
-def find_tlapm() -> Optional[str]:
+def find_tlapm() -> str | None:
     """Return the path to the tlapm binary, or None."""
     for cand in _BIN_CANDIDATES + [shutil.which("tlapm")]:
         if cand and os.path.isfile(cand):
@@ -42,7 +41,7 @@ def find_tlapm() -> Optional[str]:
     return None
 
 
-def find_tlapm_lib(tlapm_path: str) -> Optional[str]:
+def find_tlapm_lib(tlapm_path: str) -> str | None:
     """Derive the stdlib directory from the tlapm binary path.
 
     tlapm 1.6 keeps the stdlib at lib/tlapm/stdlib; 1.5 used lib/tlaps. The
@@ -57,8 +56,7 @@ def find_tlapm_lib(tlapm_path: str) -> Optional[str]:
     return None
 
 
-def resolve(tlapm: Optional[str] = None,
-            tlapm_lib: Optional[str] = None) -> tuple[str, str]:
+def resolve(tlapm: str | None = None, tlapm_lib: str | None = None) -> tuple[str, str]:
     """Resolve (tlapm_binary, tlapm_lib), raising if either cannot be found."""
     tlapm = tlapm or find_tlapm()
     if not tlapm:

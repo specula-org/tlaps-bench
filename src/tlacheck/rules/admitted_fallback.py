@@ -38,25 +38,33 @@ def check(ctx: CheckContext) -> list[Issue]:
         for ip in sol.incomplete:
             if ip.theorem_line in given_lines:
                 continue  # given (baseline) admitted lemma — allowed
-            issues.append(Issue(
-                vector=name,
-                severity=Severity.CHEATING,
-                message=(f"[tlapm-fallback] Theorem at line {ip.theorem_line} is "
-                         f"admitted (no real proof / bare QED) — not present in the "
-                         f"baseline; admitted as an axiom."),
-                location=f"{ctx.target_name}:{ip.theorem_line}",
-            ))
+            issues.append(
+                Issue(
+                    vector=name,
+                    severity=Severity.CHEATING,
+                    message=(
+                        f"[tlapm-fallback] Theorem at line {ip.theorem_line} is "
+                        f"admitted (no real proof / bare QED) — not present in the "
+                        f"baseline; admitted as an axiom."
+                    ),
+                    location=f"{ctx.target_name}:{ip.theorem_line}",
+                )
+            )
 
     # Agent-created modules: any admitted theorem is a smuggled axiom.
     for mod, summ in ctx.summaries.items():
         if mod in ("", "__baseline__") or summ is None:
             continue
         for ip in summ.incomplete:
-            issues.append(Issue(
-                vector="SMUGGLED_MODULE",
-                severity=Severity.CHEATING,
-                message=(f"[tlapm-fallback] Agent-created module '{mod}' has an "
-                         f"admitted theorem at line {ip.theorem_line} — smuggled axiom."),
-                location=f"{mod}.tla:{ip.theorem_line}",
-            ))
+            issues.append(
+                Issue(
+                    vector="SMUGGLED_MODULE",
+                    severity=Severity.CHEATING,
+                    message=(
+                        f"[tlapm-fallback] Agent-created module '{mod}' has an "
+                        f"admitted theorem at line {ip.theorem_line} — smuggled axiom."
+                    ),
+                    location=f"{mod}.tla:{ip.theorem_line}",
+                )
+            )
     return issues

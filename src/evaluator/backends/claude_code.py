@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Optional, Tuple
 
 from .base import AgentBackend
-
 
 DEFAULT_MODEL = "claude-opus-4-7"
 
@@ -16,7 +14,7 @@ DEFAULT_MODEL = "claude-opus-4-7"
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
@@ -33,13 +31,16 @@ class ClaudeCodeBackend(AgentBackend):
             "--print",
             "--dangerously-skip-permissions",
             "--no-session-persistence",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
             "--verbose",
-            "--effort", "max",
-            "--model", self.model,
+            "--effort",
+            "max",
+            "--model",
+            self.model,
         ]
 
-    def check_auth(self) -> Optional[str]:
+    def check_auth(self) -> str | None:
         # Fast path: env var present.
         if os.environ.get("ANTHROPIC_API_KEY"):
             return None
@@ -49,9 +50,10 @@ class ClaudeCodeBackend(AgentBackend):
         # checks can't see.
         try:
             r = subprocess.run(
-                ["claude", "--print", "--no-session-persistence",
-                 "--output-format", "text", "ok"],
-                capture_output=True, text=True, timeout=30,
+                ["claude", "--print", "--no-session-persistence", "--output-format", "text", "ok"],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if r.returncode == 0:
                 return None
@@ -69,7 +71,7 @@ class ClaudeCodeBackend(AgentBackend):
     def firewall_hosts(self) -> list[str]:
         return ["api.anthropic.com"]
 
-    def parse_output(self, jsonl_path: str) -> Tuple[str, int, int]:
+    def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []
         in_tok = 0
         out_tok = 0
@@ -77,7 +79,7 @@ class ClaudeCodeBackend(AgentBackend):
         final_out = None
 
         try:
-            with open(jsonl_path, "r") as f:
+            with open(jsonl_path) as f:
                 for raw in f:
                     raw = raw.strip()
                     if not raw:
@@ -132,15 +134,12 @@ class ClaudeCodeBackend(AgentBackend):
                                     result_content = block.get("content", "")
                                     if isinstance(result_content, list):
                                         result_content = "\n".join(
-                                            c.get("text", "") if isinstance(c, dict) else str(c)
-                                            for c in result_content
+                                            c.get("text", "") if isinstance(c, dict) else str(c) for c in result_content
                                         )
                                     result_content = str(result_content)
                                     if len(result_content) > 3000:
                                         result_content = (
-                                            result_content[:1500]
-                                            + "\n... (truncated) ...\n"
-                                            + result_content[-1500:]
+                                            result_content[:1500] + "\n... (truncated) ...\n" + result_content[-1500:]
                                         )
                                     lines.append(f"[TOOL_RESULT] {result_content.rstrip()}")
                                     lines.append("")

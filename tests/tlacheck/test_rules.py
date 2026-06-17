@@ -9,11 +9,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from tlacore.sany.dump import dump
-from tlacore.provenance import Provenance
 from tlacheck.context import CheckContext
-from tlacheck.rules import admitted_statement, smuggled_module, extra_axiom
 from tlacheck.issue import Severity
+from tlacheck.rules import admitted_statement, extra_axiom, smuggled_module
+from tlacore.provenance import Provenance
+from tlacore.sany.dump import dump
 
 
 def _read(p):
@@ -25,8 +25,9 @@ FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 
 def _ctx(name, baseline=None):
     m = dump(os.path.join(FIX, name + ".tla"))
-    return CheckContext(target_name=name, solution_dir=FIX, solution=m,
-                        baseline=baseline, provenance=Provenance(target=name))
+    return CheckContext(
+        target_name=name, solution_dir=FIX, solution=m, baseline=baseline, provenance=Provenance(target=name)
+    )
 
 
 def _agent_ctx(agent_name, solution_name=None):
@@ -40,9 +41,14 @@ def _agent_ctx(agent_name, solution_name=None):
     prov = Provenance(target=solution_name or "Target")
     prov.agent_created[agent_name] = path
     solution = dump(os.path.join(FIX, solution_name + ".tla")) if solution_name else None
-    return CheckContext(target_name=solution_name or "Target", solution_dir=FIX,
-                        solution=solution, baseline=None, provenance=prov,
-                        agent_modules={agent_name: dump(path)})
+    return CheckContext(
+        target_name=solution_name or "Target",
+        solution_dir=FIX,
+        solution=solution,
+        baseline=None,
+        provenance=prov,
+        agent_modules={agent_name: dump(path)},
+    )
 
 
 def _axiom_ctx(solution_name, baseline_name):
@@ -50,10 +56,14 @@ def _axiom_ctx(solution_name, baseline_name):
     sol_p = os.path.join(FIX, solution_name + ".tla")
     base_p = os.path.join(FIX, baseline_name + ".tla")
     return CheckContext(
-        target_name=solution_name, solution_dir=FIX,
-        solution=dump(sol_p), baseline=dump(base_p),
+        target_name=solution_name,
+        solution_dir=FIX,
+        solution=dump(sol_p),
+        baseline=dump(base_p),
         provenance=Provenance(target=solution_name),
-        solution_source=_read(sol_p), baseline_source=_read(base_p))
+        solution_source=_read(sol_p),
+        baseline_source=_read(base_p),
+    )
 
 
 def test_clean_proof_not_flagged():
@@ -91,16 +101,14 @@ def test_unreferenced_scratch_module_not_flagged():
     # Regression: agents leave scratch modules (test2.tla) in the workspace that
     # the real solution never EXTENDS. tlapm never loads them, so a smuggled
     # axiom there is inert — must NOT be flagged.
-    issues = smuggled_module.check(
-        _agent_ctx("SmuggledObvious", solution_name="ScratchSolution"))
+    issues = smuggled_module.check(_agent_ctx("SmuggledObvious", solution_name="ScratchSolution"))
     assert issues == [], f"unreferenced scratch module wrongly flagged: {issues}"
 
 
 def test_referenced_smuggled_module_flagged():
     # ...but when the solution DOES EXTEND the smuggled module, it is reachable
     # and the axiom is live — still caught.
-    issues = smuggled_module.check(
-        _agent_ctx("SmuggledObvious", solution_name="ImporterSolution"))
+    issues = smuggled_module.check(_agent_ctx("SmuggledObvious", solution_name="ImporterSolution"))
     assert any(i.vector == "SMUGGLED_MODULE" for i in issues), issues
 
 

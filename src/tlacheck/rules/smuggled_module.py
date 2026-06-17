@@ -92,7 +92,8 @@ def check(ctx: CheckContext) -> list[Issue]:
         source = ""
         if src_path:
             try:
-                source = open(src_path, encoding="utf-8", errors="ignore").read()
+                with open(src_path, encoding="utf-8", errors="ignore") as _sf:
+                    source = _sf.read()
             except OSError:
                 source = ""
         for t in module.theorems:
@@ -107,12 +108,16 @@ def check(ctx: CheckContext) -> list[Issue]:
                 # modularization (and would carry its own obligations).
                 continue
             line = t.loc.line_start if t.loc else "?"
-            issues.append(Issue(
-                vector=name,
-                severity=Severity.CHEATING,
-                message=(f"Agent-created module '{mod_name}' contains admitted "
-                         f"theorem '{t.display_name}' ({kind}) — smuggled axiom."),
-                location=f"{mod_name}.tla:{line}",
-                evidence=f"{mod_name}!{t.display_name}",
-            ))
+            issues.append(
+                Issue(
+                    vector=name,
+                    severity=Severity.CHEATING,
+                    message=(
+                        f"Agent-created module '{mod_name}' contains admitted "
+                        f"theorem '{t.display_name}' ({kind}) — smuggled axiom."
+                    ),
+                    location=f"{mod_name}.tla:{line}",
+                    evidence=f"{mod_name}!{t.display_name}",
+                )
+            )
     return issues

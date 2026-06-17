@@ -1,24 +1,15 @@
 ------------------------- MODULE FastLeaderElection -------------------------
-\* This is the formal specification for Fast Leader Election in Zab protocol.
-(* Reference:
-   FastLeaderElection.java, Vote.java, QuorumPeer.java in https://github.com/apache/zookeeper.
-   Medeiros A. ZooKeeper's atomic broadcast protocol: Theory and practice[J]. Aalto University School of Science, 2012.
-*)
+
 EXTENDS Integers, FiniteSets, Sequences, Naturals, TLAPS
 
 -----------------------------------------------------------------------------
-\* The set of server identifiers
+
 CONSTANT Server
 
-\* Server states
 CONSTANTS LOOKING, FOLLOWING, LEADING
-(* NOTE: In spec, we do not discuss servers whose ServerState is OBSERVING.
-*)
 
-\* Message types
 CONSTANTS NOTIFICATION
 
-\* Timeout signal
 CONSTANT NONE
 -----------------------------------------------------------------------------
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
@@ -26,46 +17,30 @@ Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
 NullPoint == CHOOSE p: p \notin Server
 
 -----------------------------------------------------------------------------
-\* Server's state(LOOKING, FOLLOWING, LEADING).
+
 VARIABLE state
 
 VARIABLE history
 
-\* The epoch number of the last NEWLEADER packet accepted, used for comparing.
 VARIABLE currentEpoch
 
-\* The index and zxid of the last processed transaction in history.
 VARIABLE lastProcessed
 
-\* currentVote[i]: The server who i thinks is the current leader(id,zxid,peerEpoch,...).
 VARIABLE currentVote
 
-\* Election instance.(logicalClock in code)
 VARIABLE logicalClock
 
-\* The votes from the current leader election are stored in ReceiveVotes.
 VARIABLE receiveVotes
 
-(* The votes from previous leader elections, as well as the votes from the current leader election are
-   stored in outofelection. Note that notifications in a LOOKING state are not stored in outofelection.
-   Only FOLLOWING or LEADING notifications are stored in outofelection.  *)
 VARIABLE outOfElection
 
-\* recvQueue[i]: The queue of received notifications or timeout signals in server i.
 VARIABLE recvQueue
 
-\* A veriable to wait for new notifications, corresponding to line 1050 in FastLeaderElection.java.
 VARIABLE waitNotmsg
 
-\* leadingVoteSet[i]: The set of voters that follow i.
 VARIABLE leadingVoteSet
 
-(* The messages about election sent from one server to another.
-   electionMsgs[i][j] means the input buffer of server j from server i. *)
 VARIABLE electionMsgs
-
-\* Set used for mapping Server to Integers, to compare ids from different servers.
-\* VARIABLE idTable
 
 serverVarsL == <<state, currentEpoch, lastProcessed, history>>
 
@@ -75,7 +50,7 @@ leaderVarsL == <<leadingVoteSet>>
 
 varsL == <<serverVarsL, electionVarsL, leaderVarsL, electionMsgs>>
 -----------------------------------------------------------------------------
-\* Processing of electionMsgs
+
 BroadcastNotmsg(i, m) == electionMsgs' = [electionMsgs EXCEPT ![i] = [v \in Server |-> IF v /= i
                                                                                        THEN Append(electionMsgs[i][v], m)
                                                                                        ELSE electionMsgs[i][v]]]
@@ -88,10 +63,9 @@ ReplyNotmsg(i, j, m) == electionMsgs' = [electionMsgs EXCEPT ![i][j] = Append(el
                                                              ![j][i] = Tail(electionMsgs[j][i])]
                                                
 -----------------------------------------------------------------------------
-\* Processing of recvQueue
+
 RemoveNone(seq) == SelectSeq(seq, LAMBDA m: m.mtype /= NONE) 
 
-\* Processing of idTable and order comparing
 InitializeIdTable(Remaining) == 
   LET IIT[R \in SUBSET Server] == 
         IF R = {} THEN {}
@@ -102,19 +76,16 @@ InitializeIdTable(Remaining) ==
 
 IdTable == InitializeIdTable(Server) 
 
-\* FALSE: id1 < id2; TRUE: id1 > id2
 IdCompare(id1,id2) == LET item1 == CHOOSE item \in IdTable: item[1] = id1
                           item2 == CHOOSE item \in IdTable: item[1] = id2
                       IN item1[2] > item2[2]
 
-\* FALSE: zxid1 <= zxid2; TRUE: zxid1 > zxid2
 ZxidCompare(zxid1, zxid2) == \/ zxid1[1] > zxid2[1]
                              \/ /\ zxid1[1] = zxid2[1]
                                 /\ zxid1[2] > zxid2[2]
 
 ZxidEqual(zxid1, zxid2) == zxid1[1] = zxid2[1] /\ zxid1[2] = zxid2[2]
 
-\* FALSE: vote1 <= vote2; TRUE: vote1 > vote2
 TotalOrderPredicate(vote1, vote2) == \/ vote1.proposedEpoch > vote2.proposedEpoch
                                      \/ /\ vote1.proposedEpoch = vote2.proposedEpoch
                                         /\ \/ ZxidCompare(vote1.proposedZxid, vote2.proposedZxid)
@@ -144,7 +115,7 @@ InitHistory(i) == LET newState == state'[i] IN
                     IF newState = LEADING THEN InitAcksidInTxns(history[i], i)
                     ELSE history[i]
 -----------------------------------------------------------------------------
-\* Processing of currentVote
+
 InitialVote == [proposedLeader |-> NullPoint,
                 proposedZxid   |-> <<0, 0>>,
                 proposedEpoch  |-> 0]
@@ -153,12 +124,12 @@ SelfVote(i) == [proposedLeader |-> i,
                 proposedZxid   |-> lastProcessed[i].zxid,
                 proposedEpoch  |-> currentEpoch[i]]
 
-UpdateProposal(i, nid, nzxid, nepoch) == currentVote' = [currentVote EXCEPT ![i].proposedLeader = nid, \* no need to record state in LOOKING
+UpdateProposal(i, nid, nzxid, nepoch) == currentVote' = [currentVote EXCEPT ![i].proposedLeader = nid, 
                                                                             ![i].proposedZxid   = nzxid,
                                                                             ![i].proposedEpoch  = nepoch]  
                                                                             
 -----------------------------------------------------------------------------
-\* Processing of receiveVotes and outOfElection
+
 RvClear(i) == receiveVotes'  = [receiveVotes  EXCEPT ![i] = [v \in Server |-> [vote    |-> InitialVote,
                                                                                round   |-> 0,
                                                                                state   |-> LOOKING,
@@ -245,10 +216,9 @@ InitL == /\ InitServerVarsL
         /\ InitElectionVarsL
         /\ InitLeaderVarsL
         /\ electionMsgs = [s \in Server |-> [v \in Server |-> << >>]]
-        \* /\ idTable = InitializeIdTable(Server)
-        
+
 -----------------------------------------------------------------------------
-(* The beginning part of FLE's main function lookForLeader() *)
+
 ZabTimeout(i) ==
         /\ state[i] \in {LEADING, FOLLOWING}
         /\ state'          = [state          EXCEPT ![i] = LOOKING]
@@ -274,8 +244,7 @@ ZabTimeout(i) ==
                                mround  |-> logicalClock'[i],
                                mvote   |-> currentVote'[i]])
         /\ UNCHANGED <<currentEpoch, history>>
-        
-(* Abstraction of WorkerReceiver.run() *)
+
 ReceiveNotmsg(i, j) ==
         /\ electionMsgs[j][i] /= << >>
         /\ LET notmsg == electionMsgs[j][i][1]
@@ -294,10 +263,10 @@ ReceiveNotmsg(i, j) ==
                     \/ /\ ~replyOk
                        /\ DiscardNotmsg(j, i)
               \/ /\ state[i] \in {LEADING, FOLLOWING}
-                 /\ \/ \* Only reply when sender's state is LOOKING
+                 /\ \/ 
                        /\ notmsg.mstate = LOOKING
                        /\ ReplyNotmsg(i, j, toSend)
-                    \/ \* sender's state and mine are both not LOOKING, just discard
+                    \/ 
                        /\ notmsg.mstate /= LOOKING
                        /\ DiscardNotmsg(j, i)
                  /\ UNCHANGED recvQueue
@@ -311,7 +280,7 @@ NotmsgTimeout(i) ==
         /\ UNCHANGED <<serverVarsL, currentVote, logicalClock, receiveVotes, outOfElection, waitNotmsg, leaderVarsL, electionMsgs>>
 
 -----------------------------------------------------------------------------
-\* Sub-action in HandleNotmsg
+
 ReceivedFollowingAndLeadingNotification(i, n) ==
         LET newVotes    == Put(i, n.msource, receiveVotes[i], n.mvote, n.mround, n.mstate)
             voteSet1    == VoteSet(i, n.msource, newVotes, n.mvote, n.mround)
@@ -319,7 +288,7 @@ ReceivedFollowingAndLeadingNotification(i, n) ==
             check1      == CheckLeader(i, newVotes, n.mvote.proposedLeader, n.mround)
             leaveOk1    == /\ n.mround = logicalClock[i]
                            /\ hasQuorums1
-                           /\ check1    \* state and leadingVoteSet cannot be changed twice in the first '/\' and second '/\'.
+                           /\ check1    
         IN
         /\ \/ /\ n.mround = logicalClock[i]
               /\ receiveVotes' = [receiveVotes EXCEPT ![i] = newVotes]
@@ -354,7 +323,6 @@ ReceivedFollowingAndLeadingNotification(i, n) ==
                           /\ UNCHANGED <<state, currentVote>>
                     /\ UNCHANGED <<logicalClock, leadingVoteSet>>
 
-(* Main part of lookForLeader() *)
 HandleNotmsg(i) ==
         /\ state[i] = LOOKING
         /\ \lnot waitNotmsg[i]
@@ -370,11 +338,11 @@ HandleNotmsg(i) ==
                  /\ UNCHANGED <<history, logicalClock, currentVote, receiveVotes, waitNotmsg, outOfElection, state, leadingVoteSet>>
               \/ /\ n.mtype = NOTIFICATION
                  /\ \/ /\ n.mstate = LOOKING
-                       /\ \/ \* n.round >= my round, then update data and receiveVotes.
+                       /\ \/ 
                              /\ n.mround >= logicalClock[i]
-                             /\ \/ \* n.round > my round, update round and decide new proposed leader.
+                             /\ \/ 
                                    /\ n.mround > logicalClock[i]
-                                   /\ logicalClock' = [logicalClock EXCEPT ![i] = n.mround] \* There should be RvClear, we will handle it in the following.
+                                   /\ logicalClock' = [logicalClock EXCEPT ![i] = n.mround] 
                                    /\ LET selfinfo == [proposedLeader |-> i,
                                                        proposedZxid   |-> lastProcessed[i].zxid,
                                                        proposedEpoch  |-> currentEpoch[i]]
@@ -388,7 +356,7 @@ HandleNotmsg(i) ==
                                                           mstate  |-> LOOKING,
                                                           mround  |-> n.mround,
                                                           mvote   |-> currentVote'[i]])
-                                \/ \* n.round = my round & n.vote > my vote
+                                \/ 
                                    /\ n.mround = logicalClock[i]
                                    /\ LET peerOk == TotalOrderPredicate(n.mvote, currentVote[i])
                                       IN \/ /\ peerOk
@@ -402,20 +370,20 @@ HandleNotmsg(i) ==
                                             /\ UNCHANGED <<currentVote, electionMsgs>>
                                    /\ UNCHANGED logicalClock
                              /\ LET rcvsetModifiedTwice == n.mround > logicalClock[i]
-                                IN \/ /\ rcvsetModifiedTwice   \* Since a variable cannot be changed more than once in one action, we handle receiveVotes here.
-                                      /\ RvClearAndPut(i, n.msource, n.mvote, n.mround)  \* clear + put
+                                IN \/ /\ rcvsetModifiedTwice   
+                                      /\ RvClearAndPut(i, n.msource, n.mvote, n.mround)  
                                    \/ /\ ~rcvsetModifiedTwice
-                                      /\ RvPut(i, n.msource, n.mvote, n.mround, n.mstate)          \* put
+                                      /\ RvPut(i, n.msource, n.mvote, n.mround, n.mstate)          
                              /\ LET hasQuorums == HasQuorums(i, i, receiveVotes'[i], currentVote'[i], n.mround)
-                                IN \/ /\ hasQuorums \* If hasQuorums, see action WaitNewNotmsg and WaitNewNotmsgEnd.
+                                IN \/ /\ hasQuorums 
                                       /\ waitNotmsg' = [waitNotmsg EXCEPT ![i] = TRUE] 
                                    \/ /\ ~hasQuorums                            
                                       /\ UNCHANGED waitNotmsg
-                          \/ \* n.round < my round, just discard it.
+                          \/ 
                              /\ n.mround < logicalClock[i]
                              /\ UNCHANGED <<logicalClock, currentVote, electionMsgs, receiveVotes, waitNotmsg>>
                        /\ UNCHANGED <<state, history, outOfElection, leadingVoteSet>>
-                    \/ \* mainly contains receivedFollowingNotification(line 1146), receivedLeadingNotification(line 1185).
+                    \/ 
                        /\ n.mstate \in {LEADING, FOLLOWING}
                        /\ ReceivedFollowingAndLeadingNotification(i, n)
                        /\ history' = [history EXCEPT ![i] = InitHistory(i) ]
@@ -423,7 +391,6 @@ HandleNotmsg(i) ==
         /\ recvQueue' = [recvQueue EXCEPT ![i] = Tail(recvQueue[i])]
         /\ UNCHANGED <<currentEpoch, lastProcessed>>
 
-\* On the premise that ReceiveVotes.HasQuorums = TRUE, corresponding to logic in LFE.java.
 WaitNewNotmsg(i) ==
         /\ state[i] = LOOKING
         /\ waitNotmsg[i] = TRUE
@@ -452,10 +419,6 @@ WaitNewNotmsg(i) ==
               /\ history' = [history EXCEPT ![i] = InitHistory(i)]
               /\ UNCHANGED <<currentEpoch, lastProcessed, electionVarsL, electionMsgs>>
 -----------------------------------------------------------------------------
-(*Test - simulate modifying currentEpoch and lastProcessed.
-  We want to reach violations to achieve some traces and see whether the whole state of system is advancing.
-  The actions below are completely not equal to implementation in real, 
-  just simulate a process of leader updates state and followers get it. *)
 
 LeaderAdvanceEpoch(i) ==
         /\ state[i] = LEADING
@@ -508,8 +471,6 @@ NextL ==
         \/ \E i, j \in Server:  FollowerUpdateZxid(i, j)
 
 SpecL == InitL /\ [][NextL]_varsL
-       
-\* These invariants should be violated after running for minutes.
 
 ShouldBeTriggered1 == ~\E Q \in Quorums: /\ \A i \in Q: /\ state[i] \in {FOLLOWING, LEADING}
                                                         /\ currentEpoch[i] > 3
@@ -517,9 +478,4 @@ ShouldBeTriggered1 == ~\E Q \in Quorums: /\ \A i \in Q: /\ state[i] \in {FOLLOWI
                                                         /\ currentVote[i].proposedLeader \in Q
                                          /\ \A i, j \in Q: currentVote[i].proposedLeader = currentVote[j].proposedLeader
 
-(*
-ShouldBeTriggered2 == ~\E Q \in Quorums: /\ \A i \in Q: /\ state[i] \in {FOLLOWING, LEADING}
-                                                        /\ currentEpoch[i] > 3
-                                                        /\ currentVote[i].proposedLeader \in Q
-                                         /\ \A i, j \in Q: currentVote[i].proposedLeader = currentVote[j].proposedLeader*)
 =============================================================================

@@ -37,9 +37,7 @@ from pathlib import Path
 # Single source of truth for module classification lives in the L1 generator.
 sys.path.insert(
     0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "src", "dataset", "level1"
-    ),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "dataset", "level1"),
 )
 from generate import RESOLVABLE_MODULES  # noqa: E402
 
@@ -118,9 +116,7 @@ def parse_instances(text: str):
 def classify(mod: str) -> str:
     if mod in RESOLVABLE_MODULES:
         return "resolvable"  # stdlib or vendored community — tlapm finds it, don't copy
-    return (
-        "local"  # assume local until proven otherwise (file presence checked by caller)
-    )
+    return "local"  # assume local until proven otherwise (file presence checked by caller)
 
 
 def proof_modules_from_manifest(spec_dir: Path):
@@ -274,9 +270,7 @@ def resolve_unit(unit_dir: Path, proof_basenames):
                 "missing": set(),
                 "ok": False,
             }
-            result["skipped_modules"][base] = (
-                f"module-name-mismatch: file {base} declares MODULE {nm}"
-            )
+            result["skipped_modules"][base] = f"module-name-mismatch: file {base} declares MODULE {nm}"
             continue
         to_copy, missing = _resolve_one(nm, local_by_name)
         ok = not missing
@@ -284,15 +278,11 @@ def resolve_unit(unit_dir: Path, proof_basenames):
         if ok:
             result["to_copy"] |= to_copy
         else:
-            result["skipped_modules"][base] = "missing-deps: " + ",".join(
-                sorted(missing)
-            )
+            result["skipped_modules"][base] = "missing-deps: " + ",".join(sorted(missing))
     return result
 
 
-def import_unit(
-    unit_name, unit_dir, proof_basenames, dry_run=False, include_unvalidatable=False
-):
+def import_unit(unit_name, unit_dir, proof_basenames, dry_run=False, include_unvalidatable=False):
     """Import one unit (a spec, or a subdir of a spec) into
     source/<unit_name>/. Returns a report dict."""
     res = resolve_unit(unit_dir, proof_basenames)
@@ -343,28 +333,15 @@ def import_spec(spec, examples_root, dry_run=False, include_unvalidatable=False)
     units, err = spec_units(spec, examples_root)
     if err:
         return [{"spec": spec, "error": err}]
-    return [
-        import_unit(name, d, bases, dry_run, include_unvalidatable)
-        for (name, d, bases) in units
-    ]
+    return [import_unit(name, d, bases, dry_run, include_unvalidatable) for (name, d, bases) in units]
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Import proven Examples specs into source/"
-    )
-    ap.add_argument(
-        "--examples", required=True, help="path to tlaplus/Examples checkout"
-    )
-    ap.add_argument(
-        "--spec", action="append", default=[], help="spec name (repeatable)"
-    )
-    ap.add_argument(
-        "--all", action="store_true", help="import every spec with a proof-keyed module"
-    )
-    ap.add_argument(
-        "--dry-run", action="store_true", help="resolve + report, do not copy"
-    )
+    ap = argparse.ArgumentParser(description="Import proven Examples specs into source/")
+    ap.add_argument("--examples", required=True, help="path to tlaplus/Examples checkout")
+    ap.add_argument("--spec", action="append", default=[], help="spec name (repeatable)")
+    ap.add_argument("--all", action="store_true", help="import every spec with a proof-keyed module")
+    ap.add_argument("--dry-run", action="store_true", help="resolve + report, do not copy")
     ap.add_argument(
         "--include-unvalidatable",
         action="store_true",
@@ -422,9 +399,7 @@ def main():
         n_ok += 1
         if nskipmod:
             partial.append(r)
-            print(
-                f"{r['spec']:<32} {nproof:<6} {len(r['copied']):<7} ok ({nskipmod} module(s) skipped)"
-            )
+            print(f"{r['spec']:<32} {nproof:<6} {len(r['copied']):<7} ok ({nskipmod} module(s) skipped)")
         else:
             print(f"{r['spec']:<32} {nproof:<6} {len(r['copied']):<7} ok")
     print()

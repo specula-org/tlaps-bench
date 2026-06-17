@@ -11,9 +11,9 @@ generate a standalone .tla file where:
 - Each benchmark file works standalone (with its dependency files)
 """
 
+import glob
 import os
 import re
-import glob
 
 # Modules that tlapm resolves via an -I path, so they should NOT be merged/copied
 # as local dependency modules. Two groups:
@@ -80,16 +80,16 @@ RESOLVABLE_MODULES = STDLIB_MODULES | COMMUNITY_MODULES
 
 # Directories to process (top-level module dirs).
 # File lives at <repo>/src/dataset/level1/generate.py; ascend three levels for the repo root.
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-SOURCE_ROOT = os.path.join(PROJECT_ROOT, 'source')
-BENCHMARK_DIR = os.path.join(PROJECT_ROOT, 'benchmark', 'level1')
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
+BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "level1")
 
 
 def find_source_dirs():
     """Find all top-level module directories under source/ containing .tla files."""
     dirs = set()
-    for f in glob.glob(os.path.join(SOURCE_ROOT, '**', '*.tla'), recursive=True):
-        if '.tlaps' in f:
+    for f in glob.glob(os.path.join(SOURCE_ROOT, "**", "*.tla"), recursive=True):
+        if ".tlaps" in f:
             continue
         rel = os.path.relpath(f, SOURCE_ROOT)
         parts = rel.split(os.sep)
@@ -101,8 +101,8 @@ def find_source_dirs():
 def find_tla_files(module_dir):
     """Find all .tla files in a module directory (excluding .tlaps subdirs)."""
     files = []
-    for f in glob.glob(os.path.join(module_dir, '**', '*.tla'), recursive=True):
-        if '.tlaps' in f:
+    for f in glob.glob(os.path.join(module_dir, "**", "*.tla"), recursive=True):
+        if ".tlaps" in f:
             continue
         files.append(f)
     return files
@@ -110,7 +110,7 @@ def find_tla_files(module_dir):
 
 def parse_module_name(content):
     """Extract the MODULE name from TLA+ content."""
-    m = re.search(r'-+\s*MODULE\s+(\w+)\s*-+', content)
+    m = re.search(r"-+\s*MODULE\s+(\w+)\s*-+", content)
     return m.group(1) if m else None
 
 
@@ -147,7 +147,7 @@ def parse_extends(content):
 def parse_instances(content):
     """Extract INSTANCE references (local module references, not stdlib)."""
     instances = []
-    for m in re.finditer(r'(?:(\w+)\s*==\s*)?INSTANCE\s+(\w+)', content):
+    for m in re.finditer(r"(?:(\w+)\s*==\s*)?INSTANCE\s+(\w+)", content):
         alias = m.group(1)
         mod = m.group(2)
         if mod not in RESOLVABLE_MODULES:
@@ -192,7 +192,7 @@ def get_all_instance_deps(mod, files_by_module, visited=None):
     filepath = files_by_module.get(mod)
     if not filepath:
         return visited
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         content = f.read()
     available = set(files_by_module.keys())
     # All dependencies of INSTANCE'd modules (both EXTENDS and INSTANCE) need to be copied
@@ -211,7 +211,7 @@ def get_all_file_deps(mod, files_by_module, visited=None):
     filepath = files_by_module.get(mod)
     if not filepath:
         return visited
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         content = f.read()
     available = set(files_by_module.keys())
     for dep in get_local_dependencies(content, available):
@@ -226,7 +226,7 @@ def build_dependency_graph(files_by_module):
     available = set(files_by_module.keys())
     graph = {}
     for mod, filepath in files_by_module.items():
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             content = f.read()
         graph[mod] = get_local_dependencies(content, available)
     return graph
@@ -268,14 +268,15 @@ def find_all_deps(mod, graph, visited=None):
 
 class TheoremInfo:
     """Represents a theorem/lemma found in the source."""
+
     def __init__(self, keyword, name, statement_start, statement_end, proof_start, proof_end, has_proof):
         self.keyword = keyword  # THEOREM, LEMMA, etc.
         self.name = name
         self.statement_start = statement_start  # line index of the keyword line
-        self.statement_end = statement_end      # line index of last line of statement (before PROOF/BY/OBVIOUS/OMITTED)
-        self.proof_start = proof_start          # line index of first proof line (None if no proof)
-        self.proof_end = proof_end              # line index of last proof line
-        self.has_proof = has_proof              # True if has a non-trivial proof
+        self.statement_end = statement_end  # line index of last line of statement (before PROOF/BY/OBVIOUS/OMITTED)
+        self.proof_start = proof_start  # line index of first proof line (None if no proof)
+        self.proof_end = proof_end  # line index of last proof line
+        self.has_proof = has_proof  # True if has a non-trivial proof
 
 
 def find_proof_end(lines, start_idx):
@@ -291,15 +292,15 @@ def find_proof_end(lines, start_idx):
         line = lines[i].strip()
 
         # End of module
-        if re.match(r'^={3,}', line):
+        if re.match(r"^={3,}", line):
             return i - 1
 
         if i > start_idx:
             # A new top-level theorem/lemma (these only appear at column 0)
-            if re.match(r'^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s', line):
+            if re.match(r"^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s", line):
                 return i - 1
             # Separator line
-            if re.match(r'^-{3,}', line):
+            if re.match(r"^-{3,}", line):
                 return i - 1
             # New top-level operator definition: must start at column 0 with a name
             # and == but NOT be a proof step. Also exclude lines that are indented
@@ -307,10 +308,10 @@ def find_proof_end(lines, start_idx):
             orig_line = lines[i]
             if orig_line and not orig_line[0].isspace():
                 # At column 0, not indented
-                if re.match(r'^\w+(\(.*?\))?\s*==(\s|$)', line) and not re.match(r'^<\d+>', line):
+                if re.match(r"^\w+(\(.*?\))?\s*==(\s|$)", line) and not re.match(r"^<\d+>", line):
                     return i - 1
                 # Top-level CONSTANT/VARIABLE/AXIOM/ASSUME declarations (at column 0 only)
-                if re.match(r'^(CONSTANT|CONSTANTS|VARIABLE|VARIABLES|AXIOM|ASSUME|ASSUMPTION)\s', line):
+                if re.match(r"^(CONSTANT|CONSTANTS|VARIABLE|VARIABLES|AXIOM|ASSUME|ASSUMPTION)\s", line):
                     return i - 1
 
         i += 1
@@ -333,9 +334,9 @@ def parse_theorems(lines):
         # Skip lines inside block comments
         if comment_depth > 0:
             for j in range(len(lines[i]) - 1):
-                if lines[i][j:j+2] == '(*':
+                if lines[i][j : j + 2] == "(*":
                     comment_depth += 1
-                elif lines[i][j:j+2] == '*)':
+                elif lines[i][j : j + 2] == "*)":
                     comment_depth -= 1
             i += 1
             continue
@@ -343,9 +344,9 @@ def parse_theorems(lines):
         # Track comment opens on this line
         line_depth = 0
         for j in range(len(lines[i]) - 1):
-            if lines[i][j:j+2] == '(*':
+            if lines[i][j : j + 2] == "(*":
                 line_depth += 1
-            elif lines[i][j:j+2] == '*)':
+            elif lines[i][j : j + 2] == "*)":
                 line_depth -= 1
         if line_depth > 0:
             comment_depth = line_depth
@@ -353,21 +354,18 @@ def parse_theorems(lines):
             continue
 
         # Match theorem/lemma declaration with a name
-        m = re.match(r'^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+(\w+)\s*==', line)
+        m = re.match(r"^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+(\w+)\s*==", line)
         if not m:
             # Also match unnamed theorems like "THEOREM Spec => []Inv"
-            m2 = re.match(r'^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+(.+)', line)
-            if m2 and '==' not in line:
+            m2 = re.match(r"^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+(.+)", line)
+            if m2 and "==" not in line:
                 m = m2  # treat as unnamed theorem, fall through
             if not m:
                 i += 1
                 continue
 
         keyword = m.group(1)
-        if '==' not in line:
-            name = f'__unnamed_{i}'
-        else:
-            name = m.group(2)
+        name = f"__unnamed_{i}" if "==" not in line else m.group(2)
         stmt_start = i
 
         # Scan forward to find where the proof starts (or where the theorem ends)
@@ -383,13 +381,14 @@ def parse_theorems(lines):
         first_line = lines[i]
         # Check for trailing BY/OBVIOUS/OMITTED on the declaration line
         # Only if the entire theorem is on one line (has == and then proof keyword)
-        if re.search(r'\bBY\s', first_line) or re.search(r'\bPROOF\s+BY\s', first_line):
+        if re.search(r"\bBY\s", first_line) or re.search(r"\bPROOF\s+BY\s", first_line):
             proof_start = i
             has_proof = True
-        elif re.search(r'\bOBVIOUS\s*$', first_line):
-            proof_start = i
-            has_proof = False
-        elif re.search(r'\bOMITTED\s*$', first_line) or re.search(r'\bPROOF\s+OMITTED\s*$', first_line):
+        elif (
+            re.search(r"\bOBVIOUS\s*$", first_line)
+            or re.search(r"\bOMITTED\s*$", first_line)
+            or re.search(r"\bPROOF\s+OMITTED\s*$", first_line)
+        ):
             proof_start = i
             has_proof = False
 
@@ -403,9 +402,9 @@ def parse_theorems(lines):
                 # Track comment depth
                 line_cd = 0
                 for ci in range(len(orig) - 1):
-                    if orig[ci:ci+2] == '(*':
+                    if orig[ci : ci + 2] == "(*":
                         line_cd += 1
-                    elif orig[ci:ci+2] == '*)':
+                    elif orig[ci : ci + 2] == "*)":
                         line_cd -= 1
                 inner_comment_depth += line_cd
                 if inner_comment_depth > 0:
@@ -413,46 +412,46 @@ def parse_theorems(lines):
                     continue
 
                 # End of module
-                if re.match(r'^={3,}', sline):
+                if re.match(r"^={3,}", sline):
                     break
 
                 # Another top-level theorem/lemma (not indented)
-                if re.match(r'^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s', sline) and (not orig or not orig[0].isspace()):
+                if re.match(r"^(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s", sline) and (not orig or not orig[0].isspace()):
                     break
 
                 # Separator
-                if re.match(r'^-{3,}', sline):
+                if re.match(r"^-{3,}", sline):
                     break
 
                 # Top-level definitions (not indented, at column 0)
                 if orig and not orig[0].isspace():
-                    if re.match(r'^[A-Z]\w*(\(.*?\))?\s*==(\s|$)', sline) and not re.match(r'^<\d+>', sline):
+                    if re.match(r"^[A-Z]\w*(\(.*?\))?\s*==(\s|$)", sline) and not re.match(r"^<\d+>", sline):
                         break
                     # Definitions starting with digits (e.g., 1bOr2bMsgs ==)
-                    if re.match(r'^\d\w*\s*==(\s|$)', sline) and not re.match(r'^<\d+>', sline):
+                    if re.match(r"^\d\w*\s*==(\s|$)", sline) and not re.match(r"^<\d+>", sline):
                         break
-                    if re.match(r'^(CONSTANT|CONSTANTS|VARIABLE|VARIABLES)\s', sline):
+                    if re.match(r"^(CONSTANT|CONSTANTS|VARIABLE|VARIABLES)\s", sline):
                         break
 
                 # Proof indicators
-                if sline == 'PROOF' or re.match(r'^PROOF\s+BY\s', sline):
+                if sline == "PROOF" or re.match(r"^PROOF\s+BY\s", sline):
                     proof_start = j
                     has_proof = True
                     break
-                if sline == 'OBVIOUS' or sline.startswith('OBVIOUS '):
+                if sline == "OBVIOUS" or sline.startswith("OBVIOUS "):
                     proof_start = j
                     has_proof = False
                     break
-                if sline == 'OMITTED' or sline == 'PROOF OMITTED' or sline.startswith('PROOF OMITTED '):
+                if sline == "OMITTED" or sline == "PROOF OMITTED" or sline.startswith("PROOF OMITTED "):
                     proof_start = j
                     has_proof = False
                     break
-                if re.match(r'^<\d+>', sline):
+                if re.match(r"^<\d+>", sline):
                     proof_start = j
                     has_proof = True
                     break
                 # BY at start of line (possibly indented)
-                if re.match(r'^\s*BY\s', orig) or sline.startswith('BY ') or sline == 'BY':
+                if re.match(r"^\s*BY\s", orig) or sline.startswith("BY ") or sline == "BY":
                     proof_start = j
                     has_proof = True
                     break
@@ -493,7 +492,7 @@ def extract_preamble(lines, theorems):
     """Extract everything before the first theorem - the preamble (module header, extends, constants, vars, defs)."""
     if not theorems:
         return lines[:]
-    return lines[:theorems[0].statement_start]
+    return lines[: theorems[0].statement_start]
 
 
 def get_theorem_statement_lines(lines, thm):
@@ -503,19 +502,19 @@ def get_theorem_statement_lines(lines, thm):
         line = lines[thm.statement_start]
         # Remove the BY/OBVIOUS/OMITTED part
         # Find the theorem body by removing proof
-        for pat in [r'\s+BY\s+.*$', r'\s+OBVIOUS\s*$', r'\s+OMITTED\s*$', r'\s+PROOF\s+OMITTED\s*$']:
-            line = re.sub(pat, '', line)
+        for pat in [r"\s+BY\s+.*$", r"\s+OBVIOUS\s*$", r"\s+OMITTED\s*$", r"\s+PROOF\s+OMITTED\s*$"]:
+            line = re.sub(pat, "", line)
         return [line]
 
-    result = lines[thm.statement_start:thm.statement_end + 1]
+    result = lines[thm.statement_start : thm.statement_end + 1]
     # Clean trailing empty lines
-    while result and result[-1].strip() == '':
+    while result and result[-1].strip() == "":
         result.pop()
     # Remove trailing comment blocks that contain proof steps (e.g. <1>2.)
     # Properly handle nested/inline comments like (* PTL *)
     while result:
         last = len(result) - 1
-        if result[last].strip().endswith('*)'):
+        if result[last].strip().endswith("*)"):
             # Scan backward tracking comment depth to find the matching opener
             depth = 0
             comment_start = None
@@ -525,19 +524,19 @@ def get_theorem_statement_lines(lines, thm):
                 opens = 0
                 closes = 0
                 for k in range(len(line_text) - 1):
-                    if line_text[k:k+2] == '(*':
+                    if line_text[k : k + 2] == "(*":
                         opens += 1
-                    elif line_text[k:k+2] == '*)':
+                    elif line_text[k : k + 2] == "*)":
                         closes += 1
                 depth += closes - opens  # going backward: closes add depth, opens reduce
                 if depth <= 0 and opens > 0:
                     comment_start = j
                     break
             if comment_start is not None and comment_start > 0:
-                comment_text = '\n'.join(result[comment_start:last+1])
-                if re.search(r'<\d+>', comment_text):
+                comment_text = "\n".join(result[comment_start : last + 1])
+                if re.search(r"<\d+>", comment_text):
                     result = result[:comment_start]
-                    while result and result[-1].strip() == '':
+                    while result and result[-1].strip() == "":
                         result.pop()
                     continue
         break
@@ -557,9 +556,9 @@ def get_theorem_proof_lines(lines, thm):
         return []
     if thm.proof_start == thm.statement_start:
         line = lines[thm.statement_start]
-        m = re.search(r'\s+(PROOF\s+BY\b.*|BY\b.*)$', line)
+        m = re.search(r"\s+(PROOF\s+BY\b.*|BY\b.*)$", line)
         return [m.group(1)] if m else [line]
-    return lines[thm.proof_start:thm.proof_end + 1]
+    return lines[thm.proof_start : thm.proof_end + 1]
 
 
 def merge_files(files_by_module, dep_graph, target_module):
@@ -571,7 +570,7 @@ def merge_files(files_by_module, dep_graph, target_module):
 
     if not all_deps:
         # No local dependencies, just return the file content
-        with open(files_by_module[target_module], 'r') as f:
+        with open(files_by_module[target_module]) as f:
             return f.readlines(), target_module
 
     # Topological order of all deps + target
@@ -583,10 +582,10 @@ def merge_files(files_by_module, dep_graph, target_module):
     merged_body_lines = []
 
     for mod in relevant:
-        with open(files_by_module[mod], 'r') as f:
+        with open(files_by_module[mod]) as f:
             content = f.read()
 
-        mod_lines = content.split('\n')
+        mod_lines = content.split("\n")
 
         # Collect resolvable extends
         for ext in parse_extends(content):
@@ -597,9 +596,9 @@ def merge_files(files_by_module, dep_graph, target_module):
         body_start = None
         body_end = None
         for idx, line in enumerate(mod_lines):
-            if body_start is None and re.match(r'^-+\s*MODULE\s+\w+\s*-+', line.strip()):
+            if body_start is None and re.match(r"^-+\s*MODULE\s+\w+\s*-+", line.strip()):
                 body_start = idx + 1
-            if re.match(r'^={3,}', line.strip()):
+            if re.match(r"^={3,}", line.strip()):
                 body_end = idx
 
         if body_start is None:
@@ -622,29 +621,29 @@ def merge_files(files_by_module, dep_graph, target_module):
                 code = re.split(r"\\\*", line)[0].rstrip()
                 in_extends = code.endswith(",")
                 continue
-            if re.match(r'^EXTENDS\s', line.strip()):
+            if re.match(r"^EXTENDS\s", line.strip()):
                 code = re.split(r"\\\*", line)[0].rstrip()
                 in_extends = code.endswith(",")  # multi-line if trailing comma
                 continue
             filtered_body.append(line)
 
         if mod != target_module:
-            merged_body_lines.append(f'(* ---- Content from module {mod} ---- *)')
+            merged_body_lines.append(f"(* ---- Content from module {mod} ---- *)")
         merged_body_lines.extend(filtered_body)
         if mod != target_module:
-            merged_body_lines.append('')
+            merged_body_lines.append("")
 
     # Build final content
     header_lines = []
-    extends_str = ', '.join(sorted(all_extends)) if all_extends else ''
+    extends_str = ", ".join(sorted(all_extends)) if all_extends else ""
 
     # We'll use a placeholder module name; caller will set it
     header_lines.append("---- MODULE __PLACEHOLDER__ ----")
     if extends_str:
-        header_lines.append(f'EXTENDS {extends_str}')
+        header_lines.append(f"EXTENDS {extends_str}")
 
-    result_lines = header_lines + merged_body_lines + ['=' * 40]
-    return [l + '\n' for l in result_lines], target_module
+    result_lines = header_lines + merged_body_lines + ["=" * 40]
+    return [ln + "\n" for ln in result_lines], target_module
 
 
 def strip_all_proofs(lines, theorems):
@@ -675,8 +674,8 @@ def strip_all_proofs(lines, theorems):
                 # checker to either accept or reject it).
                 stmt_lines = get_theorem_statement_lines(lines, thm)
                 result.extend(stmt_lines)
-                result.append('  PROOF OMITTED')
-                result.append('')
+                result.append("  PROOF OMITTED")
+                result.append("")
             i = end + 1
             continue
 
@@ -695,7 +694,7 @@ def strip_all_proofs(lines, theorems):
         result.append(lines[i])
         i += 1
 
-    return '\n'.join(result)
+    return "\n".join(result)
 
 
 def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name, benchmark_name):
@@ -706,11 +705,9 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
     - All theorems after target_idx: removed entirely
     """
     if isinstance(lines_or_content, str):
-        lines = lines_or_content.split('\n')
+        lines = lines_or_content.split("\n")
     else:
-        lines = [l.rstrip('\n') for l in lines_or_content]
-
-    target_thm = theorems[target_idx]
+        lines = [ln.rstrip("\n") for ln in lines_or_content]
 
     # We'll rebuild the file by going through lines and replacing theorem sections
     result = []
@@ -744,13 +741,13 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
                         result.append(lines[li])
                 else:
                     result.extend(stmt_lines)
-                    result.append('  PROOF OMITTED')
-                    result.append('')
+                    result.append("  PROOF OMITTED")
+                    result.append("")
             elif found_thm == target_idx:
                 # Target theorem: replace proof with OBVIOUS (will fail for non-trivial theorems)
                 result.extend(stmt_lines)
-                result.append('PROOF OBVIOUS')
-                result.append('')
+                result.append("PROOF OBVIOUS")
+                result.append("")
             else:
                 # Theorems after target: skip entirely
                 pass
@@ -762,7 +759,7 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
 
         # Check if this line is inside a theorem range (shouldn't happen, but safety)
         inside = False
-        for idx, (start, end) in thm_ranges.items():
+        for _idx, (start, end) in thm_ranges.items():
             if start < i <= end:
                 inside = True
                 break
@@ -779,7 +776,7 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
             # Check if we're past the target theorem
             if target_idx < len(theorems) and i > theorems[target_idx].statement_start:
                 # Only keep the module end line (====)
-                if re.match(r'^={3,}', lines[i].strip()):
+                if re.match(r"^={3,}", lines[i].strip()):
                     result.append(lines[i])
                 i += 1
                 continue
@@ -788,8 +785,8 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
         i += 1
 
     # Ensure module ends with ====
-    if not any(re.match(r'^={3,}', l.strip()) for l in result[-3:] if l.strip()):
-        result.append('=' * 40)
+    if not any(re.match(r"^={3,}", ln.strip()) for ln in result[-3:] if ln.strip()):
+        result.append("=" * 40)
 
     # Remove comment blocks containing proof steps (e.g. <1>2.)
     # Must properly track nested comment depth
@@ -801,9 +798,9 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
         line_opens = 0
         line_closes = 0
         for k in range(len(line) - 1):
-            if line[k:k+2] == '(*':
+            if line[k : k + 2] == "(*":
                 line_opens += 1
-            elif line[k:k+2] == '*)':
+            elif line[k : k + 2] == "*)":
                 line_closes += 1
 
         if comment_depth == 0 and line_opens > 0:
@@ -813,7 +810,7 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
                 comment_buf = [line]
             elif comment_depth == 0:
                 # Single-line comment (opens and closes on same line)
-                if not re.search(r'<\d+>\d+\.', line):
+                if not re.search(r"<\d+>\d+\.", line):
                     cleaned.append(line)
             # comment_depth < 0 shouldn't happen
         elif comment_depth > 0:
@@ -821,8 +818,8 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
             comment_depth += line_opens - line_closes
             if comment_depth <= 0:
                 # Comment block closed
-                comment_text = '\n'.join(comment_buf)
-                if not re.search(r'<\d+>\d+\.', comment_text):
+                comment_text = "\n".join(comment_buf)
+                if not re.search(r"<\d+>\d+\.", comment_text):
                     cleaned.extend(comment_buf)
                 comment_buf = []
                 comment_depth = 0
@@ -836,26 +833,28 @@ def generate_benchmark_file(lines_or_content, theorems, target_idx, module_name,
     depth = 0
     for line in result:
         for j in range(len(line) - 1):
-            if line[j:j+2] == '(*':
+            if line[j : j + 2] == "(*":
                 depth += 1
-            elif line[j:j+2] == '*)':
+            elif line[j : j + 2] == "*)":
                 depth -= 1
     # Insert closing comments before the ==== line
     if depth > 0:
-        eq_idx = next((i for i in range(len(result)-1, -1, -1) if re.match(r'^={3,}', result[i].strip())), len(result))
+        eq_idx = next(
+            (i for i in range(len(result) - 1, -1, -1) if re.match(r"^={3,}", result[i].strip())), len(result)
+        )
         for _ in range(depth):
-            result.insert(eq_idx, '*)')
+            result.insert(eq_idx, "*)")
 
     # Replace module name in header
     final = []
     for line in result:
-        if re.match(r'^-+\s*MODULE\s+\w+\s*-+', line.strip()):
-            line = re.sub(r'MODULE\s+\w+', f'MODULE {benchmark_name}', line)
-        if '__PLACEHOLDER__' in line:
-            line = line.replace('__PLACEHOLDER__', benchmark_name)
+        if re.match(r"^-+\s*MODULE\s+\w+\s*-+", line.strip()):
+            line = re.sub(r"MODULE\s+\w+", f"MODULE {benchmark_name}", line)
+        if "__PLACEHOLDER__" in line:
+            line = line.replace("__PLACEHOLDER__", benchmark_name)
         final.append(line)
 
-    return '\n'.join(final)
+    return "\n".join(final)
 
 
 def process_module_dir(module_dir_name):
@@ -869,24 +868,24 @@ def process_module_dir(module_dir_name):
     # Build module -> filepath mapping
     files_by_module = {}
     for f in tla_files:
-        with open(f, 'r') as fh:
+        with open(f) as fh:
             content = fh.read()
         mod_name = parse_module_name(content)
         if mod_name:
             files_by_module[mod_name] = f
 
     # Build dependency graph
-    dep_graph = build_dependency_graph(files_by_module)
+    build_dependency_graph(files_by_module)
     available = set(files_by_module.keys())
 
     benchmark_count = 0
     out_dir = os.path.join(BENCHMARK_DIR, module_dir_name)
 
     for mod_name, filepath in files_by_module.items():
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             content = f.read()
 
-        raw_lines = content.split('\n')
+        raw_lines = content.split("\n")
         theorems = parse_theorems(raw_lines)
 
         if not theorems or not any(t.has_proof for t in theorems):
@@ -903,7 +902,7 @@ def process_module_dir(module_dir_name):
             # Get transitive EXTENDS-only deps
             ed_filepath = files_by_module.get(ed)
             if ed_filepath:
-                with open(ed_filepath, 'r') as f:
+                with open(ed_filepath) as f:
                     ed_content = f.read()
                 all_extends_deps |= get_extends_dependencies(ed_content, available)
 
@@ -918,7 +917,7 @@ def process_module_dir(module_dir_name):
         for ed in all_extends_deps:
             ed_filepath = files_by_module.get(ed)
             if ed_filepath:
-                with open(ed_filepath, 'r') as f:
+                with open(ed_filepath) as f:
                     ed_content = f.read()
                 for _, inst_mod in parse_instances(ed_content):
                     if inst_mod in available and inst_mod not in all_extends_deps:
@@ -943,13 +942,13 @@ def process_module_dir(module_dir_name):
             for ed in all_extends_deps:
                 ed_filepath = files_by_module.get(ed)
                 if ed_filepath:
-                    with open(ed_filepath, 'r') as f:
+                    with open(ed_filepath) as f:
                         ed_content = f.read()
                     extends_graph[ed] = get_extends_dependencies(ed_content, available) & all_extends_deps
             extends_graph[mod_name] = all_extends_deps
 
             merged_lines, _ = merge_files(files_by_module, extends_graph, mod_name)
-            work_lines = [l.rstrip('\n') for l in merged_lines]
+            work_lines = [ln.rstrip("\n") for ln in merged_lines]
             theorems = parse_theorems(work_lines)
             if not theorems or not any(t.has_proof for t in theorems):
                 continue
@@ -963,25 +962,25 @@ def process_module_dir(module_dir_name):
         name_counts = {}
         for idx, thm in enumerate(theorems):
             # Skip unnamed theorems as benchmark targets (they still get PROOF OMITTED as preceding theorems)
-            if thm.name.startswith('__unnamed_'):
+            if thm.name.startswith("__unnamed_"):
                 continue
             # Skip theorems without real proofs (PROOF OMITTED / OBVIOUS only)
             if not thm.has_proof:
                 continue
-            base_name = f'{source_basename}_{thm.name}'
+            base_name = f"{source_basename}_{thm.name}"
             if base_name in name_counts:
                 name_counts[base_name] += 1
-                benchmark_name = f'{base_name}_{name_counts[base_name]}'
+                benchmark_name = f"{base_name}_{name_counts[base_name]}"
             else:
                 name_counts[base_name] = 0
                 benchmark_name = base_name
-            benchmark_file = os.path.join(out_dir, f'{benchmark_name}.tla')
+            benchmark_file = os.path.join(out_dir, f"{benchmark_name}.tla")
 
             os.makedirs(out_dir, exist_ok=True)
 
             content = generate_benchmark_file(work_lines, theorems, idx, mod_name, benchmark_name)
 
-            with open(benchmark_file, 'w') as f:
+            with open(benchmark_file, "w") as f:
                 f.write(content)
 
             # Copy INSTANCE dependency files alongside the benchmark
@@ -993,22 +992,23 @@ def process_module_dir(module_dir_name):
                     dest = os.path.join(out_dir, os.path.basename(dep_filepath))
                     if not os.path.exists(dest):
                         # Read, strip proofs, write
-                        with open(dep_filepath, 'r') as df:
+                        with open(dep_filepath) as df:
                             dep_content = df.read()
-                        dep_lines = dep_content.split('\n')
+                        dep_lines = dep_content.split("\n")
                         dep_theorems = parse_theorems(dep_lines)
                         if dep_theorems:
                             # Use generate_benchmark_file logic but admit ALL theorems
                             stripped = strip_all_proofs(dep_lines, dep_theorems)
-                            with open(dest, 'w') as df:
+                            with open(dest, "w") as df:
                                 df.write(stripped)
                         else:
                             # No theorems, just copy as-is
                             import shutil
+
                             shutil.copy2(dep_filepath, dest)
 
             benchmark_count += 1
-            print(f'  Generated: {os.path.relpath(benchmark_file, SOURCE_ROOT)}')
+            print(f"  Generated: {os.path.relpath(benchmark_file, SOURCE_ROOT)}")
 
     return benchmark_count
 
@@ -1022,13 +1022,14 @@ def _load_l2_engine():
     """Load the L2 generator as the shared-model engine. L2 does
     `from generate import ...` expecting THIS module's helpers, so alias us as
     `generate` first."""
-    import sys
     import importlib.util
-    sys.modules.setdefault('generate', sys.modules.get('__main__', sys.modules[__name__]))
-    path = os.path.join(os.path.dirname(__file__), '..', 'level2', 'generate.py')
-    spec = importlib.util.spec_from_file_location('l2_sm_engine', path)
+    import sys
+
+    sys.modules.setdefault("generate", sys.modules.get("__main__", sys.modules[__name__]))
+    path = os.path.join(os.path.dirname(__file__), "..", "level2", "generate.py")
+    spec = importlib.util.spec_from_file_location("l2_sm_engine", path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules['l2_sm_engine'] = mod
+    sys.modules["l2_sm_engine"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -1036,14 +1037,14 @@ def _load_l2_engine():
 def _is_structured_proof(sm, t, lines):
     """True iff the proof is a real structured/BY proof (not OBVIOUS/OMITTED).
     Strips comments first so `OBVIOUS (*{hint}*)` is seen as OBVIOUS."""
-    ploc = t.get('proof_loc')
-    if not (ploc and ploc.get('line_start', -1) > 0):
+    ploc = t.get("proof_loc")
+    if not (ploc and ploc.get("line_start", -1) > 0):
         return False
-    body = ''.join(lines[ploc['line_start'] - 1: ploc['line_end']])
+    body = "".join(lines[ploc["line_start"] - 1 : ploc["line_end"]])
     body = sm.strip_comments(body).strip()
-    if body.startswith('PROOF'):
+    if body.startswith("PROOF"):
         body = body[5:].lstrip()
-    return body not in ('OMITTED', 'OBVIOUS', '')
+    return body not in ("OMITTED", "OBVIOUS", "")
 
 
 def _proof_edit(source_lines, ploc, keyword):
@@ -1052,15 +1053,14 @@ def _proof_edit(source_lines, ploc, keyword):
     `LEMMA X == s  BY DEF Y` put the proof (col 41) on the statement line (cols
     1-40); a whole-line replace would delete the statement and leave a stray
     `PROOF OMITTED`."""
-    line = source_lines[ploc['line_start'] - 1]
-    col = ploc.get('column_start', 1)
-    prefix = line[:col - 1].rstrip()
-    repl = (prefix + '\n  ' + keyword + '\n') if prefix else (keyword + '\n')
-    return (ploc['line_start'], ploc['line_end'], repl)
+    line = source_lines[ploc["line_start"] - 1]
+    col = ploc.get("column_start", 1)
+    prefix = line[: col - 1].rstrip()
+    repl = (prefix + "\n  " + keyword + "\n") if prefix else (keyword + "\n")
+    return (ploc["line_start"], ploc["line_end"], repl)
 
 
-def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name,
-                  model_set, module):
+def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name, model_set, module):
     """L1 task: keep ALL scaffolding (Inv etc.), admit STRUCTURED preceding
     proofs as PROOF OMITTED (keep OBVIOUS verbatim → it still emits an
     obligation), stub the target PROOF OBVIOUS, drop later theorems, keep
@@ -1069,25 +1069,25 @@ def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name,
     use_model = bool(model_set)
     edits = list(sm._decl_edits(dump)) if use_model else []
     tid = id(target_thm)
-    tstart = target_thm['loc']['line_start']
-    for t in dump['theorems']:
-        loc, ploc = t['loc'], t.get('proof_loc')
-        has_body = ploc and ploc.get('line_start', -1) > 0
+    tstart = target_thm["loc"]["line_start"]
+    for t in dump["theorems"]:
+        loc, ploc = t["loc"], t.get("proof_loc")
+        has_body = ploc and ploc.get("line_start", -1) > 0
         if id(t) == tid:
             if has_body:
-                edits.append(_proof_edit(source_lines, ploc, 'PROOF OBVIOUS'))
-        elif loc['line_start'] < tstart:
+                edits.append(_proof_edit(source_lines, ploc, "PROOF OBVIOUS"))
+        elif loc["line_start"] < tstart:
             if has_body and _is_structured_proof(sm, t, source_lines):
-                edits.append(_proof_edit(source_lines, ploc, 'PROOF OMITTED'))
+                edits.append(_proof_edit(source_lines, ploc, "PROOF OMITTED"))
         else:
-            edits.append((loc['line_start'], loc['line_end'], ''))
+            edits.append((loc["line_start"], loc["line_end"], ""))
     if use_model:
-        for o in dump['operators']:
-            if o['name'] in model_set:
-                edits.append((o['loc']['line_start'], o['loc']['line_end'], ''))
-        for inst in dump['instances']:
-            if inst.get('name') and inst['name'] in model_set:
-                edits.append((inst['loc']['line_start'], inst['loc']['line_end'], ''))
+        for o in dump["operators"]:
+            if o["name"] in model_set:
+                edits.append((o["loc"]["line_start"], o["loc"]["line_end"], ""))
+        for inst in dump["instances"]:
+            if inst.get("name") and inst["name"] in model_set:
+                edits.append((inst["loc"]["line_start"], inst["loc"]["line_end"], ""))
     text = sm.apply_edits(source_lines, edits)
     if use_model:
         text = sm._strip_bare_decls(text)
@@ -1099,8 +1099,9 @@ def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name,
 def generate_shared_model_l1(output_root=None):
     """Dump-based L1 generation: one shared `<Module>.tla` per output dir +
     EXTENDS-based L1 tasks. Mirrors the L2 shared-model layout."""
-    import sys
     import shutil
+    import sys
+
     sm = _load_l2_engine()
     output_root = output_root or BENCHMARK_DIR
 
@@ -1109,8 +1110,8 @@ def generate_shared_model_l1(output_root=None):
     os.makedirs(output_root, exist_ok=True)
 
     targets = []
-    for f in sorted(glob.glob(os.path.join(SOURCE_ROOT, '**', '*.tla'), recursive=True)):
-        if '.tlaps' in f:
+    for f in sorted(glob.glob(os.path.join(SOURCE_ROOT, "**", "*.tla"), recursive=True)):
+        if ".tlaps" in f:
             continue
         subdir = os.path.relpath(f, SOURCE_ROOT).split(os.sep)[0]
         targets.append((f, subdir))
@@ -1123,12 +1124,11 @@ def generate_shared_model_l1(output_root=None):
         except Exception as e:
             print(f"  SANY failed on {path}: {e}", file=sys.stderr)
             continue
-        module = dump['module']
-        with open(path, encoding='utf-8') as fh:
+        module = dump["module"]
+        with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
         # L1 targets: NAMED theorems with a structured proof.
-        l1_targets = [t for t in dump['theorems']
-                      if t.get('name') and _is_structured_proof(sm, t, lines)]
+        l1_targets = [t for t in dump["theorems"] if t.get("name") and _is_structured_proof(sm, t, lines)]
         if not l1_targets:
             continue
         out_dir = os.path.join(output_root, subdir)
@@ -1139,12 +1139,12 @@ def generate_shared_model_l1(output_root=None):
             model_set, _ = sm.compute_model_set(dump, l1_targets)
             if model_set:
                 model_text = sm.build_model(lines, dump, model_set)
-                with open(os.path.join(out_dir, f"{module}.tla"), 'w') as f:
+                with open(os.path.join(out_dir, f"{module}.tla"), "w") as f:
                     f.write(model_text)
 
         base = os.path.splitext(os.path.basename(path))[0]
         used = {}
-        reachable_all = {i['name'] for i in dump['instances'] if i.get('name')}
+        reachable_all = {i["name"] for i in dump["instances"] if i.get("name")}
         for t in l1_targets:
             name = f"{base}_{t['name']}"
             if name in used:
@@ -1154,10 +1154,10 @@ def generate_shared_model_l1(output_root=None):
                 used[name] = 0
                 bench = name
             text = build_l1_task(sm, lines, dump, t, bench, model_set, module)
-            with open(os.path.join(out_dir, f"{bench}.tla"), 'w') as f:
+            with open(os.path.join(out_dir, f"{bench}.tla"), "w") as f:
                 f.write(text)
             total += 1
-            print(f"  generated: {os.path.relpath(os.path.join(out_dir, bench+'.tla'), PROJECT_ROOT)}")
+            print(f"  generated: {os.path.relpath(os.path.join(out_dir, bench + '.tla'), PROJECT_ROOT)}")
         sm.copy_deps(dump, path, out_dir, reachable_all)
     print(f"\nTotal L1 benchmarks (shared-model): {total}")
     return total
@@ -1165,12 +1165,15 @@ def generate_shared_model_l1(output_root=None):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='Generate L1 benchmarks.')
-    parser.add_argument('--shared-model', action='store_true',
-                        help='Emit one proof-free <Module>.tla model per output dir '
-                             'and have tasks EXTEND it instead of inlining the spec.')
-    parser.add_argument('--output-dir', default=None,
-                        help='Output directory (default: benchmark/level1)')
+
+    parser = argparse.ArgumentParser(description="Generate L1 benchmarks.")
+    parser.add_argument(
+        "--shared-model",
+        action="store_true",
+        help="Emit one proof-free <Module>.tla model per output dir "
+        "and have tasks EXTEND it instead of inlining the spec.",
+    )
+    parser.add_argument("--output-dir", default=None, help="Output directory (default: benchmark/level1)")
     args = parser.parse_args()
 
     if args.shared_model:
@@ -1180,6 +1183,7 @@ def main():
     # Clean benchmark dir
     if os.path.exists(BENCHMARK_DIR):
         import shutil
+
         shutil.rmtree(BENCHMARK_DIR)
     os.makedirs(BENCHMARK_DIR, exist_ok=True)
 
@@ -1187,14 +1191,14 @@ def main():
     total = 0
 
     for mod_dir in module_dirs:
-        print(f'\nProcessing {mod_dir}/')
+        print(f"\nProcessing {mod_dir}/")
         count = process_module_dir(mod_dir)
         total += count
         if count:
-            print(f'  -> {count} benchmarks')
+            print(f"  -> {count} benchmarks")
 
-    print(f'\nTotal benchmarks generated: {total}')
+    print(f"\nTotal benchmarks generated: {total}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

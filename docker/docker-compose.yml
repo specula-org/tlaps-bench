@@ -4,21 +4,26 @@ services:
   bench:
     image: tlaps-bench
     build:
-      context: .
-      dockerfile: Dockerfile
-    # NET_ADMIN for iptables firewall, LINUX_IMMUTABLE for chattr +i on tlapm
+      # Context is the repo root so the Dockerfile can COPY the compiled
+      # check_proof_bin, lib/ (tla2tools.jar + community) and the SANY assets.
+      context: ..
+      dockerfile: docker/Dockerfile
+    # NET_ADMIN for iptables firewall
     cap_add:
       - NET_ADMIN
-      - LINUX_IMMUTABLE
     environment:
       # Pass API keys at runtime (never baked into image)
       # For OpenAI (codex backend):     set OPENAI_API_KEY
       # For Azure (codex backend):      set AZURE_OPENAI_API_KEY + AZURE_OPENAI_HOST
       # For Anthropic (claude_code):    set ANTHROPIC_API_KEY
+      # For GitHub Copilot (copilot):   set COPILOT_GITHUB_TOKEN (or GH_TOKEN / GITHUB_TOKEN)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       - AZURE_OPENAI_HOST=${AZURE_OPENAI_HOST:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN:-}
+      - GH_TOKEN=${GH_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - HOST_UID=${HOST_UID:-1000}
       - HOST_GID=${HOST_GID:-1000}
     volumes:
@@ -28,10 +33,12 @@ services:
       # Mounting the whole dir keeps `from backends import ...` and
       # `from levels import ...` working without per-subpackage mount lines.
       - ../src/evaluator:/scripts:ro
-      # Checker binary lives outside /scripts to avoid mount layering.
-      - ../check_proof_bin:/usr/local/bin/check_proof_bin:ro
       # Optional: custom codex config (for Azure users etc.)
       - ./codex-config.toml:/mnt/codex-config.toml:ro
+      # Optional: GitHub Copilot CLI config (copilot backend). Copy your
+      # login state in with `cp ~/.copilot/config.json docker/copilot-config.json`
+      # (holds the gho_ token), or skip this and set COPILOT_GITHUB_TOKEN.
+      - ./copilot-config.json:/mnt/copilot-config.json:ro
       # Results output
       - ../results:/result
     ulimits:

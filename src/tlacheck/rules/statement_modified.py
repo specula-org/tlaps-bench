@@ -17,6 +17,7 @@ import os
 import re
 
 from tlacore.source import slice_loc
+
 from ..context import CheckContext
 from ..issue import Issue, Severity
 
@@ -44,8 +45,9 @@ def check(ctx: CheckContext) -> list[Issue]:
     # Read the actual files from the solution dir; module.source_file may point
     # at a now-deleted temp dir (we parse normalized copies there).
     base_src = _read(os.path.join(ctx.solution_dir, "benchmark.tla"))
-    sol_src = (_read(os.path.join(ctx.solution_dir, ctx.target_name + ".tla"))
-               or _read(os.path.join(ctx.solution_dir, "solution.tla")))
+    sol_src = _read(os.path.join(ctx.solution_dir, ctx.target_name + ".tla")) or _read(
+        os.path.join(ctx.solution_dir, "solution.tla")
+    )
     if not base_src or not sol_src:
         return []
 
@@ -55,14 +57,18 @@ def check(ctx: CheckContext) -> list[Issue]:
     issues: list[Issue] = []
     for stmt in base_stmts:
         if stmt and stmt not in sol_stmts:
-            issues.append(Issue(
-                vector=name,
-                severity=Severity.CHEATING,
-                message=("A baseline theorem statement no longer appears verbatim "
-                         "in the solution — target may have been weakened/altered."),
-                location=ctx.solution.filename,
-                evidence=stmt[:120],
-            ))
+            issues.append(
+                Issue(
+                    vector=name,
+                    severity=Severity.CHEATING,
+                    message=(
+                        "A baseline theorem statement no longer appears verbatim "
+                        "in the solution — target may have been weakened/altered."
+                    ),
+                    location=ctx.solution.filename,
+                    evidence=stmt[:120],
+                )
+            )
     return issues
 
 

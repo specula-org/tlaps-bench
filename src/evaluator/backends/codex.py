@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Optional, Tuple
 
 from .base import AgentBackend
-
 
 DEFAULT_MODEL = "gpt-5.5"
 
@@ -16,21 +14,26 @@ DEFAULT_MODEL = "gpt-5.5"
 class CodexBackend(AgentBackend):
     name = "codex"
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         last_msg_path = os.path.join(result_dir, "codex_last_message.txt")
         return [
-            "npx", "codex", "exec",
+            "npx",
+            "codex",
+            "exec",
             "--dangerously-bypass-approvals-and-sandbox",
-            "-C", workspace,
-            "-m", self.model,
+            "-C",
+            workspace,
+            "-m",
+            self.model,
             "--json",
-            "-o", last_msg_path,
+            "-o",
+            last_msg_path,
         ]
 
-    def check_auth(self) -> Optional[str]:
+    def check_auth(self) -> str | None:
         # Fast paths: an env var is set (direct OpenAI or Azure routing).
         if os.environ.get("OPENAI_API_KEY") or os.environ.get("AZURE_OPENAI_API_KEY"):
             return None
@@ -39,7 +42,9 @@ class CodexBackend(AgentBackend):
         try:
             r = subprocess.run(
                 ["codex", "login", "status"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if r.returncode == 0 and "Logged in" in (r.stdout + r.stderr):
                 return None
@@ -47,19 +52,18 @@ class CodexBackend(AgentBackend):
             return "codex: `codex` CLI not found on PATH"
         except Exception:
             pass
-        return ("codex: no auth detected. Set OPENAI_API_KEY or "
-                "AZURE_OPENAI_API_KEY, or run `codex login`.")
+        return "codex: no auth detected. Set OPENAI_API_KEY or AZURE_OPENAI_API_KEY, or run `codex login`."
 
     def firewall_hosts(self) -> list[str]:
         return ["api.openai.com"]
 
-    def parse_output(self, jsonl_path: str) -> Tuple[str, int, int]:
+    def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []
         in_tok = 0
         out_tok = 0
 
         try:
-            with open(jsonl_path, "r") as f:
+            with open(jsonl_path) as f:
                 for raw in f:
                     raw = raw.strip()
                     if not raw:

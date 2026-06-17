@@ -29,14 +29,14 @@ def strip_comments(text: str) -> str:
     return text
 
 
-def slice_loc(source: str, loc: "Loc") -> str:
+def slice_loc(source: str, loc: Loc) -> str:
     """Extract the substring of ``source`` covered by a SANY ``Loc`` (1-based)."""
     lines = source.splitlines()
     if not loc or loc.line_start < 1 or loc.line_start > len(lines):
         return ""
     if loc.line_start == loc.line_end:
-        return lines[loc.line_start - 1][loc.column_start - 1: loc.column_end]
-    out = [lines[loc.line_start - 1][loc.column_start - 1:]]
-    out.extend(lines[loc.line_start: loc.line_end - 1])
+        return lines[loc.line_start - 1][loc.column_start - 1 : loc.column_end]
+    out = [lines[loc.line_start - 1][loc.column_start - 1 :]]
+    out.extend(lines[loc.line_start : loc.line_end - 1])
     out.append(lines[loc.line_end - 1][: loc.column_end])
     return "\n".join(out)

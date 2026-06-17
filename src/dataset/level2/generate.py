@@ -78,19 +78,23 @@ import re
 import subprocess
 import sys
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-SOURCE_ROOT = os.path.join(PROJECT_ROOT, 'source')
-BENCHMARK_DIR = os.path.join(PROJECT_ROOT, 'benchmark', 'level2')
-SANY_DUMP = os.path.join(PROJECT_ROOT, 'src', 'dataset', 'sany-dump', 'run.sh')
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
+BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "level2")
+SANY_DUMP = os.path.join(PROJECT_ROOT, "src", "dataset", "sany-dump", "run.sh")
 
 # Reuse L1's proof-stripping logic for dependency .tla copies.
-sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src', 'dataset', 'level1'))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "dataset", "level1"))
 from generate import (  # noqa: E402
-    parse_theorems, strip_all_proofs, parse_extends, parse_instances, STDLIB_MODULES,
+    STDLIB_MODULES,
+    parse_extends,
+    parse_instances,
+    parse_theorems,
+    strip_all_proofs,
 )
 
-KEYWORD_PATTERN = re.compile(r'^\s*(THEOREM|LEMMA|AXIOM|COROLLARY|PROPOSITION)\b')
-MODULE_HEADER = re.compile(r'^(-+\s*MODULE\s+)(\w+)(\s*-+)')
+KEYWORD_PATTERN = re.compile(r"^\s*(THEOREM|LEMMA|AXIOM|COROLLARY|PROPOSITION)\b")
+MODULE_HEADER = re.compile(r"^(-+\s*MODULE\s+)(\w+)(\s*-+)")
 
 # Top-level theorems whose goal is actually FALSE — TLC finds a counterexample —
 # even though the source "proves" them with an OMITTED sub-step that papers over
@@ -100,29 +104,26 @@ MODULE_HEADER = re.compile(r'^(-+\s*MODULE\s+)(\w+)(\s*-+)')
 # This is the *only* reason filter A' now drops an OMITTED-sub-step theorem —
 # every other such theorem is a published, verified result and is kept.
 KNOWN_FALSE_TARGETS = {
-    ("PaxosProof", "StructOK3"):
-        "TLC counterexample: PaxosTuple.tla Phase2a's uniqueness guard tests "
-        "m[3] (the value field) instead of m[2] (the ballot), so a single ballot "
-        "can carry two distinct 2a values, violating StructOK3's one-value-per-"
-        "ballot conjunct. The author commented StructOK3 out of the proven "
-        "StructOK and left its inductive step PROOF OMITTED.",
+    ("PaxosProof", "StructOK3"): "TLC counterexample: PaxosTuple.tla Phase2a's uniqueness guard tests "
+    "m[3] (the value field) instead of m[2] (the ballot), so a single ballot "
+    "can carry two distinct 2a values, violating StructOK3's one-value-per-"
+    "ballot conjunct. The author commented StructOK3 out of the proven "
+    "StructOK and left its inductive step PROOF OMITTED.",
 }
 
 
 def dump_sany(tla_path):
     res = subprocess.run([SANY_DUMP, tla_path], capture_output=True, text=True)
     if res.returncode != 0:
-        raise RuntimeError(
-            f"SANY dump failed for {tla_path}:\n--stdout--\n{res.stdout}\n--stderr--\n{res.stderr}"
-        )
+        raise RuntimeError(f"SANY dump failed for {tla_path}:\n--stdout--\n{res.stdout}\n--stderr--\n{res.stderr}")
     # SANY's PlusCal label-adder and parse-error reporter print to System.out
     # from inside frontEndMain. Skip past the sentinel marker we print in
     # DumpSemantics.java to find the actual JSON.
-    marker = '--- BEGIN SANY-DUMP JSON ---'
+    marker = "--- BEGIN SANY-DUMP JSON ---"
     idx = res.stdout.find(marker)
     if idx < 0:
         raise RuntimeError(f"SANY produced no JSON for {tla_path}:\n{res.stdout!r}\nstderr:\n{res.stderr}")
-    return json.loads(res.stdout[idx + len(marker):])
+    return json.loads(res.stdout[idx + len(marker) :])
 
 
 def determine_keyword(lines, line_start):
@@ -144,21 +145,19 @@ def find_top_level(theorems, spec_formulas):
     """
     incoming = {}
     for t in theorems:
-        if t['name']:
-            incoming.setdefault(t['name'], set())
+        if t["name"]:
+            incoming.setdefault(t["name"], set())
     for t in theorems:
-        src_name = t['name'] or f"__unnamed_{t['loc']['line_start']}"
-        for ref in t['references']:
+        src_name = t["name"] or f"__unnamed_{t['loc']['line_start']}"
+        for ref in t["references"]:
             if ref in incoming:
                 incoming[ref].add(src_name)
 
     out = []
     for t in theorems:
-        unnamed_match = not t['name']
-        shape_match = (t['shape']['kind'] == 'implies'
-                       and t['shape']['lhs_spec_ref'] in spec_formulas)
-        graph_match = (not unnamed_match
-                       and len(incoming.get(t['name'], set())) == 0)
+        unnamed_match = not t["name"]
+        shape_match = t["shape"]["kind"] == "implies" and t["shape"]["lhs_spec_ref"] in spec_formulas
+        graph_match = not unnamed_match and len(incoming.get(t["name"], set())) == 0
         if unnamed_match or shape_match or graph_match:
             out.append((t, unnamed_match, shape_match, graph_match))
     return out
@@ -172,13 +171,10 @@ def _statement_text(target_thm, source_lines):
     proof, the statement runs to `loc.line_end`. Returned text is the joined
     source lines, stripped of surrounding whitespace.
     """
-    loc = target_thm['loc']
-    ploc = target_thm.get('proof_loc')
-    if ploc and ploc.get('line_start', -1) > 0:
-        end_line = ploc['line_start'] - 1
-    else:
-        end_line = loc['line_end']
-    return ''.join(source_lines[loc['line_start'] - 1 : end_line]).strip()
+    loc = target_thm["loc"]
+    ploc = target_thm.get("proof_loc")
+    end_line = ploc["line_start"] - 1 if ploc and ploc.get("line_start", -1) > 0 else loc["line_end"]
+    return "".join(source_lines[loc["line_start"] - 1 : end_line]).strip()
 
 
 def _has_manual_proof(target_thm, source_lines):
@@ -192,13 +188,13 @@ def _has_manual_proof(target_thm, source_lines):
     All other proof bodies (a `<N>` proof tree, a `BY ...` leaf, a `PROOF BY`
     line, etc.) count as manual proofs.
     """
-    ploc = target_thm.get('proof_loc')
-    if not (ploc and ploc.get('line_start', -1) > 0):
+    ploc = target_thm.get("proof_loc")
+    if not (ploc and ploc.get("line_start", -1) > 0):
         return False
-    body = ''.join(source_lines[ploc['line_start'] - 1 : ploc['line_end']]).strip()
-    if body.startswith('PROOF'):
+    body = "".join(source_lines[ploc["line_start"] - 1 : ploc["line_end"]]).strip()
+    if body.startswith("PROOF"):
         body = body[5:].lstrip()
-    return body not in ('OMITTED', 'OBVIOUS')
+    return body not in ("OMITTED", "OBVIOUS")
 
 
 def _proof_has_omitted_substep(target_thm, source_lines):
@@ -217,11 +213,11 @@ def _proof_has_omitted_substep(target_thm, source_lines):
     catches the subtler case of an OMITTED leaf inside an otherwise-structured
     proof. Matches the OMITTED keyword on word boundaries.
     """
-    ploc = target_thm.get('proof_loc')
-    if not (ploc and ploc.get('line_start', -1) > 0):
+    ploc = target_thm.get("proof_loc")
+    if not (ploc and ploc.get("line_start", -1) > 0):
         return False
-    body = ''.join(source_lines[ploc['line_start'] - 1 : ploc['line_end']])
-    return re.search(r'\bOMITTED\b', body) is not None
+    body = "".join(source_lines[ploc["line_start"] - 1 : ploc["line_end"]])
+    return re.search(r"\bOMITTED\b", body) is not None
 
 
 def target_theorem_name(theorem):
@@ -231,11 +227,11 @@ def target_theorem_name(theorem):
     namespace separator `!` (e.g. `V!Spec`), it is replaced with `_` because
     `!` is not legal in a TLA+ module identifier.
     """
-    if theorem['name']:
-        return theorem['name'], False
-    rhs = theorem['shape'].get('rhs_primary_name')
+    if theorem["name"]:
+        return theorem["name"], False
+    rhs = theorem["shape"].get("rhs_primary_name")
     if rhs:
-        sanitized = rhs.replace('!', '_')
+        sanitized = rhs.replace("!", "_")
         return sanitized, sanitized != rhs
     return f"line{theorem['loc']['line_start']}", False
 
@@ -255,15 +251,15 @@ def compute_reachable(dump, target_thm):
     decomposition) is reachable and kept — the goal cannot be hidden.
     """
     adj = {}
-    for o in dump['operators']:
-        adj.setdefault(o['name'], set()).update(o.get('references', []))
-    for i in dump['instances']:
-        if i.get('name'):
-            adj.setdefault(i['name'], set()).update(i.get('references', []))
+    for o in dump["operators"]:
+        adj.setdefault(o["name"], set()).update(o.get("references", []))
+    for i in dump["instances"]:
+        if i.get("name"):
+            adj.setdefault(i["name"], set()).update(i.get("references", []))
 
-    seed = set(target_thm.get('statement_references', []))
-    for a in dump['assumes']:
-        seed.update(a.get('references', []))
+    seed = set(target_thm.get("statement_references", []))
+    for a in dump["assumes"]:
+        seed.update(a.get("references", []))
 
     reachable = set()
     stack = list(seed)
@@ -289,32 +285,32 @@ def strip_comments(text):
     out = []
     i = 0
     n = len(text)
-    depth = 0          # block-comment nesting depth
-    in_line = False    # inside a \* line comment
-    in_str = False     # inside a "..." string literal
+    depth = 0  # block-comment nesting depth
+    in_line = False  # inside a \* line comment
+    in_str = False  # inside a "..." string literal
     while i < n:
         c = text[i]
-        nxt = text[i + 1] if i + 1 < n else ''
+        nxt = text[i + 1] if i + 1 < n else ""
         if in_line:
-            if c == '\n':
+            if c == "\n":
                 in_line = False
                 out.append(c)
             i += 1
         elif depth > 0:
-            if c == '(' and nxt == '*':
+            if c == "(" and nxt == "*":
                 depth += 1
                 i += 2
-            elif c == '*' and nxt == ')':
+            elif c == "*" and nxt == ")":
                 depth -= 1
                 i += 2
-            elif c == '\n':
+            elif c == "\n":
                 out.append(c)  # keep blank line where the comment sat
                 i += 1
             else:
                 i += 1
         elif in_str:
             out.append(c)
-            if c == '\\' and nxt:
+            if c == "\\" and nxt:
                 out.append(nxt)
                 i += 2
             else:
@@ -322,10 +318,10 @@ def strip_comments(text):
                     in_str = False
                 i += 1
         else:
-            if c == '\\' and nxt == '*':
+            if c == "\\" and nxt == "*":
                 in_line = True
                 i += 2
-            elif c == '(' and nxt == '*':
+            elif c == "(" and nxt == "*":
                 depth = 1
                 i += 2
             elif c == '"':
@@ -335,7 +331,7 @@ def strip_comments(text):
             else:
                 out.append(c)
                 i += 1
-    return ''.join(out)
+    return "".join(out)
 
 
 def apply_edits(lines, edits):
@@ -353,13 +349,13 @@ def apply_edits(lines, edits):
     cursor = 1
     for start, end, repl in edits:
         if start > cursor:
-            out.extend(lines[cursor - 1:start - 1])
+            out.extend(lines[cursor - 1 : start - 1])
         if repl:
             out.append(repl)
         cursor = end + 1
     if cursor <= len(lines):
-        out.extend(lines[cursor - 1:])
-    return ''.join(out)
+        out.extend(lines[cursor - 1 :])
+    return "".join(out)
 
 
 def build_benchmark(source_lines, dump, target_thm, benchmark_module_name, reachable):
@@ -376,34 +372,34 @@ def build_benchmark(source_lines, dump, target_thm, benchmark_module_name, reach
     """
     edits = []
     target_id = id(target_thm)
-    for t in dump['theorems']:
+    for t in dump["theorems"]:
         if id(t) == target_id:
-            ploc = t.get('proof_loc')
+            ploc = t.get("proof_loc")
             # Filter A in process_file guarantees the target has a real proof body.
-            assert ploc and ploc.get('line_start', -1) > 0, (
+            assert ploc and ploc.get("line_start", -1) > 0, (
                 f"build_benchmark invoked on target without proof body at "
                 f"{source_lines[t['loc']['line_start'] - 1].rstrip()!r}; "
                 "should have been filtered upstream."
             )
-            edits.append((ploc['line_start'], ploc['line_end'], 'PROOF OBVIOUS\n'))
+            edits.append((ploc["line_start"], ploc["line_end"], "PROOF OBVIOUS\n"))
         else:
             # Delete other theorems/lemmas entirely.
-            loc = t['loc']
-            edits.append((loc['line_start'], loc['line_end'], ''))
+            loc = t["loc"]
+            edits.append((loc["line_start"], loc["line_end"], ""))
 
     # Delete operator definitions not reachable from the target statement —
     # the inductive invariants and helper operators the AI must rediscover.
-    for o in dump['operators']:
-        if o['name'] not in reachable:
-            loc = o['loc']
-            edits.append((loc['line_start'], loc['line_end'], ''))
+    for o in dump["operators"]:
+        if o["name"] not in reachable:
+            loc = o["loc"]
+            edits.append((loc["line_start"], loc["line_end"], ""))
     # Delete named INSTANCE bindings that aren't needed to state the goal.
     # Unnamed (bare) INSTANCEs import names into scope unqualified and can't be
     # tracked by reachability, so they are always kept.
-    for inst in dump['instances']:
-        if inst.get('name') and inst['name'] not in reachable:
-            loc = inst['loc']
-            edits.append((loc['line_start'], loc['line_end'], ''))
+    for inst in dump["instances"]:
+        if inst.get("name") and inst["name"] not in reachable:
+            loc = inst["loc"]
+            edits.append((loc["line_start"], loc["line_end"], ""))
 
     text = apply_edits(source_lines, edits)
     text = strip_comments(text)
@@ -415,11 +411,11 @@ def build_benchmark(source_lines, dump, target_thm, benchmark_module_name, reach
         if m:
             out_lines[i] = f"{m.group(1)}{benchmark_module_name}{m.group(3)}\n"
             break
-    text = ''.join(out_lines)
+    text = "".join(out_lines)
 
     # Collapse the blank-line runs left behind by deleted defs / stripped
     # comments down to a single blank line.
-    text = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', text)
+    text = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", text)
     return text
 
 
@@ -441,7 +437,7 @@ def _gather_local_deps(start_mods, src_dir):
             continue
         seen.add(mod)
         out.append((mod, dep_path))
-        with open(dep_path, encoding='utf-8') as f:
+        with open(dep_path, encoding="utf-8") as f:
             dep_content = f.read()
         for ext in parse_extends(dep_content):
             if ext not in STDLIB_MODULES and ext not in seen:
@@ -467,23 +463,23 @@ def copy_deps(dump, source_path, out_dir, reachable):
     """
     src_dir = os.path.dirname(os.path.abspath(source_path))
     direct_deps = []
-    for ext in dump.get('extends', []):
+    for ext in dump.get("extends", []):
         if ext not in STDLIB_MODULES:
             direct_deps.append(ext)
-    for inst in dump.get('instances', []):
-        mod = inst.get('module')
+    for inst in dump.get("instances", []):
+        mod = inst.get("module")
         if not mod:
             continue
-        name = inst.get('name')
+        name = inst.get("name")
         if name and name not in reachable:
             continue  # instance was stripped from the benchmark
         direct_deps.append(mod)
 
     copied = []
-    for mod, dep_path in _gather_local_deps(direct_deps, src_dir):
-        with open(dep_path, encoding='utf-8') as f:
+    for _mod, dep_path in _gather_local_deps(direct_deps, src_dir):
+        with open(dep_path, encoding="utf-8") as f:
             dep_text = f.read()
-        dep_lines = dep_text.split('\n')
+        dep_lines = dep_text.split("\n")
         dep_thms = parse_theorems(dep_lines)
         dest = os.path.join(out_dir, os.path.basename(dep_path))
         if dep_thms:
@@ -492,14 +488,14 @@ def copy_deps(dump, source_path, out_dir, reachable):
         # THEOREM statements stay, only proofs become OMITTED) would otherwise
         # leak strategy prose just like the main file.
         dep_text = strip_comments(dep_text)
-        dep_text = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', dep_text)
-        with open(dest, 'w', encoding='utf-8') as f:
-            f.write(dep_text if dep_text.endswith('\n') else dep_text + '\n')
+        dep_text = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", dep_text)
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(dep_text if dep_text.endswith("\n") else dep_text + "\n")
         copied.append(os.path.basename(dep_path))
     return copied
 
 
-def cross_dir_dedup(target_paths, audit_writer, preferred_dir='Data'):
+def cross_dir_dedup(target_paths, audit_writer, preferred_dir="Data"):
     """Filter C — drop target benchmarks that are byte-identical to a target
     in another output directory.
 
@@ -511,9 +507,10 @@ def cross_dir_dedup(target_paths, audit_writer, preferred_dir='Data'):
     Returns the number of files removed.
     """
     import hashlib
+
     by_hash = {}
     for path in target_paths:
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             h = hashlib.sha256(f.read()).hexdigest()
         by_hash.setdefault(h, []).append(path)
 
@@ -545,17 +542,17 @@ def cross_dir_dedup(target_paths, audit_writer, preferred_dir='Data'):
 # grader already copies co-located *.tla, so EXTENDS resolves with no grader
 # change. Certified sound (obligation-set equivalence) — see tmp/split_poc.
 # ---------------------------------------------------------------------------
-_BARE_DECL = re.compile(r'^[ \t]*(CONSTANTS?|VARIABLES?)[ \t]*,?[ \t]*$', re.M)
-_EXTENDS_START = re.compile(r'^EXTENDS\b')
+_BARE_DECL = re.compile(r"^[ \t]*(CONSTANTS?|VARIABLES?)[ \t]*,?[ \t]*$", re.M)
+_EXTENDS_START = re.compile(r"^EXTENDS\b")
 
 
 def _model_closure(dump, seed):
     adj = {}
-    for o in dump['operators']:
-        adj.setdefault(o['name'], set()).update(o.get('references', []))
-    for i in dump['instances']:
-        if i.get('name'):
-            adj.setdefault(i['name'], set()).update(i.get('references', []))
+    for o in dump["operators"]:
+        adj.setdefault(o["name"], set()).update(o.get("references", []))
+    for i in dump["instances"]:
+        if i.get("name"):
+            adj.setdefault(i["name"], set()).update(i.get("references", []))
     out, stack = set(), list(seed)
     while stack:
         n = stack.pop()
@@ -573,18 +570,17 @@ def compute_model_set(dump, targets):
     `ISpec`/`LiveSpec` can't drag `Inv` into the model. The intersection drops
     anything a task is meant to hide; what remains is the common state machine,
     provably free of inductive invariants/proofs."""
-    spec_formulas = dump.get('spec_formulas', [])
-    main_specs = {t['shape'].get('lhs_spec_ref') for t in targets
-                  if t['shape'].get('lhs_spec_ref') in spec_formulas}
+    spec_formulas = dump.get("spec_formulas", [])
+    main_specs = {t["shape"].get("lhs_spec_ref") for t in targets if t["shape"].get("lhs_spec_ref") in spec_formulas}
     if not main_specs:
         return set(), main_specs
     seed = set(main_specs)
-    for a in dump['assumes']:
-        seed.update(a.get('references', []))
+    for a in dump["assumes"]:
+        seed.update(a.get("references", []))
     reachable = {id(t): compute_reachable(dump, t) for t in targets}
     model = _model_closure(dump, seed)
     for t in targets:
-        if t['shape'].get('lhs_spec_ref') in main_specs:
+        if t["shape"].get("lhs_spec_ref") in main_specs:
             model &= reachable[id(t)]
     return model, main_specs
 
@@ -593,41 +589,40 @@ def _decl_edits(dump):
     """Delete CONSTANT/VARIABLE/ASSUME declarations (one per distinct loc) —
     they come via EXTENDS in the task/model-extending file."""
     seen, edits = set(), []
-    for e in (list(dump.get('constants', [])) + list(dump.get('variables', []))
-              + list(dump.get('assumes', []))):
-        loc = e.get('loc')
+    for e in list(dump.get("constants", [])) + list(dump.get("variables", [])) + list(dump.get("assumes", [])):
+        loc = e.get("loc")
         if not loc:
             continue
-        key = (loc['line_start'], loc['line_end'])
+        key = (loc["line_start"], loc["line_end"])
         if key in seen:
             continue
         seen.add(key)
-        edits.append((loc['line_start'], loc['line_end'], ''))
+        edits.append((loc["line_start"], loc["line_end"], ""))
     return edits
 
 
 def _rewrite_extends_line(text, module):
     """Replace the (possibly multi-line) EXTENDS statement with `EXTENDS <module>`."""
-    lines = text.split('\n')
+    lines = text.split("\n")
     out, i, done = [], 0, False
     while i < len(lines):
         if not done and _EXTENDS_START.match(lines[i]):
             j = i
-            while lines[j].rstrip().endswith(','):
+            while lines[j].rstrip().endswith(","):
                 j += 1
-            out.append(f'EXTENDS {module}')
+            out.append(f"EXTENDS {module}")
             i = j + 1
             done = True
             continue
         out.append(lines[i])
         i += 1
-    return '\n'.join(out)
+    return "\n".join(out)
 
 
 def _sm_tidy(text):
     """Drop stranded pure-dash `----` dividers and collapse blank runs."""
-    text = re.sub(r'(?m)^-{4,}[ \t]*$\n?', '', text)
-    return re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', text)
+    text = re.sub(r"(?m)^-{4,}[ \t]*$\n?", "", text)
+    return re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", text)
 
 
 def _rename_header(text, new_name):
@@ -644,45 +639,43 @@ def _rename_header(text, new_name):
                 done = True
                 continue
         out.append(line)
-    return ''.join(out)
+    return "".join(out)
 
 
 def build_model(source_lines, dump, model_set):
     """Proof-free shared model (delete-from-source, preserves declaration order
     so an ASSUME/AXIOM that references a later operator still resolves)."""
     edits = []
-    for t in dump['theorems']:
-        edits.append((t['loc']['line_start'], t['loc']['line_end'], ''))
-    for o in dump['operators']:
-        if o['name'] not in model_set:
-            edits.append((o['loc']['line_start'], o['loc']['line_end'], ''))
-    for inst in dump['instances']:
-        if inst.get('name') and inst['name'] not in model_set:
-            edits.append((inst['loc']['line_start'], inst['loc']['line_end'], ''))
+    for t in dump["theorems"]:
+        edits.append((t["loc"]["line_start"], t["loc"]["line_end"], ""))
+    for o in dump["operators"]:
+        if o["name"] not in model_set:
+            edits.append((o["loc"]["line_start"], o["loc"]["line_end"], ""))
+    for inst in dump["instances"]:
+        if inst.get("name") and inst["name"] not in model_set:
+            edits.append((inst["loc"]["line_start"], inst["loc"]["line_end"], ""))
     return _sm_tidy(strip_comments(apply_edits(source_lines, edits)))
 
 
-def build_benchmark_extends(source_lines, dump, target_thm, bench_module_name,
-                            reachable, model_set, module):
+def build_benchmark_extends(source_lines, dump, target_thm, bench_module_name, reachable, model_set, module):
     """Like build_benchmark, but the spec lives in the EXTENDS'd model: also
     delete model operators + the CONSTANT/VARIABLE/ASSUME decls, and rewrite the
     EXTENDS line to `EXTENDS <module>`."""
     edits = list(_decl_edits(dump))
     tid = id(target_thm)
-    for t in dump['theorems']:
+    for t in dump["theorems"]:
         if id(t) == tid:
-            ploc = t['proof_loc']
-            edits.append((ploc['line_start'], ploc['line_end'], 'PROOF OBVIOUS\n'))
+            ploc = t["proof_loc"]
+            edits.append((ploc["line_start"], ploc["line_end"], "PROOF OBVIOUS\n"))
         else:
-            loc = t['loc']
-            edits.append((loc['line_start'], loc['line_end'], ''))
-    for o in dump['operators']:
-        if o['name'] in model_set or o['name'] not in reachable:
-            edits.append((o['loc']['line_start'], o['loc']['line_end'], ''))
-    for inst in dump['instances']:
-        if inst.get('name') and (inst['name'] in model_set
-                                 or inst['name'] not in reachable):
-            edits.append((inst['loc']['line_start'], inst['loc']['line_end'], ''))
+            loc = t["loc"]
+            edits.append((loc["line_start"], loc["line_end"], ""))
+    for o in dump["operators"]:
+        if o["name"] in model_set or o["name"] not in reachable:
+            edits.append((o["loc"]["line_start"], o["loc"]["line_end"], ""))
+    for inst in dump["instances"]:
+        if inst.get("name") and (inst["name"] in model_set or inst["name"] not in reachable):
+            edits.append((inst["loc"]["line_start"], inst["loc"]["line_end"], ""))
     text = apply_edits(source_lines, edits)
     text = strip_comments(text)
     text = _strip_bare_decls(text)
@@ -692,7 +685,7 @@ def build_benchmark_extends(source_lines, dump, target_thm, bench_module_name,
 
 
 def _strip_bare_decls(text):
-    return _BARE_DECL.sub('', text)
+    return _BARE_DECL.sub("", text)
 
 
 def compute_sibling_deps(targets):
@@ -710,7 +703,8 @@ def compute_sibling_deps(targets):
         deps = set()
         for p in paths:
             try:
-                content = open(p, encoding='utf-8').read()
+                with open(p, encoding="utf-8") as _f:
+                    content = _f.read()
             except OSError:
                 continue
             self_stem = os.path.splitext(os.path.basename(p))[0]
@@ -724,14 +718,22 @@ def compute_sibling_deps(targets):
     return result
 
 
-def process_file(source_path, audit_writer, output_root, module_subdir=None,
-                 generated_paths=None, shared_model=False, skip_model_modules=()):
+def process_file(
+    source_path,
+    audit_writer,
+    output_root,
+    module_subdir=None,
+    generated_paths=None,
+    shared_model=False,
+    skip_model_modules=(),
+    allow_no_proof=False,
+):
     """Generate L2 benchmarks for one source .tla file. Returns count emitted.
 
     If `generated_paths` is a list, each generated target benchmark path is
     appended to it (for downstream cross-directory dedup).
     """
-    with open(source_path, encoding='utf-8') as f:
+    with open(source_path, encoding="utf-8") as f:
         text = f.read()
     source_lines = text.splitlines(keepends=True)
 
@@ -741,27 +743,21 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
         audit_writer.write(f"[level2-audit] {source_path}: SANY parse failed — {e}\n")
         return 0
 
-    module = dump['module']
-    spec_formulas = set(dump['spec_formulas'])
+    module = dump["module"]
+    spec_formulas = set(dump["spec_formulas"])
 
     if not spec_formulas:
-        audit_writer.write(
-            f"[level2-audit] {source_path}: no spec formula identified — shape rule will not match\n"
-        )
+        audit_writer.write(f"[level2-audit] {source_path}: no spec formula identified — shape rule will not match\n")
     elif len(spec_formulas) > 1:
-        audit_writer.write(
-            f"[level2-audit] {source_path}: multiple spec formulas: {sorted(spec_formulas)}\n"
-        )
-    elif 'Spec' not in spec_formulas:
+        audit_writer.write(f"[level2-audit] {source_path}: multiple spec formulas: {sorted(spec_formulas)}\n")
+    elif "Spec" not in spec_formulas:
         only = next(iter(spec_formulas))
-        audit_writer.write(
-            f"[level2-audit] {source_path}: identified spec formula `{only}` — name != `Spec`\n"
-        )
+        audit_writer.write(f"[level2-audit] {source_path}: identified spec formula `{only}` — name != `Spec`\n")
 
-    for t in dump['theorems']:
-        t['_keyword'] = determine_keyword(source_lines, t['loc']['line_start'])
+    for t in dump["theorems"]:
+        t["_keyword"] = determine_keyword(source_lines, t["loc"]["line_start"])
 
-    theorem_candidates = [t for t in dump['theorems'] if t['_keyword'] == 'THEOREM']
+    theorem_candidates = [t for t in dump["theorems"] if t["_keyword"] == "THEOREM"]
     top_level = find_top_level(theorem_candidates, spec_formulas)
 
     # Filter A — require a manual TLAPS proof in the source.
@@ -773,22 +769,25 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
     survivors = []
     for entry in top_level:
         target_thm = entry[0]
-        line = target_thm['loc']['line_start']
-        name = target_thm['name'] or f"<unnamed L{line}>"
-        if not _has_manual_proof(target_thm, source_lines):
+        line = target_thm["loc"]["line_start"]
+        name = target_thm["name"] or f"<unnamed L{line}>"
+        has_proof = _has_manual_proof(target_thm, source_lines)
+        if not has_proof and not allow_no_proof:
             audit_writer.write(
                 f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has no manual TLAPS proof body — skipped (filter A)\n"
             )
-        elif (os.path.splitext(os.path.basename(source_path))[0],
-              target_theorem_name(target_thm)[0]) in KNOWN_FALSE_TARGETS:
+        elif (
+            os.path.splitext(os.path.basename(source_path))[0],
+            target_theorem_name(target_thm)[0],
+        ) in KNOWN_FALSE_TARGETS:
             # Filter A' — drop ONLY a goal TLC has shown to be false. An OMITTED
             # sub-step that papers over a *false* claim (e.g. PaxosProof
             # StructOK3) admits no honest proof, so it must not become a
             # benchmark. See KNOWN_FALSE_TARGETS for the per-target evidence.
-            reason = KNOWN_FALSE_TARGETS[(
-                os.path.splitext(os.path.basename(source_path))[0],
-                target_theorem_name(target_thm)[0])]
+            reason = KNOWN_FALSE_TARGETS[
+                (os.path.splitext(os.path.basename(source_path))[0], target_theorem_name(target_thm)[0])
+            ]
             audit_writer.write(
                 f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} asserts a FALSE goal — skipped (filter A', known-false): "
@@ -807,6 +806,17 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
                 f"from-scratch benchmark)\n"
             )
             survivors.append(entry)
+        elif not has_proof:
+            # --allow-no-proof: the source carries only PROOF OBVIOUS/OMITTED
+            # (no reference proof), but the goal is a vetted hard property
+            # (e.g. the ZooKeeper Zab safety theorems). L2 grades by tlapm, not
+            # by the human reference, so keep it as a from-scratch benchmark.
+            audit_writer.write(
+                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"{line} has no manual proof — kept (--allow-no-proof; tlapm-graded "
+                f"from-scratch benchmark)\n"
+            )
+            survivors.append(entry)
         else:
             survivors.append(entry)
     top_level = survivors
@@ -818,36 +828,29 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
         target_thm = entry[0]
         stmt = _statement_text(target_thm, source_lines)
         if stmt in seen_stmts:
-            line = target_thm['loc']['line_start']
+            line = target_thm["loc"]["line_start"]
             kept_line = seen_stmts[stmt]
-            name = target_thm['name'] or f"<unnamed L{line}>"
+            name = target_thm["name"] or f"<unnamed L{line}>"
             audit_writer.write(
                 f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has identical statement text to candidate kept at line "
                 f"{kept_line} — skipped (filter B)\n"
             )
         else:
-            seen_stmts[stmt] = target_thm['loc']['line_start']
+            seen_stmts[stmt] = target_thm["loc"]["line_start"]
             deduped.append(entry)
     top_level = deduped
 
     if not top_level:
-        audit_writer.write(
-            f"[level2-audit] {source_path}: no top-level THEOREM identified — no benchmarks generated\n"
-        )
+        audit_writer.write(f"[level2-audit] {source_path}: no top-level THEOREM identified — no benchmarks generated\n")
         return 0
     if len(top_level) > 1:
         names = []
         for t, unnamed, shp, grph in top_level:
-            label = t['name'] or f"<unnamed L{t['loc']['line_start']}>"
-            if unnamed:
-                tag = "[unnamed]"
-            else:
-                tag = f"[shape={'Y' if shp else 'N'}/graph={'Y' if grph else 'N'}]"
+            label = t["name"] or f"<unnamed L{t['loc']['line_start']}>"
+            tag = "[unnamed]" if unnamed else f"[shape={'Y' if shp else 'N'}/graph={'Y' if grph else 'N'}]"
             names.append(label + tag)
-        audit_writer.write(
-            f"[level2-audit] {source_path}: multiple top-level THEOREMs: {names}\n"
-        )
+        audit_writer.write(f"[level2-audit] {source_path}: multiple top-level THEOREMs: {names}\n")
 
     out_dir = os.path.join(output_root, module_subdir or module)
     os.makedirs(out_dir, exist_ok=True)
@@ -860,14 +863,15 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
     if shared_model and module in skip_model_modules:
         audit_writer.write(
             f"[level2-audit] {source_path}: module {module} is a local dependency "
-            f"of a sibling — kept full (no shared model)\n")
+            f"of a sibling — kept full (no shared model)\n"
+        )
     if shared_model and module not in skip_model_modules:
         targets = [entry[0] for entry in top_level]
         model_set, main_specs = compute_model_set(dump, targets)
         if model_set:
             model_text = build_model(source_lines, dump, model_set)
             model_path = os.path.join(out_dir, f"{module}.tla")
-            with open(model_path, 'w', encoding='utf-8') as f:
+            with open(model_path, "w", encoding="utf-8") as f:
                 f.write(model_text)
             print(f"  generated model: {os.path.relpath(model_path, PROJECT_ROOT)}")
 
@@ -875,11 +879,11 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
     used_names = set()
     count = 0
     for target_thm, _, _, _ in top_level:
-        if not target_thm['name']:
+        if not target_thm["name"]:
             # Not a warning: unnamed THEOREMs are top-level by construction.
             # This entry just records how the filename was derived.
-            line = target_thm['loc']['line_start']
-            rhs = target_thm['shape'].get('rhs_primary_name')
+            line = target_thm["loc"]["line_start"]
+            rhs = target_thm["shape"].get("rhs_primary_name")
             if rhs:
                 audit_writer.write(
                     f"[level2-audit] {source_path}: unnamed top-level THEOREM at line "
@@ -913,15 +917,14 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
         reachable = compute_reachable(dump, target_thm)
         # Spec-based targets EXTEND the shared model; non-spec lemmas stay
         # self-contained (the model would over-expose context they hide).
-        is_spec = target_thm['shape'].get('lhs_spec_ref') in main_specs
+        is_spec = target_thm["shape"].get("lhs_spec_ref") in main_specs
         if shared_model and model_set and is_spec:
             bench_text = build_benchmark_extends(
-                source_lines, dump, target_thm, bench_module_name,
-                reachable, model_set, module)
+                source_lines, dump, target_thm, bench_module_name, reachable, model_set, module
+            )
         else:
-            bench_text = build_benchmark(source_lines, dump, target_thm,
-                                         bench_module_name, reachable)
-        with open(bench_file, 'w', encoding='utf-8') as f:
+            bench_text = build_benchmark(source_lines, dump, target_thm, bench_module_name, reachable)
+        with open(bench_file, "w", encoding="utf-8") as f:
             f.write(bench_text)
         copy_deps(dump, source_path, out_dir, reachable)
         count += 1
@@ -934,24 +937,35 @@ def process_file(source_path, audit_writer, output_root, module_subdir=None,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source-dir', default=SOURCE_ROOT,
-                        help='Directory of source .tla files (default: %(default)s)')
-    parser.add_argument('--output-dir', default=BENCHMARK_DIR,
-                        help='Output directory for benchmarks (default: %(default)s)')
-    parser.add_argument('--filter', default=None,
-                        help='Glob-ish substring to limit which source files we process')
-    parser.add_argument('files', nargs='*',
-                        help='Specific .tla files to process (overrides --source-dir scan)')
-    parser.add_argument('--shared-model', action='store_true',
-                        help='Emit one proof-free <Module>.tla model per output dir '
-                             'and have spec-based tasks EXTEND it instead of inlining '
-                             'the spec (de-duplicates the spec; grader resolves the '
-                             'co-located model automatically).')
+    parser.add_argument(
+        "--source-dir", default=SOURCE_ROOT, help="Directory of source .tla files (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--output-dir", default=BENCHMARK_DIR, help="Output directory for benchmarks (default: %(default)s)"
+    )
+    parser.add_argument("--filter", default=None, help="Glob-ish substring to limit which source files we process")
+    parser.add_argument("files", nargs="*", help="Specific .tla files to process (overrides --source-dir scan)")
+    parser.add_argument(
+        "--shared-model",
+        action="store_true",
+        help="Emit one proof-free <Module>.tla model per output dir "
+        "and have spec-based tasks EXTEND it instead of inlining "
+        "the spec (de-duplicates the spec; grader resolves the "
+        "co-located model automatically).",
+    )
+    parser.add_argument(
+        "--allow-no-proof",
+        action="store_true",
+        help="Keep top-level theorems whose source has only PROOF "
+        "OBVIOUS/OMITTED (no reference proof). Use for vetted "
+        "hard from-scratch benchmarks (e.g. ZooKeeper Zab) that "
+        "are graded by tlapm, not against a human reference.",
+    )
     args = parser.parse_args()
 
     output_root = os.path.abspath(args.output_dir)
     os.makedirs(output_root, exist_ok=True)
-    audit_path = os.path.join(output_root, 'audit.log')
+    audit_path = os.path.join(output_root, "audit.log")
 
     if args.files:
         targets = [(os.path.abspath(p), None) for p in args.files]
@@ -959,16 +973,16 @@ def main():
         src_root = os.path.abspath(args.source_dir)
         targets = []
         for root, _, files in os.walk(src_root):
-            if '.tlaps' in root:
+            if ".tlaps" in root:
                 continue
             for fname in sorted(files):
-                if not fname.endswith('.tla'):
+                if not fname.endswith(".tla"):
                     continue
                 full = os.path.join(root, fname)
                 if args.filter and args.filter not in full:
                     continue
                 subdir = os.path.relpath(root, src_root).split(os.sep)[0]
-                if subdir == '.':
+                if subdir == ".":
                     subdir = os.path.splitext(fname)[0]
                 targets.append((full, subdir))
 
@@ -976,16 +990,21 @@ def main():
 
     total = 0
     generated_paths = []
-    with open(audit_path, 'w', encoding='utf-8') as audit_writer:
+    with open(audit_path, "w", encoding="utf-8") as audit_writer:
         for path, subdir in targets:
             print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
             key = subdir if subdir is not None else os.path.splitext(os.path.basename(path))[0]
             try:
-                total += process_file(path, audit_writer, output_root,
-                                      module_subdir=subdir,
-                                      generated_paths=generated_paths,
-                                      shared_model=args.shared_model,
-                                      skip_model_modules=sibling_deps.get(key, set()))
+                total += process_file(
+                    path,
+                    audit_writer,
+                    output_root,
+                    module_subdir=subdir,
+                    generated_paths=generated_paths,
+                    shared_model=args.shared_model,
+                    skip_model_modules=sibling_deps.get(key, set()),
+                    allow_no_proof=args.allow_no_proof,
+                )
             except Exception as e:
                 audit_writer.write(f"[level2-audit] {path}: ERROR {e!r}\n")
                 print(f"  ERROR: {e}", file=sys.stderr)
@@ -995,5 +1014,5 @@ def main():
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

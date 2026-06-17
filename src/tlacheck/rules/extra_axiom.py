@@ -23,8 +23,7 @@ name = "EXTRA_AXIOM"
 # the agent may legitimately *name* an existing baseline assumption (e.g. turn the
 # given `ASSUME N \in Nat` into `ASSUME NType == N \in Nat`) so it can cite it
 # `BY NType`. Comparing bodies recognises that as given, not a new axiom.
-_BODY = re.compile(
-    r"^(?:ASSUME|ASSUMPTION|AXIOM)\s+(?:[A-Za-z_]\w*\s*==\s*)?(.*)$", re.DOTALL)
+_BODY = re.compile(r"^(?:ASSUME|ASSUMPTION|AXIOM)\s+(?:[A-Za-z_]\w*\s*==\s*)?(.*)$", re.DOTALL)
 
 
 def _body(assume_text: str) -> str:
@@ -35,8 +34,8 @@ def _body(assume_text: str) -> str:
 def check(ctx: CheckContext) -> list[Issue]:
     if ctx.baseline is None:
         return []
-    base_axioms = {a.name for a in ctx.baseline.assumes if a.name}   # by name
-    base_bodies = {_body(t) for t in ctx.baseline_assume_texts()}    # by asserted body
+    base_axioms = {a.name for a in ctx.baseline.assumes if a.name}  # by name
+    base_bodies = {_body(t) for t in ctx.baseline_assume_texts()}  # by asserted body
     issues: list[Issue] = []
     for a in ctx.solution.assumes:
         # Given (allowed) if the baseline has an assume with the same name, OR —
@@ -50,12 +49,13 @@ def check(ctx: CheckContext) -> list[Issue]:
         kind = "AXIOM" if a.is_axiom else "ASSUME"
         line = a.loc.line_start if a.loc else "?"
         label = a.name or f"<unnamed {kind} L{line}>"
-        issues.append(Issue(
-            vector=name,
-            severity=Severity.CHEATING,
-            message=(f"New {kind} '{label}' not in the baseline — assumes away "
-                     f"an obligation."),
-            location=f"{ctx.solution.filename}:{line}",
-            evidence=label,
-        ))
+        issues.append(
+            Issue(
+                vector=name,
+                severity=Severity.CHEATING,
+                message=(f"New {kind} '{label}' not in the baseline — assumes away an obligation."),
+                location=f"{ctx.solution.filename}:{line}",
+                evidence=label,
+            )
+        )
     return issues
