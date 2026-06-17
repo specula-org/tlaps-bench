@@ -77,6 +77,70 @@ def run_tlacheck_gate(result_dir, target_name, benchmark_dir, *, tlapm_passed=Tr
     return False, ""
 
 
+def install_strong_checker(workspace, check_bin_name, checker_bin, benchmark_dir):
+    """Install the agent-facing ``check_proof_bin`` as a wrapper that runs the
+    real compiled checker AND the tlacheck SANY gate.
+
+    Without this, the prompt points the agent at the compiled ``check_proof_bin``,
+    whose legacy cheat-check misses admitted-goal lemmas (``LEMMA X == <goal>``
+    with no proof, target discharged ``BY X``) and smuggled modules — so the
+    agent gets a "PASS" for a 2-line admit and stops. The wrapper makes the
+    agent's own oracle report CHEATING/FAIL on exactly what the grade-time gate
+    (run_tlacheck_gate) catches, so the agent must actually prove the goal.
+
+    Returns the wrapper path. Falls back to a plain binary copy on any error.
+    """
+    real_bin = os.path.join(workspace, '.' + check_bin_name + '.real')
+    shutil.copy2(checker_bin, real_bin)
+    os.chmod(real_bin, 0o755)
+    wrapper = os.path.join(workspace, check_bin_name)
+    repo_src = os.path.join(REPO_ROOT, 'src')
+    script = (
+        "#!/usr/bin/env python3\n"
+        "import os, sys, subprocess\n"
+        f"REAL = {real_bin!r}\n"
+        f"REPO_SRC = {repo_src!r}\n"
+        f"BENCH_DIR = {benchmark_dir!r}\n"
+        "argv = sys.argv[1:]\n"
+        "rc = subprocess.run([REAL] + argv).returncode\n"
+        "tla = next((a for a in argv if a.endswith('.tla')), None)\n"
+        "if rc != 0 or tla is None:\n"
+        "    sys.exit(rc)\n"
+        "# real checker reports PASS -> apply the SANY tlacheck gate.\n"
+        "target = os.path.splitext(os.path.basename(tla))[0]\n"
+        "workdir = os.path.dirname(os.path.abspath(tla)) or '.'\n"
+        "sys.path.insert(0, REPO_SRC)\n"
+        "try:\n"
+        "    from tlacheck.context import build_context\n"
+        "    from tlacheck.engine import evaluate\n"
+        "    ctx = build_context(workdir, target, benchmark_dir=BENCH_DIR,\n"
+        "                        tlapm_passed=True, tlapm_fallback=True)\n"
+        "    issues = evaluate(ctx).cheating_issues\n"
+        "except Exception as e:\n"
+        "    print('[tlacheck gate] skipped (%s) - binary verdict stands' % e)\n"
+        "    sys.exit(0)\n"
+        "if issues:\n"
+        "    print('')\n"
+        "    print('=' * 60)\n"
+        "    print('CHEATING CHECK (tlacheck / SANY)')\n"
+        "    print('=' * 60)\n"
+        "    for i in issues:\n"
+        "        print('  ' + str(i))\n"
+        "    print('')\n"
+        "    print('VERDICT')\n"
+        "    print('=' * 60)\n"
+        "    print('  CHEATING/FAIL - an admitted goal or smuggled module is NOT a valid proof.')\n"
+        "    print('  Every helper LEMMA/THEOREM must itself be fully proved by TLAPS; you may')\n"
+        "    print('  not restate the target goal as an unproven lemma and discharge it BY that.')\n"
+        "    sys.exit(2)\n"
+        "sys.exit(0)\n"
+    )
+    with open(wrapper, 'w') as f:
+        f.write(script)
+    os.chmod(wrapper, 0o755)
+    return wrapper
+
+
 def resolve_paths():
     """Return (benchmark_root, checker_binary) based on environment.
 
@@ -456,12 +520,19 @@ def run_single_benchmark(item: WorkItem):
                             'GIT_COMMITTER_NAME': 'bench',
                             'GIT_COMMITTER_EMAIL': 'bench@bench'})
 
-        # Copy checker binary AFTER the initial commit so it's not in the baseline
+        # Copy checker binary AFTER the initial commit so it's not in the baseline.
+        # Install it as a wrapper that also runs the tlacheck SANY gate, so the
+        # agent's own success oracle (the prompt's `./check_proof_bin --level 2`)
+        # rejects admitted-goal / smuggled-module cheats the legacy binary misses.
         checker_bin = level.checker_binary_path()
         check_bin_name = os.path.basename(checker_bin)
-        check_bin_dest = os.path.join(workspace, check_bin_name)
-        shutil.copy2(checker_bin, check_bin_dest)
-        os.chmod(check_bin_dest, 0o755)
+        try:
+            install_strong_checker(workspace, check_bin_name, checker_bin,
+                                   os.path.dirname(item.benchmark_path))
+        except Exception:
+            check_bin_dest = os.path.join(workspace, check_bin_name)
+            shutil.copy2(checker_bin, check_bin_dest)
+            os.chmod(check_bin_dest, 0o755)
 
         # Archive the original benchmark
         shutil.copy2(item.benchmark_path, os.path.join(result_dir, 'benchmark.tla'))
