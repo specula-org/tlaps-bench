@@ -143,6 +143,15 @@ lib/                           Vendored: tla2tools.jar (gitignored)
 docker/                        Container build + isolation
 ```
 
+### Setup
+
+Requires Python ≥ 3.12, Java 21 (for SANY), and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync              # creates .venv and installs dependencies
+source .venv/bin/activate
+```
+
 ### Run the benchmark
 
 First build the checker binary (one-time, required before any run):

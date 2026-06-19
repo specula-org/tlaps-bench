@@ -29,6 +29,7 @@ Exit codes:
 """
 
 import argparse
+import contextlib
 import glob
 import os
 import re
@@ -38,13 +39,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Also expose the repo `src/` so the SANY gate can `import tlacheck`/`tlacore`
-# when running from source (frozen builds bundle them directly).
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import contextlib
-
-from cheating_detection import (
+from common.cheating_detection import (
     detect_dependency_modification,
     detect_empty_proof,
     detect_extra_axioms,
@@ -452,20 +447,21 @@ def main():
         output_lines.append(line)
         print(line)
 
+    def write_result_and_exit(code):
+        with open(output_path, "w") as f:
+            f.write("\n".join(output_lines) + "\n")
+        sys.exit(code)
+
     # Find tlapm
     tlapm_path = args.tlapm or find_tlapm()
     if not tlapm_path:
         emit("ERROR: tlapm not found. Use --tlapm to specify path.")
-        with open(output_path, "w") as f:
-            f.write("\n".join(output_lines) + "\n")
-        sys.exit(3)
+        write_result_and_exit(3)
 
     tlapm_lib = args.tlapm_lib or find_tlapm_lib(tlapm_path)
     if not tlapm_lib:
         emit("ERROR: tlapm lib not found. Use --tlapm-lib to specify path.")
-        with open(output_path, "w") as f:
-            f.write("\n".join(output_lines) + "\n")
-        sys.exit(3)
+        write_result_and_exit(3)
 
     emit(f"Checking: {os.path.relpath(filepath)}")
     emit(f"tlapm: {tlapm_path}")
@@ -621,11 +617,8 @@ def main():
             emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
 
     # Write result file
-    with open(output_path, "w") as f:
-        f.write("\n".join(output_lines) + "\n")
-    emit(f"\nResult written to: {output_path}")
-
-    sys.exit(exit_code)
+    print(f"\nResult written to: {output_path}")
+    write_result_and_exit(exit_code)
 
 
 if __name__ == "__main__":

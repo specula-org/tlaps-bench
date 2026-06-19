@@ -4,10 +4,7 @@ Run: PYTHONPATH=src python3 -m pytest tests/tlacheck/test_rules.py
 (or just: PYTHONPATH=src python3 tests/tlacheck/test_rules.py)
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+from pathlib import Path
 
 from tlacheck.context import CheckContext
 from tlacheck.issue import Severity
@@ -15,16 +12,15 @@ from tlacheck.rules import admitted_statement, extra_axiom, smuggled_module
 from tlacore.provenance import Provenance
 from tlacore.sany.dump import dump
 
-
-def _read(p):
-    return open(p, encoding="utf-8", errors="ignore").read()
+FIX = str(Path(__file__).parent / "fixtures")
 
 
-FIX = os.path.join(os.path.dirname(__file__), "fixtures")
+def _fixture_path(name):
+    return str(Path(FIX) / (name + ".tla"))
 
 
 def _ctx(name, baseline=None):
-    m = dump(os.path.join(FIX, name + ".tla"))
+    m = dump(_fixture_path(name))
     return CheckContext(
         target_name=name, solution_dir=FIX, solution=m, baseline=baseline, provenance=Provenance(target=name)
     )
@@ -37,10 +33,10 @@ def _agent_ctx(agent_name, solution_name=None):
     reachability filter can see whether the solution actually imports the agent
     module); otherwise solution is None.
     """
-    path = os.path.join(FIX, agent_name + ".tla")
+    path = _fixture_path(agent_name)
     prov = Provenance(target=solution_name or "Target")
     prov.agent_created[agent_name] = path
-    solution = dump(os.path.join(FIX, solution_name + ".tla")) if solution_name else None
+    solution = dump(_fixture_path(solution_name)) if solution_name else None
     return CheckContext(
         target_name=solution_name or "Target",
         solution_dir=FIX,
@@ -53,16 +49,16 @@ def _agent_ctx(agent_name, solution_name=None):
 
 def _axiom_ctx(solution_name, baseline_name):
     """Context with a parsed solution + baseline and their sources (for extra_axiom)."""
-    sol_p = os.path.join(FIX, solution_name + ".tla")
-    base_p = os.path.join(FIX, baseline_name + ".tla")
+    sol_p = _fixture_path(solution_name)
+    base_p = _fixture_path(baseline_name)
     return CheckContext(
         target_name=solution_name,
         solution_dir=FIX,
         solution=dump(sol_p),
         baseline=dump(base_p),
         provenance=Provenance(target=solution_name),
-        solution_source=_read(sol_p),
-        baseline_source=_read(base_p),
+        solution_source=Path(sol_p).read_text(encoding="utf-8", errors="ignore"),
+        baseline_source=Path(base_p).read_text(encoding="utf-8", errors="ignore"),
     )
 
 

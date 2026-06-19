@@ -84,8 +84,7 @@ BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "level2")
 SANY_DUMP = os.path.join(PROJECT_ROOT, "src", "dataset", "sany-dump", "run.sh")
 
 # Reuse L1's proof-stripping logic for dependency .tla copies.
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "dataset", "level1"))
-from generate import (  # noqa: E402
+from dataset.level1.generate import (  # noqa: E402
     STDLIB_MODULES,
     parse_extends,
     parse_instances,
@@ -736,6 +735,7 @@ def process_file(
     with open(source_path, encoding="utf-8") as f:
         text = f.read()
     source_lines = text.splitlines(keepends=True)
+    base_module = os.path.splitext(os.path.basename(source_path))[0]
 
     try:
         dump = dump_sany(source_path)
@@ -778,16 +778,14 @@ def process_file(
                 f"{line} has no manual TLAPS proof body — skipped (filter A)\n"
             )
         elif (
-            os.path.splitext(os.path.basename(source_path))[0],
+            base_module,
             target_theorem_name(target_thm)[0],
         ) in KNOWN_FALSE_TARGETS:
             # Filter A' — drop ONLY a goal TLC has shown to be false. An OMITTED
             # sub-step that papers over a *false* claim (e.g. PaxosProof
             # StructOK3) admits no honest proof, so it must not become a
             # benchmark. See KNOWN_FALSE_TARGETS for the per-target evidence.
-            reason = KNOWN_FALSE_TARGETS[
-                (os.path.splitext(os.path.basename(source_path))[0], target_theorem_name(target_thm)[0])
-            ]
+            reason = KNOWN_FALSE_TARGETS[(base_module, target_theorem_name(target_thm)[0])]
             audit_writer.write(
                 f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} asserts a FALSE goal — skipped (filter A', known-false): "
@@ -875,7 +873,6 @@ def process_file(
                 f.write(model_text)
             print(f"  generated model: {os.path.relpath(model_path, PROJECT_ROOT)}")
 
-    base_module = os.path.splitext(os.path.basename(source_path))[0]
     used_names = set()
     count = 0
     for target_thm, _, _, _ in top_level:

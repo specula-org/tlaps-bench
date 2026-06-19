@@ -34,12 +34,7 @@ import shutil
 import sys
 from pathlib import Path
 
-# Single source of truth for module classification lives in the L1 generator.
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "dataset", "level1"),
-)
-from generate import RESOLVABLE_MODULES  # noqa: E402
+from dataset.level1.generate import RESOLVABLE_MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / "source"

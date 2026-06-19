@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import contextlib
 import glob
 import json
 import os
@@ -30,16 +31,14 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
-# Allow `python3 src/evaluator/runner.py` as well as module import.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import contextlib
-
-from backends import get_backend, list_backends  # noqa: E402
-from levels import get_level, list_levels  # noqa: E402
+from evaluator.backends import get_backend, list_backends
+from evaluator.levels import get_level, list_levels
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+
+VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
 
 
 def resolve_paths():
@@ -341,7 +340,7 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
         for v in ["PASS", "FAIL", "CHEATING", "TIMEOUT", "ERROR"]:
             count = verdicts.get(v, 0)
             if count > 0:
-                icon = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}[v]
+                icon = VERDICT_ICONS[v]
                 lines.append(f"| {icon} {v} | {count} |")
         lines.append("")
 
@@ -349,9 +348,7 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
         lines.append("| Benchmark | Verdict | Time | Obligations | Tokens (in/out) | Notes |")
         lines.append("|-----------|---------|------|-------------|-----------------|-------|")
         for r in sorted(results, key=lambda x: x["benchmark"]):
-            icon = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}.get(
-                r["check_verdict"], "❓"
-            )
+            icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             notes = r.get("error", "")
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
             if "obligations" in r:
@@ -765,7 +762,6 @@ def main():
         )
 
     start_time = time.time()
-    icons = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
     total_benchmarks = len(benchmark_files)
     prior_done = len(results)
     if args.resume:
@@ -775,7 +771,7 @@ def main():
         for i, item in enumerate(work_items):
             r = run_single_benchmark(item)
             results.append(r)
-            icon = icons.get(r["check_verdict"], "❓")
+            icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
             print(
                 f"[{prior_done + i + 1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
@@ -787,7 +783,7 @@ def main():
             for done_count, future in enumerate(as_completed(futures), start=1):
                 r = future.result()
                 results.append(r)
-                icon = icons.get(r["check_verdict"], "❓")
+                icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
                 tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
                 print(
                     f"[{prior_done + done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
@@ -809,7 +805,7 @@ def main():
         verdicts[v] = verdicts.get(v, 0) + 1
     for v in ["PASS", "FAIL", "CHEATING", "TIMEOUT", "ERROR"]:
         if v in verdicts:
-            print(f"  {icons.get(v, '❓')} {v}: {verdicts[v]}")
+            print(f"  {VERDICT_ICONS.get(v, '❓')} {v}: {verdicts[v]}")
     total_in = sum(r.get("input_tokens", 0) for r in results)
     total_out = sum(r.get("output_tokens", 0) for r in results)
     print(f"  Total tokens: {total_in:,} input / {total_out:,} output")
