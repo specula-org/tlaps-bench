@@ -26,7 +26,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 # Internal imports
-from common.cheating_detection import CheatingIssue
+from common.cheating_detection import CheatingIssue, detect_proof_omitted
 from dataset.level1.generate import (
     BENCHMARK_DIR,
     PROJECT_ROOT,
@@ -314,8 +314,6 @@ def validate_single_benchmark(args_tuple):
         result.tlapm_passed = exit_code == 0
 
         # Only check if source proof uses PROOF OMITTED (placeholder, not a real proof)
-        from cheating_detection import detect_proof_omitted
-
         result.cheating_issues = detect_proof_omitted(proof_text)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
