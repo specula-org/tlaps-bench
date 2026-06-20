@@ -23,9 +23,9 @@ ASSUME NAssumption == N \in Nat /\ N >= 1
 (***************************************************************************)
 IsSortedFromTo(A, i, j) == \A p, q \in i..j : (p =< q) => (A[p] =< A[q])
 
-IsSortedTo(A, i) == \A j, k \in 1..i : (j =< k) => (A[j] =< A[k])
+IsSortedTo(arr, n) == \A p, q \in 1..n : (p =< q) => (arr[p] =< arr[q])
 
-IsSorted(A) == IsSortedTo(A, N)
+IsSorted(arr) == IsSortedTo(arr, N)
 
 (***************************************************************************)
 (* The less obvious correctness condition is that the array should be a    *)
@@ -35,11 +35,11 @@ IsSorted(A) == IsSortedTo(A, N)
 (* containing all of) the numbers from 1 through N.                        *)
 (***************************************************************************)
 Perms == { f \in [1..N -> 1..N] : 
-                     \A i \in 1..N : \E j \in 1..N : f[i] = f[j] }
+                     \A p \in 1..N : \E q \in 1..N : f[p] = f[q] }
 
-f ** g == [i \in 1..N |-> f[g[i]]]
+f ** g == [p \in 1..N |-> f[g[p]]]
    
-IsPermOf(A, B) == \E f \in Perms : A = (B ** f)
+IsPermOf(arr, brr) == \E f \in Perms : arr = (brr ** f)
 
 (***************************************************************************)
 (* Next, I define two useful permutations of 1..N , the identity Id and    *)
