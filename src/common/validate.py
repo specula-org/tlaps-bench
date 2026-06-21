@@ -314,7 +314,13 @@ def validate_single_benchmark(args_tuple):
         result.tlapm_exit_code = exit_code
         result.tlapm_output = output
         result.tlapm_time_secs = elapsed
-        result.tlapm_passed = exit_code == 0
+        # --strict flags the benchmark's GIVEN omitted lemmas (L1 preceding PROOF
+        # OMITTED) module-wide, so only a MISSING step (no proof at all) is a real
+        # gap; exit 11 with 0 missing just means admitted given lemmas remain,
+        # which is fine for a complete reference proof. (Same rule as check_proof.)
+        m_missing = re.search(r"Proof incomplete in module .*?:\s*(\d+) missing", output)
+        n_missing = int(m_missing.group(1)) if m_missing else 0
+        result.tlapm_passed = exit_code in (0, 11) and n_missing == 0 and "obligations failed" not in output
 
         # Only check if source proof uses PROOF OMITTED (placeholder, not a real proof)
         result.cheating_issues = detect_proof_omitted(proof_text)
@@ -384,10 +390,10 @@ def generate_report(results: list[ValidationResult], output_path: str):
             elif r.status == "FAIL":
                 # Extract failure summary from tlapm output
                 fail_match = re.search(r"(\d+)/(\d+) obligation", r.tlapm_output)
-                if r.tlapm_exit_code == 11 or "Proof incomplete" in r.tlapm_output:
-                    notes = "incomplete proof (missing/omitted step; --strict)"
-                elif fail_match:
+                if "obligations failed" in r.tlapm_output and fail_match:
                     notes = f"{fail_match.group(1)}/{fail_match.group(2)} obligations failed"
+                elif "Proof incomplete" in r.tlapm_output:
+                    notes = "incomplete proof (a step has no proof; --strict)"
                 elif "TIMEOUT" in r.tlapm_output:
                     notes = "Timeout"
 

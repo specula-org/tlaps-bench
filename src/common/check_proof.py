@@ -572,7 +572,18 @@ def main():
 
         for line in tlapm_output.split("\n"):
             emit(line)
-        tlapm_passed = tlapm_exit == 0
+        # --strict reports incompleteness module-wide as "N missing, M omitted".
+        # Only MISSING steps (no proof at all — a bare QED, an unproven helper
+        # lemma, an unfinished target) signal an agent gap. OMITTED steps are the
+        # benchmark's GIVEN admitted lemmas (L1 preceding `PROOF OMITTED`) and
+        # must NOT by themselves fail a valid solution — agent-ADDED omitted is
+        # caught separately by the proof-omitted check. So exit 0 (fully clean) or
+        # exit 11 with 0 missing (only given omitted lemmas remain) both mean the
+        # target is genuinely proved; exit 10 / failed obligations / timeout do not.
+        m_missing = re.search(r"Proof incomplete in module .*?:\s*(\d+) missing", tlapm_output)
+        n_missing = int(m_missing.group(1)) if m_missing else 0
+        obligation_failed = "obligations failed" in tlapm_output or tlapm_exit == 10
+        tlapm_passed = tlapm_exit in (0, 11) and n_missing == 0 and not obligation_failed
 
         # Run --summary to detect missing proofs (e.g. bare QED)
         summary_output = ""
@@ -692,12 +703,14 @@ def main():
         exit_code = 1
         # Extract obligation summary
         m = re.search(r"(\d+)/(\d+) obligation", tlapm_output)
-        if tlapm_exit == 11 or "Proof incomplete" in tlapm_output:
-            emit("  ❌ FAIL — proof incomplete: a step has no proof (tlapm --strict)")
+        if obligation_failed and m:
+            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
+        elif obligation_failed:
+            emit(f"  ❌ FAIL — tlapm reported failed obligations (exit {tlapm_exit})")
+        elif n_missing > 0:
+            emit(f"  ❌ FAIL — proof incomplete: {n_missing} step(s) have no proof (tlapm --strict)")
         elif tlapm_exit == 12:
             emit("  ❌ FAIL — no proof obligation for the selected target (tlapm --strict)")
-        elif m:
-            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
         elif "TIMEOUT" in tlapm_output:
             emit(f"  ❌ FAIL — timeout after {args.timeout}s")
         else:
