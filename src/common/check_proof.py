@@ -413,6 +413,48 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
     return ([str(i) for i in res.cheating_issues] + [str(i) for i in res.incomplete_issues]), ""
 
 
+# Machine-readable marker the runner greps for to set the structured
+# `sany_valid` bit. Printed in the VERDICT section on a SANY parse failure.
+SANY_INVALID_MARKER = "[SANY-INVALID]"
+
+
+def check_sany_valid(filepath):
+    """Whether the solution parses under standalone tla2sany — the canonical TLA+
+    parser, which is stricter than tlapm's own (it rejects e.g. an operator
+    parameter that shadows a state VARIABLE). Returns ``(status, detail)``:
+
+      "valid"       — SANY parsed the module.
+      "invalid"     — SANY reported a real parse/semantic error → hard FAIL.
+      "unavailable" — SANY could not be run (run.sh / Java / tla2tools.jar
+                      missing, or a timeout). Fail-open: we do NOT FAIL a proof
+                      just because the SANY tooling is absent.
+
+    Needs the Java SANY dumper reachable: the runner sets ``SANY_RUN_SH`` to
+    ``src/dataset/sany-dump/run.sh`` for both the agent and the grader so the
+    frozen ``check_proof_bin`` (which bundles the Python wrapper but not run.sh)
+    can shell out to it.
+    """
+    try:
+        from tlacore.sany.dump import SanyError, dump_normalized
+    except Exception as e:
+        return "unavailable", f"tlacore import failed: {e}"
+    dep_dir = os.path.dirname(os.path.abspath(filepath))
+    try:
+        dump_normalized(filepath, dep_dir=dep_dir, timeout=120)
+        return "valid", ""
+    except SanyError as e:
+        msg = str(e).replace("\n", " ")
+        # A genuine rejection carries SANY's own diagnostics; a bare "produced no
+        # dump" without them is an infrastructure failure (run.sh / Java missing),
+        # not an invalid spec — treat that as unavailable, not invalid.
+        low = msg.lower()
+        if any(k in low for k in ("parse error", "errorlevel", "*** errors", "unknown operator", "multiply-defined")):
+            return "invalid", msg
+        return "unavailable", msg
+    except Exception as e:
+        return "unavailable", f"{type(e).__name__}: {e}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check a single TLAPS benchmark proof")
     parser.add_argument("file", help="Path to the benchmark .tla file")
@@ -485,7 +527,13 @@ def main():
             if dep_basename != basename:
                 shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
 
-        cmd = [tlapm_path, "-I", tlapm_lib]
+        # --strict makes tlapm exit non-zero on an *incomplete* proof — a step
+        # with no proof (missing / OMITTED / bare QED) generates no obligation,
+        # so default tlapm reports "All N obligations proved" and exits 0 even
+        # though the proof is unfinished (tlaplus/tlapm#271). Exit codes: 10
+        # failed obligation, 11 incomplete proof, 12 empty target. This is the
+        # authoritative replacement for our hand-rolled incomplete-proof heuristics.
+        cmd = [tlapm_path, "--strict", "-I", tlapm_lib]
         community_lib = find_community_lib(filepath)
         if community_lib:
             cmd += ["-I", community_lib]
@@ -584,6 +632,14 @@ def main():
     for desc in engine_issues:
         real_issues.append((0, desc))
 
+    # SANY validity (output gate): the solution must parse under the canonical
+    # standalone tla2sany. A real parse failure is a hard FAIL, distinct from a
+    # proof that fails to verify — flagged with SANY_INVALID_MARKER so the runner
+    # records a `sany_valid` bit. "unavailable" (tooling absent) is fail-open.
+    sany_status, sany_detail = check_sany_valid(filepath)
+    if sany_status == "unavailable" and sany_detail:
+        warnings.append((0, f"SANY validity check skipped ({sany_detail[:160]})"))
+
     for _line_num, desc in warnings:
         emit(f"  WARNING: {desc}")
 
@@ -602,6 +658,12 @@ def main():
     if real_issues:
         exit_code = 2
         emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
+    elif sany_status == "invalid":
+        # SANY-invalid is a FAIL (not a cheat), but a distinct one: the solution
+        # is rejected by the canonical parser even if tlapm's lenient parser
+        # accepted it. The marker lets the runner flag sany_valid=False.
+        exit_code = 1
+        emit(f"  ❌ FAIL {SANY_INVALID_MARKER} — solution does not parse under standalone tla2sany: {sany_detail[:200]}")
     elif tlapm_passed:
         exit_code = 0
         emit("  ✅ PASS — all obligations proved")
@@ -609,7 +671,11 @@ def main():
         exit_code = 1
         # Extract obligation summary
         m = re.search(r"(\d+)/(\d+) obligation", tlapm_output)
-        if m:
+        if tlapm_exit == 11 or "Proof incomplete" in tlapm_output:
+            emit("  ❌ FAIL — proof incomplete: a step has no proof (tlapm --strict)")
+        elif tlapm_exit == 12:
+            emit("  ❌ FAIL — no proof obligation for the selected target (tlapm --strict)")
+        elif m:
             emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
         elif "TIMEOUT" in tlapm_output:
             emit(f"  ❌ FAIL — timeout after {args.timeout}s")

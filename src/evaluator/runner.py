@@ -350,6 +350,10 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
         for r in sorted(results, key=lambda x: x["benchmark"]):
             icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             notes = r.get("error", "")
+            # Flag a SANY-invalid FAIL distinctly (solution rejected by the
+            # canonical parser, vs a proof that simply didn't verify).
+            if r.get("sany_valid") is False:
+                notes = ("SANY✗ " + notes).strip()
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
             if "obligations" in r:
                 obs = str(r["obligations"])
@@ -470,6 +474,13 @@ def run_single_benchmark(item: WorkItem):
         agent_env = dict(os.environ)
         checker_dir = os.path.dirname(os.path.abspath(checker_bin))
         agent_env["PATH"] = checker_dir + os.pathsep + agent_env.get("PATH", "")
+        # The frozen check_proof_bin bundles the Python SANY wrapper but not the
+        # Java dumper, so point it at the real run.sh; without this the agent's
+        # self-check silently skips the SANY-validity gate (grader/agent parity).
+        # In docker run.sh isn't at REPO_ROOT — the image sets SANY_RUN_SH itself.
+        sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
+        if os.path.isfile(sany_run_sh):
+            agent_env["SANY_RUN_SH"] = sany_run_sh
         try:
             with open(agent_jsonl, "w") as jsonl_f:
                 proc = subprocess.Popen(
@@ -563,12 +574,18 @@ def run_single_benchmark(item: WorkItem):
             benchmark_dir=os.path.dirname(item.benchmark_path),
         )
         try:
+            # Same SANY_RUN_SH the agent got, so the grader's check runs the
+            # SANY-validity gate identically (grader/agent oracle parity).
+            check_env = dict(os.environ)
+            if os.path.isfile(sany_run_sh):
+                check_env["SANY_RUN_SH"] = sany_run_sh
             check_proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=item.check_timeout + 60,
                 cwd=workspace,
+                env=check_env,
             )
             check_log = os.path.join(result_dir, "check_debug.txt")
             with open(check_log, "w") as dbg:
@@ -583,6 +600,10 @@ def run_single_benchmark(item: WorkItem):
                 result["check_verdict"] = "FAIL"
             else:
                 result["check_verdict"] = "ERROR"
+            # Structured SANY-validity bit. check_proof marks a parse failure
+            # with [SANY-INVALID]; verdict stays FAIL but this distinguishes
+            # "doesn't parse under standalone tla2sany" from "proof didn't verify".
+            result["sany_valid"] = "[SANY-INVALID]" not in (check_proc.stdout or "")
             ob_matches = re.findall(r"All (\d+) obligation", check_proc.stdout)
             if ob_matches:
                 result["obligations"] = int(ob_matches[-1])
