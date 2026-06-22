@@ -632,7 +632,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=1, help="Parallel agent runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
     parser.add_argument(
-        "--timeout", type=int, default=7200, help="Agent timeout per benchmark in seconds (default: 7200; 0 = no limit)"
+        "--timeout", type=int, default=28800, help="Agent timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)"
     )
     parser.add_argument(
         "--check-timeout", type=int, default=600, help="Checker timeout per benchmark in seconds (default: 600)"
