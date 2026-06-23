@@ -131,15 +131,15 @@ class ContainerRunner:
         # Credential directory mounts (read-only except codex which needs write for cache)
         aws_dir = Path.home() / ".aws"
         if aws_dir.is_dir():
-            args.extend(["-v", f"{aws_dir.resolve()}:/home/bench/.aws:ro"])
+            args.extend(["-v", f"{aws_dir.resolve()}:/root/.aws:ro"])
 
         codex_dir = Path.home() / ".codex"
         if codex_dir.is_dir():
-            args.extend(["-v", f"{codex_dir.resolve()}:/home/bench/.codex"])
+            args.extend(["-v", f"{codex_dir.resolve()}:/root/.codex"])
 
         copilot_dir = Path.home() / ".copilot"
         if copilot_dir.is_dir():
-            args.extend(["-v", f"{copilot_dir.resolve()}:/home/bench/.copilot:ro"])
+            args.extend(["-v", f"{copilot_dir.resolve()}:/root/.copilot"])
 
         # Env vars
         for key, value in config.env.items():

@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .base import AgentBackend
+from .base import AgentBackend, detect_firewall_hosts
 
 DEFAULT_MODEL = "gpt-5.5"
 
@@ -59,7 +59,7 @@ class CodexBackend(AgentBackend):
         return "codex: no auth detected. Set OPENAI_API_KEY or AZURE_OPENAI_API_KEY, or run `codex login`."
 
     def firewall_hosts(self) -> list[str]:
-        return ["api.openai.com"]
+        return detect_firewall_hosts(self.model)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

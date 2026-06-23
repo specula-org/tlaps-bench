@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 
-from .base import AgentBackend
+from .base import AgentBackend, detect_firewall_hosts
 
 DEFAULT_MODEL = "claude-opus-4-7"
 
@@ -87,7 +87,7 @@ class ClaudeCodeBackend(AgentBackend):
             return f"claude_code: auth probe error: {e}"
 
     def firewall_hosts(self) -> list[str]:
-        return ["api.anthropic.com"]
+        return detect_firewall_hosts(self.model)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

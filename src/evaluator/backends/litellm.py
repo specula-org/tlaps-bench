@@ -8,7 +8,7 @@ import sys
 
 import litellm
 
-from .base import AgentBackend
+from .base import AgentBackend, detect_firewall_hosts
 
 DEFAULT_MODEL = "gpt-5.5"
 
@@ -44,14 +44,7 @@ class LiteLLMBackend(AgentBackend):
         ]
 
     def firewall_hosts(self) -> list[str]:
-        m = self.model.lower()
-        if "anthropic" in m or "claude" in m:
-            return ["api.anthropic.com"]
-        if "gemini" in m or "google" in m:
-            return ["generativelanguage.googleapis.com"]
-        if "deepseek" in m:
-            return ["api.deepseek.com"]
-        return ["api.openai.com"]
+        return detect_firewall_hosts(self.model)
 
     def check_auth(self) -> str | None:
         m = self.model.lower()
