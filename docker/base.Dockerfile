@@ -1,6 +1,7 @@
 # Stage 1: Compile check_proof_bin from source (no source leaks to final image)
 FROM python:3.12-slim AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir pyinstaller
 
 COPY pyproject.toml /build/pyproject.toml
