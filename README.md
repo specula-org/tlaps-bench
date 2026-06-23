@@ -148,9 +148,21 @@ docker/                        Container build + isolation
 Requires Python ≥ 3.12, Java 21 (for SANY), and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync              # creates .venv and installs dependencies
+uv sync              # creates .venv, installs deps + the `tlaps-bench` command
 source .venv/bin/activate
 ```
+
+This installs a single `tlaps-bench` CLI with subcommands for every operation
+below (`tlaps-bench --help` lists them; `tlaps-bench <command> --help` shows a
+command's full flag set):
+
+| Command | Does |
+|---|---|
+| `tlaps-bench run` | Run an agent backend on the benchmarks |
+| `tlaps-bench check` | Check a single proof for correctness and cheating |
+| `tlaps-bench validate` | Batch-validate the source proofs with tlapm |
+| `tlaps-bench generate` | Generate benchmarks (`--level level1`/`level2`) |
+| `tlaps-bench score` | Score / aggregate results (not implemented yet) |
 
 ### Run the benchmark
 
@@ -164,21 +176,21 @@ Then drive the runner. It is `--backend` × `--level` parameterised — pick one
 
 ```bash
 # Single benchmark, L1, Codex (default backend, default level)
-python3 src/evaluator/runner.py --filter GCD_GCD3
+tlaps-bench run --filter GCD_GCD3
 
 # Full L1 run, Codex, 40 parallel, 2h timeout
-python3 src/evaluator/runner.py --jobs 40 --timeout 7200
+tlaps-bench run --jobs 40 --timeout 7200
 
 # Same on L2 (proof from scratch)
-python3 src/evaluator/runner.py --level level2 --jobs 40 --timeout 7200
+tlaps-bench run --level level2 --jobs 40 --timeout 7200
 
 # Claude Code backend on L1 (override the default model if you like)
-python3 src/evaluator/runner.py --backend claude_code --jobs 40
-python3 src/evaluator/runner.py --backend claude_code --model claude-sonnet-4-6 --jobs 40
+tlaps-bench run --backend claude_code --jobs 40
+tlaps-bench run --backend claude_code --model claude-sonnet-4-6 --jobs 40
 
 # GitHub Copilot CLI backend on L1 (override the default model if you like)
-python3 src/evaluator/runner.py --backend copilot --jobs 40
-python3 src/evaluator/runner.py --backend copilot --model gpt-5.5 --jobs 40
+tlaps-bench run --backend copilot --jobs 40
+tlaps-bench run --backend copilot --model gpt-5.5 --jobs 40
 ```
 
 Requires: tlapm 1.6 pre-release at `~/.tlapm/` (or `/tmp/tlapm/` as a host-only fallback the runner will copy on first use) and the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex) for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for `--backend claude_code`, [GitHub Copilot CLI](https://github.com/github/copilot-cli) for `--backend copilot`.
@@ -201,11 +213,11 @@ parallel run pauses instead of failing when quota runs out.
 
 ```bash
 # Defaults: pause at 5h>80% or 7d>95%, sleep through up to 6 resets.
-python3 src/evaluator/runner.py --backend claude_code --jobs 40
+tlaps-bench run --backend claude_code --jobs 40
 # Tune thresholds, or set 0 to disable a window:
-python3 src/evaluator/runner.py --backend claude_code --jobs 40 \
+tlaps-bench run --backend claude_code --jobs 40 \
     --quota-5h 90 --quota-7d 95 --quota-max-waits 4
-python3 src/evaluator/runner.py --backend claude_code --quota-5h 0 --quota-7d 0  # off
+tlaps-bench run --backend claude_code --quota-5h 0 --quota-7d 0  # off
 ```
 
 The gate fails open: it is skipped for `--backend codex`, and for API-key auth
@@ -232,33 +244,34 @@ Verify that the source proofs (before `PROOF OBVIOUS` replacement) are valid:
 
 ```bash
 # Validate all benchmarks (uses tlapm 1.6 pre-release by default)
-python3 src/common/validate.py --jobs 40
+tlaps-bench validate --jobs 40
 
 # Validate with an alternative tlapm (e.g. 1.5) as a rerun for failures
-python3 src/common/validate.py --jobs 40 --rerun --rerun-tlapm /path/to/tlapm15
+tlaps-bench validate --jobs 40 --rerun --rerun-tlapm /path/to/tlapm15
 
 # Filter specific benchmarks
-python3 src/common/validate.py --filter Paxos --jobs 10
+tlaps-bench validate --filter Paxos --jobs 10
 ```
 
 ### Check a single proof
 
 ```bash
-python3 src/common/check_proof.py benchmark/level1/Euclid/GCD_GCD3.tla [--level 1] [--tlapm PATH] [--timeout SECS]
-python3 src/common/check_proof.py benchmark/level2/Cantor/Cantor1_cantor.tla --level 2
+tlaps-bench check benchmark/level1/Euclid/GCD_GCD3.tla [--level 1] [--tlapm PATH] [--timeout SECS]
+tlaps-bench check benchmark/level2/Cantor/Cantor1_cantor.tla --level 2
 ```
 
 `--level` controls which cheating rules apply: L1 enforces a byte-identical preamble (the agent only fills in the last proof); L2 lets the agent add new lemmas above the target theorem. Both levels still reject `PROOF OMITTED`, new `AXIOM`/`ASSUME`, bare-QED tricks, and dependency-file tampering.
 
 Exit codes: `0` = PASS, `1` = FAIL, `2` = CHEATING, `3` = ERROR.
 
-### Generate Level 1 benchmarks from source
+### Generate benchmarks from source
 
 ```bash
-python3 src/dataset/level1/generate.py
+tlaps-bench generate                  # Level 1 (default)
+tlaps-bench generate --level level2   # Level 2 (proof from scratch)
 ```
 
-Extracts each theorem with a real proof, replaces the last proof with `PROOF OBVIOUS`, and writes one benchmark file per theorem to `benchmark/level1/`.
+Level 1 extracts each theorem with a real proof, replaces the last proof with `PROOF OBVIOUS`, and writes one benchmark file per theorem to `benchmark/level1/`. Use `--level level2` to drive the Level 2 generator instead.
 
 ## Related Work
 
