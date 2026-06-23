@@ -34,7 +34,7 @@ RUN curl -fsSL -o /tmp/community.tar.gz \
 # Lock down tlapm
 RUN chown -R root:root /opt/tlapm && chmod -R a-w /opt/tlapm
 
-# Cheat checker + SANY assets
+# Cheat checker + SANY assets (built on host via `make`)
 COPY check_proof_bin /usr/local/bin/check_proof_bin
 COPY lib/tla2tools.jar /opt/sany/lib/tla2tools.jar
 COPY lib/community /opt/sany/lib/community
