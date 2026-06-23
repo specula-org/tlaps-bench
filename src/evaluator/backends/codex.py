@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+from pathlib import Path
 
 from .base import AgentBackend
 
@@ -112,3 +114,28 @@ class CodexBackend(AgentBackend):
             pass
 
         return "\n".join(lines), in_tok, out_tok
+
+
+def run_preflight() -> None:
+    """Validate model + credentials by making a minimal Codex CLI call."""
+    home = Path.home() / ".codex"
+    auth = home / "auth.json"
+    key = os.environ.get("OPENAI_API_KEY", "")
+
+    if not auth.exists() and not key:
+        print("missing ~/.codex/auth.json and OPENAI_API_KEY")
+        sys.exit(1)
+
+    if not auth.exists():
+        home.mkdir(parents=True, exist_ok=True)
+        auth.write_text(json.dumps({"OPENAI_API_KEY": key}))
+
+    m = os.environ.get("AGENT_MODEL_ID", "gpt-5.5").split("/")[-1]
+    r = subprocess.run(
+        ["codex", "exec", "--model", m, "--dangerously-bypass-approvals-and-sandbox",
+         "--skip-git-repo-check", "--", "say ok"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode:
+        print(r.stdout or r.stderr)
+        sys.exit(r.returncode)

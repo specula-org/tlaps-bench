@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 
 from .base import AgentBackend
 
@@ -176,3 +177,20 @@ class ClaudeCodeBackend(AgentBackend):
             in_tok, out_tok = final_in, final_out
 
         return "\n".join(lines), in_tok, out_tok
+
+
+def run_preflight() -> None:
+    """Validate model + credentials by making a minimal Claude Code CLI call."""
+    m = os.environ.get("AGENT_MODEL_ID", "claude-opus-4-7").split("/")[-1]
+
+    env = os.environ.copy()
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        env.pop("ANTHROPIC_API_KEY", None)
+
+    r = subprocess.run(
+        ["claude", "-p", "say ok", "--model", m, "--max-turns", "1"],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    if r.returncode:
+        print(r.stdout or r.stderr)
+        sys.exit(r.returncode)

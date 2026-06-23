@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 
 from .base import AgentBackend
 
@@ -185,3 +186,15 @@ class CopilotBackend(AgentBackend):
             pass
 
         return "\n".join(lines), in_tok, out_tok
+
+
+def run_preflight() -> None:
+    """Validate model + credentials by making a minimal Copilot CLI call."""
+    r = subprocess.run(
+        ["copilot", "--allow-all", "--disable-builtin-mcps", "--no-color",
+         "--no-auto-update", "--output-format", "text", "-p", "ok"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode:
+        print(r.stdout or r.stderr)
+        sys.exit(r.returncode)

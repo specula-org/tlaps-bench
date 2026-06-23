@@ -250,14 +250,12 @@ class ContainerRunner:
 
     @staticmethod
     def build_image(dockerfile: str, tag: str, context: str) -> None:
-        """Build a Docker image."""
+        """Build a Docker image, streaming output to stdout."""
         result = subprocess.run(
             ["docker", "build", "-f", dockerfile, "-t", tag, context],
-            capture_output=True,
-            text=True,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"Docker build failed: {result.stderr}")
+            raise RuntimeError(f"Docker build failed (exit {result.returncode})")
 
     @staticmethod
     def image_exists(tag: str) -> bool:
@@ -267,6 +265,38 @@ class ContainerRunner:
             capture_output=True,
         )
         return result.returncode == 0
+
+    def run_preflight(
+        self, config: ContainerConfig, backend_name: str, install_script: str | None = None
+    ) -> None:
+        """Run the backend's preflight check inside a container.
+
+        Installs the CLI, then calls the backend's run_preflight() to validate
+        model + credentials with a minimal API call. Fails fast on error.
+        """
+        check_cmd = (
+            f"python3 -c "
+            f"'from evaluator.backends.{backend_name} import run_preflight; run_preflight()'"
+        )
+        if install_script:
+            check_cmd = f"/opt/install-scripts/{install_script} > /dev/null 2>&1 && {check_cmd}"
+
+        docker_args, cid_file = self.build_docker_args(config)
+        full_cmd = docker_args + ["bash", "-c", check_cmd]
+
+        print(f"🔍 Running preflight check for '{backend_name}'...")
+        result = subprocess.run(
+            full_cmd,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if result.returncode != 0:
+            output = (result.stdout or result.stderr or "").strip()
+            raise RuntimeError(
+                f"❌ Preflight failed for '{backend_name}' (exit {result.returncode}):\n{output}"
+            )
+        print(f"✅ Preflight passed for '{backend_name}'")
 
 
 def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, str]:

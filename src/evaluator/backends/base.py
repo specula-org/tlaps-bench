@@ -24,18 +24,9 @@ class AgentBackend(ABC):
         """Parse the backend's stdout dump into (transcript, input_tokens, output_tokens)."""
 
     def check_auth(self) -> str | None:
-        """Verify the agent CLI can authenticate.
-
-        Returns None if auth looks OK, or a human-readable error string that
-        the runner will print and exit on.
-
-        Each backend chooses how to verify — env var fast path, CLI status
-        subcommand, or a minimal CLI probe — since users may authenticate
-        via API key, OAuth (`claude /login` / `codex login`), or a subscription.
-        Pre-flight should be quiet and ephemeral: do not leave session history.
-        """
+        """Host-side fast auth check. Returns None if OK, error string otherwise."""
         return None
 
     def firewall_hosts(self) -> list[str]:
-        """API hosts that must be reachable. For docs / entrypoint reference."""
+        """API hosts that must be reachable."""
         return []
