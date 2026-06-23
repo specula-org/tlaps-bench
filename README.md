@@ -143,18 +143,29 @@ lib/                           Vendored: tla2tools.jar (gitignored)
 docker/                        Container build + isolation
 ```
 
-### Setup
+### Setup (Linux x86-64)
 
-Requires Python ≥ 3.12, Java 21 (for SANY), and [uv](https://docs.astral.sh/uv/).
+Native setup requires GNU Make, `curl`, `tar`, [uv](https://docs.astral.sh/uv/),
+and a JDK 21 or newer (`java` and `javac`). The project itself requires Python
+≥ 3.12; `uv` selects or installs a compatible Python automatically.
+
+From the repository root, run:
 
 ```bash
-uv sync              # creates .venv, installs deps + the `tlaps-bench` command
-source .venv/bin/activate
+make setup
 ```
 
-This installs a single `tlaps-bench` CLI with subcommands for every operation
-below (`tlaps-bench --help` lists them; `tlaps-bench <command> --help` shows a
-command's full flag set):
+This one idempotent command syncs the locked Python environment, installs the
+pinned tlapm/Apalache/SANY dependencies, compiles the SANY semantic dumper,
+builds `check_proof_bin`, and runs a fast SANY smoke test. It is safe to rerun.
+Missing system prerequisites and a moved TLAPM rolling-release pin are reported
+as actionable errors. Allow roughly 3 GB of free disk space: the first run
+downloads an approximately 850 MB TLAPM archive and installs about 1.7 GB of
+external tools.
+
+`make setup` also installs a single `tlaps-bench` CLI with subcommands for every
+operation below (`tlaps-bench --help` lists them; `tlaps-bench <command> --help`
+shows a command's full flag set):
 
 | Command | Does |
 |---|---|
@@ -164,15 +175,14 @@ command's full flag set):
 | `tlaps-bench generate` | Generate benchmarks (`--level level1`/`level2`) |
 | `tlaps-bench score` | Score / aggregate results (not implemented yet) |
 
+Virtualenv activation is optional: run `source .venv/bin/activate` once so the
+`tlaps-bench` command is on your `PATH`, or leave the venv inactive and prefix
+each command below with `uv run` (e.g. `uv run tlaps-bench run --filter GCD_GCD3`).
+
 ### Run the benchmark
 
-First build the checker binary (one-time, required before any run):
-
-```bash
-make            # produces ./check_proof_bin via PyInstaller
-```
-
-Then drive the runner. It is `--backend` × `--level` parameterised — pick one of each.
+`make setup` builds the checker binary required by the runner. The runner is
+`--backend` × `--level` parameterised — pick one of each.
 
 ```bash
 # Single benchmark, L1, Codex (default backend, default level)
@@ -193,7 +203,11 @@ tlaps-bench run --backend copilot --jobs 40
 tlaps-bench run --backend copilot --model gpt-5.5 --jobs 40
 ```
 
-Requires: tlapm 1.6 pre-release at `~/.tlapm/` (or `/tmp/tlapm/` as a host-only fallback the runner will copy on first use) and the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex) for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for `--backend claude_code`, [GitHub Copilot CLI](https://github.com/github/copilot-cli) for `--backend copilot`.
+`make setup` installs the pinned tlapm 1.6 pre-release at `~/.tlapm/`. Each run
+also requires the relevant agent CLI on `PATH` — [OpenAI Codex CLI](https://github.com/openai/codex)
+for `--backend codex`, [Claude Code](https://github.com/anthropics/claude-code) for
+`--backend claude_code`, or [GitHub Copilot CLI](https://github.com/github/copilot-cli)
+for `--backend copilot`.
 
 ### Usage monitoring & quota gate (Claude Max)
 
@@ -227,6 +241,7 @@ token are absent — so it never blocks a run it can't measure.
 ### Run with Docker (recommended)
 
 ```bash
+make setup
 cd docker && bash build.sh
 # Set the API key(s) your chosen backend needs:
 #   OPENAI_API_KEY (or AZURE_OPENAI_API_KEY + AZURE_OPENAI_HOST) for codex
@@ -236,7 +251,9 @@ docker-compose run bench python3 /scripts/runner.py --jobs 40                   
 docker-compose run bench python3 /scripts/runner.py --backend claude_code --level level2 --jobs 40
 ```
 
-The container mounts the whole `benchmark/` tree and the prebuilt `check_proof_bin`, so make sure you've run `make` on the host first. Docker blocks access to GitHub/TLA+ sites to prevent data leakage.
+The container mounts the whole `benchmark/` tree. `make setup` prepares the
+prebuilt checker and SANY assets consumed by `docker/build.sh`. Docker blocks
+access to GitHub/TLA+ sites to prevent data leakage.
 
 ### Validate benchmarks
 

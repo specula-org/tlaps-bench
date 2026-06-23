@@ -6,7 +6,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TLA2TOOLS="$REPO_ROOT/lib/tla2tools.jar"
 BUILD="$SCRIPT_DIR/build"
 if [[ ! -f "$BUILD/DumpSemantics.class" \
-      || "$SCRIPT_DIR/DumpSemantics.java" -nt "$BUILD/DumpSemantics.class" ]]; then
+      || "$SCRIPT_DIR/DumpSemantics.java" -nt "$BUILD/DumpSemantics.class" \
+      || "$TLA2TOOLS" -nt "$BUILD/DumpSemantics.class" ]]; then
   bash "$SCRIPT_DIR/build.sh" >&2
 fi
 # TLAPS stdlib must be on the SANY search path so EXTENDS TLAPS resolves.
