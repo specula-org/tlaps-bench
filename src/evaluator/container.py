@@ -178,7 +178,7 @@ class ContainerRunner:
             text=True,
         )
 
-        if stdin_data:
+        if stdin_data and proc.stdin:
             try:
                 proc.stdin.write(stdin_data)
                 proc.stdin.close()

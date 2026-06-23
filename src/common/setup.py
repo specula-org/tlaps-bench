@@ -14,12 +14,8 @@ def ensure_build_deps() -> None:
     check_proof_bin and SANY DumpSemantics are compiled inside Docker (multi-stage build).
     """
     install_deps = os.path.join(REPO_ROOT, "scripts", "install_deps.sh")
-    tla2tools = os.path.join(REPO_ROOT, "lib", "tla2tools.jar")
-    if os.path.isfile(install_deps) and not os.path.isfile(tla2tools):
-        print("[setup] Installing dependencies (tla2tools.jar, community modules, tlapm)...")
+    if os.path.isfile(install_deps):
         r = subprocess.run(["bash", install_deps], cwd=REPO_ROOT)
         if r.returncode != 0:
             print("ERROR: Failed to install deps. Run `bash scripts/install_deps.sh` manually.")
             sys.exit(1)
-    else:
-        print("[setup] Dependencies already present.")

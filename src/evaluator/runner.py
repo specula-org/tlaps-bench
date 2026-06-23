@@ -662,7 +662,7 @@ def _run_grader_container(
     check_cmd = level.checker_command(
         "/workspace",
         basename,
-        "/grading/check.result",
+        "/results/check.result",
         item.check_timeout,
         benchmark_dir="/workspace",
     )
