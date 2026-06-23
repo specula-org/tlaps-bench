@@ -250,25 +250,7 @@ class ContainerRunner:
 
     @staticmethod
     def build_image(dockerfile: str, tag: str, context: str) -> None:
-        """Build a Docker image, streaming output to stdout.
-
-        Compiles check_proof_bin and SANY assets first (required by the image).
-        """
-        # Build check_proof_bin + SANY (same as docker/build.sh)
-        makefile = os.path.join(context, "Makefile")
-        if os.path.isfile(makefile):
-            print("[build] Compiling check_proof_bin...")
-            r = subprocess.run(["make", "build"], cwd=context)
-            if r.returncode != 0:
-                raise RuntimeError("Failed to compile check_proof_bin (run `make` manually)")
-
-        sany_build = os.path.join(context, "src", "dataset", "sany-dump", "build.sh")
-        if os.path.isfile(sany_build):
-            print("[build] Compiling SANY DumpSemantics...")
-            r = subprocess.run(["bash", sany_build], cwd=context)
-            if r.returncode != 0:
-                raise RuntimeError("Failed to compile SANY (need javac)")
-
+        """Build a Docker image, streaming output to stdout."""
         print(f"[build] docker build -t {tag}...")
         result = subprocess.run(
             ["docker", "build", "-f", dockerfile, "-t", tag, context],

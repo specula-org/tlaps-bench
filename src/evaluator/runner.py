@@ -730,8 +730,13 @@ def main():
         # Use container-side paths for prompts.
         tlapm_root = "/opt/tlapm"
         tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
+        # Benchmarks are read from host, grading uses host checker
         benchmark_root = os.path.join(REPO_ROOT, "benchmark")
-        checker_binary = "/usr/local/bin/check_proof_bin"
+        checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
+        if not os.path.isfile(checker_binary):
+            print(f"ERROR: checker binary not found at {checker_binary}")
+            print("       run `tlaps-bench setup` to build it.")
+            sys.exit(1)
         level = get_level(args.level, benchmark_root, checker_binary)
 
         dockerfile = os.path.join(REPO_ROOT, "docker", "base.Dockerfile")
@@ -766,7 +771,7 @@ def main():
         benchmark_root, checker_binary = resolve_paths()
         if not os.path.isfile(checker_binary):
             print(f"ERROR: checker binary not found at {checker_binary}")
-            print("       run `make` at the repo root to build it.")
+            print("       run `tlaps-bench setup` to build it.")
             sys.exit(1)
         level = get_level(args.level, benchmark_root, checker_binary)
 
