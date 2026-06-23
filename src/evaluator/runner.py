@@ -42,6 +42,9 @@ REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
 
+# Set to True to stream agent output to terminal during container runs
+STREAM_AGENT_OUTPUT = True
+
 
 def resolve_paths():
     """Return (benchmark_root, checker_binary) based on environment.
@@ -512,7 +515,7 @@ def _run_agent_container(
     prompt: str,
     result: dict,
 ) -> None:
-    """Run agent inside a Docker container."""
+    """Run agent inside a Docker container with live output streaming."""
     runner = ContainerRunner()
     cmd = backend.build_command("/workspace", "/results")
 
@@ -525,24 +528,44 @@ def _run_agent_container(
     )
 
     timeout = item.timeout if item.timeout and item.timeout > 0 else None
+    container_run = None
     try:
-        exit_code, stdout, stderr = runner.run_with_output(
-            config, cmd, stdin_data=prompt, timeout=timeout
-        )
-        result["agent_exit"] = exit_code
-        # Docker forwards stdout/stderr from the container process
-        if stdout:
-            with open(agent_jsonl, "w") as f:
-                f.write(stdout)
+        container_run = runner.run(config, cmd, stdin_data=prompt)
+        proc = container_run.proc
+        assert proc.stdout is not None  # Popen created with stdout=PIPE
+
+        # Stream stdout to file in real-time (and stderr separately)
+        with open(agent_jsonl, "w") as jsonl_f:
+            deadline = (time.time() + timeout) if timeout else None
+            while True:
+                line = proc.stdout.readline()
+                if not line and proc.poll() is not None:
+                    break
+                if line:
+                    jsonl_f.write(line)
+                    jsonl_f.flush()
+                    if STREAM_AGENT_OUTPUT:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                if deadline and time.time() > deadline:
+                    runner.kill(container_run)
+                    result["agent_exit"] = -1
+                    result["error"] = f"{backend.name} timeout after {item.timeout}s"
+                    return
+
+        result["agent_exit"] = proc.returncode
+        # Capture any remaining stderr
+        stderr = proc.stderr.read() if proc.stderr else ""
         if stderr:
             with open(os.path.join(agent_dir, "stderr.txt"), "w") as f:
                 f.write(stderr)
-        # Detect OOM kill
-        if exit_code == 137:
+        if proc.returncode == 137:
             result["error"] = "container OOM killed (exit 137)"
-    except subprocess.TimeoutExpired:
-        result["agent_exit"] = -1
-        result["error"] = f"{backend.name} timeout after {item.timeout}s"
+    except Exception as e:
+        result["agent_exit"] = -2
+        result["error"] = str(e)
+        if container_run:
+            runner.kill(container_run)
 
 
 def _run_agent_local(
