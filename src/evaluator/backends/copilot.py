@@ -13,6 +13,8 @@ DEFAULT_MODEL = "claude-opus-4.8"
 
 class CopilotBackend(AgentBackend):
     name = "copilot"
+    install_script = "install-copilot.sh"
+    env_keys = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL

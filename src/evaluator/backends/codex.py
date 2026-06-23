@@ -13,6 +13,8 @@ DEFAULT_MODEL = "gpt-5.5"
 
 class CodexBackend(AgentBackend):
     name = "codex"
+    install_script = "install-codex.sh"
+    env_keys = ["OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_HOST"]
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL

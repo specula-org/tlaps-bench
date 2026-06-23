@@ -7,17 +7,16 @@ from abc import ABC, abstractmethod
 
 class AgentBackend(ABC):
     name: str = ""
+    install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
+    env_keys: list[str] = []  # host env vars to forward into container
 
     @abstractmethod
-    def build_command(self, workspace: str, jsonl_out_path: str) -> list[str]:
+    def build_command(self, workspace: str, result_dir: str) -> list[str]:
         """Build the agent CLI command. Prompt is fed via stdin.
 
         Args:
             workspace: agent's working directory (will be the CLI's cwd).
-            jsonl_out_path: where the runner will redirect stdout.
-                            Returned by reference for backends that need to embed
-                            the path in flags (most don't — codex uses -o for last
-                            message, claude streams to stdout).
+            result_dir: directory for backend-specific output files.
         """
 
     @abstractmethod

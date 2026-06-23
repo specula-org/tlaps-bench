@@ -13,6 +13,8 @@ DEFAULT_MODEL = "claude-opus-4-7"
 
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
+    install_script = "install-claudecode.sh"
+    env_keys = ["ANTHROPIC_API_KEY"]
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
