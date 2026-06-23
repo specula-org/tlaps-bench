@@ -107,16 +107,7 @@ class LiteLLMBackend(AgentBackend):
 
 
 def run_preflight() -> None:
-    """Validate model + credentials by making a minimal LiteLLM API call.
-
-    Runs inside the container after install-litellm.sh, so litellm is available.
-    """
-    try:
-        import litellm  # noqa: F811 — installed at container runtime
-    except ImportError:
-        print("litellm not installed")
-        sys.exit(1)
-
+    """Validate model + credentials by making a minimal LiteLLM API call."""
     m = os.environ.get("AGENT_MODEL_ID", "gpt-5.5")
     try:
         response = litellm.completion(
