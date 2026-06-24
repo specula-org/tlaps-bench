@@ -82,7 +82,8 @@ COPY --from=builder /check_proof_bin /usr/local/bin/check_proof_bin
 
 ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
     TLAPS_LIB=/opt/tlapm/lib/tlapm/stdlib \
-    COMMUNITY_LIB=/opt/community
+    COMMUNITY_LIB=/opt/community \
+    TLAPS_IN_CONTAINER=1
 
 # Layer 8: LiteLLM agent script
 COPY src/evaluator/backends/litellm_agent.py /opt/litellm_agent.py

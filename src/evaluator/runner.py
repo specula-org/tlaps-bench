@@ -669,13 +669,16 @@ def _run_grader_container(
         basename,
         "/results/check.result",
         item.check_timeout,
-        benchmark_dir="/workspace",
+        benchmark_dir=None,  # let git-root reconstruction provide the pristine baseline
     )
     level._checker_binary = old_binary
     config = ContainerConfig(
         workspace=workspace,
         result_dir=grading_dir,
     )
+    config.env["GIT_CONFIG_COUNT"] = "1"
+    config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
+    config.env["GIT_CONFIG_VALUE_0"] = "/workspace"
     try:
         exit_code, stdout, stderr = runner.run_with_output(config, check_cmd, timeout=item.check_timeout + 60)
         with open(os.path.join(grading_dir, "check_debug.txt"), "w") as dbg:

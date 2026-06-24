@@ -577,8 +577,8 @@ def main():
         print(f"ERROR: File not found: {filepath}")
         sys.exit(3)
 
-    # Default: run in Docker. --no-container runs locally.
-    if not args.no_container:
+    # Default: run in Docker. --no-container or TLAPS_IN_CONTAINER=1 runs locally.
+    if not args.no_container and not os.environ.get("TLAPS_IN_CONTAINER"):
         _run_in_container(filepath, args)
 
     # Fast path: --sany-only skips tlapm and just reports whether the solution
