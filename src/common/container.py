@@ -109,6 +109,8 @@ class ContainerRunner:
         args = [
             "docker",
             "run",
+            "--platform",
+            "linux/amd64",
             "--rm",
             "--init",
             "-i",
@@ -260,7 +262,7 @@ class ContainerRunner:
         """Build a Docker image, streaming output to stdout."""
         print(f"[build] docker build -t {tag}...")
         result = subprocess.run(
-            ["docker", "build", "-f", dockerfile, "-t", tag, context],
+            ["docker", "build", "--platform", "linux/amd64", "-f", dockerfile, "-t", tag, context],
         )
         if result.returncode != 0:
             raise RuntimeError(f"Docker build failed (exit {result.returncode})")
