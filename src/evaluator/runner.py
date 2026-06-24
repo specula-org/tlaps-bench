@@ -830,16 +830,6 @@ def main():
 
         ensure_image(force=args.force_build)
         print("Container mode: ON (image: tlaps-bench-base)")
-
-        # Preflight: validate install + auth inside container
-        # TODO: re-enable once preflight probe commands are validated
-        # runner = ContainerRunner()
-        # preflight_config = ContainerConfig(
-        #     env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
-        #     firewall_hosts=backend.firewall_hosts(),
-        #     install_script=backend.install_script,
-        # )
-        # runner.run_preflight(preflight_config, backend.name, backend.install_script)
     else:
         # Local mode: require tlapm and checker on host
         ensure_tlapm()

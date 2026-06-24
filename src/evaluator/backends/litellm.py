@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-
-import litellm
 
 from .base import AgentBackend, detect_firewall_hosts
 
@@ -96,20 +93,3 @@ class LiteLLMBackend(AgentBackend):
             pass
 
         return "\n".join(lines), in_tok, out_tok
-
-
-def run_preflight() -> None:
-    """Validate model + credentials by making a minimal LiteLLM API call."""
-    m = os.environ.get("AGENT_MODEL_ID", "gpt-5.5")
-    try:
-        response = litellm.completion(
-            model=m,
-            messages=[{"role": "user", "content": "say ok"}],
-            max_tokens=5,
-        )
-        if not response.choices[0].message.content:
-            print("empty response from model")
-            sys.exit(1)
-    except Exception as e:
-        print(f"preflight failed: {e}")
-        sys.exit(1)
