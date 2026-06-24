@@ -39,16 +39,16 @@ W4 semantic statement-match (catch operator redefinition); W5 trusted-file repla
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Gate(str, Enum):
+class Gate(StrEnum):
     A_IDENTITY = "A:identity"  # proved thing IS the canonical target
     B_DISCHARGE = "B:discharge"  # target goal genuinely discharged
     C_TRUST = "C:trust"  # graded on trusted files
 
 
-class Status(str, Enum):
+class Status(StrEnum):
     WIRED = "wired"  # real check, migrated from existing detection
     PARTIAL = "partial"  # works now; to be tightened (see TODO in detail)
     PLACEHOLDER = "placeholder"  # not implemented; FAIL-OPEN, covered by siblings
