@@ -1,14 +1,11 @@
 import sys
 
-from common.setup import ensure_build_deps
-
 # (subcommand, one-line help) — order is the order shown in --help.
 SUBCOMMANDS = [
     ("run", "Run an agent backend (codex / claude_code / copilot / litellm) on the benchmarks"),
     ("check", "Check a single benchmark proof for correctness and cheating"),
     ("validate", "Batch-validate source proofs with tlapm"),
     ("generate", "Generate benchmarks (--level level1|level2; default level1)"),
-    ("setup", "Install dependencies and compile build artifacts"),
     ("score", "Score / aggregate results (not implemented yet)"),
 ]
 
@@ -105,10 +102,6 @@ def main(argv: list[str] | None = None) -> int:
     if sub == "score":
         sys.stderr.write("tlaps-bench score: not implemented yet (tracked as a separate task)\n")
         return 1
-    if sub == "setup":
-        ensure_build_deps()
-        print("Setup complete.")
-        return 0
 
     return 2  # unreachable
 
