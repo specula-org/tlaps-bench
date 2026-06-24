@@ -50,6 +50,7 @@ from common.cheating_detection import (
     detect_zero_total_obligations,
     strip_comments,
 )
+from common.container import ContainerConfig, ContainerRunner, ensure_image
 
 
 def _descendant_pids(root_pid):
@@ -477,6 +478,46 @@ def parse_strict_status(tlapm_exit, tlapm_output):
     return complete, n_missing, obligation_failed
 
 
+def _run_in_container(filepath, args):
+    """Run check_proof_bin inside Docker container."""
+    ensure_image()
+    runner = ContainerRunner()
+
+    # Mount the directory containing the .tla file (includes deps)
+    workspace = os.path.dirname(filepath)
+    basename = os.path.basename(filepath)
+    result_dir = tempfile.mkdtemp(prefix="tlaps_check_docker_")
+
+    cmd = ["/usr/local/bin/check_proof_bin", f"/workspace/{basename}"]
+    cmd += ["--level", str(args.level)]
+    cmd += ["--timeout", str(args.timeout)]
+    cmd += ["--output", "/results/check.result"]
+    if args.benchmark_dir:
+        cmd += ["--benchmark-dir", "/workspace"]
+    if args.sany_only:
+        cmd += ["--sany-only"]
+
+    config = ContainerConfig(workspace=workspace, result_dir=result_dir)
+    try:
+        exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=args.timeout + 60)
+        # Print output (mirrors local behavior)
+        if stdout:
+            print(stdout, end="")
+        if stderr:
+            print(stderr, end="", file=sys.stderr)
+
+        # Copy result file to expected output location
+        container_result = os.path.join(result_dir, "check.result")
+        output_path = args.output or (os.path.splitext(filepath)[0] + ".result")
+        if os.path.isfile(container_result):
+            shutil.copy2(container_result, output_path)
+            print(f"\nResult written to: {output_path}")
+
+        sys.exit(exit_code)
+    finally:
+        shutil.rmtree(result_dir, ignore_errors=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check a single TLAPS benchmark proof")
     parser.add_argument("file", help="Path to the benchmark .tla file")
@@ -499,12 +540,21 @@ def main():
         "tla2sany and exit (0 valid, 1 invalid) WITHOUT running tlapm. For quick "
         "syntax feedback while writing a proof — the full check applies the same gate.",
     )
+    parser.add_argument(
+        "--no-container",
+        action="store_true",
+        help="Run tlapm on host instead of Docker (requires local tlapm installation)",
+    )
     args = parser.parse_args()
 
     filepath = os.path.abspath(args.file)
     if not os.path.isfile(filepath):
         print(f"ERROR: File not found: {filepath}")
         sys.exit(3)
+
+    # Default: run in Docker. --no-container runs locally.
+    if not args.no_container:
+        _run_in_container(filepath, args)
 
     # Fast path: --sany-only skips tlapm and just reports whether the solution
     # parses under standalone tla2sany (seconds, vs a full proof run). Same gate
@@ -709,7 +759,9 @@ def main():
         # is rejected by the canonical parser even if tlapm's lenient parser
         # accepted it. The marker lets the runner flag sany_valid=False.
         exit_code = 1
-        emit(f"  ❌ FAIL {SANY_INVALID_MARKER} — solution does not parse under standalone tla2sany: {sany_detail[:200]}")
+        emit(
+            f"  ❌ FAIL {SANY_INVALID_MARKER} — solution does not parse under standalone tla2sany: {sany_detail[:200]}"
+        )
     elif tlapm_passed:
         exit_code = 0
         emit("  ✅ PASS — all obligations proved")
