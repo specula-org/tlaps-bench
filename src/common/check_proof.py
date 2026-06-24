@@ -373,8 +373,10 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
     """Run the compiled-in SANY + incomplete-proof cheat engine.
 
     Folds CHEATING and INCOMPLETE findings into one list — any of them must fail
-    the run. On any internal error returns ([], reason) so the engine never
-    spuriously fails an otherwise-valid proof. ``benchmark_dir`` (when the runner
+    the run. Returns ``(issue_strings, reason, result)`` where ``result`` is the
+    tlacheck ``Result`` (or ``None`` on any internal error, so the engine never
+    spuriously fails an otherwise-valid proof — ``result`` also feeds the shadow
+    gate-framework verdict). ``benchmark_dir`` (when the runner
     supplies the canonical read-only module dir) is the tamper-proof provenance
     oracle; otherwise we reconstruct it from the git root commit.
     """
@@ -383,7 +385,7 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
         from tlacheck.engine import evaluate
         from tlacore.tlapm.summary import parse_summary
     except Exception as e:
-        return [], f"tlacheck import failed: {e}"
+        return [], f"tlacheck import failed: {e}", None
 
     cleanup = []
     try:
@@ -391,7 +393,7 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
         bench = benchmark_dir or git_bench
         if sol_dir is None:
             if benchmark_dir is None:
-                return [], "no git baseline available"
+                return [], "no git baseline available", None
             sol_dir = os.path.dirname(os.path.abspath(filepath))
         summary = parse_summary(summary_output) if summary_output else None
         ctx = build_context(
@@ -405,12 +407,12 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
         )
         res = evaluate(ctx)
     except Exception as e:
-        return [], f"tlacheck error: {e}"
+        return [], f"tlacheck error: {e}", None
     finally:
         for d in cleanup:
             shutil.rmtree(d, ignore_errors=True)
 
-    return ([str(i) for i in res.cheating_issues] + [str(i) for i in res.incomplete_issues]), ""
+    return ([str(i) for i in res.cheating_issues] + [str(i) for i in res.incomplete_issues]), "", res
 
 
 # Machine-readable marker the runner greps for to set the structured
@@ -670,7 +672,7 @@ def main():
     # ANY helper lemma (not just the target). Runs on every check so the agent
     # gets the same verdict the grader does. Any finding fails the run.
     target_name = os.path.splitext(os.path.basename(filepath))[0]
-    engine_issues, engine_reason = run_tlacheck_engine(
+    engine_issues, engine_reason, engine_result = run_tlacheck_engine(
         filepath, target_name, summary_output, tlapm_passed, benchmark_dir=args.benchmark_dir
     )
     if engine_reason:
@@ -729,6 +731,35 @@ def main():
             emit(f"  ❌ FAIL — timeout after {args.timeout}s")
         else:
             emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+
+    # --- Shadow: consolidated gate-framework verdict (W1) --------------------
+    # Run the A/B/C gate grader (src/tlacheck/gates.py) alongside the
+    # authoritative verdict above. INFORMATIONAL ONLY — it never changes
+    # exit_code; it lets us validate the consolidated grader against the live
+    # checker before cutover. Wrapped so it can never break the real check.
+    # Known gap: legacy-only checks (L1 preamble byte-match, PROOF OMITTED regex)
+    # aren't migrated onto the gates yet, so a verdict may differ for those.
+    try:
+        from tlacheck.gates import from_tlacheck, grade
+
+        shadow = grade(
+            from_tlacheck(
+                engine_result,
+                tlapm_obligations_proved=(not obligation_failed and tlapm_exit in (0, 11)),
+                n_missing=n_missing,
+                sany_valid=(sany_status != "invalid"),
+                graded_on_canonical=(args.benchmark_dir is not None),
+            )
+        )
+        emit()
+        emit("  [shadow] gate-framework verdict: " + ("PASS" if shadow.passed else "FAIL"))
+        for reason in shadow.reasons:
+            emit(f"    {reason}")
+        if shadow.passed != (exit_code == 0):
+            emit("  [shadow] NOTE: differs from authoritative verdict "
+                 "(expected where legacy-only checks aren't migrated yet)")
+    except Exception as e:  # shadow must never break the authoritative check
+        emit(f"  [shadow] gate-framework skipped ({e})")
 
     # Write result file
     print(f"\nResult written to: {output_path}")
