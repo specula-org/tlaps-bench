@@ -28,10 +28,10 @@ This is the consolidation point for logic spread across `tlacheck` rules,
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Gate(str, Enum):
+class Gate(StrEnum):
     A_IDENTITY = "A:identity"  # proved thing IS the canonical target
     B_DISCHARGE = "B:discharge"  # target goal genuinely discharged
     C_TRUST = "C:trust"  # graded on trusted files
