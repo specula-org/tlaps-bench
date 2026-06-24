@@ -742,6 +742,28 @@ def main():
     try:
         from tlacheck.gates import from_tlacheck, grade
 
+        # Legacy-only signals (not tlacheck vectors): L1 preamble byte-match and
+        # agent-added PROOF OMITTED. Computed here, with the same detectors the
+        # authoritative check uses, so the gates stay at least as strict as today.
+        shadow_preamble_modified = False
+        shadow_proof_omitted = False
+        try:
+            with open(filepath) as _f:
+                _sol_text = _f.read()
+            if args.level == 1:
+                _main = get_main_version(filepath)
+                if _main:
+                    _main_lines = _main.split("\n")
+                    _po = find_proof_obvious_line(_main_lines)
+                    if _po is not None:
+                        _cur_lines = _sol_text.split("\n")
+                        shadow_preamble_modified = bool(detect_preamble_modification(_main_lines, _cur_lines, _po))
+                        shadow_proof_omitted = bool(detect_proof_omitted("\n".join(_cur_lines[_po:])))
+            else:
+                shadow_proof_omitted = bool(detect_proof_omitted(_sol_text))
+        except Exception:
+            pass
+
         shadow = grade(
             from_tlacheck(
                 engine_result,
@@ -749,6 +771,8 @@ def main():
                 n_missing=n_missing,
                 sany_valid=(sany_status != "invalid"),
                 graded_on_canonical=(args.benchmark_dir is not None),
+                preamble_modified=shadow_preamble_modified,
+                proof_omitted=shadow_proof_omitted,
             )
         )
         emit()

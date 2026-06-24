@@ -78,10 +78,12 @@ class GraderInputs:
     statement_modified: bool = False  # target statement changed / weakened
     extra_axiom: bool = False  # new AXIOM/ASSUME beyond baseline
     smuggled_module: bool = False  # agent-created module sneaking content in
+    preamble_modified: bool = False  # L1 preamble (defs/CONSTANT/VARIABLE/ASSUME) changed
     # Gate B — discharge
     tlapm_obligations_proved: bool = False  # every generated obligation PROVED, none failed
     n_missing: int = 0  # `--strict` MISSING steps (agent gaps)
     admitted_goal: bool = False  # a helper restates the target and is admitted
+    proof_omitted: bool = False  # agent added a PROOF OMITTED / bare OMITTED step
     admitted_extra: bool = False  # agent added an admitted lemma beyond baseline (W3)
     # Gate C — trust
     deps_modified: bool = False  # a given dependency file was changed
@@ -126,6 +128,8 @@ def grade(inp: GraderInputs) -> GradeResult:
               "a new AXIOM/ASSUME was introduced beyond the baseline"),
         Check("no_smuggled_module", Gate.A_IDENTITY, Status.WIRED, not inp.smuggled_module,
               "an agent-created module smuggles content into the proof"),
+        Check("preamble_unchanged", Gate.A_IDENTITY, Status.WIRED, not inp.preamble_modified,
+              "the L1 preamble (definitions / CONSTANT / VARIABLE / ASSUME above PROOF OBVIOUS) was modified"),
         Check("no_smuggled_definition", Gate.A_IDENTITY, Status.PLACEHOLDER, True,
               "TODO(W4) semantic statement-match: catch redefining an operator used in the "
               "statement so the text is identical but the meaning is weaker"),
@@ -136,6 +140,8 @@ def grade(inp: GraderInputs) -> GradeResult:
               f"{inp.n_missing} step(s) have no proof (bare QED / unproven helper / unfinished target)"),
         Check("no_admitted_goal", Gate.B_DISCHARGE, Status.WIRED, not inp.admitted_goal,
               "the target goal is restated as an admitted (unproven) helper lemma"),
+        Check("no_added_omitted", Gate.B_DISCHARGE, Status.WIRED, not inp.proof_omitted,
+              "the agent added a PROOF OMITTED / bare OMITTED step (an unproven admit)"),
         Check("admitted_set_eq_baseline", Gate.B_DISCHARGE, Status.PARTIAL, not inp.admitted_extra,
               "TODO(W3) tighten to admitted-set == baseline; an admitted lemma was added"),
         # ── Gate C: TRUST — graded on trusted files ──────────────────────────
@@ -148,7 +154,16 @@ def grade(inp: GraderInputs) -> GradeResult:
     return GradeResult(passed=all(c.ok for c in checks), checks=checks)
 
 
-def from_tlacheck(result, *, tlapm_obligations_proved, n_missing, sany_valid, graded_on_canonical=False):
+def from_tlacheck(
+    result,
+    *,
+    tlapm_obligations_proved,
+    n_missing,
+    sany_valid,
+    graded_on_canonical=False,
+    preamble_modified=False,
+    proof_omitted=False,
+):
     """Migrate existing detection onto the gate inputs (W1).
 
     Buckets a tlacheck ``Result``'s issues (by vector, ignoring WARNINGs) together
@@ -156,6 +171,11 @@ def from_tlacheck(result, *, tlapm_obligations_proved, n_missing, sany_valid, gr
     :class:`GraderInputs`. ``result`` is duck-typed: any object exposing
     ``.issues`` where each issue has ``.vector`` and ``.severity`` (with a
     ``.value``/name distinguishing ``WARNING``).
+
+    ``preamble_modified`` (L1 byte-match) and ``proof_omitted`` (agent-added
+    PROOF OMITTED / bare OMITTED) are legacy-only detections that are not tlacheck
+    vectors; the caller computes them so the gates stay at least as strict as the
+    current checker.
     """
     vectors = {
         i.vector
@@ -167,9 +187,11 @@ def from_tlacheck(result, *, tlapm_obligations_proved, n_missing, sany_valid, gr
         statement_modified="STATEMENT_MODIFIED" in vectors,
         extra_axiom="EXTRA_AXIOM" in vectors,
         smuggled_module="SMUGGLED_MODULE" in vectors,
+        preamble_modified=preamble_modified,
         tlapm_obligations_proved=tlapm_obligations_proved,
         n_missing=n_missing,
         admitted_goal=bool(vectors & {"ADMITTED_STATEMENT", "ADMITTED_FALLBACK"}),
+        proof_omitted=proof_omitted,
         # admitted_extra (W3, the true baseline set-diff) is not computed yet; the
         # WIRED no_admitted_goal check covers the known cases until W3 lands.
         admitted_extra=False,
