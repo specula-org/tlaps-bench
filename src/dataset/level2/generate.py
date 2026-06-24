@@ -91,7 +91,6 @@ from dataset.level1.generate import (  # noqa: E402
     parse_theorems,
     strip_all_proofs,
 )
-
 from dataset.sany_audit import gate as sany_gate  # noqa: E402
 
 KEYWORD_PATTERN = re.compile(r"^\s*(THEOREM|LEMMA|AXIOM|COROLLARY|PROPOSITION)\b")

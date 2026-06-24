@@ -1,0 +1,56 @@
+name: CI
+
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+    
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run make setup
+        run: make setup
+
+
+      - name: Verify lib/tla2tools.jar is present
+        run: test -f lib/tla2tools.jar
+
+      - name: Lint with ruff
+        run: uv run ruff check
+
+      - name: Run pytest
+        env:
+          PYTHONPATH: src
+        run: uv run pytest tests
+
+    
+      - name: Check tlaps-bench CLI help
+        run: |
+          set -euo pipefail
+          uv run tlaps-bench --help
+          for sub in run check validate generate score; do
+            echo "--- tlaps-bench $sub --help ---"
+            uv run tlaps-bench "$sub" --help
+          done
