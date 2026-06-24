@@ -738,7 +738,6 @@ def main():
                 tlapm_obligations_proved=(not obligation_failed and tlapm_exit in (0, 11)),
                 n_missing=n_missing,
                 sany_valid=(sany_status != "invalid"),
-                graded_on_canonical=(args.benchmark_dir is not None),
                 preamble_modified=legacy_preamble_modified,
                 proof_omitted=legacy_proof_omitted,
             )

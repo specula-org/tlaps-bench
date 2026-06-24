@@ -1,15 +1,13 @@
 """Tests for the cheat-checker gate framework (src/tlacheck/gates.py).
 
-Covers: the binary PASS/FAIL collapse, each WIRED gate check failing the run,
-PLACEHOLDER checks failing-open (so the skeleton is never less strict than the
-wired siblings but unbuilt checks don't block), and the from_tlacheck migration
-mapping real tlacheck issue vectors onto the right gate.
+Covers: the binary PASS/FAIL collapse, each gate check failing the run, and the
+from_tlacheck migration mapping real tlacheck issue vectors onto the right gate.
 
 Run: PYTHONPATH=src python3 -m pytest tests/tlacheck/test_gates.py
 (or:  PYTHONPATH=src python3 tests/tlacheck/test_gates.py)
 """
 
-from tlacheck.gates import Gate, GraderInputs, Status, from_tlacheck, grade
+from tlacheck.gates import Gate, GraderInputs, from_tlacheck, grade
 from tlacheck.issue import Issue, Severity
 from tlacheck.verdict import Result, Verdict
 
@@ -24,9 +22,7 @@ CLEAN = GraderInputs(
     n_missing=0,
     admitted_goal=False,
     proof_omitted=False,
-    admitted_extra=False,
     deps_modified=False,
-    graded_on_canonical=True,
 )
 
 
@@ -61,15 +57,6 @@ def test_missing_step_fails_gate_b():
     r = grade(GraderInputs(**{**CLEAN.__dict__, "n_missing": 1}))
     assert not r.passed
     assert Gate.B_DISCHARGE in r.failed_gates()
-
-
-def test_placeholders_fail_open():
-    # On a clean input, the only PLACEHOLDER/PARTIAL checks must NOT block.
-    r = grade(CLEAN)
-    placeholders = [c for c in r.checks if c.status is Status.PLACEHOLDER]
-    assert placeholders, "scaffold should carry explicit placeholders (W4/W5)"
-    assert all(c.ok for c in placeholders), "placeholders must fail-open"
-    assert r.passed
 
 
 def test_binary_no_cheat_category():
@@ -115,7 +102,7 @@ def test_from_tlacheck_legacy_signals_flow_to_gates():
 
 
 def test_from_tlacheck_clean_result_passes():
-    inp = from_tlacheck(_result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, graded_on_canonical=True)
+    inp = from_tlacheck(_result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True)
     assert grade(inp).passed
 
 
