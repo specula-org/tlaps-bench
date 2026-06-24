@@ -604,6 +604,11 @@ def run_single_benchmark(item: WorkItem):
             # with [SANY-INVALID]; verdict stays FAIL but this distinguishes
             # "doesn't parse under standalone tla2sany" from "proof didn't verify".
             result["sany_valid"] = "[SANY-INVALID]" not in (check_proc.stdout or "")
+            # Which gate(s) failed (binary verdict keeps the analysis signal):
+            # A:identity / C:trust ~ tamper/cheat-type, B:discharge ~ incomplete.
+            gm = re.search(r"GATES-FAILED:\s*([^\n]+)", check_proc.stdout or "")
+            if gm:
+                result["failed_gates"] = [g.strip() for g in gm.group(1).split(",") if g.strip()]
             ob_matches = re.findall(r"All (\d+) obligation", check_proc.stdout)
             if ob_matches:
                 result["obligations"] = int(ob_matches[-1])

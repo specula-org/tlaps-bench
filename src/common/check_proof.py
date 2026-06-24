@@ -19,12 +19,12 @@ Levels:
 Output:
     - Raw tlapm output (preserved verbatim)
     - Cheating check (compares against main branch where applicable)
-    - Summary verdict: PASS / FAIL / CHEATING
+    - Binary verdict: PASS / FAIL. A cheat is not a separate verdict — it is just
+      a FAIL; the failing gate is shown in the output and on a GATES-FAILED line.
 
 Exit codes:
     0 = PASS
-    1 = FAIL (proof doesn't verify)
-    2 = CHEATING (tampering detected)
+    1 = FAIL (proof doesn't verify, or a soundness gate failed)
     3 = ERROR (could not run check)
 """
 
@@ -514,12 +514,12 @@ def main():
     if args.sany_only:
         status, detail = check_sany_valid(filepath)
         if status == "valid":
-            print("✅ SANY OK — parses under standalone tla2sany")
+            print("SANY OK — parses under standalone tla2sany")
             sys.exit(0)
         if status == "invalid":
-            print(f"❌ FAIL {SANY_INVALID_MARKER} — {detail[:300]}")
+            print(f"FAIL {SANY_INVALID_MARKER} — {detail[:300]}")
             sys.exit(1)
-        print(f"⚠️  SANY check unavailable ({detail[:200]}) — could not run; not treated as invalid")
+        print(f"WARNING: SANY check unavailable ({detail[:200]}) — could not run; not treated as invalid")
         sys.exit(0)
 
     # Set up output: write to file and stdout
@@ -697,93 +697,79 @@ def main():
     else:
         emit("  No cheating detected.")
 
-    # --- Step 3: Verdict ---
+    # --- Step 3: Verdict — BINARY pass/fail via the A/B/C gate framework ------
     emit()
     emit("=" * 60)
     emit("VERDICT")
     emit("=" * 60)
 
-    if real_issues:
-        exit_code = 2
-        emit(f"  ⚠️  CHEATING — {len(real_issues)} issue(s) found")
-    elif sany_status == "invalid":
-        # SANY-invalid is a FAIL (not a cheat), but a distinct one: the solution
-        # is rejected by the canonical parser even if tlapm's lenient parser
-        # accepted it. The marker lets the runner flag sany_valid=False.
-        exit_code = 1
-        emit(f"  ❌ FAIL {SANY_INVALID_MARKER} — solution does not parse under standalone tla2sany: {sany_detail[:200]}")
-    elif tlapm_passed:
-        exit_code = 0
-        emit("  ✅ PASS — all obligations proved")
-    else:
-        exit_code = 1
-        # Extract obligation summary
-        m = re.search(r"(\d+)/(\d+) obligation", tlapm_output)
-        if obligation_failed and m:
-            emit(f"  ❌ FAIL — {m.group(1)}/{m.group(2)} obligations failed")
-        elif obligation_failed:
-            emit(f"  ❌ FAIL — tlapm reported failed obligations (exit {tlapm_exit})")
-        elif n_missing > 0:
-            emit(f"  ❌ FAIL — proof incomplete: {n_missing} step(s) have no proof (tlapm --strict)")
-        elif tlapm_exit == 12:
-            emit("  ❌ FAIL — no proof obligation for the selected target (tlapm --strict)")
-        elif "TIMEOUT" in tlapm_output:
-            emit(f"  ❌ FAIL — timeout after {args.timeout}s")
+    # Legacy-only signals not yet a tlacheck vector (L1 preamble byte-match,
+    # agent-added PROOF OMITTED), computed with the same detectors the legacy
+    # path uses, so the gates capture everything the old checker did.
+    legacy_preamble_modified = False
+    legacy_proof_omitted = False
+    try:
+        with open(filepath) as _f:
+            _sol_text = _f.read()
+        if args.level == 1:
+            _main = get_main_version(filepath)
+            if _main:
+                _main_lines = _main.split("\n")
+                _po = find_proof_obvious_line(_main_lines)
+                if _po is not None:
+                    _cur = _sol_text.split("\n")
+                    legacy_preamble_modified = bool(detect_preamble_modification(_main_lines, _cur, _po))
+                    legacy_proof_omitted = bool(detect_proof_omitted("\n".join(_cur[_po:])))
         else:
-            emit(f"  ❌ FAIL — tlapm exit code {tlapm_exit}")
+            legacy_proof_omitted = bool(detect_proof_omitted(_sol_text))
+    except Exception:
+        pass
 
-    # --- Shadow: consolidated gate-framework verdict (W1) --------------------
-    # Run the A/B/C gate grader (src/tlacheck/gates.py) alongside the
-    # authoritative verdict above. INFORMATIONAL ONLY — it never changes
-    # exit_code; it lets us validate the consolidated grader against the live
-    # checker before cutover. Wrapped so it can never break the real check.
-    # Known gap: legacy-only checks (L1 preamble byte-match, PROOF OMITTED regex)
-    # aren't migrated onto the gates yet, so a verdict may differ for those.
+    # The gate framework (src/tlacheck/gates.py) is the authoritative grader:
+    # PASS iff identity AND discharge AND trust. "Cheating" is NOT a separate verdict
+    # — it is just a gate failing, so the outcome is binary PASS / FAIL.
+    grade_passed, grade_reasons, grade_gates = True, [], []
     try:
         from tlacheck.gates import from_tlacheck, grade
 
-        # Legacy-only signals (not tlacheck vectors): L1 preamble byte-match and
-        # agent-added PROOF OMITTED. Computed here, with the same detectors the
-        # authoritative check uses, so the gates stay at least as strict as today.
-        shadow_preamble_modified = False
-        shadow_proof_omitted = False
-        try:
-            with open(filepath) as _f:
-                _sol_text = _f.read()
-            if args.level == 1:
-                _main = get_main_version(filepath)
-                if _main:
-                    _main_lines = _main.split("\n")
-                    _po = find_proof_obvious_line(_main_lines)
-                    if _po is not None:
-                        _cur_lines = _sol_text.split("\n")
-                        shadow_preamble_modified = bool(detect_preamble_modification(_main_lines, _cur_lines, _po))
-                        shadow_proof_omitted = bool(detect_proof_omitted("\n".join(_cur_lines[_po:])))
-            else:
-                shadow_proof_omitted = bool(detect_proof_omitted(_sol_text))
-        except Exception:
-            pass
-
-        shadow = grade(
+        _gr = grade(
             from_tlacheck(
                 engine_result,
                 tlapm_obligations_proved=(not obligation_failed and tlapm_exit in (0, 11)),
                 n_missing=n_missing,
                 sany_valid=(sany_status != "invalid"),
                 graded_on_canonical=(args.benchmark_dir is not None),
-                preamble_modified=shadow_preamble_modified,
-                proof_omitted=shadow_proof_omitted,
+                preamble_modified=legacy_preamble_modified,
+                proof_omitted=legacy_proof_omitted,
             )
         )
-        emit()
-        emit("  [shadow] gate-framework verdict: " + ("PASS" if shadow.passed else "FAIL"))
-        for reason in shadow.reasons:
+        grade_passed, grade_reasons = _gr.passed, _gr.reasons
+        grade_gates = [g.value for g in _gr.failed_gates()]
+    except Exception as e:  # never let the grader crash the check
+        grade_reasons = [f"gate framework unavailable ({e}); fell back to legacy verdict"]
+        grade_passed = None  # signal: use legacy verdict alone
+
+    # Safety net during migration: the legacy path must also agree before we
+    # report PASS, so the consolidated grader can never be LESS strict than the
+    # checker it replaces. Validated equal on a real-solution corpus; kept until
+    # the legacy detectors are retired.
+    legacy_pass = (not real_issues) and (sany_status != "invalid") and tlapm_passed
+    passed = legacy_pass if grade_passed is None else (grade_passed and legacy_pass)
+
+    if passed:
+        exit_code = 0
+        emit("  PASS — target goal genuinely proved (identity and discharge and trust)")
+    else:
+        exit_code = 1
+        emit("  FAIL")
+        for reason in grade_reasons:
             emit(f"    {reason}")
-        if shadow.passed != (exit_code == 0):
-            emit("  [shadow] NOTE: differs from authoritative verdict "
-                 "(expected where legacy-only checks aren't migrated yet)")
-    except Exception as e:  # shadow must never break the authoritative check
-        emit(f"  [shadow] gate-framework skipped ({e})")
+        if sany_status == "invalid":
+            emit(f"    {SANY_INVALID_MARKER} {sany_detail[:200]}")
+        if grade_gates:
+            emit(f"  GATES-FAILED: {','.join(grade_gates)}")
+        if grade_passed and not legacy_pass:
+            emit("  FAIL: legacy safety-net flagged a failure the gates missed — investigate divergence")
 
     # Write result file
     print(f"\nResult written to: {output_path}")
