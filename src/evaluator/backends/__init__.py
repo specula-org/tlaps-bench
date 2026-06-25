@@ -5,12 +5,14 @@ from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend
 from .copilot import CopilotBackend
 from .litellm import LiteLLMBackend
+from .pi import PiBackend
 
 _REGISTRY = {
     CodexBackend.name: CodexBackend,
     ClaudeCodeBackend.name: ClaudeCodeBackend,
     CopilotBackend.name: CopilotBackend,
     LiteLLMBackend.name: LiteLLMBackend,
+    PiBackend.name: PiBackend,
 }
 
 

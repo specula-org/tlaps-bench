@@ -22,6 +22,19 @@ VERTEX_HOSTS = [
     "europe-west1-aiplatform.googleapis.com",
 ]
 
+KIRO_HOSTS = [
+    # API (CodeWhisperer/Q service)
+    "q.us-east-1.amazonaws.com",
+    "q.eu-central-1.amazonaws.com",
+    # OIDC token refresh (IAM Identity Center)
+    "oidc.us-east-1.amazonaws.com",
+    "oidc.us-east-2.amazonaws.com",
+    "oidc.us-west-2.amazonaws.com",
+    "oidc.eu-central-1.amazonaws.com",
+    "oidc.eu-west-1.amazonaws.com",
+    "oidc.ap-southeast-1.amazonaws.com",
+]
+
 # All known LLM API hosts. Safe to allow all together since the general internet is still blocked (Google, GitHub etc.)
 ALL_API_HOSTS = (
     [
@@ -35,6 +48,7 @@ ALL_API_HOSTS = (
     ]
     + BEDROCK_HOSTS
     + VERTEX_HOSTS
+    + KIRO_HOSTS
 )
 
 

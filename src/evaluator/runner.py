@@ -8,7 +8,7 @@ For each benchmark:
 4. Saves all outputs
 
 Usage:
-    python3 runner.py [--backend codex|claude_code|copilot] [--level level1|level2] \\
+    python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--level level1|level2] \\
                       [--model NAME] [--jobs N] [--filter PATTERN] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """

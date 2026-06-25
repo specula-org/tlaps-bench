@@ -143,6 +143,17 @@ def _copy_claude_credentials(src: Path, dst: Path) -> bool:
     return _copy_named_credential_file(src, dst, ".credentials.json")
 
 
+def _copy_pi_credentials(src: Path, dst: Path) -> bool:
+    """Copy only Pi's provider auth file"""
+    auth_src = src / "agent" / "auth.json"
+    if auth_src.is_symlink() or not auth_src.is_file() or not os.access(auth_src, os.R_OK):
+        return False
+    auth_dst = dst / "agent"
+    auth_dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(auth_src, auth_dst / "auth.json")
+    return True
+
+
 def _copy_codex_credentials(src: Path, dst: Path) -> bool:
     """Copy only Codex auth material needed for a run, never sessions/logs."""
     copied = _copy_named_credential_file(src, dst, "auth.json")
@@ -192,6 +203,7 @@ class ContainerRunner:
         "aws": CredentialMount("/root/.aws", _copy_all_credentials),
         "claude": CredentialMount("/root/.claude", _copy_claude_credentials),
         "codex": CredentialMount("/root/.codex", _copy_codex_credentials),
+        "pi": CredentialMount("/root/.pi", _copy_pi_credentials),
     }
 
     def build_docker_args(self, config: ContainerConfig) -> tuple[list[str], str]:
