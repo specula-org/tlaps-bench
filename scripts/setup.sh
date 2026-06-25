@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Prepare a native Linux x86-64 checkout for benchmark development and runs.
+# Prepare a native checkout (Linux x86-64 or macOS arm64) for benchmark
+# development and runs.
 
 set -euo pipefail
 
@@ -54,19 +55,40 @@ check_java() {
 main() {
   cd "${REPO_ROOT}"
 
-  local host_os host_arch
+  local host_os host_arch is_macos=0
   host_os="$(uname -s)"
   host_arch="$(uname -m)"
-  if [[ "${host_os}" != "Linux" || "${host_arch}" != "x86_64" ]]; then
-    die "native setup currently supports Linux x86-64 only; detected ${host_os} ${host_arch}."
+  if [[ "${host_os}" == "Linux" && "${host_arch}" == "x86_64" ]]; then
+    : # Linux x86-64: the original, unchanged path.
+  elif [[ "${host_os}" == "Darwin" && "${host_arch}" == "arm64" ]]; then
+    is_macos=1
+  elif [[ "${host_os}" == "Darwin" ]]; then
+    die "native setup supports macOS on Apple Silicon (arm64) only; detected ${host_os} ${host_arch}. Upstream tlapm publishes no Intel (x86_64) macOS binary, so Intel Macs are unsupported."
+  else
+    die "native setup supports Linux x86-64 and macOS arm64 only; detected ${host_os} ${host_arch}."
   fi
 
-  require_command make "Install GNU Make (Ubuntu/Debian: sudo apt-get install make)."
-  require_command curl "Install curl (Ubuntu/Debian: sudo apt-get install curl)."
-  require_command tar "Install tar (Ubuntu/Debian: sudo apt-get install tar)."
-  require_command uv "Install uv with: curl -LsSf https://astral.sh/uv/install.sh | sh."
-  require_command java "Install a JDK 21+ package (Ubuntu/Debian: sudo apt-get install openjdk-21-jdk)."
-  require_command javac "A JRE is not sufficient; install a JDK 21+ package (Ubuntu/Debian: sudo apt-get install openjdk-21-jdk)."
+  local make_hint curl_hint tar_hint uv_hint jdk_hint
+  if (( is_macos )); then
+    make_hint="Install Xcode Command Line Tools: xcode-select --install."
+    curl_hint="curl ships with macOS; reinstall the Command Line Tools (xcode-select --install) if missing."
+    tar_hint="tar ships with macOS; reinstall the Command Line Tools (xcode-select --install) if missing."
+    uv_hint="Install uv with: brew install uv (or: curl -LsSf https://astral.sh/uv/install.sh | sh)."
+    jdk_hint="Install a JDK 21+ on PATH (java and javac). Homebrew's openjdk is keg-only, so register it after installing, e.g.: brew install openjdk@21 && ln -sfn \$(brew --prefix)/opt/openjdk@21/libexec/openjdk.jdk ~/Library/Java/JavaVirtualMachines/openjdk-21.jdk."
+  else
+    make_hint="Install GNU Make (Ubuntu/Debian: sudo apt-get install make)."
+    curl_hint="Install curl (Ubuntu/Debian: sudo apt-get install curl)."
+    tar_hint="Install tar (Ubuntu/Debian: sudo apt-get install tar)."
+    uv_hint="Install uv with: curl -LsSf https://astral.sh/uv/install.sh | sh."
+    jdk_hint="Install a JDK 21+ package (Ubuntu/Debian: sudo apt-get install openjdk-21-jdk)."
+  fi
+
+  require_command make "${make_hint}"
+  require_command curl "${curl_hint}"
+  require_command tar "${tar_hint}"
+  require_command uv "${uv_hint}"
+  require_command java "${jdk_hint}"
+  require_command javac "A JRE is not sufficient; ${jdk_hint}"
   check_java
 
   log "syncing the locked Python environment..."

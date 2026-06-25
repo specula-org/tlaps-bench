@@ -9,14 +9,31 @@
 
 set -euo pipefail
 
+# Detect the host platform. tlapm ships a separate binary per platform; the
+# other deps (Apalache, tla2tools, CommunityModules) are JVM/text artifacts and
+# are platform-agnostic, so only the tlapm asset name is conditional below.
+HOST_OS="$(uname -s)"
+HOST_ARCH="$(uname -m)"
+
 # Pinned versions — bump deliberately, then re-run.
 # 1.6.0-pre is a *rolling* tag (the asset is rebuilt in place), so the tag alone
 # is not reproducible — pin by the expected `tlapm --version` commit and
 # re-download on mismatch. 80172c6 is the first rolling build carrying `--strict`
 # (tlaplus/tlapm#278); bump TLAPM_COMMIT deliberately when upgrading.
+# TLAPM_TAG/TLAPM_COMMIT are shared across platforms (same release); only the
+# downloaded asset differs. The 1.6.0-pre release publishes Linux x86_64 and
+# macOS arm64 binaries — there is no Intel (x86_64) macOS build.
 TLAPM_TAG="1.6.0-pre"
 TLAPM_COMMIT="80172c6"
-TLAPM_ASSET="tlapm-${TLAPM_TAG}-x86_64-linux-gnu.tar.gz"
+case "${HOST_OS} ${HOST_ARCH}" in
+  "Linux x86_64") TLAPM_ASSET="tlapm-${TLAPM_TAG}-x86_64-linux-gnu.tar.gz" ;;
+  "Darwin arm64") TLAPM_ASSET="tlapm-${TLAPM_TAG}-arm64-darwin.tar.gz" ;;
+  *)
+    echo "[install_deps] ERROR: unsupported platform '${HOST_OS} ${HOST_ARCH}'." >&2
+    echo "[install_deps]        tlapm ${TLAPM_TAG} provides binaries for Linux x86_64 and macOS arm64 only." >&2
+    exit 1
+    ;;
+esac
 TLAPM_URL="https://github.com/tlaplus/tlapm/releases/download/${TLAPM_TAG}/${TLAPM_ASSET}"
 
 APALACHE_TAG="v0.57.0"
@@ -36,7 +53,10 @@ LIB_DIR="${REPO_ROOT}/lib"
 TMP_DIRS=()
 cleanup() {
   local path
-  for path in "${TMP_DIRS[@]}"; do
+  # macOS ships bash 3.2, where "${arr[@]}" on an empty array trips `set -u`
+  # ("unbound variable"). On a rerun where every download is skipped TMP_DIRS
+  # stays empty, so guard the expansion to keep the EXIT trap from failing.
+  for path in ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}; do
     rm -rf "${path}"
   done
 }

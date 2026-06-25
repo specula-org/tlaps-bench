@@ -143,11 +143,24 @@ lib/                           Vendored: tla2tools.jar (gitignored)
 docker/                        Container build + isolation
 ```
 
-### Setup (Linux x86-64)
+### Setup (Linux x86-64 / macOS arm64)
+
+Native setup runs on Linux x86-64 and macOS arm64 (Apple Silicon). Intel Macs
+are unsupported — upstream tlapm publishes no x86-64 macOS binary.
 
 Native setup requires GNU Make, `curl`, `tar`, [uv](https://docs.astral.sh/uv/),
 and a JDK 21 or newer (`java` and `javac`). The project itself requires Python
 ≥ 3.12; `uv` selects or installs a compatible Python automatically.
+
+On macOS, Homebrew's `openjdk` is keg-only, so `brew install openjdk@21` does not
+by itself put `java`/`javac` on `PATH`. Register it once (no `sudo` needed) so it
+becomes the default JDK:
+
+```bash
+brew install openjdk@21
+ln -sfn "$(brew --prefix)/opt/openjdk@21/libexec/openjdk.jdk" \
+  ~/Library/Java/JavaVirtualMachines/openjdk-21.jdk
+```
 
 From the repository root, run:
 
@@ -156,10 +169,11 @@ make setup
 ```
 
 This one idempotent command syncs the locked Python environment, installs the
-pinned tlapm/Apalache/SANY dependencies, compiles the SANY semantic dumper,
-builds `check_proof_bin`, and runs a fast SANY smoke test. It is safe to rerun.
-Missing system prerequisites and a moved TLAPM rolling-release pin are reported
-as actionable errors. Allow roughly 3 GB of free disk space: the first run
+pinned tlapm/Apalache/SANY dependencies (the platform-matching tlapm binary is
+selected automatically), compiles the SANY semantic dumper, builds
+`check_proof_bin`, and runs a fast SANY smoke test. It is safe to rerun. Missing
+system prerequisites and a moved TLAPM rolling-release pin are reported as
+actionable errors. Allow roughly 3 GB of free disk space: the first run
 downloads an approximately 850 MB TLAPM archive and installs about 1.7 GB of
 external tools.
 
