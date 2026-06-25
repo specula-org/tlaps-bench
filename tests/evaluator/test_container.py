@@ -7,6 +7,10 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from common.container import ContainerConfig, ContainerRunner, forward_env
+from evaluator.backends.claude_code import ClaudeCodeBackend
+from evaluator.backends.codex import CodexBackend
+from evaluator.backends.copilot import CopilotBackend
+from evaluator.backends.litellm import LiteLLMBackend
 
 
 class TestBuildDockerArgs:
@@ -82,6 +86,113 @@ class TestBuildDockerArgs:
 
         assert args[-1] == "my-image:v1"
 
+    def test_credentials_not_mounted_by_default(self, tmp_path):
+        (tmp_path / ".aws").mkdir()
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".codex").mkdir()
+
+        runner = ContainerRunner()
+        config = ContainerConfig()
+        with patch("common.container.Path.home", return_value=tmp_path):
+            args, _ = runner.build_docker_args(config)
+
+        mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+        assert not any(mount.endswith(":/root/.aws:rw") for mount in mount_args)
+        assert not any(mount.endswith(":/root/.claude:rw") for mount in mount_args)
+        assert not any(mount.endswith(":/root/.codex:rw") for mount in mount_args)
+
+    def test_claude_mount_copies_only_credentials_file(self, tmp_path):
+        claude_home = tmp_path / ".claude"
+        claude_home.mkdir()
+        (claude_home / ".credentials.json").write_text('{"claudeAiOauth": {"accessToken": "secret"}}\n')
+        (claude_home / "projects").mkdir()
+        (claude_home / "projects" / "old.jsonl").write_text("previous benchmark transcript")
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["claude"])
+        try:
+            with patch("common.container.Path.home", return_value=tmp_path):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+            claude_mount = next(m for m in mount_args if m.endswith(":/root/.claude:rw"))
+            copied_home = claude_mount.split(":", 1)[0]
+            assert os.path.exists(os.path.join(copied_home, ".credentials.json"))
+            assert not os.path.exists(os.path.join(copied_home, "projects"))
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_symlinked_minimal_credential_file_is_not_copied(self, tmp_path):
+        claude_home = tmp_path / ".claude"
+        claude_home.mkdir()
+        secret = tmp_path / "outside-secret"
+        secret.write_text("do not copy")
+        (claude_home / ".credentials.json").symlink_to(secret)
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["claude"])
+        with patch("common.container.Path.home", return_value=tmp_path):
+            args, _ = runner.build_docker_args(config)
+
+        mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+        assert not any(mount.endswith(":/root/.claude:rw") for mount in mount_args)
+
+    def test_codex_mount_copies_only_auth_file(self, tmp_path):
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        (codex_home / "auth.json").write_text('{"token": "secret"}\n')
+        (codex_home / "sessions").mkdir()
+        (codex_home / "sessions" / "old.jsonl").write_text("previous benchmark transcript")
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["codex"])
+        try:
+            with patch("common.container.Path.home", return_value=tmp_path):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+            codex_mount = next(m for m in mount_args if m.endswith(":/root/.codex:rw"))
+            copied_home = codex_mount.split(":", 1)[0]
+            assert os.path.exists(os.path.join(copied_home, "auth.json"))
+            assert not os.path.exists(os.path.join(copied_home, "sessions"))
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_codex_mount_copies_only_minimal_bedrock_config(self, tmp_path):
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        (codex_home / "config.toml").write_text(
+            """
+model_provider = "amazon-bedrock"
+
+[model_providers.amazon-bedrock.aws]
+region = "us-east-2"
+profile = "bench-profile"
+
+[mcp_servers.private]
+command = "leaky-local-command"
+"""
+        )
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["codex"])
+        try:
+            with patch("common.container.Path.home", return_value=tmp_path):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+            codex_mount = next(m for m in mount_args if m.endswith(":/root/.codex:rw"))
+            copied_home = codex_mount.split(":", 1)[0]
+            with open(os.path.join(copied_home, "config.toml")) as f:
+                config_text = f.read()
+            assert 'model_provider = "amazon-bedrock"' in config_text
+            assert 'region = "us-east-2"' in config_text
+            assert 'profile = "bench-profile"' in config_text
+            assert "mcp_servers" not in config_text
+            assert "leaky-local-command" not in config_text
+        finally:
+            runner.cleanup_credential_tmps()
+
 
 class TestBuildCompositeCommand:
     def test_without_install_script(self):
@@ -106,6 +217,99 @@ class TestBuildCompositeCommand:
         runner = ContainerRunner()
         result = runner.build_composite_command(["echo", "hello world"])
         assert "hello world" in result  # should be quoted
+
+
+class TestBackendCredentialMounts:
+    def test_backend_credential_mounts_use_only_needed_filesystem_auth(self, tmp_path):
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True),
+            patch("evaluator.backends.codex.Path.home", return_value=tmp_path),
+        ):
+            assert CodexBackend().get_credential_mounts() == []
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("evaluator.backends.codex.Path.home", return_value=tmp_path),
+        ):
+            assert CodexBackend().get_credential_mounts() == ["codex"]
+
+        with (
+            patch.dict(os.environ, {"AWS_BEARER_TOKEN_BEDROCK": "token"}, clear=True),
+            patch("evaluator.backends.codex.Path.home", return_value=tmp_path),
+        ):
+            assert CodexBackend(model="openai.gpt-5.5").get_credential_mounts() == ["codex"]
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=True):
+            assert ClaudeCodeBackend().get_credential_mounts() == []
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert ClaudeCodeBackend().get_credential_mounts() == ["claude"]
+
+        with patch.dict(os.environ, {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_BEARER_TOKEN_BEDROCK": "token"}, clear=True):
+            assert ClaudeCodeBackend().get_credential_mounts() == []
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert LiteLLMBackend(model="bedrock/anthropic.claude-3-5-sonnet").get_credential_mounts() == ["aws"]
+
+        with patch.dict(os.environ, {"AWS_BEARER_TOKEN_BEDROCK": "token"}, clear=True):
+            assert LiteLLMBackend(model="bedrock/anthropic.claude-3-5-sonnet").get_credential_mounts() == []
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert CopilotBackend().get_credential_mounts() == []
+
+    def test_codex_bedrock_bearer_token_with_config_region_passes_auth(self, tmp_path):
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        (codex_home / "config.toml").write_text(
+            """
+model_provider = "amazon-bedrock"
+
+[model_providers.amazon-bedrock.aws]
+region = "us-east-2"
+"""
+        )
+        with (
+            patch.dict(os.environ, {"AWS_BEARER_TOKEN_BEDROCK": "token"}, clear=True),
+            patch("evaluator.backends.codex.Path.home", return_value=tmp_path),
+        ):
+            assert CodexBackend(model="openai.gpt-5.5").check_auth() is None
+
+    def test_bedrock_env_auth_requires_backend_specific_region(self, tmp_path):
+        with (
+            patch.dict(os.environ, {"AWS_BEARER_TOKEN_BEDROCK": "token"}, clear=True),
+            patch("evaluator.backends.codex.Path.home", return_value=tmp_path),
+        ):
+            assert "AWS_REGION" in (CodexBackend(model="openai.gpt-5.5").check_auth() or "")
+
+        with (
+            patch.dict(os.environ, {"AWS_BEARER_TOKEN_BEDROCK": "token", "AWS_REGION": "us-east-1"}, clear=True),
+            patch("evaluator.backends.codex.Path.home", return_value=tmp_path),
+        ):
+            assert CodexBackend(model="openai.gpt-5.5").check_auth() is None
+
+        with patch.dict(
+            os.environ,
+            {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_BEARER_TOKEN_BEDROCK": "token"},
+            clear=True,
+        ):
+            assert "AWS_REGION" in (ClaudeCodeBackend().check_auth() or "")
+
+        with patch.dict(
+            os.environ,
+            {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_BEARER_TOKEN_BEDROCK": "token", "AWS_REGION": "us-east-1"},
+            clear=True,
+        ):
+            assert ClaudeCodeBackend().check_auth() is None
+
+        with patch.dict(os.environ, {"AWS_BEARER_TOKEN_BEDROCK": "token"}, clear=True):
+            assert "AWS_REGION_NAME" in (LiteLLMBackend(model="bedrock/anthropic.claude-3-5-sonnet").check_auth() or "")
+
+        with patch.dict(
+            os.environ,
+            {"AWS_BEARER_TOKEN_BEDROCK": "token", "AWS_REGION_NAME": "us-east-1"},
+            clear=True,
+        ):
+            assert LiteLLMBackend(model="bedrock/anthropic.claude-3-5-sonnet").check_auth() is None
 
 
 class TestForwardEnv:

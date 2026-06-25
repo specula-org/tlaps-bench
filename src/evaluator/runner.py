@@ -526,6 +526,7 @@ def _run_agent_container(
         env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
         firewall_hosts=backend.firewall_hosts(),
         install_script=backend.install_script,
+        credential_mounts=backend.get_credential_mounts(),
     )
 
     timeout = item.timeout if item.timeout and item.timeout > 0 else None

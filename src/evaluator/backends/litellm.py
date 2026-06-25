@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 import os
 
-from .base import AgentBackend, detect_firewall_hosts
+from .base import (
+    AgentBackend,
+    detect_firewall_hosts,
+    has_aws_bedrock_bearer_token,
+    has_aws_env_credentials,
+    has_aws_shared_credentials,
+    needs_aws_shared_credentials,
+)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -24,11 +31,21 @@ class LiteLLMBackend(AgentBackend):
         "DEEPSEEK_API_KEY",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
         "AWS_REGION_NAME",
     ]
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
+
+    def get_credential_mounts(self) -> list[str]:
+        if self._uses_bedrock() and needs_aws_shared_credentials():
+            return ["aws"]
+        return []
+
+    def _uses_bedrock(self) -> bool:
+        return "bedrock" in self.model.lower()
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         return [
@@ -45,6 +62,18 @@ class LiteLLMBackend(AgentBackend):
 
     def check_auth(self) -> str | None:
         m = self.model.lower()
+        if "bedrock" in m:
+            if has_aws_bedrock_bearer_token():
+                if not (os.environ.get("AWS_REGION_NAME") or os.environ.get("AWS_REGION")):
+                    return "litellm: AWS_REGION_NAME or AWS_REGION required for bedrock bearer-token auth"
+                return None
+            if has_aws_env_credentials():
+                if not (os.environ.get("AWS_REGION_NAME") or os.environ.get("AWS_REGION")):
+                    return "litellm: AWS_REGION_NAME or AWS_REGION required for bedrock model"
+                return None
+            if has_aws_shared_credentials():
+                return None
+            return "litellm: AWS credentials not found for bedrock model"
         if "anthropic" in m or "claude" in m:
             if os.environ.get("ANTHROPIC_API_KEY"):
                 return None

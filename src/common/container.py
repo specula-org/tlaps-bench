@@ -9,7 +9,9 @@ import shutil
 import subprocess
 import tempfile
 import time
+import tomllib
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,6 +56,7 @@ API_KEY_VARS = [
     "AWS_ROLE_ARN",
     "AWS_WEB_IDENTITY_TOKEN_FILE",
     "AWS_BEDROCK_RUNTIME_ENDPOINT",
+    "AWS_BEARER_TOKEN_BEDROCK",
     # Vertex AI
     "VERTEXAI_PROJECT",
     "VERTEXAI_LOCATION",
@@ -92,6 +95,7 @@ class ContainerConfig:
     cap_net_admin: bool = True
     memory: str = ""
     cpus: float = 0
+    credential_mounts: list[str] = field(default_factory=list)  # host credential dirs to copy+mount
 
 
 @dataclass
@@ -102,8 +106,93 @@ class ContainerRun:
     container_id: str
 
 
+@dataclass(frozen=True)
+class CredentialMount:
+    """How to prepare and mount a host credential directory."""
+
+    mount_path: str
+    copy: Callable[[Path, Path], bool]
+
+
+def _copy_all_credentials(src: Path, dst: Path) -> bool:
+    """Copy a complete credential directory for providers with complex auth flows."""
+    # AWS profile/SSO resolution can need several files; the container firewall
+    # still keeps egress scoped to the configured model/API hosts.
+    shutil.copytree(
+        src,
+        dst,
+        dirs_exist_ok=True,
+        symlinks=True,
+        ignore_dangling_symlinks=True,
+        copy_function=lambda s, d: shutil.copy2(s, d) if os.access(s, os.R_OK) else None,
+    )
+    return True
+
+
+def _copy_named_credential_file(src: Path, dst: Path, filename: str) -> bool:
+    """Copy one auth file, rejecting symlinks to avoid copying unrelated host files."""
+    auth_src = src / filename
+    if auth_src.is_symlink() or not auth_src.is_file() or not os.access(auth_src, os.R_OK):
+        return False
+    shutil.copy2(auth_src, dst / filename)
+    return True
+
+
+def _copy_claude_credentials(src: Path, dst: Path) -> bool:
+    """Copy only Claude Code's OAuth credential file."""
+    return _copy_named_credential_file(src, dst, ".credentials.json")
+
+
+def _copy_codex_credentials(src: Path, dst: Path) -> bool:
+    """Copy only Codex auth material needed for a run, never sessions/logs."""
+    copied = _copy_named_credential_file(src, dst, "auth.json")
+
+    config_src = src / "config.toml"
+    if not config_src.is_symlink() and config_src.is_file() and os.access(config_src, os.R_OK):
+        copied = _copy_codex_bedrock_config(config_src, dst / "config.toml") or copied
+
+    return copied
+
+
+def _copy_codex_bedrock_config(src: Path, dst: Path) -> bool:
+    """Write a minimal Codex Bedrock config without copying unrelated config."""
+    try:
+        with open(src, "rb") as f:
+            config = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+
+    if config.get("model_provider") != "amazon-bedrock":
+        return False
+
+    lines = ['model_provider = "amazon-bedrock"', ""]
+    provider = config.get("model_providers", {}).get("amazon-bedrock", {})
+    aws = provider.get("aws", {}) if isinstance(provider, dict) else {}
+    region = aws.get("region") if isinstance(aws, dict) else None
+    profile = aws.get("profile") if isinstance(aws, dict) else None
+    if (isinstance(region, str) and region) or (isinstance(profile, str) and profile):
+        lines.append("[model_providers.amazon-bedrock.aws]")
+    if isinstance(region, str) and region:
+        escaped_region = region.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'region = "{escaped_region}"')
+    if isinstance(profile, str) and profile:
+        escaped_profile = profile.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'profile = "{escaped_profile}"')
+    if len(lines) > 2:
+        lines.append("")
+
+    dst.write_text("\n".join(lines))
+    return True
+
+
 class ContainerRunner:
     """Programmatic interface to Docker for running agent backends in isolation."""
+
+    _CREDENTIAL_MOUNTS = {
+        "aws": CredentialMount("/root/.aws", _copy_all_credentials),
+        "claude": CredentialMount("/root/.claude", _copy_claude_credentials),
+        "codex": CredentialMount("/root/.codex", _copy_codex_credentials),
+    }
 
     def build_docker_args(self, config: ContainerConfig) -> tuple[list[str], str]:
         """Build the `docker run` argument list from config."""
@@ -142,19 +231,15 @@ class ContainerRunner:
         # cannot modify host credentials. Cleaned up after run.
         self._credential_tmps: list[str] = []
 
-        for name, mount_path in [("aws", "/root/.aws"), ("codex", "/root/.codex"), ("copilot", "/root/.copilot")]:
+        for name in config.credential_mounts:
+            mount = self._CREDENTIAL_MOUNTS.get(name)
+            if mount is None:
+                raise ValueError(f"unknown credential mount: {name}")
             src = Path.home() / f".{name}"
             if src.is_dir():
-                tmp = tempfile.mkdtemp(prefix=f"tlaps-bench-{name}-")
-                shutil.copytree(
-                    src,
-                    tmp,
-                    dirs_exist_ok=True,
-                    ignore_dangling_symlinks=True,
-                    copy_function=lambda s, d: shutil.copy2(s, d) if os.access(s, os.R_OK) else None,
-                )
-                self._credential_tmps.append(tmp)
-                args.extend(["-v", f"{tmp}:{mount_path}:rw"])
+                tmp = self._copy_credential_dir(name, src, mount)
+                if tmp:
+                    args.extend(["-v", f"{tmp}:{mount.mount_path}:rw"])
 
         # Env vars
         for key, value in config.env.items():
@@ -257,6 +342,21 @@ class ContainerRunner:
         for tmp in getattr(self, "_credential_tmps", []):
             shutil.rmtree(tmp, ignore_errors=True)
         self._credential_tmps = []
+
+    def _copy_credential_dir(self, name: str, src: Path, mount: CredentialMount) -> str | None:
+        """Copy host credentials into a throwaway directory and return its path."""
+        tmp = tempfile.mkdtemp(prefix=f"tlaps-bench-{name}-")
+        try:
+            copied = mount.copy(src, Path(tmp))
+            if not copied:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return None
+        except Exception:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+
+        self._credential_tmps.append(tmp)
+        return tmp
 
     @staticmethod
     def _read_cidfile(cid_file: str, retries: int = 10) -> str:

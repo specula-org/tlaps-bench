@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 BEDROCK_HOSTS = [
     "bedrock-runtime.us-east-1.amazonaws.com",
@@ -41,10 +43,40 @@ def detect_firewall_hosts(model: str) -> list[str]:
     return ALL_API_HOSTS
 
 
+def has_aws_env_credentials() -> bool:
+    """Whether AWS access-key credentials are available through env vars."""
+    return bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
+
+
+def has_aws_bedrock_bearer_token() -> bool:
+    """Whether Bedrock bearer-token auth is available through env vars."""
+    return bool(os.environ.get("AWS_BEARER_TOKEN_BEDROCK"))
+
+
+def has_aws_region() -> bool:
+    """Whether an AWS region is available through env vars."""
+    return bool(os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+
+
+def needs_aws_shared_credentials() -> bool:
+    """Whether a container needs ~/.aws for AWS SDK credential resolution."""
+    return not (has_aws_bedrock_bearer_token() or has_aws_env_credentials())
+
+
+def has_aws_shared_credentials() -> bool:
+    """Whether host-side AWS shared credentials/config may be available."""
+    return (Path.home() / ".aws").is_dir()
+
+
 class AgentBackend(ABC):
     name: str = ""
     install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
     env_keys: list[str] = []  # host env vars to forward into container
+    credential_mounts: list[str] = []  # host credential dirs to copy into agent containers
+
+    def get_credential_mounts(self) -> list[str]:
+        """Credential directories this backend needs mounted for the current run."""
+        return list(self.credential_mounts)
 
     @abstractmethod
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
