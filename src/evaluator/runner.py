@@ -339,10 +339,17 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
         lines = []
         lines.append(f"# {backend_name} on {level_name}\n")
         lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        # SKIP = operator-excluded from scoring; drop it from the pass rate
+        # entirely (neither numerator nor denominator) rather than count it FAIL.
         n_pass = verdicts.get("PASS", 0)
-        pass_pct = (100.0 * n_pass / total) if total else 0.0
+        n_skip = verdicts.get("SKIP", 0)
+        scored = total - n_skip
+        pass_pct = (100.0 * n_pass / scored) if scored else 0.0
+        pass_line = f"**Pass rate**: {n_pass}/{scored} ({pass_pct:.1f}%)"
+        if n_skip:
+            pass_line += f" · {n_skip} skipped"
         lines.append(f"**Progress**: {total}/{total_benchmarks}")
-        lines.append(f"**Pass rate**: {n_pass}/{total} ({pass_pct:.1f}%)")
+        lines.append(pass_line)
         lines.append(f"**Total tokens**: {total_input:,} input / {total_output:,} output\n")
 
         lines.append("## Summary\n")
