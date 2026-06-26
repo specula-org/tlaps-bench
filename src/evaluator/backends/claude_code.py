@@ -16,7 +16,7 @@ from .base import (
     needs_aws_shared_credentials,
 )
 
-DEFAULT_MODEL = "claude-opus-4-7"
+DEFAULT_MODEL = "claude-opus-4-8"
 
 
 class ClaudeCodeBackend(AgentBackend):
