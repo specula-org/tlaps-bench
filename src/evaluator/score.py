@@ -9,6 +9,12 @@ PASS/FAIL: a task counts as passed iff its ``check_verdict`` is exactly
 ``"PASS"``. Every other verdict — FAIL, CHEATING, TIMEOUT, ERROR — counts as
 not passed. CHEATING is not a separate category here: a cheat is just a failure.
 
+SKIP is the one exception: an operator marks a benchmark ``SKIP`` to exclude it
+from scoring (e.g. a theorem known to time out for reasons outside the agent's
+control). A skipped task is in neither the numerator nor the denominator — it is
+dropped from the pass rate entirely, not counted as a failure — and the count of
+skipped tasks is reported separately so nothing is hidden.
+
 Pluggable scoring: a scorer assigns a non-negative weight to each task; the
 score of a group of tasks is
 
@@ -30,11 +36,22 @@ from collections import defaultdict
 from collections.abc import Callable
 
 PASS_VERDICT = "PASS"
+SKIP_VERDICT = "SKIP"
 
 
 def is_pass(result: dict) -> bool:
     """A task passed iff its verdict is exactly PASS (CHEATING/FAIL/... do not)."""
     return result.get("check_verdict") == PASS_VERDICT
+
+
+def is_skipped(result: dict) -> bool:
+    """A task is SKIP iff an operator excluded it from scoring (see module doc)."""
+    return result.get("check_verdict") == SKIP_VERDICT
+
+
+def n_skipped(results: list[dict]) -> int:
+    """How many tasks were operator-excluded from scoring."""
+    return sum(1 for r in results if is_skipped(r))
 
 
 # A scorer maps one task result to a non-negative weight; the group score is the
@@ -46,11 +63,16 @@ SCORERS: dict[str, Callable[[dict], float]] = {
 
 
 def weighted_score(results: list[dict], weight: Callable[[dict], float]) -> tuple[float, int, int]:
-    """Return (score_percent, n_passed, n_total) for a list of task results."""
-    n_total = len(results)
-    n_pass = sum(1 for r in results if is_pass(r))
-    total_w = sum(max(weight(r), 0.0) for r in results)
-    pass_w = sum(max(weight(r), 0.0) for r in results if is_pass(r))
+    """Return (score_percent, n_passed, n_total) over the scored tasks.
+
+    SKIP tasks are dropped first, so ``n_total`` is the number of *scored* tasks
+    (skipped ones count toward neither the pass count nor the denominator).
+    """
+    scored = [r for r in results if not is_skipped(r)]
+    n_total = len(scored)
+    n_pass = sum(1 for r in scored if is_pass(r))
+    total_w = sum(max(weight(r), 0.0) for r in scored)
+    pass_w = sum(max(weight(r), 0.0) for r in scored if is_pass(r))
     pct = (100.0 * pass_w / total_w) if total_w > 0 else 0.0
     return pct, n_pass, n_total
 
@@ -88,13 +110,17 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
     """Markdown scorecard for a single run: overall pass rate + per-module table."""
     results = run["results"]
     pct, n_pass, n_total = weighted_score(results, weight)
+    skipped = n_skipped(results)
     in_tok, out_tok, secs = _cost(results)
 
+    pass_line = f"**Pass rate**: {n_pass}/{n_total} ({pct:.1f}%)"
+    if skipped:
+        pass_line += f" · {skipped} skipped"
     lines = [
         f"# Scorecard — {run['backend']} / {run['level']}",
         "",
         f"**Source**: {run['path']}",
-        f"**Pass rate**: {n_pass}/{n_total} ({pct:.1f}%)",
+        pass_line,
         f"**Cost**: {in_tok:,} in / {out_tok:,} out tokens · {secs:,.0f}s total",
     ]
     if scoring_name != "equal":
@@ -108,6 +134,8 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
     ]
     by_module: dict[str, list[dict]] = defaultdict(list)
     for r in results:
+        if is_skipped(r):
+            continue  # fully-skipped modules drop out of the table entirely
         by_module[r.get("module") or "?"].append(r)
     for module in sorted(by_module):
         mpct, mp, mt = weighted_score(by_module[module], weight)
@@ -129,9 +157,13 @@ def comparison_md(runs: list[dict], weight: Callable[[dict], float], scoring_nam
     for run in runs:
         pct, n_pass, n_total = weighted_score(run["results"], weight)
         in_tok, out_tok, secs = _cost(run["results"])
+        passed_total = f"{n_pass}/{n_total}"
+        skipped = n_skipped(run["results"])
+        if skipped:
+            passed_total += f" (+{skipped} skipped)"
         lines.append(
             f"| {run['id']} | {run['backend']} | {run['level']} | {pct:.1f}% | "
-            f"{n_pass}/{n_total} | {in_tok:,}/{out_tok:,} | {secs:,.0f}s |"
+            f"{passed_total} | {in_tok:,}/{out_tok:,} | {secs:,.0f}s |"
         )
     lines.append("")
     return "\n".join(lines)
