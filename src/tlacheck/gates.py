@@ -107,6 +107,14 @@ class GradeResult:
     def failed_gates(self) -> list[Gate]:
         return sorted({c.gate for c in self.checks if not c.ok}, key=lambda g: g.value)
 
+    def failed_integrity_checks(self) -> list[str]:
+        """Names of failing INTEGRITY checks — a tamper/admit (the agent changed
+        the statement, smuggled in an axiom/module, or admitted the goal), as
+        opposed to an honest incomplete proof (a COMPLETION check) or a parse
+        failure (sany_valid). Empty when the only failures are honest. The grade
+        stays binary; this just labels *why* a FAIL happened for human reports."""
+        return [c.name for c in self.checks if not c.ok and c.name in INTEGRITY_CHECKS]
+
 
 # Single migration map: which tlacheck issue vector belongs to which gate.
 VECTOR_GATE = {
@@ -118,6 +126,29 @@ VECTOR_GATE = {
     "INCOMPLETE_PROOF": Gate.B_DISCHARGE,
     "DEPENDENCY_MODIFIED": Gate.C_TRUST,
 }
+
+# Checks whose failure means the agent TAMPERED/ADMITTED rather than honestly
+# failed to finish. Used only to label a FAIL for human reports (the grade itself
+# stays binary). NOT integrity: the COMPLETION checks ``obligations_proved`` /
+# ``no_missing_steps`` (an honest unfinished proof) and the PARSE check
+# ``sany_valid`` (an honest reject, surfaced separately). Note this is finer than
+# the A/B/C gates — gate B mixes honest completion checks with admit-type cheats
+# (``no_admitted_goal`` / ``no_added_omitted``), so cheat vs. honest can only be
+# told apart at the check level, not the gate level.
+INTEGRITY_CHECKS = frozenset(
+    {
+        "statement_unchanged",
+        "no_extra_axiom",
+        "no_smuggled_module",
+        "no_smuggled_definition",
+        "preamble_unchanged",
+        "no_admitted_goal",
+        "no_added_omitted",
+        "admitted_set_eq_baseline",
+        "deps_unmodified",
+        "graded_on_canonical",
+    }
+)
 
 
 def grade(inp: GraderInputs) -> GradeResult:

@@ -143,6 +143,22 @@ def test_from_tlacheck_strict_status_flows_to_gate_b():
     assert Gate.B_DISCHARGE in grade(missing).failed_gates()
 
 
+def test_failed_integrity_checks_separate_cheats_from_honest_fails():
+    # A tamper/admit fails an INTEGRITY check (a cheat); an unfinished proof or a
+    # parse failure does not — even when they share an A/B/C gate.
+    cheat = grade(GraderInputs(**{**CLEAN.__dict__, "extra_axiom": True}))
+    assert cheat.failed_integrity_checks() == ["no_extra_axiom"]
+    # admitted_goal lives under gate B (with the honest completion checks) but IS
+    # a cheat — the reason check-level, not gate-level, is the right granularity.
+    admit = grade(GraderInputs(**{**CLEAN.__dict__, "admitted_goal": True}))
+    assert admit.failed_integrity_checks() == ["no_admitted_goal"]
+    # Honest incomplete proof: no integrity check fails.
+    assert grade(GraderInputs(**{**CLEAN.__dict__, "tlapm_obligations_proved": False})).failed_integrity_checks() == []
+    assert grade(GraderInputs(**{**CLEAN.__dict__, "n_missing": 1})).failed_integrity_checks() == []
+    # Parse failure is an honest reject, not a cheat.
+    assert grade(GraderInputs(**{**CLEAN.__dict__, "sany_valid": False})).failed_integrity_checks() == []
+
+
 if __name__ == "__main__":
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_") and callable(_fn):
