@@ -40,8 +40,10 @@ class CodexBackend(AgentBackend):
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         last_msg_path = os.path.join(result_dir, "codex_last_message.txt")
+        # Invoke the `codex` binary directly (it must be on PATH). Going through
+        # `npx codex` is wrong: npm has no top-level `codex` package (OpenAI's is
+        # `@openai/codex`), so `npx codex` resolves to an unrelated bogus package.
         cmd = [
-            "npx",
             "codex",
             "exec",
             "--dangerously-bypass-approvals-and-sandbox",
