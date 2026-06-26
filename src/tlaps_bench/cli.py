@@ -6,7 +6,7 @@ SUBCOMMANDS = [
     ("check", "Check a single benchmark proof for correctness and cheating"),
     ("validate", "Batch-validate source proofs with tlapm"),
     ("generate", "Generate benchmarks (--level level1|level2; default level1)"),
-    ("score", "Score / aggregate results (not implemented yet)"),
+    ("score", "Score results (pass rate, per-module breakdown) from results.json"),
 ]
 
 PROG = "tlaps-bench"
@@ -100,19 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         module = "dataset.level1.generate" if level == "level1" else "dataset.level2.generate"
         return _dispatch(f"{PROG} generate --level {level}", module, "main", gen_args)
     if sub == "score":
-        # Give `score` a real argparse parser so `--help` behaves like every
-        # other subcommand (prints usage, exits 0). Invoking it for real still
-        # prints "not implemented" and exits non-zero, so the stub is never
-        # mistaken for a working command.
-        import argparse
-
-        parser = argparse.ArgumentParser(
-            prog=f"{PROG} score",
-            description="Score / aggregate results (not implemented yet).",
-        )
-        parser.parse_args(rest)
-        sys.stderr.write("tlaps-bench score: not implemented yet (tracked as a separate task)\n")
-        return 1
+        return _dispatch(f"{PROG} score", "evaluator.score", "main", rest)
 
     return 2  # unreachable
 
