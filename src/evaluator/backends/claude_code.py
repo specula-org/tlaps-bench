@@ -6,30 +6,82 @@ import json
 import os
 import subprocess
 
-from .base import AgentBackend
+from .base import (
+    AgentBackend,
+    detect_firewall_hosts,
+    has_aws_bedrock_bearer_token,
+    has_aws_env_credentials,
+    has_aws_region,
+    has_aws_shared_credentials,
+    needs_aws_shared_credentials,
+)
 
 DEFAULT_MODEL = "claude-opus-4-7"
 
 
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
+    install_script = "install-claudecode.sh"
+    env_keys = [
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_MANTLE",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_PROFILE",
+        "ANTHROPIC_BEDROCK_BASE_URL",
+        "ANTHROPIC_AWS_BASE_URL",
+        "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+        "DISABLE_PROMPT_CACHING",
+    ]
+
+    # Tools the agent is allowed to use (mirrors SREGym's whitelist).
+    # Using --allowedTools instead of --dangerously-skip-permissions
+    # because the latter is blocked when running as root in containers.
+    ALLOWED_TOOLS = [
+        "Bash",
+        "Edit",
+        "Write",
+        "Read",
+        "Glob",
+        "Grep",
+        "LS",
+        "NotebookEdit",
+        "NotebookRead",
+        "TodoRead",
+        "TodoWrite",
+        "Agent",
+        "Skill",
+        "SlashCommand",
+        "Task",
+    ]
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
 
+    def get_credential_mounts(self) -> list[str]:
+        if self._uses_aws_provider() and needs_aws_shared_credentials():
+            return ["aws"]
+        if not self._uses_aws_provider() and self._needs_claude_credentials():
+            return ["claude"]
+        return []
+
+    @staticmethod
+    def _uses_aws_provider() -> bool:
+        return (
+            os.environ.get("CLAUDE_CODE_USE_BEDROCK", "").strip() == "1"
+            or os.environ.get("CLAUDE_CODE_USE_MANTLE", "").strip() == "1"
+        )
+
+    @staticmethod
+    def _needs_claude_credentials() -> bool:
+        return not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        # claude has no -C / --cwd flag; runner sets cwd=workspace.
-        # stream-json requires --verbose in non-interactive (--print) mode.
-        # --no-session-persistence keeps benchmark runs out of the user's
-        # /resume history (193 entries per full run otherwise).
-        # --effort max runs the highest reasoning budget (levels:
-        # low|medium|high|xhigh|max) so the comparison against Codex's
-        # xhigh reasoning is apples-to-apples; without it the CLI uses a
-        # lighter default.
         return [
             "claude",
             "--print",
-            "--dangerously-skip-permissions",
             "--no-session-persistence",
             "--output-format",
             "stream-json",
@@ -38,9 +90,22 @@ class ClaudeCodeBackend(AgentBackend):
             "max",
             "--model",
             self.model,
-        ]
+            "--allowedTools",
+        ] + self.ALLOWED_TOOLS
 
     def check_auth(self) -> str | None:
+        if self._uses_aws_provider():
+            if has_aws_bedrock_bearer_token():
+                if not has_aws_region():
+                    return "claude_code: AWS_REGION or AWS_DEFAULT_REGION required for Bedrock bearer-token auth"
+                return None
+            if has_aws_env_credentials():
+                if not has_aws_region():
+                    return "claude_code: AWS_REGION or AWS_DEFAULT_REGION required for Bedrock AWS env auth"
+                return None
+            if has_aws_shared_credentials():
+                return None
+            return "claude_code: Bedrock/Mantle selected but no AWS credentials detected"
         # Fast path: env var present.
         if os.environ.get("ANTHROPIC_API_KEY"):
             return None
@@ -69,7 +134,7 @@ class ClaudeCodeBackend(AgentBackend):
             return f"claude_code: auth probe error: {e}"
 
     def firewall_hosts(self) -> list[str]:
-        return ["api.anthropic.com"]
+        return detect_firewall_hosts(self.model)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

@@ -26,8 +26,7 @@ L1_GIVEN_OMITTED = (
 
 # Agent left a gap: a bare QED / unproven helper lemma (no proof keyword) = MISSING.
 MISSING_STEP = (
-    '[ERROR]: Proof incomplete in module "X": 1 missing, 0 omitted proof step(s).\n'
-    "[INFO]: All 1 obligation proved."
+    '[ERROR]: Proof incomplete in module "X": 1 missing, 0 omitted proof step(s).\n[INFO]: All 1 obligation proved.'
 )
 
 FAILED_OBLIGATION = "[ERROR]: 1/3 obligations failed."

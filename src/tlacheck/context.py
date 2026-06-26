@@ -126,7 +126,11 @@ def build_context(
     solution = try_dump_normalized(sol_path, dep_dirs=dep_dirs)
     sany_ok = solution is not None
 
-    base_path = os.path.join(solution_dir, "benchmark.tla")
+    # Baseline from read-only benchmark_dir (agent can't tamper via git commands).
+    if benchmark_dir:
+        base_path = os.path.join(benchmark_dir, target_name + ".tla")
+    else:
+        base_path = os.path.join(solution_dir, "benchmark.tla")
     baseline = try_dump_normalized(base_path, dep_dirs=dep_dirs) if os.path.exists(base_path) else None
 
     def _read(p):

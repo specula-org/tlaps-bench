@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Run an agent CLI on TLAPS benchmarks to attempt automated proof writing.
 
@@ -9,17 +8,18 @@ For each benchmark:
 4. Saves all outputs
 
 Usage:
-    python3 runner.py [--backend codex|claude_code|copilot] [--level level1|level2] \\
+    python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--level level1|level2] \\
                       [--model NAME] [--jobs N] [--filter PATTERN] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """
 
 import argparse
 import contextlib
-import glob
+import fcntl
 import json
 import os
 import re
+import select
 import shlex
 import shutil
 import signal
@@ -31,14 +31,20 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
+from common.container import ContainerConfig, ContainerRunner, ensure_image, forward_env
 from evaluator.backends import get_backend, list_backends
+from evaluator.backends.base import AgentBackend
 from evaluator.levels import get_level, list_levels
+from evaluator.levels.base import Level
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
+
+# Set to True to stream agent output to terminal during container runs
+STREAM_AGENT_OUTPUT = True
 
 
 def resolve_paths():
@@ -302,8 +308,8 @@ class WorkItem:
     output_dir: str
     timeout: int
     check_timeout: int
-    backend: object
-    level: object
+    backend: AgentBackend
+    level: Level
     tlapm_path: str
     tlapm_lib: str
     # Quota gate (Claude Max subscription). usage_script=None disables it.
@@ -314,6 +320,8 @@ class WorkItem:
     # Memory gate: hold off launching the agent until this many GB are free
     # (0 = off). Guards a no-swap host against OOM under concurrent heavy runs.
     min_free_gb: float = 0
+    # Container mode: run agent inside Docker container
+    use_container: bool = False
 
 
 def update_summary(results, output_dir, total_benchmarks, backend_name, level_name):
@@ -354,6 +362,10 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
             # canonical parser, vs a proof that simply didn't verify).
             if r.get("sany_valid") is False:
                 notes = ("SANY✗ " + notes).strip()
+            # Name the tamper/admit check(s) behind a CHEATING verdict so a cheat
+            # is distinguishable from an honest incomplete FAIL at a glance.
+            if r.get("check_verdict") == "CHEATING" and r.get("cheat_checks"):
+                notes = (",".join(r["cheat_checks"]) + " " + notes).strip()
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
             if "obligations" in r:
                 obs = str(r["obligations"])
@@ -385,8 +397,13 @@ def run_single_benchmark(item: WorkItem):
     basename = os.path.basename(item.benchmark_path)
     name_no_ext = os.path.splitext(basename)[0]
 
+    # Structured result directory: input/, agent/, grading/
     result_dir = os.path.join(item.output_dir, module_dir, name_no_ext)
-    os.makedirs(result_dir, exist_ok=True)
+    input_dir = os.path.join(result_dir, "input")
+    agent_dir = os.path.join(result_dir, "agent")
+    grading_dir = os.path.join(result_dir, "grading")
+    for d in (input_dir, agent_dir, grading_dir):
+        os.makedirs(d, exist_ok=True)
 
     result = {
         "benchmark": rel_path,
@@ -400,11 +417,6 @@ def run_single_benchmark(item: WorkItem):
         "error": "",
     }
 
-    # Quota gate: pause before doing any work if the Claude Max subscription
-    # is over threshold (sleeps until the window resets, then resumes). Gated
-    # here — before workspace setup — so sleeping workers don't hold temp dirs.
-    # No-op when gating is disabled or usage can't be measured (codex / API-key
-    # auth / docker), in which case it returns True immediately.
     if not wait_for_quota(item, log_prefix=f"[{name_no_ext}] "):
         result["agent_exit"] = -3
         result["error"] = "quota exceeded (max waits reached); skipped"
@@ -419,8 +431,7 @@ def run_single_benchmark(item: WorkItem):
         for dep in level.get_dependencies(item.benchmark_path):
             shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
 
-        # Init git repo with original files as initial commit (the baseline
-        # the cheating check compares against)
+        # Init git repo (baseline for cheating check)
         subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
         subprocess.run(["git", "add", "."], capture_output=True, cwd=workspace)
         subprocess.run(
@@ -436,197 +447,361 @@ def run_single_benchmark(item: WorkItem):
             },
         )
 
-        # The cheat checker is the baked, root-owned, read-only binary on PATH
-        # (/usr/local/bin/check_proof_bin in docker). It is NEVER copied into the
-        # agent-writable workspace, so the agent cannot swap it to fake a verdict.
         checker_bin = level.checker_binary_path()
 
-        # Archive the original benchmark
-        shutil.copy2(item.benchmark_path, os.path.join(result_dir, "benchmark.tla"))
+        # Save input artifacts
+        shutil.copy2(item.benchmark_path, os.path.join(input_dir, "benchmark.tla"))
+        for dep in level.get_dependencies(item.benchmark_path):
+            shutil.copy2(dep, os.path.join(input_dir, os.path.basename(dep)))
 
         # Build prompt
         prompt = level.build_prompt(basename, item.tlapm_path, item.tlapm_lib)
-        prompt_file = os.path.join(result_dir, "prompt.txt")
-        with open(prompt_file, "w") as f:
+        with open(os.path.join(input_dir, "prompt.txt"), "w") as f:
             f.write(prompt)
 
         # Run the agent
-        agent_jsonl = os.path.join(result_dir, f"{backend.name}_output.jsonl")
-        cmd = backend.build_command(workspace, result_dir)
+        agent_jsonl = os.path.join(agent_dir, "output.jsonl")
 
-        # Source shell profile for host env vars (no-op in docker).
-        shell_cmd = "source ~/.zshrc 2>/dev/null; source ~/.bashrc 2>/dev/null; exec " + " ".join(
-            shlex.quote(c) for c in cmd
-        )
-
-        # Memory gate: on a no-swap host shared with another heavy run, hold off
-        # launching until there's RAM headroom (no-op when min_free_gb == 0).
         wait_for_memory(item.min_free_gb, 120, log_prefix=f"[{name_no_ext}] ")
-
         start_time = time.time()
-        # timeout <= 0 means no limit.
-        _to = item.timeout if item.timeout and item.timeout > 0 else None
-        timed_out = {"v": False}
-        proc = None
-        # Make `check_proof_bin` resolvable on PATH for the agent's self-check
-        # without a writable workspace copy. In docker it already lives in
-        # /usr/local/bin; on host we prepend the repo root (where the binary is).
-        agent_env = dict(os.environ)
-        checker_dir = os.path.dirname(os.path.abspath(checker_bin))
-        agent_env["PATH"] = checker_dir + os.pathsep + agent_env.get("PATH", "")
-        # The frozen check_proof_bin bundles the Python SANY wrapper but not the
-        # Java dumper, so point it at the real run.sh; without this the agent's
-        # self-check silently skips the SANY-validity gate (grader/agent parity).
-        # In docker run.sh isn't at REPO_ROOT — the image sets SANY_RUN_SH itself.
-        sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
-        if os.path.isfile(sany_run_sh):
-            agent_env["SANY_RUN_SH"] = sany_run_sh
-        try:
-            with open(agent_jsonl, "w") as jsonl_f:
-                proc = subprocess.Popen(
-                    ["bash", "-c", shell_cmd],
-                    stdin=subprocess.PIPE,
-                    stdout=jsonl_f,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=workspace,
-                    env=agent_env,
-                    start_new_session=True,  # own process group / session
-                )
 
-                # Watchdog is the PRIMARY timeout: at _to it forcibly reaps the
-                # agent's whole tree incl. detached Isabelle/poly (process-group
-                # kill alone leaves those behind, which is what hung the run and
-                # leaked ~150GB). We don't rely on communicate()'s own timeout —
-                # it failed to fire when a hung tlapm child held the pipe open.
-                def _watchdog():
-                    timed_out["v"] = True
-                    kill_agent_tree(proc, workspace)
-
-                timer = threading.Timer(_to, _watchdog) if _to else None
-                if timer:
-                    timer.daemon = True
-                    timer.start()
-                try:
-                    # Backstop timeout 10min past the watchdog so communicate can
-                    # never block forever even if a stray pipe holder lingers.
-                    _bt = (_to + 600) if _to else None
-                    _, stderr = proc.communicate(input=prompt, timeout=_bt)
-                except subprocess.TimeoutExpired:
-                    timed_out["v"] = True
-                    kill_agent_tree(proc, workspace)
-                    with contextlib.suppress(Exception):
-                        proc.wait(timeout=30)
-                    stderr = ""
-                finally:
-                    if timer:
-                        timer.cancel()
-            result["agent_exit"] = proc.returncode
-            if stderr:
-                with open(os.path.join(result_dir, "agent_stderr.txt"), "w") as f:
-                    f.write(stderr)
-            if timed_out["v"]:
-                result["agent_exit"] = -1
-                result["error"] = f"{backend.name} timeout after {item.timeout}s"
-                kill_agent_tree(proc, workspace)  # final sweep
-        except Exception as e:
-            result["agent_exit"] = -2
-            result["error"] = str(e)
-            if proc is not None:
-                kill_agent_tree(proc, workspace)
+        if item.use_container:
+            _run_agent_container(item, backend, workspace, agent_dir, agent_jsonl, prompt, result)
+        else:
+            _run_agent_local(item, backend, level, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin)
 
         elapsed = time.time() - start_time
         result["time_secs"] = elapsed
 
+        # Parse agent output
         transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
         result["input_tokens"] = input_tokens
         result["output_tokens"] = output_tokens
 
-        transcript_path = os.path.join(result_dir, "transcript.txt")
-        with open(transcript_path, "w") as f:
+        # Save agent artifacts
+        with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
             f.write(f"Time: {elapsed:.0f}s\n")
             f.write(f"Tokens: {input_tokens:,} input / {output_tokens:,} output\n")
             f.write("=" * 60 + "\n\n")
             f.write(transcript)
 
-        # Copy all .tla files from workspace (solution + dependencies)
         solution_path = os.path.join(workspace, basename)
-        for tla_file in glob.glob(os.path.join(workspace, "*.tla")):
-            shutil.copy2(tla_file, os.path.join(result_dir, os.path.basename(tla_file)))
         if os.path.isfile(solution_path):
-            shutil.copy2(solution_path, os.path.join(result_dir, "solution.tla"))
+            shutil.copy2(solution_path, os.path.join(agent_dir, "solution.tla"))
 
-        # Copy .result file if the agent ran the checker itself
-        result_file = os.path.join(workspace, name_no_ext + ".result")
-        if os.path.isfile(result_file):
-            shutil.copy2(result_file, os.path.join(result_dir, "agent_check.result"))
+        agent_check_file = os.path.join(workspace, name_no_ext + ".result")
+        if os.path.isfile(agent_check_file):
+            shutil.copy2(agent_check_file, os.path.join(grading_dir, "agent_check.result"))
 
-        # Run our own checker via the level. The compiled binary now runs the
-        # full cheat engine (legacy regex + SANY semantic + incomplete-proof)
-        # inline, so a single invocation produces the authoritative verdict.
-        check_result_path = os.path.join(result_dir, "check.result")
-        cmd = level.checker_command(
-            workspace,
-            basename,
-            check_result_path,
-            item.check_timeout,
-            benchmark_dir=os.path.dirname(item.benchmark_path),
-        )
-        try:
-            # Same SANY_RUN_SH the agent got, so the grader's check runs the
-            # SANY-validity gate identically (grader/agent oracle parity).
-            check_env = dict(os.environ)
-            if os.path.isfile(sany_run_sh):
-                check_env["SANY_RUN_SH"] = sany_run_sh
-            check_proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=item.check_timeout + 60,
-                cwd=workspace,
-                env=check_env,
-            )
-            check_log = os.path.join(result_dir, "check_debug.txt")
-            with open(check_log, "w") as dbg:
-                dbg.write(f"exit code: {check_proc.returncode}\n")
-                dbg.write(f"stdout:\n{check_proc.stdout}\n")
-                dbg.write(f"stderr:\n{check_proc.stderr}\n")
-            if check_proc.returncode == 0:
-                result["check_verdict"] = "PASS"
-            elif check_proc.returncode == 2:
-                result["check_verdict"] = "CHEATING"
-            elif check_proc.returncode == 1:
-                result["check_verdict"] = "FAIL"
-            else:
-                result["check_verdict"] = "ERROR"
-            # Structured SANY-validity bit. check_proof marks a parse failure
-            # with [SANY-INVALID]; verdict stays FAIL but this distinguishes
-            # "doesn't parse under standalone tla2sany" from "proof didn't verify".
-            result["sany_valid"] = "[SANY-INVALID]" not in (check_proc.stdout or "")
-            # Which gate(s) failed (binary verdict keeps the analysis signal):
-            # A:identity / C:trust ~ tamper/cheat-type, B:discharge ~ incomplete.
-            gm = re.search(r"GATES-FAILED:\s*([^\n]+)", check_proc.stdout or "")
-            if gm:
-                result["failed_gates"] = [g.strip() for g in gm.group(1).split(",") if g.strip()]
-            ob_matches = re.findall(r"All (\d+) obligation", check_proc.stdout)
-            if ob_matches:
-                result["obligations"] = int(ob_matches[-1])
-            else:
-                fail_match = re.search(r"(\d+)/(\d+) obligation", check_proc.stdout)
-                if fail_match:
-                    result["obligations_failed"] = int(fail_match.group(1))
-                    result["obligations_total"] = int(fail_match.group(2))
-        except subprocess.TimeoutExpired:
-            result["check_verdict"] = "TIMEOUT"
-        except Exception as e:
-            result["check_verdict"] = "ERROR"
-            result["error"] = str(e)
+        # Run grader
+        check_result_path = os.path.join(grading_dir, "check.result")
+        if item.use_container:
+            _run_grader_container(item, workspace, basename, grading_dir, check_result_path, result)
+        else:
+            _run_grader_local(item, workspace, basename, grading_dir, check_result_path, result)
+
+        # Write per-benchmark result.json
+        with open(os.path.join(result_dir, "result.json"), "w") as f:
+            json.dump(result, f, indent=2)
 
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
     return result
+
+
+def _run_agent_container(
+    item: WorkItem,
+    backend,
+    workspace: str,
+    agent_dir: str,
+    agent_jsonl: str,
+    prompt: str,
+    result: dict,
+) -> None:
+    """Run agent inside a Docker container with live output streaming."""
+    runner = ContainerRunner()
+    cmd = backend.build_command("/workspace", "/results")
+
+    config = ContainerConfig(
+        workspace=workspace,
+        result_dir=agent_dir,  # mount only agent/ subdir as /results
+        env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
+        firewall_hosts=backend.firewall_hosts(),
+        install_script=backend.install_script,
+        credential_mounts=backend.get_credential_mounts(),
+    )
+
+    timeout = item.timeout if item.timeout and item.timeout > 0 else None
+    container_run = None
+    try:
+        container_run = runner.run(config, cmd, stdin_data=prompt)
+        proc = container_run.proc
+        assert proc.stdout is not None  # Popen created with stdout=PIPE
+
+        # Make stderr non-blocking to prevent pipe deadlock (>64KB stderr blocks agent)
+        if proc.stderr:
+            flags = fcntl.fcntl(proc.stderr, fcntl.F_GETFL)
+            fcntl.fcntl(proc.stderr, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+        stderr_chunks: list[str] = []
+
+        # Stream stdout to file in real-time (and stderr separately)
+        with open(agent_jsonl, "w") as jsonl_f:
+            deadline = (time.time() + timeout) if timeout else None
+            while True:
+                # Poll with 5s timeout so deadline is checked even if agent hangs
+                ready, _, _ = select.select([proc.stdout], [], [], 5.0)
+                # Drain stderr opportunistically
+                if proc.stderr:
+                    try:
+                        chunk = proc.stderr.read()
+                        if chunk:
+                            stderr_chunks.append(chunk)
+                    except (OSError, BlockingIOError):
+                        pass
+                if ready:
+                    line = proc.stdout.readline()
+                    if not line and proc.poll() is not None:
+                        break
+                    if line:
+                        jsonl_f.write(line)
+                        jsonl_f.flush()
+                        if STREAM_AGENT_OUTPUT:
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                elif proc.poll() is not None:
+                    break
+                if deadline and time.time() > deadline:
+                    runner.kill(container_run)
+                    result["agent_exit"] = -1
+                    result["error"] = f"{backend.name} timeout after {item.timeout}s"
+                    return
+
+        result["agent_exit"] = proc.returncode
+        # Drain any remaining stderr
+        if proc.stderr:
+            try:
+                remaining = proc.stderr.read()
+                if remaining:
+                    stderr_chunks.append(remaining)
+            except (OSError, BlockingIOError):
+                pass
+        stderr = "".join(stderr_chunks)
+        if stderr:
+            with open(os.path.join(agent_dir, "stderr.txt"), "w") as f:
+                f.write(stderr)
+        if proc.returncode == 137:
+            result["error"] = "container OOM killed (exit 137)"
+    except Exception as e:
+        result["agent_exit"] = -2
+        result["error"] = str(e)
+        if container_run:
+            runner.kill(container_run)
+    finally:
+        runner.cleanup_credential_tmps()
+
+
+def _run_agent_local(
+    item: WorkItem,
+    backend,
+    level,
+    workspace: str,
+    agent_dir: str,
+    agent_jsonl: str,
+    prompt: str,
+    result: dict,
+    checker_bin: str,
+) -> None:
+    """Run agent as a local subprocess (existing behavior)."""
+    cmd = backend.build_command(workspace, agent_dir)
+    shell_cmd = "source ~/.zshrc 2>/dev/null; source ~/.bashrc 2>/dev/null; exec " + " ".join(
+        shlex.quote(c) for c in cmd
+    )
+
+    _to = item.timeout if item.timeout and item.timeout > 0 else None
+    timed_out = {"v": False}
+    proc = None
+
+    agent_env = dict(os.environ)
+    checker_dir = os.path.dirname(os.path.abspath(checker_bin))
+    agent_env["PATH"] = checker_dir + os.pathsep + agent_env.get("PATH", "")
+    sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
+    if os.path.isfile(sany_run_sh):
+        agent_env["SANY_RUN_SH"] = sany_run_sh
+
+    try:
+        with open(agent_jsonl, "w") as jsonl_f:
+            proc = subprocess.Popen(
+                ["bash", "-c", shell_cmd],
+                stdin=subprocess.PIPE,
+                stdout=jsonl_f,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=workspace,
+                env=agent_env,
+                start_new_session=True,
+            )
+
+            def _watchdog():
+                timed_out["v"] = True
+                kill_agent_tree(proc, workspace)
+
+            timer = threading.Timer(_to, _watchdog) if _to else None
+            if timer:
+                timer.daemon = True
+                timer.start()
+            try:
+                _bt = (_to + 600) if _to else None
+                _, stderr = proc.communicate(input=prompt, timeout=_bt)
+            except subprocess.TimeoutExpired:
+                timed_out["v"] = True
+                kill_agent_tree(proc, workspace)
+                with contextlib.suppress(Exception):
+                    proc.wait(timeout=30)
+                stderr = ""
+            finally:
+                if timer:
+                    timer.cancel()
+        result["agent_exit"] = proc.returncode
+        if stderr:
+            with open(os.path.join(agent_dir, "stderr.txt"), "w") as f:
+                f.write(stderr)
+        if timed_out["v"]:
+            result["agent_exit"] = -1
+            result["error"] = f"{backend.name} timeout after {item.timeout}s"
+            kill_agent_tree(proc, workspace)
+    except Exception as e:
+        result["agent_exit"] = -2
+        result["error"] = str(e)
+        if proc is not None:
+            kill_agent_tree(proc, workspace)
+
+
+def _run_grader_container(
+    item: WorkItem,
+    workspace: str,
+    basename: str,
+    grading_dir: str,
+    check_result_path: str,
+    result: dict,
+) -> None:
+    """Run grader inside a Docker container (check_proof_bin lives in the image)."""
+    runner = ContainerRunner()
+    level = item.level
+
+    # Use container path for checker binary (not host path)
+    old_binary = level._checker_binary
+    level._checker_binary = "/usr/local/bin/check_proof_bin"
+    check_cmd = level.checker_command(
+        "/workspace",
+        basename,
+        "/results/check.result",
+        item.check_timeout,
+        benchmark_dir="/benchmark",  # tamper-proof read-only mount
+    )
+    level._checker_binary = old_binary
+    config = ContainerConfig(
+        workspace=workspace,
+        result_dir=grading_dir,
+        benchmark_dir=os.path.dirname(item.benchmark_path),
+    )
+    config.env["GIT_CONFIG_COUNT"] = "1"
+    config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
+    config.env["GIT_CONFIG_VALUE_0"] = "/workspace"
+    try:
+        exit_code, stdout, stderr = runner.run_with_output(config, check_cmd, timeout=item.check_timeout + 60)
+        with open(os.path.join(grading_dir, "check_debug.txt"), "w") as dbg:
+            dbg.write(f"exit code: {exit_code}\n")
+            dbg.write(f"stdout:\n{stdout}\n")
+            dbg.write(f"stderr:\n{stderr}\n")
+        _parse_grader_result(exit_code, stdout, result)
+    except subprocess.TimeoutExpired:
+        result["check_verdict"] = "TIMEOUT"
+    except Exception as e:
+        result["check_verdict"] = "ERROR"
+        result["error"] = str(e)
+    finally:
+        runner.cleanup_credential_tmps()
+
+
+def _run_grader_local(
+    item: WorkItem,
+    workspace: str,
+    basename: str,
+    grading_dir: str,
+    check_result_path: str,
+    result: dict,
+) -> None:
+    """Run grader on host (local mode)."""
+    level = item.level
+    sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
+
+    check_cmd = level.checker_command(
+        workspace,
+        basename,
+        check_result_path,
+        item.check_timeout,
+        benchmark_dir=os.path.dirname(item.benchmark_path),
+    )
+    try:
+        check_env = dict(os.environ)
+        if os.path.isfile(sany_run_sh):
+            check_env["SANY_RUN_SH"] = sany_run_sh
+        check_proc = subprocess.run(
+            check_cmd,
+            capture_output=True,
+            text=True,
+            timeout=item.check_timeout + 60,
+            cwd=workspace,
+            env=check_env,
+        )
+        with open(os.path.join(grading_dir, "check_debug.txt"), "w") as dbg:
+            dbg.write(f"exit code: {check_proc.returncode}\n")
+            dbg.write(f"stdout:\n{check_proc.stdout}\n")
+            dbg.write(f"stderr:\n{check_proc.stderr}\n")
+        _parse_grader_result(check_proc.returncode, check_proc.stdout, result)
+    except subprocess.TimeoutExpired:
+        result["check_verdict"] = "TIMEOUT"
+    except Exception as e:
+        result["check_verdict"] = "ERROR"
+        result["error"] = str(e)
+
+
+def _parse_grader_result(exit_code: int, stdout: str, result: dict) -> None:
+    """Parse grader exit code + stdout into result dict."""
+    # The merged checker is binary: exit 0 = PASS, 1 = FAIL (a cheat is just a
+    # FAIL, not a separate exit code). Anything else is unexpected → ERROR.
+    if exit_code == 0:
+        result["check_verdict"] = "PASS"
+    elif exit_code == 1:
+        result["check_verdict"] = "FAIL"
+    else:
+        result["check_verdict"] = "ERROR"
+    result["sany_valid"] = "[SANY-INVALID]" not in (stdout or "")
+    # Which gate(s) failed (the grade is binary; this keeps the analysis signal).
+    gm = re.search(r"GATES-FAILED:\s*([^\n]+)", stdout or "")
+    if gm:
+        result["failed_gates"] = [g.strip() for g in gm.group(1).split(",") if g.strip()]
+    # A FAIL whose failing checks include an integrity (tamper/admit) check is a
+    # cheat, not an honest incomplete proof — relabel it for the human-facing
+    # report so the two are distinguishable at a glance. The checker emits
+    # CHEAT-DETECTED with the failing integrity-check names; the grade itself
+    # stays binary (the PASS/FAIL exit code is untouched).
+    if result["check_verdict"] == "FAIL":
+        cm = re.search(r"CHEAT-DETECTED:\s*([^\n]+)", stdout or "")
+        if cm:
+            result["check_verdict"] = "CHEATING"
+            result["cheat_checks"] = [c.strip() for c in cm.group(1).split(",") if c.strip()]
+    ob_matches = re.findall(r"All (\d+) obligation", stdout)
+    if ob_matches:
+        result["obligations"] = int(ob_matches[-1])
+    else:
+        fail_match = re.search(r"(\d+)/(\d+) obligation", stdout)
+        if fail_match:
+            result["obligations_failed"] = int(fail_match.group(1))
+            result["obligations_total"] = int(fail_match.group(2))
 
 
 def main():
@@ -637,7 +812,10 @@ def main():
     parser.add_argument("--jobs", type=int, default=1, help="Parallel agent runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
     parser.add_argument(
-        "--timeout", type=int, default=28800, help="Agent timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)"
+        "--timeout",
+        type=int,
+        default=28800,
+        help="Agent timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)",
     )
     parser.add_argument(
         "--check-timeout", type=int, default=600, help="Checker timeout per benchmark in seconds (default: 600)"
@@ -669,6 +847,16 @@ def main():
         help="Hold off launching an agent until this many GB RAM are free "
         "(0 = off). Use on a no-swap host shared with another heavy run.",
     )
+    parser.add_argument(
+        "--no-container",
+        action="store_true",
+        help="Run agent locally instead of inside a Docker container",
+    )
+    parser.add_argument(
+        "--force-build",
+        action="store_true",
+        help="Force rebuild the Docker base image before running",
+    )
     args = parser.parse_args()
 
     backend = get_backend(args.backend, model=args.model)
@@ -678,29 +866,32 @@ def main():
         print(f"ERROR: {auth_err}")
         sys.exit(1)
 
-    ensure_tlapm()
-    # tlapm has two paths the runner tracks separately:
-    #   tlapm_root — install root (TLAPM_PERSISTENT). The prompt template
-    #                appends `/bin/tlapm` itself, and uses tlapm_root for
-    #                "do not modify any files under {tlapm_path}/".
-    #   tlapm_bin  — the binary, used by find_tlapm_lib (which derives the
-    #                lib dir as two levels above the binary).
-    # Conflating the two caused the prompt to expand to
-    # `<install_root>/bin/tlapm/bin/tlapm`, which the agent then ran and
-    # got "Not a directory" on every tlapm invocation.
-    tlapm_root = TLAPM_PERSISTENT
-    tlapm_bin = os.path.join(tlapm_root, "bin", "tlapm")
-    tlapm_lib = find_tlapm_lib(tlapm_bin)
-    if not tlapm_lib:
-        print(f"ERROR: tlapm lib not found near {tlapm_bin}")
-        sys.exit(1)
+    # Container mode is default; --no-container disables it
+    use_container = not args.no_container
 
-    benchmark_root, checker_binary = resolve_paths()
-    if not os.path.isfile(checker_binary):
-        print(f"ERROR: checker binary not found at {checker_binary}")
-        print("       run `make` at the repo root to build it.")
-        sys.exit(1)
-    level = get_level(args.level, benchmark_root, checker_binary)
+    if use_container:
+        # In container mode, tlapm and checker are inside the image.
+        # Use container-side paths for prompts.
+        tlapm_root = "/opt/tlapm"
+        tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
+        benchmark_root = os.path.join(REPO_ROOT, "benchmark")
+        checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
+        level = get_level(args.level, benchmark_root, checker_binary)
+
+        ensure_image(force=args.force_build)
+        print("Container mode: ON (image: tlaps-bench-base)")
+    else:
+        # Local mode: require tlapm and checker on host
+        ensure_tlapm()
+        tlapm_root = TLAPM_PERSISTENT
+        tlapm_bin = os.path.join(tlapm_root, "bin", "tlapm")
+        tlapm_lib = find_tlapm_lib(tlapm_bin)
+        if not tlapm_lib:
+            print(f"ERROR: tlapm lib not found near {tlapm_bin}")
+            sys.exit(1)
+
+        benchmark_root, checker_binary = resolve_paths()
+        level = get_level(args.level, benchmark_root, checker_binary)
 
     # results/<level>/<backend>/<ts>/  (level first, then agent)
     if args.output_dir:
@@ -784,6 +975,7 @@ def main():
                 quota_7d=args.quota_7d,
                 quota_max_waits=args.quota_max_waits,
                 min_free_gb=args.min_free_gb,
+                use_container=use_container,
             )
         )
 

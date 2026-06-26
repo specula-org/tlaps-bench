@@ -1,11 +1,8 @@
-#!/usr/bin/env python3
-
-
 import sys
 
 # (subcommand, one-line help) — order is the order shown in --help.
 SUBCOMMANDS = [
-    ("run", "Run an agent backend (codex / claude_code / copilot) on the benchmarks"),
+    ("run", "Run an agent backend (codex / claude_code / copilot / litellm) on the benchmarks"),
     ("check", "Check a single benchmark proof for correctness and cheating"),
     ("validate", "Batch-validate source proofs with tlapm"),
     ("generate", "Generate benchmarks (--level level1|level2; default level1)"),
@@ -52,7 +49,7 @@ def _dispatch(prog: str, module_name: str, attr: str, passthrough: list[str]) ->
 
 
 def _extract_level(args: list[str]) -> tuple[str, list[str]]:
-    
+
     level = "level1"
     rest: list[str] = []
     i = 0

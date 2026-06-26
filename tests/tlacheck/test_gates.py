@@ -1,13 +1,17 @@
 """Tests for the cheat-checker gate framework (src/tlacheck/gates.py).
 
-Covers: the binary PASS/FAIL collapse, each gate check failing the run, and the
-from_tlacheck migration mapping real tlacheck issue vectors onto the right gate.
+Covers: the binary PASS/FAIL collapse, each WIRED gate check failing the run,
+PLACEHOLDER checks failing-open (so the skeleton is never less strict than the
+wired siblings but unbuilt checks don't block), the caller-computed legacy
+signals (L1 preamble byte-match, agent-added PROOF OMITTED) flowing to their
+gates, and the from_tlacheck migration mapping real tlacheck issue vectors onto
+the right gate.
 
 Run: PYTHONPATH=src python3 -m pytest tests/tlacheck/test_gates.py
 (or:  PYTHONPATH=src python3 tests/tlacheck/test_gates.py)
 """
 
-from tlacheck.gates import Gate, GraderInputs, from_tlacheck, grade
+from tlacheck.gates import Gate, GraderInputs, Status, from_tlacheck, grade
 from tlacheck.issue import Issue, Severity
 from tlacheck.verdict import Result, Verdict
 
@@ -22,7 +26,9 @@ CLEAN = GraderInputs(
     n_missing=0,
     admitted_goal=False,
     proof_omitted=False,
+    admitted_extra=False,
     deps_modified=False,
+    graded_on_canonical=True,
 )
 
 
@@ -33,7 +39,7 @@ def test_clean_passes():
 
 
 def test_each_wired_failure_fails_the_run():
-    # (field to flip, expected failing gate)
+    # (field to flip, expected failing gate, bad value)
     cases = [
         ("sany_valid", Gate.A_IDENTITY, False),
         ("statement_modified", Gate.A_IDENTITY, True),
@@ -57,6 +63,15 @@ def test_missing_step_fails_gate_b():
     r = grade(GraderInputs(**{**CLEAN.__dict__, "n_missing": 1}))
     assert not r.passed
     assert Gate.B_DISCHARGE in r.failed_gates()
+
+
+def test_placeholders_fail_open():
+    # On a clean input, the only PLACEHOLDER/PARTIAL checks must NOT block.
+    r = grade(CLEAN)
+    placeholders = [c for c in r.checks if c.status is Status.PLACEHOLDER]
+    assert placeholders, "scaffold should carry explicit placeholders (W4/W5)"
+    assert all(c.ok for c in placeholders), "placeholders must fail-open"
+    assert r.passed
 
 
 def test_binary_no_cheat_category():
@@ -102,7 +117,9 @@ def test_from_tlacheck_legacy_signals_flow_to_gates():
 
 
 def test_from_tlacheck_clean_result_passes():
-    inp = from_tlacheck(_result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True)
+    inp = from_tlacheck(
+        _result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, graded_on_canonical=True
+    )
     assert grade(inp).passed
 
 
@@ -124,6 +141,22 @@ def test_from_tlacheck_strict_status_flows_to_gate_b():
     missing = from_tlacheck(_result(), tlapm_obligations_proved=True, n_missing=2, sany_valid=True)
     assert not grade(missing).passed
     assert Gate.B_DISCHARGE in grade(missing).failed_gates()
+
+
+def test_failed_integrity_checks_separate_cheats_from_honest_fails():
+    # A tamper/admit fails an INTEGRITY check (a cheat); an unfinished proof or a
+    # parse failure does not — even when they share an A/B/C gate.
+    cheat = grade(GraderInputs(**{**CLEAN.__dict__, "extra_axiom": True}))
+    assert cheat.failed_integrity_checks() == ["no_extra_axiom"]
+    # admitted_goal lives under gate B (with the honest completion checks) but IS
+    # a cheat — the reason check-level, not gate-level, is the right granularity.
+    admit = grade(GraderInputs(**{**CLEAN.__dict__, "admitted_goal": True}))
+    assert admit.failed_integrity_checks() == ["no_admitted_goal"]
+    # Honest incomplete proof: no integrity check fails.
+    assert grade(GraderInputs(**{**CLEAN.__dict__, "tlapm_obligations_proved": False})).failed_integrity_checks() == []
+    assert grade(GraderInputs(**{**CLEAN.__dict__, "n_missing": 1})).failed_integrity_checks() == []
+    # Parse failure is an honest reject, not a cheat.
+    assert grade(GraderInputs(**{**CLEAN.__dict__, "sany_valid": False})).failed_integrity_checks() == []
 
 
 if __name__ == "__main__":

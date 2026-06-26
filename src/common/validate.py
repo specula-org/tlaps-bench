@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 # Internal imports
 from common.cheating_detection import CheatingIssue, detect_proof_omitted
+from common.container import ContainerConfig, ContainerRunner, ensure_image
 from dataset.level1.generate import (
     BENCHMARK_DIR,
     PROJECT_ROOT,
@@ -198,9 +199,35 @@ def run_tlapm(tla_file: str, tlapm_path: str, tlapm_lib: str, timeout: int = 120
         return -2, f"ERROR: {str(e)}", elapsed
 
 
+def run_tlapm_docker(tla_file: str, timeout: int = 120) -> tuple[int, str, float]:
+    """Run tlapm inside Docker container. Returns (exit_code, output, elapsed_secs)."""
+    runner = ContainerRunner()
+    workspace = os.path.dirname(tla_file)
+    basename = os.path.basename(tla_file)
+
+    cmd = ["/opt/tlapm/bin/tlapm", "--strict", "-I", "/opt/tlapm/lib/tlapm/stdlib"]
+    # Community modules are vendored in the image at /opt/community
+    cmd += ["-I", "/opt/community"]
+    cmd += [f"/workspace/{basename}"]
+
+    config = ContainerConfig(workspace=workspace, result_dir="")
+    start = time.time()
+    try:
+        exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=timeout + 30)
+        elapsed = time.time() - start
+        output = stdout + "\n" + stderr
+        return exit_code, output.strip(), elapsed
+    except subprocess.TimeoutExpired:
+        elapsed = time.time() - start
+        return -1, f"TIMEOUT after {timeout}s", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return -2, f"ERROR: {str(e)}", elapsed
+
+
 def validate_single_benchmark(args_tuple):
     """Validate a single benchmark. Designed for ProcessPoolExecutor."""
-    (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout) = args_tuple
+    (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout, use_container) = args_tuple
 
     basename = os.path.basename(benchmark_path)
     module_dir = os.path.basename(os.path.dirname(benchmark_path))
@@ -310,7 +337,11 @@ def validate_single_benchmark(args_tuple):
             if dep_basename != basename and "_" not in os.path.splitext(dep_basename)[0]:
                 shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
 
-        exit_code, output, elapsed = run_tlapm(tmp_file, tlapm_path, tlapm_lib, timeout)
+        exit_code, output, elapsed = (
+            run_tlapm_docker(tmp_file, timeout)
+            if use_container
+            else run_tlapm(tmp_file, tlapm_path, tlapm_lib, timeout)
+        )
         result.tlapm_exit_code = exit_code
         result.tlapm_output = output
         result.tlapm_time_secs = elapsed
@@ -446,33 +477,50 @@ def main():
     parser.add_argument("--rerun-tlapm", default=None, help="Path to alternative tlapm for rerun (e.g. tlapm 1.6)")
     parser.add_argument("--rerun-tlapm-lib", default=None, help="Path to alternative tlapm lib for rerun")
     parser.add_argument("--rerun", action="store_true", help="Rerun failed benchmarks (optionally with --rerun-tlapm)")
+    parser.add_argument(
+        "--no-container",
+        action="store_true",
+        help="Run tlapm on host instead of Docker (requires local tlapm installation)",
+    )
+    parser.add_argument(
+        "--force-build",
+        action="store_true",
+        help="Rebuild Docker image before running",
+    )
     args = parser.parse_args()
 
-    # Find tlapm
-    tlapm_path = args.tlapm
-    if not tlapm_path:
-        # Try common locations
-        candidates = [
-            "/opt/tlapm/bin/tlapm",
-            os.path.expanduser("~/.tlapm/bin/tlapm"),
-            "/tmp/tlapm/bin/tlapm",
-            shutil.which("tlapm"),
-        ]
-        for candidate in candidates:
-            if candidate and os.path.isfile(candidate):
-                tlapm_path = candidate
-                break
-    if not tlapm_path or not os.path.isfile(tlapm_path):
-        print("ERROR: tlapm not found. Use --tlapm to specify path.")
-        sys.exit(1)
+    use_container = not args.no_container
 
-    tlapm_lib = args.tlapm_lib or _derive_tlapm_lib(tlapm_path)
-    if not tlapm_lib or not os.path.isdir(tlapm_lib):
-        print(f"ERROR: tlapm lib not found near {tlapm_path}. Use --tlapm-lib to specify.")
-        sys.exit(1)
+    if use_container:
+        ensure_image(force=args.force_build)
+        tlapm_path = "/opt/tlapm/bin/tlapm"  # placeholder, not used directly
+        tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
+        print("Using tlapm: Docker container")
+    else:
+        # Find tlapm on host
+        tlapm_path = args.tlapm
+        if not tlapm_path:
+            candidates = [
+                "/opt/tlapm/bin/tlapm",
+                os.path.expanduser("~/.tlapm/bin/tlapm"),
+                "/tmp/tlapm/bin/tlapm",
+                shutil.which("tlapm"),
+            ]
+            for candidate in candidates:
+                if candidate and os.path.isfile(candidate):
+                    tlapm_path = candidate
+                    break
+        if not tlapm_path or not os.path.isfile(tlapm_path):
+            print("ERROR: tlapm not found. Use --tlapm to specify path, or run without --no-container.")
+            sys.exit(1)
 
-    print(f"Using tlapm: {tlapm_path}")
-    print(f"Using lib: {tlapm_lib}")
+        tlapm_lib = args.tlapm_lib or _derive_tlapm_lib(tlapm_path)
+        if not tlapm_lib or not os.path.isdir(tlapm_lib):
+            print(f"ERROR: tlapm lib not found near {tlapm_path}. Use --tlapm-lib to specify.")
+            sys.exit(1)
+
+        print(f"Using tlapm: {tlapm_path}")
+        print(f"Using lib: {tlapm_lib}")
 
     # Build source file index: list of (module_name, filepath)
     source_files = []  # list of (mod_name, filepath)
@@ -496,7 +544,7 @@ def main():
     print(f"Found {len(benchmark_files)} benchmark files to validate")
 
     # Prepare work items
-    work_items = [(bf, source_files, tlapm_path, tlapm_lib, args.timeout) for bf in benchmark_files]
+    work_items = [(bf, source_files, tlapm_path, tlapm_lib, args.timeout, use_container) for bf in benchmark_files]
 
     # Run validation
     results = []
@@ -543,7 +591,9 @@ def main():
         rerun_items = []
         for r in failed_results:
             bench_path = os.path.join(PROJECT_ROOT, r.benchmark_file)
-            rerun_items.append((bench_path, source_files, rerun_tlapm, rerun_tlapm_lib, args.rerun_timeout))
+            rerun_items.append(
+                (bench_path, source_files, rerun_tlapm, rerun_tlapm_lib, args.rerun_timeout, use_container)
+            )
 
         rerun_fixed = 0
         rerun_results = []

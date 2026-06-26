@@ -2,22 +2,105 @@
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
+from pathlib import Path
+
+BEDROCK_HOSTS = [
+    "bedrock-runtime.us-east-1.amazonaws.com",
+    "bedrock-runtime.us-east-2.amazonaws.com",
+    "bedrock-runtime.us-west-2.amazonaws.com",
+    "bedrock-runtime.eu-west-1.amazonaws.com",
+    "bedrock-runtime.eu-central-1.amazonaws.com",
+    "bedrock-runtime.ap-southeast-1.amazonaws.com",
+    "bedrock-runtime.ap-northeast-1.amazonaws.com",
+]
+
+VERTEX_HOSTS = [
+    "us-central1-aiplatform.googleapis.com",
+    "us-east1-aiplatform.googleapis.com",
+    "europe-west1-aiplatform.googleapis.com",
+]
+
+KIRO_HOSTS = [
+    # API (CodeWhisperer/Q service)
+    "q.us-east-1.amazonaws.com",
+    "q.eu-central-1.amazonaws.com",
+    # OIDC token refresh (IAM Identity Center)
+    "oidc.us-east-1.amazonaws.com",
+    "oidc.us-east-2.amazonaws.com",
+    "oidc.us-west-2.amazonaws.com",
+    "oidc.eu-central-1.amazonaws.com",
+    "oidc.eu-west-1.amazonaws.com",
+    "oidc.ap-southeast-1.amazonaws.com",
+]
+
+# All known LLM API hosts. Safe to allow all together since the general internet is still blocked (Google, GitHub etc.)
+ALL_API_HOSTS = (
+    [
+        "api.openai.com",
+        "chatgpt.com",  # Codex subscription auth (backend-api endpoint)
+        "auth.openai.com",  # OAuth token exchange for ChatGPT login
+        "api.anthropic.com",
+        "generativelanguage.googleapis.com",
+        "api.deepseek.com",
+        "api.githubcopilot.com",
+        "api.business.githubcopilot.com",
+        "api.enterprise.githubcopilot.com",
+    ]
+    + BEDROCK_HOSTS
+    + VERTEX_HOSTS
+    + KIRO_HOSTS
+)
+
+
+def detect_firewall_hosts(model: str) -> list[str]:
+    """All known LLM API hosts. Blocks general internet, allows any provider."""
+    return ALL_API_HOSTS
+
+
+def has_aws_env_credentials() -> bool:
+    """Whether AWS access-key credentials are available through env vars."""
+    return bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
+
+
+def has_aws_bedrock_bearer_token() -> bool:
+    """Whether Bedrock bearer-token auth is available through env vars."""
+    return bool(os.environ.get("AWS_BEARER_TOKEN_BEDROCK"))
+
+
+def has_aws_region() -> bool:
+    """Whether an AWS region is available through env vars."""
+    return bool(os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+
+
+def needs_aws_shared_credentials() -> bool:
+    """Whether a container needs ~/.aws for AWS SDK credential resolution."""
+    return not (has_aws_bedrock_bearer_token() or has_aws_env_credentials())
+
+
+def has_aws_shared_credentials() -> bool:
+    """Whether host-side AWS shared credentials/config may be available."""
+    return (Path.home() / ".aws").is_dir()
 
 
 class AgentBackend(ABC):
     name: str = ""
+    install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
+    env_keys: list[str] = []  # host env vars to forward into container
+    credential_mounts: list[str] = []  # host credential dirs to copy into agent containers
+
+    def get_credential_mounts(self) -> list[str]:
+        """Credential directories this backend needs mounted for the current run."""
+        return list(self.credential_mounts)
 
     @abstractmethod
-    def build_command(self, workspace: str, jsonl_out_path: str) -> list[str]:
+    def build_command(self, workspace: str, result_dir: str) -> list[str]:
         """Build the agent CLI command. Prompt is fed via stdin.
 
         Args:
             workspace: agent's working directory (will be the CLI's cwd).
-            jsonl_out_path: where the runner will redirect stdout.
-                            Returned by reference for backends that need to embed
-                            the path in flags (most don't — codex uses -o for last
-                            message, claude streams to stdout).
+            result_dir: directory for backend-specific output files.
         """
 
     @abstractmethod
@@ -25,18 +108,9 @@ class AgentBackend(ABC):
         """Parse the backend's stdout dump into (transcript, input_tokens, output_tokens)."""
 
     def check_auth(self) -> str | None:
-        """Verify the agent CLI can authenticate.
-
-        Returns None if auth looks OK, or a human-readable error string that
-        the runner will print and exit on.
-
-        Each backend chooses how to verify — env var fast path, CLI status
-        subcommand, or a minimal CLI probe — since users may authenticate
-        via API key, OAuth (`claude /login` / `codex login`), or a subscription.
-        Pre-flight should be quiet and ephemeral: do not leave session history.
-        """
+        """Host-side fast auth check. Returns None if OK, error string otherwise."""
         return None
 
     def firewall_hosts(self) -> list[str]:
-        """API hosts that must be reachable. For docs / entrypoint reference."""
+        """API hosts that must be reachable."""
         return []

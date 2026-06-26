@@ -50,6 +50,7 @@ from common.cheating_detection import (
     detect_zero_total_obligations,
     strip_comments,
 )
+from common.container import ContainerConfig, ContainerRunner, ensure_image
 
 
 def _descendant_pids(root_pid):
@@ -479,6 +480,66 @@ def parse_strict_status(tlapm_exit, tlapm_output):
     return complete, n_missing, obligation_failed
 
 
+def _run_in_container(filepath, args):
+    """Run check_proof_bin inside Docker container."""
+    ensure_image(force=getattr(args, "force_build", False))
+    runner = ContainerRunner()
+
+    # Mount repo root so git cheating checks (main branch comparison) work
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        cwd=os.path.dirname(filepath) or ".",
+    ).stdout.strip()
+
+    result_dir = tempfile.mkdtemp(prefix="tlaps_check_docker_")
+
+    if repo_root:
+        rel_path = os.path.relpath(filepath, repo_root)
+        container_file = f"/workspace/{rel_path}"
+        workspace = repo_root
+    else:
+        container_file = f"/workspace/{os.path.basename(filepath)}"
+        workspace = os.path.dirname(filepath)
+
+    cmd = ["/usr/local/bin/check_proof_bin", container_file]
+    cmd += ["--no-container"]
+    cmd += ["--level", str(args.level)]
+    cmd += ["--timeout", str(args.timeout)]
+    cmd += ["--output", "/results/check.result"]
+    if args.benchmark_dir:
+        cmd += ["--benchmark-dir", os.path.dirname(container_file)]
+    if args.sany_only:
+        cmd += ["--sany-only"]
+
+    config = ContainerConfig(workspace=workspace, result_dir=result_dir)
+    config.env["GIT_CONFIG_COUNT"] = "1"
+    config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
+    config.env["GIT_CONFIG_VALUE_0"] = "/workspace"
+    try:
+        exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=args.timeout + 60)
+        # Print output, filtering container-internal paths
+        if stdout:
+            for line in stdout.splitlines():
+                if line.startswith("Result written to: /results/"):
+                    continue
+                print(line)
+        if stderr:
+            print(stderr, end="", file=sys.stderr)
+
+        # Copy result file to expected output location
+        container_result = os.path.join(result_dir, "check.result")
+        output_path = args.output or (os.path.splitext(filepath)[0] + ".result")
+        if os.path.isfile(container_result):
+            shutil.copy2(container_result, output_path)
+            print(f"\nResult written to: {output_path}")
+
+        sys.exit(exit_code)
+    finally:
+        shutil.rmtree(result_dir, ignore_errors=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check a single TLAPS benchmark proof")
     parser.add_argument("file", help="Path to the benchmark .tla file")
@@ -501,12 +562,39 @@ def main():
         "tla2sany and exit (0 valid, 1 invalid) WITHOUT running tlapm. For quick "
         "syntax feedback while writing a proof — the full check applies the same gate.",
     )
+    # Container vs. host. Default is auto: use the local toolchain when a tlapm
+    # is installed, else fall back to Docker. These two flags force either side.
+    container_group = parser.add_mutually_exclusive_group()
+    container_group.add_argument(
+        "--no-container",
+        action="store_true",
+        help="Force running tlapm on the host, never Docker (requires a local tlapm installation)",
+    )
+    container_group.add_argument(
+        "--container",
+        action="store_true",
+        help="Force running inside Docker even when a local tlapm is installed",
+    )
+    parser.add_argument(
+        "--force-build",
+        action="store_true",
+        help="Rebuild Docker image before running",
+    )
     args = parser.parse_args()
 
     filepath = os.path.abspath(args.file)
     if not os.path.isfile(filepath):
         print(f"ERROR: File not found: {filepath}")
         sys.exit(3)
+
+    # Container vs. local: prefer the local toolchain when it is there, so a
+    # native setup (and the integration tests, and a hand-run) "just works"
+    # without flags; fall back to Docker only when no local tlapm is installed.
+    # Already inside a container (TLAPS_IN_CONTAINER, baked into the image) → always
+    # local, never nest. --no-container forces local; --container forces Docker.
+    in_container = bool(os.environ.get("TLAPS_IN_CONTAINER"))
+    if args.container or (not args.no_container and not in_container and find_tlapm() is None):
+        _run_in_container(filepath, args)
 
     # Fast path: --sany-only skips tlapm and just reports whether the solution
     # parses under standalone tla2sany (seconds, vs a full proof run). Same gate
@@ -689,7 +777,8 @@ def main():
         warnings.append((0, f"SANY validity check skipped ({sany_detail[:160]})"))
 
     for _line_num, desc in warnings:
-        emit(f"  WARNING: {desc}")
+        msg = desc.removeprefix("WARNING: ")
+        emit(f"  WARNING: {msg}")
 
     if real_issues:
         for line_num, desc in real_issues:
@@ -728,7 +817,7 @@ def main():
     # The gate framework (src/tlacheck/gates.py) is the authoritative grader:
     # PASS iff identity AND discharge AND trust. "Cheating" is NOT a separate verdict
     # — it is just a gate failing, so the outcome is binary PASS / FAIL.
-    grade_passed, grade_reasons, grade_gates = True, [], []
+    grade_passed, grade_reasons, grade_gates, grade_cheat_checks = True, [], [], []
     try:
         from tlacheck.gates import from_tlacheck, grade
 
@@ -744,6 +833,9 @@ def main():
         )
         grade_passed, grade_reasons = _gr.passed, _gr.reasons
         grade_gates = [g.value for g in _gr.failed_gates()]
+        # Failing integrity checks (tamper/admit) distinguish a cheat from an
+        # honest incomplete proof — surfaced as a marker for the runner's report.
+        grade_cheat_checks = _gr.failed_integrity_checks()
     except Exception as e:  # never let the grader crash the check
         grade_reasons = [f"gate framework unavailable ({e}); fell back to legacy verdict"]
         grade_passed = None  # signal: use legacy verdict alone
@@ -767,6 +859,8 @@ def main():
             emit(f"    {SANY_INVALID_MARKER} {sany_detail[:200]}")
         if grade_gates:
             emit(f"  GATES-FAILED: {','.join(grade_gates)}")
+        if grade_cheat_checks:
+            emit(f"  CHEAT-DETECTED: {','.join(grade_cheat_checks)}")
         if grade_passed and not legacy_pass:
             emit("  FAIL: legacy safety-net flagged a failure the gates missed — investigate divergence")
 

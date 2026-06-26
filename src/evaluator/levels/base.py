@@ -111,6 +111,7 @@ class Level(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; su
         cmd = [
             self._checker_binary,
             os.path.join(workspace, benchmark_basename),
+            "--no-container",
             "--level",
             str(self.level_number),
             "--output",

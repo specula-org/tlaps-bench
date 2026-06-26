@@ -6,13 +6,23 @@ import json
 import os
 import subprocess
 
-from .base import AgentBackend
+from .base import AgentBackend, detect_firewall_hosts
 
 DEFAULT_MODEL = "claude-opus-4.8"
 
 
 class CopilotBackend(AgentBackend):
     name = "copilot"
+    install_script = "install-copilot.sh"
+    env_keys = [
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "COPILOT_PROVIDER_BASE_URL",
+        "COPILOT_PROVIDER_API_KEY",
+        "COPILOT_PROVIDER_TYPE",
+        "COPILOT_MODEL",
+    ]
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
@@ -50,12 +60,15 @@ class CopilotBackend(AgentBackend):
             "--disable-builtin-mcps",
             "--no-custom-instructions",
             "--no-auto-update",
+            "--excluded-tools",
+            "web_fetch",
         ]
 
     def check_auth(self) -> str | None:
+        # BYOK mode: provider env vars are set
+        if os.environ.get("COPILOT_PROVIDER_BASE_URL"):
+            return None
         # Fast path: a token env var is set (headless auth).
-        # Checked by the CLI in this order: COPILOT_GITHUB_TOKEN, GH_TOKEN,
-        # GITHUB_TOKEN.
         if os.environ.get("COPILOT_GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"):
             return None
         # Slow path: probe the CLI with a trivial prompt. This covers OAuth
@@ -92,15 +105,7 @@ class CopilotBackend(AgentBackend):
             return f"copilot: auth probe error: {e}"
 
     def firewall_hosts(self) -> list[str]:
-        # Only the Copilot inference API — no github.com / api.github.com, so
-        # the agent cannot reach GitHub repos or the web (anti-cheating). The
-        # host varies by plan, so allow all three; --no-auto-update means the
-        # CLI never needs api.github.com for a release check.
-        return [
-            "api.githubcopilot.com",  # individual / pro
-            "api.business.githubcopilot.com",  # business
-            "api.enterprise.githubcopilot.com",  # enterprise
-        ]
+        return detect_firewall_hosts(self.model)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []
