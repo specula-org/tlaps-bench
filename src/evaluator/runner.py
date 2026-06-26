@@ -339,7 +339,10 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
         lines = []
         lines.append(f"# {backend_name} on {level_name}\n")
         lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        n_pass = verdicts.get("PASS", 0)
+        pass_pct = (100.0 * n_pass / total) if total else 0.0
         lines.append(f"**Progress**: {total}/{total_benchmarks}")
+        lines.append(f"**Pass rate**: {n_pass}/{total} ({pass_pct:.1f}%)")
         lines.append(f"**Total tokens**: {total_input:,} input / {total_output:,} output\n")
 
         lines.append("## Summary\n")
