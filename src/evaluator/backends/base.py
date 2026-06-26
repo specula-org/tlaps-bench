@@ -39,6 +39,8 @@ KIRO_HOSTS = [
 ALL_API_HOSTS = (
     [
         "api.openai.com",
+        "chatgpt.com",  # Codex subscription auth (backend-api endpoint)
+        "auth.openai.com",  # OAuth token exchange for ChatGPT login
         "api.anthropic.com",
         "generativelanguage.googleapis.com",
         "api.deepseek.com",
