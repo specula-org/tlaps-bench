@@ -3,7 +3,7 @@
 Covers: the binary PASS/FAIL collapse, each WIRED gate check failing the run,
 PLACEHOLDER checks failing-open (so the skeleton is never less strict than the
 wired siblings but unbuilt checks don't block), the caller-computed legacy
-signals (L1 preamble byte-match, agent-added PROOF OMITTED) flowing to their
+signals (auto-complete preamble byte-match, agent-added PROOF OMITTED) flowing to their
 gates, and the from_tlacheck migration mapping real tlacheck issue vectors onto
 the right gate.
 
@@ -102,7 +102,7 @@ def test_from_tlacheck_buckets_vectors():
 
 
 def test_from_tlacheck_legacy_signals_flow_to_gates():
-    # L1 preamble byte-match (gate A) and agent-added PROOF OMITTED (gate B) are
+    # auto-complete preamble byte-match (gate A) and agent-added PROOF OMITTED (gate B) are
     # not tlacheck vectors — they come in as explicit caller-computed flags.
     pre = from_tlacheck(
         _result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, preamble_modified=True

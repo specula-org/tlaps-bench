@@ -60,7 +60,7 @@ shows a command's full flag set):
 | `tlaps-bench run` | Run an agent backend on the benchmarks |
 | `tlaps-bench check` | Check a single proof for correctness and cheating |
 | `tlaps-bench validate` | Batch-validate the source proofs with tlapm |
-| `tlaps-bench generate` | Generate benchmarks (`--level level1`/`level2`) |
+| `tlaps-bench generate` | Generate benchmarks (`--mode auto-complete`/`synthesis-from-scratch`) |
 | `tlaps-bench score` | Score results — pass rate & per-module breakdown from results.json |
 
 Virtualenv activation is optional: run `source .venv/bin/activate` once so the
@@ -70,23 +70,23 @@ each command below with `uv run` (e.g. `uv run tlaps-bench run --filter GCD_GCD3
 ### Run the benchmark
 
 `make setup` builds the checker binary required by the runner. The runner is
-`--backend` × `--level` parameterised — pick one of each.
+`--backend` × `--mode` parameterised — pick one of each.
 
 ```bash
-# Single benchmark, L1, Codex (default backend, default level)
+# Single benchmark, auto-complete, Codex (default backend, default mode)
 tlaps-bench run --filter GCD_GCD3
 
-# Full L1 run, Codex, 40 parallel, 2h timeout
+# Full auto-complete run, Codex, 40 parallel, 2h timeout
 tlaps-bench run --jobs 40 --timeout 7200
 
-# Same on L2 (proof from scratch)
-tlaps-bench run --level level2 --jobs 40 --timeout 7200
+# Same on synthesis-from-scratch (proof from scratch)
+tlaps-bench run --mode synthesis-from-scratch --jobs 40 --timeout 7200
 
-# Claude Code backend on L1 (override the default model if you like)
+# Claude Code backend on auto-complete (override the default model if you like)
 tlaps-bench run --backend claude_code --jobs 40
 tlaps-bench run --backend claude_code --model claude-sonnet-4-6 --jobs 40
 
-# GitHub Copilot CLI backend on L1 (override the default model if you like)
+# GitHub Copilot CLI backend on auto-complete (override the default model if you like)
 tlaps-bench run --backend copilot --jobs 40
 tlaps-bench run --backend copilot --model gpt-5.5 --jobs 40
 ```
@@ -111,8 +111,8 @@ cd docker && bash build.sh
 #   OPENAI_API_KEY (or AZURE_OPENAI_API_KEY + AZURE_OPENAI_HOST) for codex
 #   ANTHROPIC_API_KEY                                            for claude_code
 #   COPILOT_GITHUB_TOKEN (or GH_TOKEN / GITHUB_TOKEN)            for copilot
-docker-compose run bench python3 /scripts/runner.py --jobs 40                       # L1 + codex
-docker-compose run bench python3 /scripts/runner.py --backend claude_code --level level2 --jobs 40
+docker-compose run bench python3 /scripts/runner.py --jobs 40                       # auto-complete + codex
+docker-compose run bench python3 /scripts/runner.py --backend claude_code --mode synthesis-from-scratch --jobs 40
 ```
 
 The container mounts the whole `benchmark/` tree. `make setup` prepares the
@@ -137,19 +137,19 @@ tlaps-bench validate --filter Paxos --jobs 10
 ### Check a single proof
 
 ```bash
-tlaps-bench check benchmark/level1/Euclid/GCD_GCD3.tla [--level 1] [--tlapm PATH] [--timeout SECS]
-tlaps-bench check benchmark/level2/Cantor/Cantor1_cantor.tla --level 2
+tlaps-bench check benchmark/auto-complete/Euclid/GCD_GCD3.tla [--mode auto-complete] [--tlapm PATH] [--timeout SECS]
+tlaps-bench check benchmark/synthesis-from-scratch/Cantor/Cantor1_cantor.tla --mode synthesis-from-scratch
 ```
 
-`--level` controls which cheating rules apply: L1 enforces a byte-identical preamble (the agent only fills in the last proof); L2 lets the agent add new lemmas above the target theorem. Both levels still reject `PROOF OMITTED`, new `AXIOM`/`ASSUME`, bare-QED tricks, and dependency-file tampering.
+`--mode` controls which cheating rules apply: auto-complete enforces a byte-identical preamble (the agent only fills in the last proof); synthesis-from-scratch lets the agent add new lemmas above the target theorem. Both modes still reject `PROOF OMITTED`, new `AXIOM`/`ASSUME`, bare-QED tricks, and dependency-file tampering.
 
 Exit codes: `0` = PASS, `1` = FAIL, `3` = ERROR. A detected cheat reports as FAIL (exit `1`).
 
 ### Generate benchmarks from source
 
 ```bash
-tlaps-bench generate                  # Level 1 (default)
-tlaps-bench generate --level level2   # Level 2 (proof from scratch)
+tlaps-bench generate                       # auto-complete (default)
+tlaps-bench generate --mode synthesis-from-scratch   # synthesis-from-scratch
 ```
 
-Level 1 extracts each theorem with a real proof, replaces the last proof with `PROOF OBVIOUS`, and writes one benchmark file per theorem to `benchmark/level1/`. Use `--level level2` to drive the Level 2 generator instead.
+Auto-complete extracts each theorem with a real proof, replaces the last proof with `PROOF OBVIOUS`, and writes one benchmark file per theorem to `benchmark/auto-complete/`. Use `--mode synthesis-from-scratch` to drive the synthesis-from-scratch generator instead.

@@ -5,7 +5,7 @@ SUBCOMMANDS = [
     ("run", "Run an agent backend (codex / claude_code / copilot / litellm) on the benchmarks"),
     ("check", "Check a single benchmark proof for correctness and cheating"),
     ("validate", "Batch-validate source proofs with tlapm"),
-    ("generate", "Generate benchmarks (--level level1|level2; default level1)"),
+    ("generate", "Generate benchmarks (--mode auto-complete|synthesis-from-scratch; default auto-complete)"),
     ("score", "Score results (pass rate, per-module breakdown) from results.json"),
 ]
 
@@ -48,29 +48,32 @@ def _dispatch(prog: str, module_name: str, attr: str, passthrough: list[str]) ->
     return rc if isinstance(rc, int) else 0
 
 
-def _extract_level(args: list[str]) -> tuple[str, list[str]]:
+def _extract_mode(args: list[str]) -> tuple[str, list[str]]:
 
-    level = "level1"
+    mode = "auto-complete"
     rest: list[str] = []
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "--level":
+        if a == "--mode":
             if i + 1 >= len(args):
-                raise SystemExit(f"{PROG} generate: argument --level: expected one argument")
-            level = args[i + 1]
+                raise SystemExit(f"{PROG} generate: argument --mode: expected one argument")
+            mode = args[i + 1]
             i += 2
             continue
-        if a.startswith("--level="):
-            level = a.split("=", 1)[1]
+        if a.startswith("--mode="):
+            mode = a.split("=", 1)[1]
             i += 1
             continue
         rest.append(a)
         i += 1
-    norm = {"1": "level1", "level1": "level1", "2": "level2", "level2": "level2"}
-    if level not in norm:
-        raise SystemExit(f"{PROG} generate: argument --level: invalid choice: {level!r} (choose level1 or level2)")
-    return norm[level], rest
+    valid = {"auto-complete", "synthesis-from-scratch"}
+    if mode not in valid:
+        raise SystemExit(
+            f"{PROG} generate: argument --mode: invalid choice: {mode!r} "
+            "(choose auto-complete or synthesis-from-scratch)"
+        )
+    return mode, rest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,11 +97,15 @@ def main(argv: list[str] | None = None) -> int:
     if sub == "validate":
         return _dispatch(f"{PROG} validate", "common.validate", "main", rest)
     if sub == "generate":
-        # --help before --level: show which levels exist plus the level1 flags
-        # (the default) — the level-specific flags then come from that module.
-        level, gen_args = _extract_level(rest)
-        module = "dataset.level1.generate" if level == "level1" else "dataset.level2.generate"
-        return _dispatch(f"{PROG} generate --level {level}", module, "main", gen_args)
+        # --help before --mode: show which modes exist plus the auto-complete flags
+        # (the default) — the mode-specific flags then come from that module.
+        mode, gen_args = _extract_mode(rest)
+        module = (
+            "dataset.auto_complete.generate"
+            if mode == "auto-complete"
+            else "dataset.synthesis_from_scratch.generate"
+        )
+        return _dispatch(f"{PROG} generate --mode {mode}", module, "main", gen_args)
     if sub == "score":
         return _dispatch(f"{PROG} score", "evaluator.score", "main", rest)
 

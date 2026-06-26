@@ -26,7 +26,7 @@ def check(ctx: CheckContext) -> list[Issue]:
 
     def is_given(t) -> bool:
         # Given (allowed) if the baseline already admits a theorem with the same
-        # name, OR — for unnamed L1 lemmas — the same statement text.
+        # name, OR — for unnamed auto-complete lemmas — the same statement text.
         if t.name and t.name in given_admitted:
             return True
         return ctx.solution_stmt_text(t) in given_admitted_texts

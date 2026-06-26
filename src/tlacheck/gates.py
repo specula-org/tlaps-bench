@@ -6,7 +6,7 @@ This module IS the framework (W0): a benchmark solution passes iff
 
   A — IDENTITY:  the thing that got proved IS the canonical target. The target
                  statement / CONSTANT / VARIABLE / ASSUME and the definitions it
-                 depends on are unchanged (L1 preamble byte-identical); no new
+                 depends on are unchanged (auto-complete preamble byte-identical); no new
                  AXIOM/ASSUME; no smuggled module or definition; the file parses
                  under standalone SANY.
   B — DISCHARGE: the target goal is genuinely discharged. tlapm proved every
@@ -82,7 +82,7 @@ class GraderInputs:
     statement_modified: bool = False  # target statement changed / weakened
     extra_axiom: bool = False  # new AXIOM/ASSUME beyond baseline
     smuggled_module: bool = False  # agent-created module sneaking content in
-    preamble_modified: bool = False  # L1 preamble (defs/CONSTANT/VARIABLE/ASSUME) changed
+    preamble_modified: bool = False  # auto-complete preamble (defs/CONSTANT/VARIABLE/ASSUME) changed
     # Gate B — discharge
     tlapm_obligations_proved: bool = False  # every generated obligation PROVED, none failed
     n_missing: int = 0  # `--strict` MISSING steps (agent gaps)
@@ -164,7 +164,7 @@ def grade(inp: GraderInputs) -> GradeResult:
         Check("no_smuggled_module", Gate.A_IDENTITY, Status.WIRED, not inp.smuggled_module,
               "an agent-created module smuggles content into the proof"),
         Check("preamble_unchanged", Gate.A_IDENTITY, Status.WIRED, not inp.preamble_modified,
-              "the L1 preamble (definitions / CONSTANT / VARIABLE / ASSUME above PROOF OBVIOUS) was modified"),
+              "the auto-complete preamble (definitions / CONSTANT / VARIABLE / ASSUME above PROOF OBVIOUS) was modified"),
         Check("no_smuggled_definition", Gate.A_IDENTITY, Status.PLACEHOLDER, True,
               "TODO(W4) semantic statement-match: catch redefining an operator used in the "
               "statement so the text is identical but the meaning is weaker"),
@@ -199,7 +199,7 @@ def from_tlacheck(result, *, tlapm_obligations_proved, n_missing, sany_valid,
     ``.issues`` where each issue has ``.vector`` and ``.severity`` (with a
     ``.value``/name distinguishing ``WARNING``).
 
-    ``preamble_modified`` (L1 byte-match) and ``proof_omitted`` (agent-added
+    ``preamble_modified`` (auto-complete byte-match) and ``proof_omitted`` (agent-added
     PROOF OMITTED / bare OMITTED) are legacy-only detections that are not tlacheck
     vectors; the caller computes them. ``graded_on_canonical`` records whether the
     grade ran on trusted read-only files (W5).

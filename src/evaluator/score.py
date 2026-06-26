@@ -80,7 +80,7 @@ def weighted_score(results: list[dict], weight: Callable[[dict], float]) -> tupl
 def load_run(path: str) -> dict:
     """Load a results.json (``path`` may be the file itself or its run dir).
 
-    Returns {"path", "id", "backend", "level", "results"}.
+    Returns {"path", "id", "backend", "mode", "results"}.
     """
     json_path = os.path.join(path, "results.json") if os.path.isdir(path) else path
     if not os.path.isfile(json_path):
@@ -88,13 +88,13 @@ def load_run(path: str) -> dict:
     with open(json_path) as f:
         results = json.load(f)
     backends = sorted({r.get("backend") for r in results if r.get("backend")})
-    levels = sorted({r.get("level") for r in results if r.get("level")})
+    modes = sorted({r.get("mode") for r in results if r.get("mode")})
     run_dir = os.path.dirname(os.path.abspath(json_path))
     return {
         "path": json_path,
         "id": os.path.basename(run_dir) or run_dir,
         "backend": "+".join(backends) or "?",
-        "level": "+".join(levels) or "?",
+        "mode": "+".join(modes) or "?",
         "results": results,
     }
 
@@ -117,7 +117,7 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
     if skipped:
         pass_line += f" · {skipped} skipped"
     lines = [
-        f"# Scorecard — {run['backend']} / {run['level']}",
+        f"# Scorecard — {run['backend']} / {run['mode']}",
         "",
         f"**Source**: {run['path']}",
         pass_line,
@@ -151,8 +151,8 @@ def comparison_md(runs: list[dict], weight: Callable[[dict], float], scoring_nam
     if scoring_name != "equal":
         lines += [f"**Scoring**: {scoring_name} (weighted)", ""]
     lines += [
-        "| Run | Backend | Level | Pass % | Passed/Total | Tokens (in/out) | Time |",
-        "|-----|---------|-------|-------:|-------------:|-----------------|-----:|",
+        "| Run | Backend | Mode | Pass % | Passed/Total | Tokens (in/out) | Time |",
+        "|-----|---------|------|-------:|-------------:|-----------------|-----:|",
     ]
     for run in runs:
         pct, n_pass, n_total = weighted_score(run["results"], weight)
@@ -162,7 +162,7 @@ def comparison_md(runs: list[dict], weight: Callable[[dict], float], scoring_nam
         if skipped:
             passed_total += f" (+{skipped} skipped)"
         lines.append(
-            f"| {run['id']} | {run['backend']} | {run['level']} | {pct:.1f}% | "
+            f"| {run['id']} | {run['backend']} | {run['mode']} | {pct:.1f}% | "
             f"{passed_total} | {in_tok:,}/{out_tok:,} | {secs:,.0f}s |"
         )
     lines.append("")

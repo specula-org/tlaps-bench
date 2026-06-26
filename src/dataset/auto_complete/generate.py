@@ -79,10 +79,10 @@ COMMUNITY_MODULES = {
 RESOLVABLE_MODULES = STDLIB_MODULES | COMMUNITY_MODULES
 
 # Directories to process (top-level module dirs).
-# File lives at <repo>/src/dataset/level1/generate.py; ascend three levels for the repo root.
+# File lives at <repo>/src/dataset/auto_complete/generate.py; ascend three levels for the repo root.
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
-BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "level1")
+BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "auto-complete")
 
 
 def find_source_dirs():
@@ -1014,19 +1014,19 @@ def process_module_dir(module_dir_name):
 
 
 # ---------------------------------------------------------------------------
-# Shared-model L1 (opt-in via --shared-model). Reuses the certified L2 dump
-# engine (src/dataset/level2/generate.py) for the model extraction + helpers,
-# and adds an L1-specific task builder. Default (no flag) keeps the regex path.
+# Shared-model auto-complete (opt-in via --shared-model). Reuses the certified synthesis-from-scratch dump
+# engine (src/dataset/synthesis_from_scratch/generate.py) for the model extraction + helpers,
+# and adds an auto-complete-specific task builder. Default (no flag) keeps the regex path.
 # ---------------------------------------------------------------------------
 def _load_l2_engine():
-    """Load the L2 generator as the shared-model engine. L2 does
+    """Load the synthesis-from-scratch generator as the shared-model engine. synthesis-from-scratch does
     `from generate import ...` expecting THIS module's helpers, so alias us as
     `generate` first."""
     import importlib.util
     import sys
 
     sys.modules.setdefault("generate", sys.modules.get("__main__", sys.modules[__name__]))
-    path = os.path.join(os.path.dirname(__file__), "..", "level2", "generate.py")
+    path = os.path.join(os.path.dirname(__file__), "..", "synthesis_from_scratch", "generate.py")
     spec = importlib.util.spec_from_file_location("l2_sm_engine", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["l2_sm_engine"] = mod
@@ -1061,7 +1061,7 @@ def _proof_edit(source_lines, ploc, keyword):
 
 
 def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name, model_set, module):
-    """L1 task: keep ALL scaffolding (Inv etc.), admit STRUCTURED preceding
+    """auto-complete task: keep ALL scaffolding (Inv etc.), admit STRUCTURED preceding
     proofs as PROOF OMITTED (keep OBVIOUS verbatim → it still emits an
     obligation), stub the target PROOF OBVIOUS, drop later theorems, keep
     comments. If model_set is non-empty, EXTEND the shared model (delete its ops
@@ -1097,8 +1097,8 @@ def build_l1_task(sm, source_lines, dump, target_thm, bench_module_name, model_s
 
 
 def generate_shared_model_l1(output_root=None):
-    """Dump-based L1 generation: one shared `<Module>.tla` per output dir +
-    EXTENDS-based L1 tasks. Mirrors the L2 shared-model layout."""
+    """Dump-based auto-complete generation: one shared `<Module>.tla` per output dir +
+    EXTENDS-based auto-complete tasks. Mirrors the synthesis-from-scratch shared-model layout."""
     import shutil
     import sys
 
@@ -1127,7 +1127,7 @@ def generate_shared_model_l1(output_root=None):
         module = dump["module"]
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
-        # L1 targets: NAMED theorems with a structured proof.
+        # auto-complete targets: NAMED theorems with a structured proof.
         l1_targets = [t for t in dump["theorems"] if t.get("name") and _is_structured_proof(sm, t, lines)]
         if not l1_targets:
             continue
@@ -1159,12 +1159,12 @@ def generate_shared_model_l1(output_root=None):
             total += 1
             print(f"  generated: {os.path.relpath(os.path.join(out_dir, bench + '.tla'), PROJECT_ROOT)}")
         sm.copy_deps(dump, path, out_dir, reachable_all)
-    print(f"\nTotal L1 benchmarks (shared-model): {total}")
+    print(f"\nTotal auto-complete benchmarks (shared-model): {total}")
     return total
 
 
 def _run_sany_gate(directory):
-    """Post-generation input SANY gate over the emitted L1 benchmark dir.
+    """Post-generation input SANY gate over the emitted auto-complete benchmark dir.
 
     Every task file handed to an agent must parse under standalone tla2sany.
     Flags failures (manifest + stdout); does not drop them.
@@ -1177,14 +1177,14 @@ def _run_sany_gate(directory):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate L1 benchmarks.")
+    parser = argparse.ArgumentParser(description="Generate auto-complete benchmarks.")
     parser.add_argument(
         "--shared-model",
         action="store_true",
         help="Emit one proof-free <Module>.tla model per output dir "
         "and have tasks EXTEND it instead of inlining the spec.",
     )
-    parser.add_argument("--output-dir", default=None, help="Output directory (default: benchmark/level1)")
+    parser.add_argument("--output-dir", default=None, help="Output directory (default: benchmark/auto-complete)")
     args = parser.parse_args()
 
     if args.shared_model:

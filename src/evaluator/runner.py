@@ -4,11 +4,11 @@ Run an agent CLI on TLAPS benchmarks to attempt automated proof writing.
 For each benchmark:
 1. Creates an isolated workspace (fresh git repo with only benchmark files)
 2. Runs the chosen backend (codex / claude_code / copilot) with a proof-writing prompt
-3. Validates the result with the level's checker
+3. Validates the result with the mode's checker
 4. Saves all outputs
 
 Usage:
-    python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--level level1|level2] \\
+    python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--mode auto-complete|synthesis-from-scratch] \\
                       [--model NAME] [--jobs N] [--filter PATTERN] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """
@@ -34,8 +34,8 @@ from dataclasses import dataclass
 from common.container import ContainerConfig, ContainerRunner, ensure_image, forward_env
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import AgentBackend
-from evaluator.levels import get_level, list_levels
-from evaluator.levels.base import Level
+from evaluator.modes import get_mode, list_modes
+from evaluator.modes.base import Mode
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
@@ -302,14 +302,14 @@ _summary_lock = threading.Lock()
 
 @dataclass
 class WorkItem:
-    """A single (benchmark, backend, level) task fed to the worker pool."""
+    """A single (benchmark, backend, mode) task fed to the worker pool."""
 
     benchmark_path: str
     output_dir: str
     timeout: int
     check_timeout: int
     backend: AgentBackend
-    level: Level
+    mode: Mode
     tlapm_path: str
     tlapm_lib: str
     # Quota gate (Claude Max subscription). usage_script=None disables it.
@@ -324,7 +324,7 @@ class WorkItem:
     use_container: bool = False
 
 
-def update_summary(results, output_dir, total_benchmarks, backend_name, level_name):
+def update_summary(results, output_dir, total_benchmarks, backend_name, mode_name):
     """Incrementally update summary.md + results.json with current results."""
     with _summary_lock:
         total = len(results)
@@ -337,7 +337,7 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
         total_output = sum(r.get("output_tokens", 0) for r in results)
 
         lines = []
-        lines.append(f"# {backend_name} on {level_name}\n")
+        lines.append(f"# {backend_name} on {mode_name}\n")
         lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         # SKIP = operator-excluded from scoring; drop it from the pass rate
         # entirely (neither numerator nor denominator) rather than count it FAIL.
@@ -400,9 +400,9 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, level_na
 def run_single_benchmark(item: WorkItem):
     """Run the agent backend on a single benchmark. Returns result dict."""
     backend = item.backend
-    level = item.level
+    mode = item.mode
 
-    rel_path = os.path.relpath(item.benchmark_path, level.benchmark_dir())
+    rel_path = os.path.relpath(item.benchmark_path, mode.benchmark_dir())
     module_dir = os.path.basename(os.path.dirname(item.benchmark_path))
     basename = os.path.basename(item.benchmark_path)
     name_no_ext = os.path.splitext(basename)[0]
@@ -420,7 +420,7 @@ def run_single_benchmark(item: WorkItem):
         "module": module_dir,
         "theorem": name_no_ext,
         "backend": backend.name,
-        "level": level.name,
+        "mode": mode.name,
         "agent_exit": -1,
         "check_verdict": "ERROR",
         "time_secs": 0,
@@ -438,7 +438,7 @@ def run_single_benchmark(item: WorkItem):
     try:
         # Copy benchmark + dependencies into the isolated workspace
         shutil.copy2(item.benchmark_path, os.path.join(workspace, basename))
-        for dep in level.get_dependencies(item.benchmark_path):
+        for dep in mode.get_dependencies(item.benchmark_path):
             shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
 
         # Init git repo (baseline for cheating check)
@@ -457,15 +457,15 @@ def run_single_benchmark(item: WorkItem):
             },
         )
 
-        checker_bin = level.checker_binary_path()
+        checker_bin = mode.checker_binary_path()
 
         # Save input artifacts
         shutil.copy2(item.benchmark_path, os.path.join(input_dir, "benchmark.tla"))
-        for dep in level.get_dependencies(item.benchmark_path):
+        for dep in mode.get_dependencies(item.benchmark_path):
             shutil.copy2(dep, os.path.join(input_dir, os.path.basename(dep)))
 
         # Build prompt
-        prompt = level.build_prompt(basename, item.tlapm_path, item.tlapm_lib)
+        prompt = mode.build_prompt(basename, item.tlapm_path, item.tlapm_lib)
         with open(os.path.join(input_dir, "prompt.txt"), "w") as f:
             f.write(prompt)
 
@@ -478,7 +478,7 @@ def run_single_benchmark(item: WorkItem):
         if item.use_container:
             _run_agent_container(item, backend, workspace, agent_dir, agent_jsonl, prompt, result)
         else:
-            _run_agent_local(item, backend, level, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin)
+            _run_agent_local(item, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin)
 
         elapsed = time.time() - start_time
         result["time_secs"] = elapsed
@@ -616,7 +616,7 @@ def _run_agent_container(
 def _run_agent_local(
     item: WorkItem,
     backend,
-    level,
+    mode,
     workspace: str,
     agent_dir: str,
     agent_jsonl: str,
@@ -699,19 +699,19 @@ def _run_grader_container(
 ) -> None:
     """Run grader inside a Docker container (check_proof_bin lives in the image)."""
     runner = ContainerRunner()
-    level = item.level
+    mode = item.mode
 
     # Use container path for checker binary (not host path)
-    old_binary = level._checker_binary
-    level._checker_binary = "/usr/local/bin/check_proof_bin"
-    check_cmd = level.checker_command(
+    old_binary = mode._checker_binary
+    mode._checker_binary = "/usr/local/bin/check_proof_bin"
+    check_cmd = mode.checker_command(
         "/workspace",
         basename,
         "/results/check.result",
         item.check_timeout,
         benchmark_dir="/benchmark",  # tamper-proof read-only mount
     )
-    level._checker_binary = old_binary
+    mode._checker_binary = old_binary
     config = ContainerConfig(
         workspace=workspace,
         result_dir=grading_dir,
@@ -745,10 +745,10 @@ def _run_grader_local(
     result: dict,
 ) -> None:
     """Run grader on host (local mode)."""
-    level = item.level
+    mode = item.mode
     sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
 
-    check_cmd = level.checker_command(
+    check_cmd = mode.checker_command(
         workspace,
         basename,
         check_result_path,
@@ -817,7 +817,7 @@ def _parse_grader_result(exit_code: int, stdout: str, result: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Run an agent CLI on TLAPS benchmarks")
     parser.add_argument("--backend", default="codex", choices=list_backends(), help="Agent backend (default: codex)")
-    parser.add_argument("--level", default="level1", choices=list_levels(), help="Benchmark level (default: level1)")
+    parser.add_argument("--mode", default="auto-complete", choices=list_modes(), help="Benchmark mode (default: auto-complete)")
     parser.add_argument("--model", default=None, help="Override the backend default model")
     parser.add_argument("--jobs", type=int, default=1, help="Parallel agent runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
@@ -886,7 +886,7 @@ def main():
         tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
         benchmark_root = os.path.join(REPO_ROOT, "benchmark")
         checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
-        level = get_level(args.level, benchmark_root, checker_binary)
+        mode = get_mode(args.mode, benchmark_root, checker_binary)
 
         ensure_image(force=args.force_build)
         print("Container mode: ON (image: tlaps-bench-base)")
@@ -901,22 +901,22 @@ def main():
             sys.exit(1)
 
         benchmark_root, checker_binary = resolve_paths()
-        level = get_level(args.level, benchmark_root, checker_binary)
+        mode = get_mode(args.mode, benchmark_root, checker_binary)
 
-    # results/<level>/<backend>/<ts>/  (level first, then agent)
+    # results/<mode>/<backend>/<ts>/  (mode first, then agent)
     if args.output_dir:
         output_dir = args.output_dir
     else:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         if os.path.isdir("/result"):
-            output_dir = os.path.join("/result", level.name, backend.name, timestamp)
+            output_dir = os.path.join("/result", mode.name, backend.name, timestamp)
         else:
-            output_dir = os.path.join(REPO_ROOT, "results", level.name, backend.name, timestamp)
+            output_dir = os.path.join(REPO_ROOT, "results", mode.name, backend.name, timestamp)
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
-    print(f"Level:   {level.name} — {level.description}")
+    print(f"Mode:   {mode.name} — {mode.description}")
     print(f"Output:  {output_dir}")
 
     # Quota gate: only meaningful for claude_code on a Claude Max subscription.
@@ -943,7 +943,7 @@ def main():
         elif args.usage_script:
             print(f"Quota:   gate OFF — usage script not found at {candidate}")
 
-    benchmark_files = level.get_benchmark_files(args.filter)
+    benchmark_files = mode.get_benchmark_files(args.filter)
     print(f"Found {len(benchmark_files)} benchmarks")
 
     # Resume: reuse --output-dir, skip benchmarks already recorded PASS there,
@@ -967,7 +967,7 @@ def main():
 
     work_items = []
     for bf in benchmark_files:
-        rel = os.path.relpath(bf, level.benchmark_dir())
+        rel = os.path.relpath(bf, mode.benchmark_dir())
         if rel in done_pass:
             continue
         work_items.append(
@@ -977,7 +977,7 @@ def main():
                 timeout=args.timeout,
                 check_timeout=args.check_timeout,
                 backend=backend,
-                level=level,
+                mode=mode,
                 tlapm_path=tlapm_root,
                 tlapm_lib=tlapm_lib,
                 usage_script=usage_script,
@@ -1004,7 +1004,7 @@ def main():
             print(
                 f"[{prior_done + i + 1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
             )
-            update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
+            update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
             futures = {executor.submit(run_single_benchmark, item): item for item in work_items}
@@ -1016,11 +1016,11 @@ def main():
                 print(
                     f"[{prior_done + done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
                 )
-                update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
+                update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
 
     total_time = time.time() - start_time
 
-    update_summary(results, output_dir, total_benchmarks, backend.name, level.name)
+    update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
     report_path = os.path.join(output_dir, "summary.md")
 
     print(f"\n{'=' * 60}")

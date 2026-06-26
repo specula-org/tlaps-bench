@@ -1,4 +1,4 @@
-"""Level 1 — proof completion.
+"""auto-complete — proof completion.
 
 The benchmark file has its last theorem's body replaced with `PROOF OBVIOUS`.
 Preceding theorems are admitted with `PROOF OMITTED`. The agent must fill in
@@ -6,10 +6,9 @@ only the last proof. The preamble (everything above `PROOF OBVIOUS`) is
 expected to be byte-identical to the baseline.
 """
 
-from .base import Level
+from .base import Mode
 
 
-class Level1(Level):
-    name = "level1"
-    level_number = 1
+class AutoComplete(Mode):
+    name = "auto-complete"
     description = "Proof completion — fill in the last theorem's PROOF OBVIOUS"

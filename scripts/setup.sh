@@ -122,7 +122,7 @@ main() {
       TLAPS_LIB="${HOME}/.tlapm/lib/tlapm/stdlib" \
       COMMUNITY_LIB="${REPO_ROOT}/lib/community" \
       "${REPO_ROOT}/check_proof_bin" \
-      "${REPO_ROOT}/benchmark/level1/Euclid/GCD_GCD3.tla" --no-container --sany-only 2>&1
+      "${REPO_ROOT}/benchmark/auto-complete/Euclid/GCD_GCD3.tla" --no-container --sany-only 2>&1
   )"; then
     echo "${smoke_output}" >&2
     die "the SANY smoke test failed."

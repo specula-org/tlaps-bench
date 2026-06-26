@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generate Level 2 benchmarks from source .tla files.
+"""Generate synthesis-from-scratch benchmarks from source .tla files.
 
-Core principle (strict L2, from src/dataset/level2/design.md, Issue #1/#3):
+Core principle (strict mode, from src/dataset/synthesis_from_scratch/design.md, Issue #1/#3):
   Keep only what is needed to STATE the top-level theorem; delete every
   other definition, all other theorems/lemmas, all proof content, and all
   comments. The AI must rediscover the inductive invariant and design the
   proof structure from scratch.
 
 For each top-level THEOREM in source/<Module>/<File>.tla we emit one
-file benchmark/level2/<Module>/<File>_<TheoremName>.tla in which:
+file benchmark/synthesis-from-scratch/<Module>/<File>_<TheoremName>.tla in which:
   - The module + EXTENDS + CONSTANT/VARIABLE/ASSUME/AXIOM are kept.
   - Only the `==` definitions / named INSTANCE bindings reachable from the
     target theorem's STATEMENT (transitive closure over the definition-
@@ -30,7 +30,7 @@ Top-level selection (OR rule, applied to THEOREM-keyword decls only):
 
 Post-selection filters:
   A. Manual-proof filter: drop candidates whose source has no structured
-     TLAPS proof (bare statement / PROOF OMITTED / PROOF OBVIOUS). L2's
+     TLAPS proof (bare statement / PROOF OMITTED / PROOF OBVIOUS). synthesis-from-scratch's
      contract is "AI writes a proof, compared against a human reference",
      so candidates without ground truth are out of scope for now.
      Known cost: PaxosTuple.tla:79 `Spec => V!Spec` (proof lives in the
@@ -44,19 +44,19 @@ Post-selection filters:
      no honest proof, so it cannot be a benchmark. This is now the ONLY reason
      an OMITTED-sub-step theorem is dropped: every other such theorem is a
      published/verified result and is KEPT as a (hard) from-scratch benchmark,
-     since L2 grades by tlapm rather than by the human reference proof.
+     since synthesis-from-scratch grades by tlapm rather than by the human reference proof.
      See KNOWN_FALSE_TARGETS for the per-target TLC evidence.
   B. Within-file dedup: collapse exact-text-duplicate statements. Catches
      Peterson.tla L124/L134/L183 — three identical
      `THEOREM Spec => []MutualExclusion` decls the author wrote to
-     showcase different prover backends; as L2 prompts they are
+     showcase different prover backends; as synthesis-from-scratch prompts they are
      indistinguishable, so keep the first by line.
   C. Cross-directory dedup: across all output directories, collapse
      byte-identical target benchmarks. Catches the seven `Sets_*.tla`
      pairs that arise because source/Consensus/Sets.tla and
      source/Data/Sets.tla are near-identical copies of the same
      utility library (only two prover-hint lines differ, both inside
-     proof bodies that L2 strips, so the emitted L2 prompts are
+     proof bodies that synthesis-from-scratch strips, so the emitted synthesis-from-scratch prompts are
      byte-identical). When duplicates are detected, the copy under
      `Data/` is kept (utility libraries are at home in `Data/`); the
      copies in other directories are removed and the audit log records
@@ -80,11 +80,11 @@ import sys
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
-BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "level2")
+BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "synthesis-from-scratch")
 SANY_DUMP = os.path.join(PROJECT_ROOT, "src", "dataset", "sany-dump", "run.sh")
 
-# Reuse L1's proof-stripping logic for dependency .tla copies.
-from dataset.level1.generate import (  # noqa: E402
+# Reuse auto-complete's proof-stripping logic for dependency .tla copies.
+from dataset.auto_complete.generate import (  # noqa: E402
     STDLIB_MODULES,
     parse_extends,
     parse_instances,
@@ -361,7 +361,7 @@ def apply_edits(lines, edits):
 def build_benchmark(source_lines, dump, target_thm, benchmark_module_name, reachable):
     """Build the benchmark .tla text by editing source_lines.
 
-    Strict L2 (per Issue #1 / #3): keep only the model + target property + the
+    Strict synthesis-from-scratch (per Issue #1 / #3): keep only the model + target property + the
     bare THEOREM statement; strip every proof artifact. Concretely we:
       - replace the target theorem's proof body with `PROOF OBVIOUS`,
       - delete all other THEOREM/LEMMA declarations,
@@ -527,7 +527,7 @@ def cross_dir_dedup(target_paths, audit_writer, preferred_dir="Data"):
                 continue
             os.remove(path)
             audit_writer.write(
-                f"[level2-audit] {os.path.relpath(path, PROJECT_ROOT)}: "
+                f"[audit] {os.path.relpath(path, PROJECT_ROOT)}: "
                 f"byte-identical to {os.path.relpath(keeper, PROJECT_ROOT)} "
                 f"— removed (filter C, cross-dir dedup)\n"
             )
@@ -728,7 +728,7 @@ def process_file(
     skip_model_modules=(),
     allow_no_proof=False,
 ):
-    """Generate L2 benchmarks for one source .tla file. Returns count emitted.
+    """Generate synthesis-from-scratch benchmarks for one source .tla file. Returns count emitted.
 
     If `generated_paths` is a list, each generated target benchmark path is
     appended to it (for downstream cross-directory dedup).
@@ -741,19 +741,19 @@ def process_file(
     try:
         dump = dump_sany(source_path)
     except RuntimeError as e:
-        audit_writer.write(f"[level2-audit] {source_path}: SANY parse failed — {e}\n")
+        audit_writer.write(f"[audit] {source_path}: SANY parse failed — {e}\n")
         return 0
 
     module = dump["module"]
     spec_formulas = set(dump["spec_formulas"])
 
     if not spec_formulas:
-        audit_writer.write(f"[level2-audit] {source_path}: no spec formula identified — shape rule will not match\n")
+        audit_writer.write(f"[audit] {source_path}: no spec formula identified — shape rule will not match\n")
     elif len(spec_formulas) > 1:
-        audit_writer.write(f"[level2-audit] {source_path}: multiple spec formulas: {sorted(spec_formulas)}\n")
+        audit_writer.write(f"[audit] {source_path}: multiple spec formulas: {sorted(spec_formulas)}\n")
     elif "Spec" not in spec_formulas:
         only = next(iter(spec_formulas))
-        audit_writer.write(f"[level2-audit] {source_path}: identified spec formula `{only}` — name != `Spec`\n")
+        audit_writer.write(f"[audit] {source_path}: identified spec formula `{only}` — name != `Spec`\n")
 
     for t in dump["theorems"]:
         t["_keyword"] = determine_keyword(source_lines, t["loc"]["line_start"])
@@ -775,7 +775,7 @@ def process_file(
         has_proof = _has_manual_proof(target_thm, source_lines)
         if not has_proof and not allow_no_proof:
             audit_writer.write(
-                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has no manual TLAPS proof body — skipped (filter A)\n"
             )
         elif (
@@ -788,19 +788,19 @@ def process_file(
             # benchmark. See KNOWN_FALSE_TARGETS for the per-target evidence.
             reason = KNOWN_FALSE_TARGETS[(base_module, target_theorem_name(target_thm)[0])]
             audit_writer.write(
-                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} asserts a FALSE goal — skipped (filter A', known-false): "
                 f"{reason}\n"
             )
         elif _proof_has_omitted_substep(target_thm, source_lines):
             # An OMITTED sub-step is NO LONGER grounds for dropping: the proof is
             # structured (an OMITTED leaf still "counts as a proof"), the goal is
-            # a published/verified result, and L2 grades by tlapm — not by the
+            # a published/verified result, and synthesis-from-scratch grades by tlapm — not by the
             # human reference — so a missing reference proof is fine. Keep it as
             # a (hard) from-scratch benchmark. Record that it carries an OMITTED
             # sub-step for traceability.
             audit_writer.write(
-                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has an OMITTED sub-step — kept (goal vetted true; hard "
                 f"from-scratch benchmark)\n"
             )
@@ -808,10 +808,10 @@ def process_file(
         elif not has_proof:
             # --allow-no-proof: the source carries only PROOF OBVIOUS/OMITTED
             # (no reference proof), but the goal is a vetted hard property
-            # (e.g. the ZooKeeper Zab safety theorems). L2 grades by tlapm, not
+            # (e.g. the ZooKeeper Zab safety theorems). synthesis-from-scratch grades by tlapm, not
             # by the human reference, so keep it as a from-scratch benchmark.
             audit_writer.write(
-                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has no manual proof — kept (--allow-no-proof; tlapm-graded "
                 f"from-scratch benchmark)\n"
             )
@@ -831,7 +831,7 @@ def process_file(
             kept_line = seen_stmts[stmt]
             name = target_thm["name"] or f"<unnamed L{line}>"
             audit_writer.write(
-                f"[level2-audit] {source_path}: top-level THEOREM {name} at line "
+                f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has identical statement text to candidate kept at line "
                 f"{kept_line} — skipped (filter B)\n"
             )
@@ -841,7 +841,7 @@ def process_file(
     top_level = deduped
 
     if not top_level:
-        audit_writer.write(f"[level2-audit] {source_path}: no top-level THEOREM identified — no benchmarks generated\n")
+        audit_writer.write(f"[audit] {source_path}: no top-level THEOREM identified — no benchmarks generated\n")
         return 0
     if len(top_level) > 1:
         names = []
@@ -849,7 +849,7 @@ def process_file(
             label = t["name"] or f"<unnamed L{t['loc']['line_start']}>"
             tag = "[unnamed]" if unnamed else f"[shape={'Y' if shp else 'N'}/graph={'Y' if grph else 'N'}]"
             names.append(label + tag)
-        audit_writer.write(f"[level2-audit] {source_path}: multiple top-level THEOREMs: {names}\n")
+        audit_writer.write(f"[audit] {source_path}: multiple top-level THEOREMs: {names}\n")
 
     out_dir = os.path.join(output_root, module_subdir or module)
     os.makedirs(out_dir, exist_ok=True)
@@ -861,7 +861,7 @@ def process_file(
     model_set, main_specs = (set(), set())
     if shared_model and module in skip_model_modules:
         audit_writer.write(
-            f"[level2-audit] {source_path}: module {module} is a local dependency "
+            f"[audit] {source_path}: module {module} is a local dependency "
             f"of a sibling — kept full (no shared model)\n"
         )
     if shared_model and module not in skip_model_modules:
@@ -884,19 +884,19 @@ def process_file(
             rhs = target_thm["shape"].get("rhs_primary_name")
             if rhs:
                 audit_writer.write(
-                    f"[level2-audit] {source_path}: unnamed top-level THEOREM at line "
+                    f"[audit] {source_path}: unnamed top-level THEOREM at line "
                     f"{line} — filename derived from rhs primary name `{rhs}`\n"
                 )
             else:
                 audit_writer.write(
-                    f"[level2-audit] {source_path}: unnamed top-level THEOREM at line "
+                    f"[audit] {source_path}: unnamed top-level THEOREM at line "
                     f"{line} — no usable rhs primary name; filename uses line "
                     f"number `line{line}`\n"
                 )
         thm_name, sanitized = target_theorem_name(target_thm)
         if sanitized:
             audit_writer.write(
-                f"[level2-audit] {source_path}: rhs primary name "
+                f"[audit] {source_path}: rhs primary name "
                 f"`{target_thm['shape'].get('rhs_primary_name')}` contains `!` "
                 f"(INSTANCE namespace separator); sanitized to `{thm_name}` for module identifier\n"
             )
@@ -906,7 +906,7 @@ def process_file(
         if bench_module_name in used_names:
             bench_module_name = f"{bench_module_name}_L{target_thm['loc']['line_start']}"
             audit_writer.write(
-                f"[level2-audit] {source_path}: filename collision on `{base_module}_{thm_name}`, "
+                f"[audit] {source_path}: filename collision on `{base_module}_{thm_name}`, "
                 f"disambiguated to `{bench_module_name}`\n"
             )
         used_names.add(bench_module_name)
@@ -1004,14 +1004,14 @@ def main():
                     allow_no_proof=args.allow_no_proof,
                 )
             except Exception as e:
-                audit_writer.write(f"[level2-audit] {path}: ERROR {e!r}\n")
+                audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
                 print(f"  ERROR: {e}", file=sys.stderr)
         removed = cross_dir_dedup(generated_paths, audit_writer)
         # Input SANY gate: every emitted task must parse under standalone
         # tla2sany. Flags failures (manifest + audit log); does not drop.
         sany_gate(output_root, audit_writer=audit_writer, label="sany-gate-l2")
 
-    print(f"\nTotal L2 benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
+    print(f"\nTotal synthesis-from-scratch benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
 
 

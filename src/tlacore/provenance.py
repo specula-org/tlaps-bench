@@ -1,7 +1,7 @@
 """Tell apart files the benchmark *gave* the agent from files the agent *created*.
 
 This distinction is the single most important guard against false positives.
-In L2, every dependency module the benchmark provides has its proofs stripped to
+In synthesis-from-scratch, every dependency module the benchmark provides has its proofs stripped to
 ``PROOF OMITTED`` *by design* — so OMITTED inside a given dependency is expected
 and legitimate. The cheat (e.g. codex's ``AuxLiveness.tla``) is when the agent
 *introduces a new module* containing an admitted statement and leans on it.
@@ -41,7 +41,7 @@ STDLIB = {
     "CommunityModules",
     # Vendored CommunityModules (lib/community/) the tlaplus/Examples imports
     # EXTEND by individual module name. Kept in sync with COMMUNITY_MODULES in
-    # src/dataset/level1/generate.py.
+    # src/dataset/auto_complete/generate.py.
     "SequencesExt",
     "SequencesExtTheorems",
     "FiniteSetsExt",

@@ -34,7 +34,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from dataset.level1.generate import RESOLVABLE_MODULES
+from dataset.auto_complete.generate import RESOLVABLE_MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / "source"

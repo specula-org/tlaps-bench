@@ -36,7 +36,7 @@ def _tlapm():
 CASES = [
     {
         "name": "correct_l2",
-        "level": 2,
+        "mode": "synthesis-from-scratch",
         "target": "Good.tla",
         "baseline": {"Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"},
         "solution": {"Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\n  OBVIOUS\n====\n"},
@@ -44,7 +44,7 @@ CASES = [
     },
     {
         "name": "sany_invalid_shadow",
-        "level": 2,
+        "mode": "synthesis-from-scratch",
         "target": "Shadow.tla",
         "baseline": {
             "M.tla": "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n====\n",
@@ -58,7 +58,7 @@ CASES = [
     },
     {
         "name": "admitted_goal",
-        "level": 2,
+        "mode": "synthesis-from-scratch",
         "target": "Admit.tla",
         "baseline": {"Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N > 0\nPROOF OBVIOUS\n====\n"},
         "solution": {"Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA Goal == N > 0\nTHEOREM Target == N > 0\n  BY Goal\n====\n"},
@@ -66,7 +66,7 @@ CASES = [
     },
     {
         "name": "added_proof_omitted",
-        "level": 2,
+        "mode": "synthesis-from-scratch",
         "target": "Omit.tla",
         "baseline": {"Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N >= 0\nPROOF OBVIOUS\n====\n"},
         "solution": {"Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA H == N >= 0\n  PROOF OMITTED\nTHEOREM Target == N >= 0\n  BY H\n====\n"},
@@ -74,7 +74,7 @@ CASES = [
     },
     {
         "name": "bare_qed",
-        "level": 2,
+        "mode": "synthesis-from-scratch",
         "target": "Qed.tla",
         "baseline": {"Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"},
         "solution": {"Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF\n<1> QED\n====\n"},
@@ -103,7 +103,7 @@ def _run_case(case):
                 f.write(content)
         env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "src"), "SANY_RUN_SH": SRS}
         r = subprocess.run(
-            [sys.executable, CHECK, case["target"], "--level", str(case["level"]), "--timeout", "120"],
+            [sys.executable, CHECK, case["target"], "--mode", case["mode"], "--timeout", "120"],
             cwd=w, capture_output=True, text=True, timeout=300, env=env,
         )
         m = VERDICT_RE.search(r.stdout)

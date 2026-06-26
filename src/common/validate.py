@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 # Internal imports
 from common.cheating_detection import CheatingIssue, detect_proof_omitted
 from common.container import ContainerConfig, ContainerRunner, ensure_image
-from dataset.level1.generate import (
+from dataset.auto_complete.generate import (
     BENCHMARK_DIR,
     PROJECT_ROOT,
     SOURCE_ROOT,
@@ -345,7 +345,7 @@ def validate_single_benchmark(args_tuple):
         result.tlapm_exit_code = exit_code
         result.tlapm_output = output
         result.tlapm_time_secs = elapsed
-        # --strict flags the benchmark's GIVEN omitted lemmas (L1 preceding PROOF
+        # --strict flags the benchmark's GIVEN omitted lemmas (auto-complete preceding PROOF
         # OMITTED) module-wide, so only a MISSING step (no proof at all) is a real
         # gap; exit 11 with 0 missing just means admitted given lemmas remain,
         # which is fine for a complete reference proof. (Same rule as check_proof.)

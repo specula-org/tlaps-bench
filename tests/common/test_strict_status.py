@@ -1,8 +1,8 @@
 """Regression tests for parse_strict_status — the tlapm --strict interpreter.
 
 The bug this LOCKS (fixed in 1a545f0): `tlapm --strict` reports a benchmark's
-GIVEN admitted lemmas (an L1 preceding `PROOF OMITTED`) as module-wide "omitted"
-and exits 11, so a *correct* L1 solution (target fully proved, given lemma still
+GIVEN admitted lemmas (an auto-complete preceding `PROOF OMITTED`) as module-wide "omitted"
+and exits 11, so a *correct* auto-complete solution (target fully proved, given lemma still
 OMITTED) must NOT be graded as incomplete. Only a MISSING step (no proof at all
 — bare QED, unproven helper lemma, unfinished target) is a real agent gap.
 
@@ -15,7 +15,7 @@ from common.check_proof import parse_strict_status
 # Real `tlapm --strict` output shapes.
 CLEAN = "File ...\n[INFO]: All 9 obligations proved."
 
-# A CORRECT L1 solution: the target is fully proved, but the benchmark's GIVEN
+# A CORRECT auto-complete solution: the target is fully proved, but the benchmark's GIVEN
 # `THEOREM Cantor ... PROOF OMITTED` lemma remains — so --strict exits 11 with
 # "0 missing, 1 omitted". This must still count as complete.
 L1_GIVEN_OMITTED = (
@@ -42,7 +42,7 @@ def test_clean_run_is_complete():
 def test_given_omitted_lemma_still_passes():
     # THE regression: exit 11 whose only gap is a GIVEN omitted lemma -> complete.
     complete, n_missing, failed = parse_strict_status(11, L1_GIVEN_OMITTED)
-    assert complete, "a correct L1 solution keeping a given PROOF OMITTED lemma must PASS"
+    assert complete, "a correct auto-complete solution keeping a given PROOF OMITTED lemma must PASS"
     assert n_missing == 0
     assert not failed
 

@@ -7,7 +7,7 @@ detection.
 
 Usage:
     python -m tlacheck.cli <solution_dir> --target NAME --benchmark-dir DIR
-    python -m tlacheck.cli --scan results/level2 --benchmark-root benchmark
+    python -m tlacheck.cli --scan results/synthesis-from-scratch --benchmark-root benchmark
 
 Exit code: 0 = clean (PASS/no cheating), 2 = cheating found, 3 = error.
 """
@@ -35,12 +35,12 @@ def _infer(bdir: str, benchmark_root: str | None):
     """From a result benchmark dir, infer (target, benchmark_dir)."""
     name = os.path.basename(bdir.rstrip("/"))
     group = os.path.basename(os.path.dirname(bdir.rstrip("/")))
-    # find the enclosing level (level1/level2) in the path
+    # find the enclosing mode (auto-complete/synthesis-from-scratch) in the path
     parts = bdir.split(os.sep)
-    level = next((p for p in parts if p in ("level1", "level2")), None)
+    mode = next((p for p in parts if p in ("auto-complete", "synthesis-from-scratch")), None)
     bench_dir = None
-    if benchmark_root and level:
-        bench_dir = os.path.join(benchmark_root, level, group)
+    if benchmark_root and mode:
+        bench_dir = os.path.join(benchmark_root, mode, group)
     return name, bench_dir
 
 
@@ -48,7 +48,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="TLA+ proof cheat auditor (SANY-based)")
     ap.add_argument("solution_dir", nargs="?", help="a single benchmark result dir")
     ap.add_argument("--target", help="benchmark module name (else inferred)")
-    ap.add_argument("--benchmark-dir", help="canonical benchmark/<level>/<module>/ dir")
+    ap.add_argument("--benchmark-dir", help="canonical benchmark/<mode>/<module>/ dir")
     ap.add_argument("--scan", help="recursively audit all benchmark dirs under this path")
     ap.add_argument(
         "--benchmark-root", default="benchmark", help="root of canonical benchmarks (for --scan provenance)"

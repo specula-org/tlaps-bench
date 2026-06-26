@@ -56,7 +56,7 @@ class TestCheckDockerDispatch:
 
         # Simulate args
         class Args:
-            level = 1
+            mode = "auto-complete"
             timeout = 60
             output = None
             benchmark_dir = None
@@ -82,7 +82,7 @@ class TestCheckDockerDispatch:
         from common.check_proof import _run_in_container
 
         class Args:
-            level = 1
+            mode = "auto-complete"
             timeout = 60
             output = None
             benchmark_dir = None
@@ -96,13 +96,13 @@ class TestCheckDockerDispatch:
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)
-    def test_level2_passed(self, mock_exists, mock_run):
+    def test_synthesis_from_scratch_passed(self, mock_exists, mock_run):
         mock_run.return_value = (0, "✅ PASS\n", "")
 
         from common.check_proof import _run_in_container
 
         class Args:
-            level = 2
+            mode = "synthesis-from-scratch"
             timeout = 60
             output = None
             benchmark_dir = None
@@ -112,8 +112,8 @@ class TestCheckDockerDispatch:
             _run_in_container(FIXTURE_TLA, Args())
 
         cmd = mock_run.call_args[0][1]
-        assert "--level" in cmd
-        assert "2" in cmd
+        assert "--mode" in cmd
+        assert "synthesis-from-scratch" in cmd
 
 
 class TestValidateDockerDispatch:
