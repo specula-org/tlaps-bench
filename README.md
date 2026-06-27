@@ -17,6 +17,22 @@ The benchmark comes in two task types:
   remain; the AI must invent the entire proof structure, including any helper
   lemmas.
 
+### Benchmark problems
+
+790 theorems drawn from eight third-party sources (see `NOTICE` for attribution):
+
+| Source | Proof completion | Proof from scratch | Total |
+|---|--:|--:|--:|
+| tlaplus/Examples | 381 | 126 | 507 |
+| TLAPS distribution examples | 154 | 80 | 234 |
+| ZooKeeper / Zab (Remix) | 0 | 18 | 18 |
+| Ivy liveness | 0 | 12 | 12 |
+| etcd (Specula) | 0 | 8 | 8 |
+| AbstractRaft (Stephan Merz) | 0 | 4 | 4 |
+| OpenAddressing (Markus Kuppe) | 1 | 5 | 6 |
+| Anvil | 0 | 1 | 1 |
+| **Total** | **536** | **254** | **790** |
+
 ### Setup (Linux x86-64 / macOS arm64)
 
 Native setup runs on Linux x86-64 and macOS arm64 (Apple Silicon). Intel Macs
