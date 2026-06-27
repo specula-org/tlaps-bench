@@ -437,9 +437,14 @@ def run_single_benchmark(item: WorkItem):
     workspace = tempfile.mkdtemp(prefix=f"{backend.name}_bench_{name_no_ext}_")
     canonical_dir = None
     try:
+        # Resolve dependencies ONCE — the EXTENDS-closure walk parses files and may
+        # warn (e.g. a goal-bearing module reached via the closure), so a second
+        # call would just repeat that work and double the stderr noise.
+        deps = mode.get_dependencies(item.benchmark_path)
+
         # Copy benchmark + dependencies into the isolated workspace
         shutil.copy2(item.benchmark_path, os.path.join(workspace, basename))
-        for dep in mode.get_dependencies(item.benchmark_path):
+        for dep in deps:
             shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
 
         # Canonical snapshot: the SINGLE baseline that BOTH the agent's
@@ -454,7 +459,7 @@ def run_single_benchmark(item: WorkItem):
         # dir beside the source, which a read-only dir would break.)
         canonical_dir = tempfile.mkdtemp(prefix=f"canon_{name_no_ext}_")
         shutil.copy2(item.benchmark_path, os.path.join(canonical_dir, basename))
-        for dep in mode.get_dependencies(item.benchmark_path):
+        for dep in deps:
             shutil.copy2(dep, os.path.join(canonical_dir, os.path.basename(dep)))
 
         # Init git repo (baseline for cheating check)
