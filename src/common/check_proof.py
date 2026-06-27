@@ -446,6 +446,25 @@ def resolve_benchmark_dir(explicit, filepath, target_name):
     return None
 
 
+def resolve_timeout(explicit):
+    """Effective tlapm timeout (seconds) for the check.
+
+    Precedence: an explicit ``--timeout`` (the grader passes it) > ``$TLAPS_CHECK_TIMEOUT``
+    (the runner sets it to the grader's check_timeout, so the agent's bare
+    ``check_proof_bin <file>`` self-check uses the SAME budget) > 600s default (a
+    developer hand-running the checker). Mirrors resolve_benchmark_dir so the
+    agent self-check and the grader can't diverge on the discharge deadline — a
+    proof near the boundary must not pass the self-check yet time out at grading.
+    A malformed env value falls back to 600 rather than crashing the check.
+    """
+    if explicit is not None:
+        return explicit
+    try:
+        return int(os.environ.get("TLAPS_CHECK_TIMEOUT", "600"))
+    except ValueError:
+        return 600
+
+
 # Machine-readable marker the runner greps for to set the structured
 # `sany_valid` bit. Printed in the VERDICT section on a SANY parse failure.
 SANY_INVALID_MARKER = "[SANY-INVALID]"
@@ -627,11 +646,7 @@ def main():
     # up $TLAPS_CHECK_TIMEOUT (the runner sets it to the grader's check_timeout),
     # so a proof near the time boundary can't pass the self-check yet time out at
     # grading. Falls back to 600 outside the harness.
-    if args.timeout is None:
-        try:
-            args.timeout = int(os.environ.get("TLAPS_CHECK_TIMEOUT", "600"))
-        except ValueError:
-            args.timeout = 600
+    args.timeout = resolve_timeout(args.timeout)
 
     filepath = os.path.abspath(args.file)
     if not os.path.isfile(filepath):

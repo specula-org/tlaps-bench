@@ -8,7 +8,7 @@ from pathlib import Path
 
 from tlacheck.context import CheckContext
 from tlacheck.issue import Severity
-from tlacheck.rules import admitted_statement, extra_axiom, smuggled_module
+from tlacheck.rules import admitted_statement, extra_axiom, smuggled_module, statement_modified
 from tlacore.provenance import Provenance
 from tlacore.sany.dump import dump
 
@@ -122,6 +122,28 @@ def test_genuinely_new_axiom_flagged():
     assert all(i.severity is Severity.CHEATING for i in issues)
 
 
+def test_weakened_statement_flagged():
+    # The agent weakened the target's claim (`\A n : n+0=n` -> `TRUE`). The
+    # baseline statement no longer appears in the solution -> STATEMENT_MODIFIED.
+    issues = statement_modified.check(_axiom_ctx("TargetWeak", "TargetStrong"))
+    assert any(i.vector == "STATEMENT_MODIFIED" for i in issues), issues
+    assert all(i.severity is Severity.CHEATING for i in issues)
+
+
+def test_added_helper_lemma_not_flagged():
+    # Synthesis FP guard: keeping the target statement verbatim while ADDING a
+    # helper lemma above it is legitimate and must NOT trip the rule.
+    issues = statement_modified.check(_axiom_ctx("TargetHelper", "TargetStrong"))
+    assert issues == [], f"added helper lemma wrongly flagged: {issues}"
+
+
+def test_statement_modified_no_baseline_source_is_noop():
+    # Guard: without both sources the rule cannot slice statements -> returns [].
+    ctx = _axiom_ctx("TargetWeak", "TargetStrong")
+    ctx.baseline_source = None
+    assert statement_modified.check(ctx) == []
+
+
 if __name__ == "__main__":
     test_clean_proof_not_flagged()
     test_bare_theorem_flagged()
@@ -131,4 +153,7 @@ if __name__ == "__main__":
     test_referenced_smuggled_module_flagged()
     test_named_baseline_assume_not_flagged()
     test_genuinely_new_axiom_flagged()
+    test_weakened_statement_flagged()
+    test_added_helper_lemma_not_flagged()
+    test_statement_modified_no_baseline_source_is_noop()
     print("ok: all tlacheck rule tests passed")
