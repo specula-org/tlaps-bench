@@ -19,8 +19,6 @@ The benchmark comes in two task types:
 
 ### Benchmark problems
 
-790 theorems drawn from eight third-party sources (see `NOTICE` for attribution):
-
 | Source | Proof completion | Proof from scratch | Total |
 |---|--:|--:|--:|
 | tlaplus/Examples | 381 | 126 | 507 |
