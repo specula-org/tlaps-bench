@@ -11,6 +11,7 @@ from .rules import (
     extra_axiom,
     incomplete_proof,
     smuggled_module,
+    statement_modified,
 )
 from .verdict import Result, decide
 
@@ -21,6 +22,7 @@ SANY_RULES = [
     smuggled_module,
     extra_axiom,
     dependency_modified,
+    statement_modified,  # target theorem statement must not be weakened/altered
     incomplete_proof,  # bare-QED / missing step inside a structured proof
 ]
 

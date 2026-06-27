@@ -13,7 +13,6 @@ positions.
 
 from __future__ import annotations
 
-import os
 import re
 
 from tlacore.source import slice_loc
@@ -40,14 +39,15 @@ def _statement_texts(module, source: str) -> dict[str, str]:
 
 
 def check(ctx: CheckContext) -> list[Issue]:
-    if ctx.baseline is None:
+    if ctx.baseline is None or ctx.solution is None:
         return []
-    # Read the actual files from the solution dir; module.source_file may point
-    # at a now-deleted temp dir (we parse normalized copies there).
-    base_src = _read(os.path.join(ctx.solution_dir, "benchmark.tla"))
-    sol_src = _read(os.path.join(ctx.solution_dir, ctx.target_name + ".tla")) or _read(
-        os.path.join(ctx.solution_dir, "solution.tla")
-    )
+    # Compare against the CANONICAL baseline text (ctx.baseline_source is read
+    # from the read-only benchmark snapshot, and ctx.baseline was parsed from
+    # that same text, so the statement_loc coordinates line up). Crucially this
+    # is NOT a workspace/git-derived copy, so a `git --amend` in the agent's
+    # workspace cannot disguise a weakened statement as the baseline.
+    base_src = ctx.baseline_source
+    sol_src = ctx.solution_source
     if not base_src or not sol_src:
         return []
 
@@ -70,12 +70,3 @@ def check(ctx: CheckContext) -> list[Issue]:
                 )
             )
     return issues
-
-
-def _read(path):
-    if not path or not os.path.exists(path):
-        return None
-    try:
-        return open(path, encoding="utf-8", errors="ignore").read()
-    except OSError:
-        return None
