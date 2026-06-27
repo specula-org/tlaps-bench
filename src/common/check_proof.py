@@ -201,6 +201,27 @@ def get_main_version(filepath):
     return None
 
 
+def get_baseline_text(filepath, benchmark_dir=None):
+    """Canonical baseline text of ``filepath`` for the legacy detectors.
+
+    Prefers the read-only benchmark snapshot (``benchmark_dir/<basename>``), which
+    the runner exposes to BOTH the agent self-check and the grader and which the
+    agent cannot rewrite — so a ``git --amend`` / ``rm -rf .git`` in the workspace
+    can no longer disguise a tampered preamble or dependency. Falls back to the
+    git main/master version only when no canonical dir is available (a developer
+    hand-running the checker outside the harness).
+    """
+    if benchmark_dir:
+        cand = os.path.join(benchmark_dir, os.path.basename(filepath))
+        if os.path.isfile(cand):
+            try:
+                with open(cand, encoding="utf-8", errors="ignore") as f:
+                    return f.read()
+            except OSError:
+                pass
+    return get_main_version(filepath)
+
+
 def find_proof_obvious_line(lines):
     """Find the line number (0-indexed) of 'PROOF OBVIOUS' in the file."""
     for i in range(len(lines) - 1, -1, -1):
@@ -209,23 +230,26 @@ def find_proof_obvious_line(lines):
     return None
 
 
-def check_cheating(filepath, strict_preamble: bool = True):
-    """Check for cheating by comparing against main branch.
+def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
+    """Check for cheating by comparing against the canonical baseline.
 
     Args:
         strict_preamble: True (auto-complete) = strict preamble + proof-section
             checks; False (synthesis-from-scratch) = preamble may grow (the
             agent can add lemmas), so the preamble-integrity check is skipped
             and PROOF OMITTED is scanned across the whole current file.
+        benchmark_dir: canonical (tamper-proof) baseline dir; when given the
+            baseline is read from there instead of workspace git (see
+            get_baseline_text), so a workspace git rewrite can't fool the check.
 
     Returns list of (line_number_1indexed, description) issues.
     """
     issues = []
 
-    # Get main branch version
-    main_content = get_main_version(filepath)
+    # Baseline version (canonical snapshot when available, else git).
+    main_content = get_baseline_text(filepath, benchmark_dir)
     if main_content is None:
-        issues.append((0, "WARNING: Could not retrieve main branch version for comparison"))
+        issues.append((0, "WARNING: Could not retrieve baseline version for comparison"))
         return issues
 
     main_lines = main_content.split("\n")
@@ -233,10 +257,10 @@ def check_cheating(filepath, strict_preamble: bool = True):
         current_content = f.read()
     current_lines = current_content.split("\n")
 
-    # Find PROOF OBVIOUS in main version - this is the boundary
+    # Find PROOF OBVIOUS in baseline version - this is the boundary
     po_line = find_proof_obvious_line(main_lines)
     if po_line is None:
-        issues.append((0, "WARNING: No PROOF OBVIOUS found in main branch version"))
+        issues.append((0, "WARNING: No PROOF OBVIOUS found in baseline version"))
         return issues
 
     if strict_preamble and len(current_lines) < po_line:
@@ -267,35 +291,22 @@ def check_cheating(filepath, strict_preamble: bool = True):
     for ci in detect_extra_axioms(main_content, current_content):
         issues.append((0, ci.description))
 
-    # 4. Dependency file modification (shared module)
+    # 4. Dependency file modification (shared module). Baseline per dep comes
+    # from the canonical snapshot (else git) — never the amendable workspace.
     bench_dir = os.path.dirname(filepath)
-    repo_root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, cwd=bench_dir or "."
-    ).stdout.strip()
+    dep_files = {}
+    for dep_file in glob.glob(os.path.join(bench_dir, "*.tla")):
+        if os.path.abspath(dep_file) == os.path.abspath(filepath):
+            continue
+        dep_baseline = get_baseline_text(dep_file, benchmark_dir)
+        if dep_baseline is None:
+            continue
+        with open(dep_file) as f:
+            dep_current = f.read()
+        dep_files[os.path.basename(dep_file)] = (dep_baseline, dep_current)
 
-    if repo_root:
-        dep_files = {}
-        for dep_file in glob.glob(os.path.join(bench_dir, "*.tla")):
-            if os.path.abspath(dep_file) == os.path.abspath(filepath):
-                continue
-            dep_basename = os.path.basename(dep_file)
-            dep_rel = os.path.relpath(dep_file, repo_root)
-            dep_main = None
-            for branch in ["main", "master"]:
-                r = subprocess.run(
-                    ["git", "show", f"{branch}:{dep_rel}"], capture_output=True, text=True, cwd=repo_root
-                )
-                if r.returncode == 0:
-                    dep_main = r.stdout
-                    break
-            if dep_main is None:
-                continue
-            with open(dep_file) as f:
-                dep_current = f.read()
-            dep_files[dep_basename] = (dep_main, dep_current)
-
-        for ci in detect_dependency_modification(dep_files):
-            issues.append((0, ci.description))
+    for ci in detect_dependency_modification(dep_files):
+        issues.append((0, ci.description))
 
     return issues
 
@@ -414,6 +425,25 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
             shutil.rmtree(d, ignore_errors=True)
 
     return ([str(i) for i in res.cheating_issues] + [str(i) for i in res.incomplete_issues]), "", res
+
+
+def resolve_benchmark_dir(explicit, filepath, target_name):
+    """Effective canonical baseline dir for the cheat engine.
+
+    Precedence: explicit ``--benchmark-dir`` > ``$TLAPS_BENCHMARK_DIR`` > the
+    well-known read-only ``/benchmark`` mount. The runner exposes the SAME
+    canonical snapshot to BOTH the agent's in-workspace self-check and the grader,
+    so the two oracles read one source of truth and can never diverge — neither a
+    ``git commit --amend`` nor ``rm -rf .git`` in the workspace can weaken the
+    agent's self-check below the grader. Only a dir that actually holds
+    ``<target>.tla`` qualifies; otherwise return None and ``run_tlacheck_engine``
+    falls back to git-root reconstruction (for a developer hand-running the
+    checker outside the harness, where no canonical copy exists).
+    """
+    for cand in (explicit, os.environ.get("TLAPS_BENCHMARK_DIR"), "/benchmark"):
+        if cand and os.path.isdir(cand) and os.path.isfile(os.path.join(cand, target_name + ".tla")):
+            return cand
+    return None
 
 
 # Machine-readable marker the runner greps for to set the structured
@@ -551,7 +581,14 @@ def main():
     )
     parser.add_argument("--tlapm", default=None, help="Path to tlapm binary")
     parser.add_argument("--tlapm-lib", default=None, help="Path to tlapm lib directory")
-    parser.add_argument("--timeout", type=int, default=600, help="Timeout in seconds")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Timeout in seconds. If omitted, uses $TLAPS_CHECK_TIMEOUT (set by the "
+        "runner so the agent's self-check uses the SAME tlapm budget as the grader), "
+        "else 600.",
+    )
     parser.add_argument("--output", "-o", default=None, help="Write results to this file (default: <input>.result)")
     parser.add_argument(
         "--benchmark-dir",
@@ -584,6 +621,17 @@ def main():
         help="Rebuild Docker image before running",
     )
     args = parser.parse_args()
+
+    # Couple the timeout to the grader's budget: an explicit --timeout wins (the
+    # grader passes it); otherwise the agent's bare `check_proof_bin <file>` picks
+    # up $TLAPS_CHECK_TIMEOUT (the runner sets it to the grader's check_timeout),
+    # so a proof near the time boundary can't pass the self-check yet time out at
+    # grading. Falls back to 600 outside the harness.
+    if args.timeout is None:
+        try:
+            args.timeout = int(os.environ.get("TLAPS_CHECK_TIMEOUT", "600"))
+        except ValueError:
+            args.timeout = 600
 
     filepath = os.path.abspath(args.file)
     if not os.path.isfile(filepath):
@@ -713,7 +761,15 @@ def main():
     emit("CHEATING CHECK")
     emit("=" * 60)
 
-    cheating_issues = check_cheating(filepath, strict_preamble=(args.mode == "auto-complete"))
+    # Same canonical baseline the grader uses (arg / env / well-known mount), so
+    # the agent self-check and the grader are the same oracle for EVERY check
+    # below — legacy detectors included. See resolve_benchmark_dir.
+    target_name = os.path.splitext(os.path.basename(filepath))[0]
+    benchmark_dir = resolve_benchmark_dir(args.benchmark_dir, filepath, target_name)
+
+    cheating_issues = check_cheating(
+        filepath, strict_preamble=(args.mode == "auto-complete"), benchmark_dir=benchmark_dir
+    )
     real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
     warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
 
@@ -723,9 +779,9 @@ def main():
             cur_lines = f.read().split("\n")
 
         if args.mode == "auto-complete":
-            # auto-complete: PROOF OBVIOUS in main is the boundary; slice current at
-            # the same index because the preamble is required to be unchanged.
-            main_content = get_main_version(filepath)
+            # auto-complete: PROOF OBVIOUS in the baseline is the boundary; slice
+            # current at the same index (the preamble is required to be unchanged).
+            main_content = get_baseline_text(filepath, benchmark_dir)
             if main_content:
                 main_lines = main_content.split("\n")
                 po_line = find_proof_obvious_line(main_lines)
@@ -762,9 +818,9 @@ def main():
     # statements, dependency tampering, smuggled modules, AND bare-QED holes in
     # ANY helper lemma (not just the target). Runs on every check so the agent
     # gets the same verdict the grader does. Any finding fails the run.
-    target_name = os.path.splitext(os.path.basename(filepath))[0]
+    # (target_name + benchmark_dir were resolved above, before check_cheating.)
     engine_issues, engine_reason, engine_result = run_tlacheck_engine(
-        filepath, target_name, summary_output, tlapm_passed, benchmark_dir=args.benchmark_dir
+        filepath, target_name, summary_output, tlapm_passed, benchmark_dir=benchmark_dir
     )
     if engine_reason:
         warnings.append((0, f"semantic engine skipped ({engine_reason})"))
@@ -804,7 +860,7 @@ def main():
         with open(filepath) as _f:
             _sol_text = _f.read()
         if args.mode == "auto-complete":
-            _main = get_main_version(filepath)
+            _main = get_baseline_text(filepath, benchmark_dir)
             if _main:
                 _main_lines = _main.split("\n")
                 _po = find_proof_obvious_line(_main_lines)

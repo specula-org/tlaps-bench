@@ -435,11 +435,27 @@ def run_single_benchmark(item: WorkItem):
         return result
 
     workspace = tempfile.mkdtemp(prefix=f"{backend.name}_bench_{name_no_ext}_")
+    canonical_dir = None
     try:
         # Copy benchmark + dependencies into the isolated workspace
         shutil.copy2(item.benchmark_path, os.path.join(workspace, basename))
         for dep in mode.get_dependencies(item.benchmark_path):
             shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
+
+        # Canonical snapshot: the SINGLE baseline that BOTH the agent's
+        # in-workspace self-check and the grader read, so the two oracles can't
+        # diverge (a git --amend / rm -rf .git in the workspace no longer weakens
+        # the self-check below the grader). Holds exactly the files the workspace
+        # started with ({target}.tla + deps) — NOT the whole module dir, which
+        # would leak sibling task files into the agent's sandbox. In container
+        # mode it is bind-mounted ``:ro`` (tamper-proof); on the host the agent
+        # could touch this copy, but since both oracles read it the verdicts stay
+        # consistent regardless. (Not chmod'd read-only: tlapm/SANY write a cache
+        # dir beside the source, which a read-only dir would break.)
+        canonical_dir = tempfile.mkdtemp(prefix=f"canon_{name_no_ext}_")
+        shutil.copy2(item.benchmark_path, os.path.join(canonical_dir, basename))
+        for dep in mode.get_dependencies(item.benchmark_path):
+            shutil.copy2(dep, os.path.join(canonical_dir, os.path.basename(dep)))
 
         # Init git repo (baseline for cheating check)
         subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
@@ -476,9 +492,11 @@ def run_single_benchmark(item: WorkItem):
         start_time = time.time()
 
         if item.use_container:
-            _run_agent_container(item, backend, workspace, agent_dir, agent_jsonl, prompt, result)
+            _run_agent_container(item, backend, workspace, agent_dir, agent_jsonl, prompt, result, canonical_dir)
         else:
-            _run_agent_local(item, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin)
+            _run_agent_local(
+                item, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir
+            )
 
         elapsed = time.time() - start_time
         result["time_secs"] = elapsed
@@ -507,9 +525,9 @@ def run_single_benchmark(item: WorkItem):
         # Run grader
         check_result_path = os.path.join(grading_dir, "check.result")
         if item.use_container:
-            _run_grader_container(item, workspace, basename, grading_dir, check_result_path, result)
+            _run_grader_container(item, workspace, basename, grading_dir, check_result_path, result, canonical_dir)
         else:
-            _run_grader_local(item, workspace, basename, grading_dir, check_result_path, result)
+            _run_grader_local(item, workspace, basename, grading_dir, check_result_path, result, canonical_dir)
 
         # Write per-benchmark result.json
         with open(os.path.join(result_dir, "result.json"), "w") as f:
@@ -517,6 +535,8 @@ def run_single_benchmark(item: WorkItem):
 
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+        if canonical_dir:
+            shutil.rmtree(canonical_dir, ignore_errors=True)
 
     return result
 
@@ -529,6 +549,7 @@ def _run_agent_container(
     agent_jsonl: str,
     prompt: str,
     result: dict,
+    canonical_dir: str | None = None,
 ) -> None:
     """Run agent inside a Docker container with live output streaming."""
     runner = ContainerRunner()
@@ -537,11 +558,20 @@ def _run_agent_container(
     config = ContainerConfig(
         workspace=workspace,
         result_dir=agent_dir,  # mount only agent/ subdir as /results
+        # Same canonical snapshot the grader reads, bind-mounted read-only so the
+        # agent's own check_proof_bin runs the identical cheat oracle the grader will.
+        benchmark_dir=canonical_dir or "",
         env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
         firewall_hosts=backend.firewall_hosts(),
         install_script=backend.install_script,
         credential_mounts=backend.get_credential_mounts(),
     )
+    if canonical_dir:
+        config.env["TLAPS_BENCHMARK_DIR"] = "/benchmark"
+    # Self-check uses the SAME tlapm budget as the grader (item.check_timeout),
+    # so a proof near the time boundary can't pass the agent's check yet time out
+    # at grading.
+    config.env["TLAPS_CHECK_TIMEOUT"] = str(item.check_timeout)
 
     timeout = item.timeout if item.timeout and item.timeout > 0 else None
     container_run = None
@@ -623,6 +653,7 @@ def _run_agent_local(
     prompt: str,
     result: dict,
     checker_bin: str,
+    canonical_dir: str | None = None,
 ) -> None:
     """Run agent as a local subprocess (existing behavior)."""
     cmd = backend.build_command(workspace, agent_dir)
@@ -640,6 +671,13 @@ def _run_agent_local(
     sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
     if os.path.isfile(sany_run_sh):
         agent_env["SANY_RUN_SH"] = sany_run_sh
+    # Point the agent's own check_proof_bin at the same canonical snapshot the
+    # grader reads, so its self-check is the identical cheat oracle (no host
+    # /benchmark mount exists, so the env var is how the checker discovers it).
+    if canonical_dir:
+        agent_env["TLAPS_BENCHMARK_DIR"] = canonical_dir
+    # Same tlapm budget the grader uses, so the discharge verdict matches.
+    agent_env["TLAPS_CHECK_TIMEOUT"] = str(item.check_timeout)
 
     try:
         with open(agent_jsonl, "w") as jsonl_f:
@@ -696,6 +734,7 @@ def _run_grader_container(
     grading_dir: str,
     check_result_path: str,
     result: dict,
+    canonical_dir: str | None = None,
 ) -> None:
     """Run grader inside a Docker container (check_proof_bin lives in the image)."""
     runner = ContainerRunner()
@@ -715,7 +754,9 @@ def _run_grader_container(
     config = ContainerConfig(
         workspace=workspace,
         result_dir=grading_dir,
-        benchmark_dir=os.path.dirname(item.benchmark_path),
+        # The same canonical snapshot the agent self-checked against (exactly
+        # {target}.tla + deps), NOT the whole module dir.
+        benchmark_dir=canonical_dir or os.path.dirname(item.benchmark_path),
     )
     config.env["GIT_CONFIG_COUNT"] = "1"
     config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
@@ -743,6 +784,7 @@ def _run_grader_local(
     grading_dir: str,
     check_result_path: str,
     result: dict,
+    canonical_dir: str | None = None,
 ) -> None:
     """Run grader on host (local mode)."""
     mode = item.mode
@@ -753,7 +795,9 @@ def _run_grader_local(
         basename,
         check_result_path,
         item.check_timeout,
-        benchmark_dir=os.path.dirname(item.benchmark_path),
+        # The same canonical snapshot the agent self-checked against (exactly
+        # {target}.tla + deps), NOT the whole module dir.
+        benchmark_dir=canonical_dir or os.path.dirname(item.benchmark_path),
     )
     try:
         check_env = dict(os.environ)
