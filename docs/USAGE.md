@@ -44,7 +44,7 @@ A backend is the AI agent that attempts the proof. Five are included:
 |---------|----------|---------------|
 | OpenAI Codex | `codex` | `gpt-5.5` |
 | Claude Code | `claude_code` | `claude-opus-4-8` |
-| GitHub Copilot | `copilot` | (Copilot default) |
+| GitHub Copilot | `copilot` | `claude-opus-4.8` |
 | LiteLLM | `litellm` | `claude-sonnet-4-6` |
 | Pi | `pi` | `openai/gpt-5.5` |
 
@@ -222,7 +222,7 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --no-container
 
 Only needed if you run with `--no-container` or develop the tooling itself.
 
-**Additional requirements:** GNU Make, `curl`, `tar`, JDK 21+, Linux x86-64 or macOS arm64.
+**Additional requirements:** GNU Make, `curl`, `tar`, Python 3.12+, JDK 21+, Linux x86-64 or macOS arm64.
 
 ```bash
 make setup
