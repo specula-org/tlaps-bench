@@ -90,7 +90,7 @@ def _azure_openai_hosts() -> list[str]:
         val = os.environ.get(var, "").strip()
         if not val:
             continue
-        parsed = urlparse(val).hostname if "://" in val else val.split("/")[0]
+        parsed = urlparse(val if "://" in val else f"//{val}").hostname
         if parsed and parsed not in hosts:
             hosts.append(parsed)
     return hosts
