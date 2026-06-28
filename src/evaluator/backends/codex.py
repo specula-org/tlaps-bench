@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tomllib
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from evaluator import quota
 
 from .base import (
     AgentBackend,
@@ -19,6 +23,11 @@ from .base import (
 )
 
 DEFAULT_MODEL = "gpt-5.5"
+
+# ChatGPT's hard usage cap surfaces as an `error` / `turn.failed` event whose
+# message reads e.g. "You've hit your usage limit. ... try again at 7:24 PM."
+_USAGE_LIMIT_RE = re.compile(r"usage limit", re.IGNORECASE)
+_RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 
 
 class CodexBackend(AgentBackend):
@@ -136,6 +145,73 @@ class CodexBackend(AgentBackend):
 
     def firewall_hosts(self) -> list[str]:
         return detect_firewall_hosts(self.model)
+
+    def usage_script(self) -> str | None:
+        return "scripts/usage/codex.sh"
+
+    def default_quota(self) -> tuple[float, float]:
+        return (95.0, 95.0)
+
+    def detect_quota_block(self, jsonl_path: str) -> int | None:
+        """Detect ChatGPT's hard 'usage limit' cap and return seconds to wait.
+
+        The percentage gate cannot see this: once capped, codex's turns fail
+        instantly with no `usage` event, so the rolling utilization the gate reads
+        goes stale/low and never trips — every subsequent task fails in ~3s and is
+        misgraded as FAIL. We scan the run's own events for the explicit usage-limit
+        error and sleep until the stated reset instead. Returns None if no cap.
+        """
+        msg = None
+        try:
+            with open(jsonl_path) as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    t = ev.get("type", "")
+                    if t == "error":
+                        m = ev.get("message", "")
+                    elif t == "turn.failed":
+                        m = (ev.get("error") or {}).get("message", "")
+                    else:
+                        continue
+                    if m and _USAGE_LIMIT_RE.search(m):
+                        msg = m  # keep the last occurrence
+        except FileNotFoundError:
+            return None
+        if msg is None:
+            return None
+        return quota.secs_until_reset(
+            self._parse_retry_time(msg), clamp_hi=6 * 3600, fallback=1800
+        )
+
+    @staticmethod
+    def _parse_retry_time(msg: str) -> datetime | None:
+        """Parse 'try again at 7:24 PM' from a usage-limit message into a datetime
+        (today, or tomorrow if that time already passed), or None if absent. Waking
+        too early (timezone skew) is self-correcting: the retry re-hits the cap and
+        re-sleeps on the fresh error.
+        """
+        m = _RETRY_AT_RE.search(msg)
+        if not m:
+            return None
+        try:
+            hh, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3).upper()
+            if ap == "PM" and hh != 12:
+                hh += 12
+            elif ap == "AM" and hh == 12:
+                hh = 0
+            now = datetime.now()
+            target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            return target
+        except Exception:
+            return None
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

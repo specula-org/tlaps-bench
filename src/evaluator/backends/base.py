@@ -114,3 +114,31 @@ class AgentBackend(ABC):
     def firewall_hosts(self) -> list[str]:
         """API hosts that must be reachable."""
         return []
+
+    def detect_quota_block(self, jsonl_path: str) -> int | None:
+        """If the run hit a hard provider usage/quota cap (the agent did no work),
+        return seconds to wait before retrying; else None.
+
+        This is distinct from the percentage usage gate: once a provider hard-caps
+        the account, the agent emits no usage events, so the gate's utilization
+        reading goes stale and never trips. Backends that can recognise the cap in
+        their own output override this so the runner pauses-and-retries instead of
+        grading a no-op run as a failure. Default: never blocks.
+        """
+        return None
+
+    def usage_script(self) -> str | None:
+        """Repo-relative path to this backend's usage probe, or None if it has
+        none. The probe prints subscription utilization as the JSON shape the
+        quota gate consumes (see scripts/usage/). Returning None disables the
+        proactive gate for this backend. Overrides replace the runner's old
+        name-based script selection so adding a backend needs no runner change.
+        """
+        return None
+
+    def default_quota(self) -> tuple[float, float]:
+        """Default (5h%, 7d%) thresholds for the proactive gate when the user
+        passes no --quota-5h/--quota-7d. (0, 0) leaves the gate off; a backend
+        with a usage_script overrides this with its subscription's sensible caps.
+        """
+        return (0.0, 0.0)

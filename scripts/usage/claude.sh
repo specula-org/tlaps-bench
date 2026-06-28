@@ -6,9 +6,9 @@
 # quota gate (src/evaluator/runner.py) and runnable standalone.
 #
 # Usage:
-#   bash scripts/usage.sh              # JSON output (full endpoint response)
-#   bash scripts/usage.sh --check 80   # exit 1 if 5h/7d window > 80%
-#   bash scripts/usage.sh --summary    # one human-readable line per window
+#   bash scripts/usage/claude.sh              # JSON output (full endpoint response)
+#   bash scripts/usage/claude.sh --check 80   # exit 1 if 5h/7d window > 80%
+#   bash scripts/usage/claude.sh --summary    # one human-readable line per window
 #
 # Profile selection (first match wins):
 #   CLAUDE_CREDENTIALS   — explicit path to credentials.json

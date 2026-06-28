@@ -136,6 +136,12 @@ class ClaudeCodeBackend(AgentBackend):
     def firewall_hosts(self) -> list[str]:
         return detect_firewall_hosts(self.model)
 
+    def usage_script(self) -> str | None:
+        return "scripts/usage/claude.sh"
+
+    def default_quota(self) -> tuple[float, float]:
+        return (80.0, 95.0)
+
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []
         in_tok = 0
