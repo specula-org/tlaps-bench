@@ -67,7 +67,6 @@ ALL_API_HOSTS = (
         "api.mistral.ai",
         "openrouter.ai",
         "api.x.ai",
-        "api-inference.huggingface.co",
         "router.huggingface.co",
         "open.bigmodel.cn",  # Zhipu AI / GLM models
         "api.z.ai",  # Zhipu AI / GLM models
