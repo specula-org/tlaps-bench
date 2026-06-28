@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
+from urllib.parse import urlparse
 
 BEDROCK_HOSTS = [
     "bedrock-runtime.us-east-1.amazonaws.com",
@@ -14,6 +15,18 @@ BEDROCK_HOSTS = [
     "bedrock-runtime.eu-central-1.amazonaws.com",
     "bedrock-runtime.ap-southeast-1.amazonaws.com",
     "bedrock-runtime.ap-northeast-1.amazonaws.com",
+]
+
+# AWS STS endpoints for role assumption (needed when AWS_PROFILE uses role_arn)
+STS_HOSTS = [
+    "sts.amazonaws.com",
+    "sts.us-east-1.amazonaws.com",
+    "sts.us-east-2.amazonaws.com",
+    "sts.us-west-2.amazonaws.com",
+    "sts.eu-west-1.amazonaws.com",
+    "sts.eu-central-1.amazonaws.com",
+    "sts.ap-southeast-1.amazonaws.com",
+    "sts.ap-northeast-1.amazonaws.com",
 ]
 
 VERTEX_HOSTS = [
@@ -42,21 +55,51 @@ ALL_API_HOSTS = (
         "chatgpt.com",  # Codex subscription auth (backend-api endpoint)
         "auth.openai.com",  # OAuth token exchange for ChatGPT login
         "api.anthropic.com",
+        "console.anthropic.com",  # Claude Code OAuth token exchange
+        "platform.claude.com",  # Claude Code OAuth token refresh (current endpoint)
         "generativelanguage.googleapis.com",
         "api.deepseek.com",
         "api.githubcopilot.com",
         "api.business.githubcopilot.com",
         "api.enterprise.githubcopilot.com",
+        # Additional providers (pi backend, litellm)
+        "api.groq.com",
+        "api.mistral.ai",
+        "openrouter.ai",
+        "api.x.ai",
+        "api-inference.huggingface.co",
+        "router.huggingface.co",
+        "open.bigmodel.cn",  # Zhipu AI / GLM models
+        "api.z.ai",  # Zhipu AI / GLM models
+        "login.microsoftonline.com",
     ]
     + BEDROCK_HOSTS
+    + STS_HOSTS
     + VERTEX_HOSTS
     + KIRO_HOSTS
 )
 
 
+def _azure_openai_hosts() -> list[str]:
+    """Extract Azure OpenAI endpoint host(s) from environment variables.
+
+    Azure OpenAI uses customer-specific hostnames (e.g.
+    my-resource.openai.azure.com) that cannot be statically enumerated.
+    """
+    hosts: list[str] = []
+    for var in ("AZURE_OPENAI_HOST", "AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT"):
+        val = os.environ.get(var, "").strip()
+        if not val:
+            continue
+        parsed = urlparse(val).hostname if "://" in val else val.split("/")[0]
+        if parsed and parsed not in hosts:
+            hosts.append(parsed)
+    return hosts
+
+
 def detect_firewall_hosts(model: str) -> list[str]:
     """All known LLM API hosts. Blocks general internet, allows any provider."""
-    return ALL_API_HOSTS
+    return ALL_API_HOSTS + _azure_openai_hosts()
 
 
 def has_aws_env_credentials() -> bool:
