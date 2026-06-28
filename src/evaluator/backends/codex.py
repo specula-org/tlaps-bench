@@ -29,6 +29,10 @@ DEFAULT_MODEL = "gpt-5.5"
 _USAGE_LIMIT_RE = re.compile(r"usage limit", re.IGNORECASE)
 _RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 
+# detect_quota_block runs host-side (after the agent container exits) where the
+# repo and ~/.codex are available, so it can reuse the usage probe's precise reset.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
 
 class CodexBackend(AgentBackend):
     name = "codex"
@@ -185,9 +189,29 @@ class CodexBackend(AgentBackend):
             return None
         if msg is None:
             return None
-        return quota.secs_until_reset(
-            self._parse_retry_time(msg), clamp_hi=6 * 3600, fallback=1800
-        )
+        # Prefer the precise reset epoch codex records in its session rollout (what
+        # the usage probe reads) over parsing the human "try again at 7:24 PM"
+        # string, which is timezone- and boundary-fragile. Fall back to the prose
+        # time only when the probe has no data.
+        reset_at = self._reset_at_from_probe()
+        when = reset_at if reset_at is not None else self._parse_retry_time(msg)
+        return quota.secs_until_reset(when, clamp_hi=6 * 3600, fallback=1800)
+
+    def _reset_at_from_probe(self) -> str | None:
+        """The 5h window's reset time (ISO) from the codex usage probe, or None.
+
+        This is the structured ``resets_at`` epoch codex writes to its session
+        rollout — far more reliable than the human time in the cap message. The 5h
+        window is codex's usual hard cap; when the probe can't be read (no repo
+        script, no ~/.codex, API-key auth) the caller falls back to the prose time.
+        """
+        rel = self.usage_script()
+        if not rel:
+            return None
+        usage = quota.fetch_usage(os.path.join(_REPO_ROOT, rel))
+        if not usage:
+            return None
+        return (usage.get("five_hour") or {}).get("resets_at")
 
     @staticmethod
     def _parse_retry_time(msg: str) -> datetime | None:

@@ -91,3 +91,45 @@ def test_missing_used_percent_is_zero_not_crash(tmp_path):
     out = json.loads(_run(home).stdout)
     assert out["five_hour"]["utilization"] == 0
     assert out["seven_day"]["utilization"] == 5.0
+
+
+def test_window_without_reset_epoch_fails_open(tmp_path):
+    # A high used_percent with no resets_at can't be checked for freshness and
+    # gives the gate no recovery time, so it must report 0 (fail open), not block.
+    home = str(tmp_path / "codex")
+    _write_rollout(
+        home,
+        {"used_percent": 99.0, "window_minutes": 300},  # no resets_at
+        {"used_percent": 5.0, "window_minutes": 10080, "resets_at": FUTURE},
+    )
+    out = json.loads(_run(home).stdout)
+    assert out["five_hour"]["utilization"] == 0
+    assert out["five_hour"]["resets_at"] is None
+    assert out["seven_day"]["utilization"] == 5.0
+
+
+def test_non_utf8_locale_does_not_crash(tmp_path):
+    # Rollouts are real UTF-8 (serde_json). Under a non-UTF-8 host locale with
+    # Python's UTF-8 mode off, `for line in f` would raise UnicodeDecodeError and
+    # silently disable the gate unless the script decodes UTF-8 explicitly.
+    home = str(tmp_path / "codex")
+    d = os.path.join(home, "sessions", "2026", "06", "26")
+    os.makedirs(d, exist_ok=True)
+    event = {
+        "type": "event_msg",
+        "note": "café résumé déjà",  # multibyte UTF-8, written as raw bytes
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "primary": {"used_percent": 12.0, "window_minutes": 300, "resets_at": FUTURE},
+                "secondary": {"used_percent": 5.0, "window_minutes": 10080, "resets_at": FUTURE},
+            },
+        },
+    }
+    with open(os.path.join(d, "rollout-utf8.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    env = {**os.environ, "CODEX_HOME": home, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0"}
+    r = subprocess.run(["bash", SCRIPT], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["five_hour"]["utilization"] == 12.0

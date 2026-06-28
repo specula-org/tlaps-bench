@@ -36,12 +36,45 @@ def _write_jsonl(path, events):
             f.write(json.dumps(e) + "\n")
 
 
-def test_usage_limit_blocks(tmp_path):
+def _write_rollout(codex_home, primary, secondary):
+    """Write one codex session rollout carrying a rate_limits snapshot."""
+    d = os.path.join(codex_home, "sessions", "2026", "06", "26")
+    os.makedirs(d, exist_ok=True)
+    event = {
+        "type": "event_msg",
+        "payload": {"type": "token_count", "rate_limits": {"primary": primary, "secondary": secondary}},
+    }
+    with open(os.path.join(d, "rollout-2026-06-26T17-51-58-abc.jsonl"), "w") as f:
+        f.write(json.dumps(event) + "\n")
+
+
+def test_usage_limit_blocks(tmp_path, monkeypatch):
+    # No session data -> probe returns None -> falls back to parsing the prose time.
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty"))
     p = os.path.join(tmp_path, "out.jsonl")
     _write_jsonl(p, USAGE_LIMIT_STREAM)
     secs = CodexBackend().detect_quota_block(p)
     assert isinstance(secs, int)
     assert 60 <= secs <= 6 * 3600
+
+
+def test_prefers_probe_reset_over_prose(tmp_path, monkeypatch):
+    # The probe's precise 5h reset epoch (~2h out) must win over the prose
+    # "try again at 7:24 PM" in the message — solving the tz/boundary fragility.
+    import time
+
+    home = str(tmp_path / "codex")
+    future = int(time.time()) + 2 * 3600
+    _write_rollout(
+        home,
+        {"used_percent": 100.0, "window_minutes": 300, "resets_at": future},
+        {"used_percent": 5.0, "window_minutes": 10080, "resets_at": future + 999},
+    )
+    monkeypatch.setenv("CODEX_HOME", home)
+    p = os.path.join(tmp_path, "out.jsonl")
+    _write_jsonl(p, USAGE_LIMIT_STREAM)
+    secs = CodexBackend().detect_quota_block(p)
+    assert 2 * 3600 - 300 <= secs <= 2 * 3600 + 300  # tracks the probe, not the prose
 
 
 def test_normal_run_does_not_block(tmp_path):

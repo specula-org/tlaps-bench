@@ -71,7 +71,10 @@ def last_rate_limits(path):
     """The last rate_limits snapshot in one rollout file, or None."""
     found = None
     try:
-        with open(path) as f:
+        # Rollouts are UTF-8 (serde_json); decode explicitly so a non-UTF-8 host
+        # locale doesn't raise UnicodeDecodeError on `for line in f` and silently
+        # disable the gate. errors="replace" keeps a stray byte from crashing us.
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if '"rate_limits"' not in line:
                     continue
@@ -82,7 +85,7 @@ def last_rate_limits(path):
                 rl = find_rate_limits(event)
                 if rl:
                     found = rl
-    except OSError:
+    except (OSError, ValueError):
         return None
     return found
 
@@ -115,6 +118,11 @@ def window(obj):
         iso = datetime.fromtimestamp(resets, tz=timezone.utc).isoformat()
         if resets <= now:
             used = 0  # window already rolled over; the snapshot's percent is stale
+    else:
+        # No usable reset epoch — we can't tell whether used_percent is fresh and
+        # the gate would have no resets_at to sleep until, so fail open (report 0)
+        # rather than block on a possibly-stale value with no recovery time.
+        used = 0
     return {"utilization": used if used is not None else 0, "resets_at": iso}
 
 
