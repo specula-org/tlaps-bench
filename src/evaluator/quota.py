@@ -146,6 +146,10 @@ def run_with_quota_retry(
         block_secs = detect_block()
         if block_secs is None:
             return True
+        if attempt == max_retries - 1:
+            # Last attempt: the verdict is already "give up", so don't sleep
+            # through a reset (up to 6h) we'll never use.
+            break
         print(
             f"{log_prefix}provider usage limit hit — sleeping {block_secs}s then "
             f"retrying (attempt {attempt + 1}/{max_retries})",

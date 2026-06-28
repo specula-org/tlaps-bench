@@ -84,8 +84,11 @@ def test_run_with_quota_retry_retries_then_succeeds(monkeypatch):
 
 
 def test_run_with_quota_retry_exhausts(monkeypatch):
-    monkeypatch.setattr(quota.time, "sleep", lambda s: None)
+    slept = []
+    monkeypatch.setattr(quota.time, "sleep", lambda s: slept.append(s))
     calls = []
     ok = quota.run_with_quota_retry(lambda: calls.append(1), lambda: 10, max_retries=3)
     assert ok is False
     assert len(calls) == 3
+    # last attempt must NOT sleep through a reset it will never use
+    assert len(slept) == 2

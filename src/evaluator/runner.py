@@ -403,18 +403,24 @@ def run_single_benchmark(item: WorkItem):
         agent_jsonl = os.path.join(agent_dir, "output.jsonl")
 
         wait_for_memory(item.min_free_gb, 120, log_prefix=f"[{name_no_ext}] ")
-        start_time = time.time()
 
         # Run the agent, sleeping through any hard provider usage-limit cap that
-        # the proactive gate (above) can't see. See quota.run_with_quota_retry.
+        # the proactive gate (above) can't see (see quota.run_with_quota_retry).
+        # _run_once accumulates only active agent time, so time_secs excludes the
+        # retry sleeps (which can be hours).
+        active_secs = 0.0
+
         def _run_once():
+            nonlocal active_secs
             result["error"] = ""
+            t0 = time.time()
             if item.use_container:
                 _run_agent_container(item, backend, workspace, agent_dir, agent_jsonl, prompt, result, canonical_dir)
             else:
                 _run_agent_local(
                     item, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir
                 )
+            active_secs += time.time() - t0
 
         quota_exhausted = not quota.run_with_quota_retry(
             _run_once,
@@ -422,25 +428,16 @@ def run_single_benchmark(item: WorkItem):
             log_prefix=f"[{name_no_ext}] ",
         )
 
-        elapsed = time.time() - start_time
+        elapsed = active_secs
         result["time_secs"] = elapsed
 
-        if quota_exhausted:
-            result["agent_exit"] = -3
-            result["check_verdict"] = "ERROR"
-            result["error"] = "provider usage limit; exhausted quota retries"
-            result["input_tokens"] = result.get("input_tokens", 0)
-            result["output_tokens"] = result.get("output_tokens", 0)
-            with open(os.path.join(result_dir, "result.json"), "w") as f:
-                json.dump(result, f, indent=2)
-            return result
-
-        # Parse agent output
+        # Parse agent output and save artifacts on every path — including quota
+        # exhaustion — so the result dir keeps a consistent shape and records any
+        # tokens the agent did emit (rather than forcing them to 0).
         transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
         result["input_tokens"] = input_tokens
         result["output_tokens"] = output_tokens
 
-        # Save agent artifacts
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
             f.write(f"Time: {elapsed:.0f}s\n")
@@ -455,6 +452,17 @@ def run_single_benchmark(item: WorkItem):
         agent_check_file = os.path.join(workspace, name_no_ext + ".result")
         if os.path.isfile(agent_check_file):
             shutil.copy2(agent_check_file, os.path.join(grading_dir, "agent_check.result"))
+
+        if quota_exhausted:
+            # Provider hard-capped us past the retry budget. Mark ERROR (retriable
+            # via --resume) and skip grading; the artifacts above keep the result
+            # dir consistent with a normal run.
+            result["agent_exit"] = -3
+            result["check_verdict"] = "ERROR"
+            result["error"] = "provider usage limit; exhausted quota retries"
+            with open(os.path.join(result_dir, "result.json"), "w") as f:
+                json.dump(result, f, indent=2)
+            return result
 
         # Run grader
         check_result_path = os.path.join(grading_dir, "check.result")
