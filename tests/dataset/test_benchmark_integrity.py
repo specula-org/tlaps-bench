@@ -1,0 +1,41 @@
+"""Permanent guard: no benchmark file may leak proof content outside a module.
+
+Content after a module's ``====`` terminator is invisible to SANY/tlapm but
+readable by an agent — so a generator that fails to truncate the source leaves
+the reference proof there as an answer leak (the CRDT contamination bug, which
+regressed once unnoticed because nothing asserted against it). This test is that
+assertion: it fails if any benchmark `.tla` has a THEOREM/LEMMA/proof step
+outside a module body. Keep it green.
+
+Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_benchmark_integrity.py
+"""
+
+import os
+
+import pytest
+
+from dataset.integrity import check_dir
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOTS = [
+    os.path.join(REPO, "source"),  # the origin — a malformed source leaks into every derived task
+    os.path.join(REPO, "benchmark", "auto-complete"),
+    os.path.join(REPO, "benchmark", "synthesis-from-scratch"),
+]
+
+
+@pytest.mark.parametrize("root", ROOTS, ids=lambda r: os.path.basename(r))
+def test_no_proof_leak_outside_module(root):
+    if not os.path.isdir(root):
+        pytest.skip(f"benchmark dir absent: {root}")
+    bad = check_dir(root)
+    if bad:
+        lines = []
+        for f, leaks in sorted(bad.items()):
+            rel = f.split("benchmark/")[-1]
+            lines.append(f"  {rel}: {len(leaks)} leaked tokens (first @ line {leaks[0][0]}: {leaks[0][1].strip()[:50]!r})")
+        detail = "\n".join(lines)
+        pytest.fail(
+            f"{len(bad)} benchmark file(s) leak proof/theorem content OUTSIDE a module "
+            f"(answer contamination — strip everything after the first `====`):\n{detail}"
+        )
