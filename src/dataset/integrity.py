@@ -46,9 +46,12 @@ def iter_leaks(text: str):
     """Yield (lineno, line) for each proof/theorem token found OUTSIDE a module.
 
     A simple state machine tracks module nesting and `(* *)` / `\\*` comments,
-    so author prose and trailing TLC tables never trigger it.
+    so author prose and trailing TLC tables never trigger it. ``module_depth`` is
+    a counter, not a flag: TLA+ allows a nested ``---- MODULE Inner ---- … ====``
+    inside an outer module, and the outer module continues after the inner's
+    terminator — a flag would wrongly treat the outer body as "outside a module".
     """
-    in_module = False
+    module_depth = 0  # 0 = outside every module; each header deepens, each ==== rises
     block_comment = 0  # depth of (* ... *)
     for i, raw in enumerate(text.splitlines(), start=1):
         line = raw
@@ -77,18 +80,19 @@ def iter_leaks(text: str):
             continue
 
         if _MODULE_HEADER.match(stripped):
-            in_module = True
+            module_depth += 1
             continue
         if _MODULE_END.match(stripped):
-            in_module = False
+            module_depth = max(0, module_depth - 1)
             continue
-        if not in_module and _LEAK_TOKEN.match(line):
+        if module_depth == 0 and _LEAK_TOKEN.match(line):
             yield i, raw.rstrip()
 
 
 def check_file(path: str) -> list[tuple[int, str]]:
     try:
-        text = open(path, encoding="utf-8", errors="ignore").read()
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            text = f.read()
     except OSError:
         return []
     return list(iter_leaks(text))
