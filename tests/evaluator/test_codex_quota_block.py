@@ -77,6 +77,26 @@ def test_prefers_probe_reset_over_prose(tmp_path, monkeypatch):
     assert 2 * 3600 - 300 <= secs <= 2 * 3600 + 300  # tracks the probe, not the prose
 
 
+def test_probe_targets_capped_window_not_just_5h(tmp_path, monkeypatch):
+    # Weekly window is the one at its cap while the 5h window is fresh: we must
+    # wait for the weekly reset, not the nearer 5h reset (else we retry-thrash).
+    import time
+
+    home = str(tmp_path / "codex")
+    near = int(time.time()) + 600  # 5h resets soon, but it is NOT capped
+    far = int(time.time()) + 3 * 3600  # weekly is the capped one, resets later
+    _write_rollout(
+        home,
+        {"used_percent": 20.0, "window_minutes": 300, "resets_at": near},
+        {"used_percent": 100.0, "window_minutes": 10080, "resets_at": far},
+    )
+    monkeypatch.setenv("CODEX_HOME", home)
+    p = os.path.join(tmp_path, "out.jsonl")
+    _write_jsonl(p, USAGE_LIMIT_STREAM)
+    secs = CodexBackend().detect_quota_block(p)
+    assert 3 * 3600 - 300 <= secs <= 3 * 3600 + 300  # weekly reset, not the ~10min 5h one
+
+
 def test_normal_run_does_not_block(tmp_path):
     p = os.path.join(tmp_path, "out.jsonl")
     _write_jsonl(p, NORMAL_STREAM)

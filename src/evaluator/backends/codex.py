@@ -198,12 +198,16 @@ class CodexBackend(AgentBackend):
         return quota.secs_until_reset(when, clamp_hi=6 * 3600, fallback=1800)
 
     def _reset_at_from_probe(self) -> str | None:
-        """The 5h window's reset time (ISO) from the codex usage probe, or None.
+        """The reset time (ISO) of the window that hit its cap, from the codex
+        usage probe — or None.
 
-        This is the structured ``resets_at`` epoch codex writes to its session
-        rollout — far more reliable than the human time in the cap message. The 5h
-        window is codex's usual hard cap; when the probe can't be read (no repo
-        script, no ~/.codex, API-key auth) the caller falls back to the prose time.
+        Codex records a structured ``resets_at`` epoch per window in its session
+        rollout, far more reliable than the human time in the cap message. The
+        binding window is the one at its cap (utilization >= 100); when both the 5h
+        and weekly windows are capped we wait for the later reset, so a weekly cap
+        with a fresh 5h window doesn't make us retry-thrash until the 5h resets.
+        Falls back to the most-utilized window, then to None (prose time) when the
+        probe can't be read (no repo script, no ~/.codex, API-key auth).
         """
         rel = self.usage_script()
         if not rel:
@@ -211,7 +215,14 @@ class CodexBackend(AgentBackend):
         usage = quota.fetch_usage(os.path.join(_REPO_ROOT, rel))
         if not usage:
             return None
-        return (usage.get("five_hour") or {}).get("resets_at")
+        windows = [usage.get("five_hour") or {}, usage.get("seven_day") or {}]
+        capped = [w for w in windows if (w.get("utilization") or 0) >= 100 and w.get("resets_at")]
+        if capped:
+            return max(w["resets_at"] for w in capped)  # wait past the last-clearing cap
+        with_reset = [w for w in windows if w.get("resets_at")]
+        if not with_reset:
+            return None
+        return max(with_reset, key=lambda w: w.get("utilization") or 0)["resets_at"]
 
     @staticmethod
     def _parse_retry_time(msg: str) -> datetime | None:
