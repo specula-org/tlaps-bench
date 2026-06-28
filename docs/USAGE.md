@@ -116,11 +116,14 @@ uv run tlaps-bench run [flags]
 | `--model` | (backend default) | Override the model |
 | `--filter` | (all benchmarks) | Substring match on path, comma-separated |
 | `--jobs` | `1` | Number of parallel agent runs |
-| `--timeout` | `28800` | Per-benchmark timeout in seconds |
+| `--timeout` | `28800` | Per-benchmark agent timeout in seconds |
+| `--check-timeout` | `600` | Per-benchmark checker (tlapm) timeout in seconds |
 | `--output-dir` | auto-generated | Output directory |
 | `--resume` | off | Skip benchmarks already marked PASS |
 | `--force-build` | off | Rebuild the Docker image |
 | `--no-container` | off | Run without Docker (requires native setup) |
+
+Run `uv run tlaps-bench run --help` for the full flag list.
 
 ### `tlaps-bench check`
 
@@ -177,13 +180,16 @@ results/<mode>/<backend>/<timestamp>/
     ├── result.json           # Per-benchmark verdict and metadata
     ├── input/
     │   ├── benchmark.tla     # Original benchmark file (copied in)
+    │   ├── *.tla             # Dependency modules it EXTENDS (copied in)
     │   └── prompt.txt        # Prompt sent to the agent
     ├── agent/
     │   ├── solution.tla      # The agent's final output
     │   ├── output.jsonl      # Raw agent stdout capture
+    │   ├── stderr.txt        # Agent stderr, if any — start here to debug a 0-token run
     │   └── transcript.txt    # Parsed transcript with token summary
     └── grading/
-        └── check.result      # Checker verdict and details
+        ├── check.result        # Checker verdict and details
+        └── agent_check.result  # Agent's own in-workspace check, if it ran one
 ```
 
 ---
@@ -222,7 +228,7 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --no-container
 
 Only needed if you run with `--no-container` or develop the tooling itself.
 
-**Additional requirements:** GNU Make, `curl`, `tar`, Python 3.12+, JDK 21+, Linux x86-64 or macOS arm64.
+**Additional requirements:** GNU Make, `curl`, `tar`, Python 3.12+, JDK 21+, and Linux x86-64 with glibc ≥ 2.38 (Ubuntu 24.04+, Debian 13+) or macOS arm64. On older Linux, use Docker instead.
 
 ```bash
 make setup
