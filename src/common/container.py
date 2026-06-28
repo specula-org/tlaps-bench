@@ -323,6 +323,36 @@ class ContainerRunner:
                 self.kill_by_id(cid)
             raise
 
+    def run_preflight(self, config: ContainerConfig, cmd: list[str], stdin_data: str, timeout: int = 180) -> None:
+        """Validate a backend end-to-end before a full run. Raises on failure.
+
+        Runs the real agent command (`cmd`) on a trivial prompt through the SAME
+        install + firewall path as a real run (build_composite_command applies
+        /opt/firewall.sh, then drops NET_ADMIN). This is what makes the check
+        meaningful: it exercises the actual network sandbox, so a broken model
+        id, an unknown CLI flag, missing credentials, or a firewall that blocks
+        the auth host all surface here — instead of silently producing a whole
+        sweep of 0-token FAILs. (The earlier preflight bypassed firewall.sh and
+        so could not have caught an auth-host block.)
+        """
+        docker_args, cid_file = self.build_docker_args(config)
+        composite = self.build_composite_command(cmd, config.install_script)
+        full_cmd = docker_args + ["bash", "-c", composite]
+        try:
+            result = subprocess.run(full_cmd, input=stdin_data, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            cid = self._read_cidfile(cid_file)
+            if cid:
+                self.kill_by_id(cid)
+            raise RuntimeError(f"preflight timed out after {timeout}s") from e
+        finally:
+            self.cleanup_credential_tmps()
+        if result.returncode != 0:
+            output = (result.stderr or result.stdout or "").strip()
+            if len(output) > 2000:
+                output = "... (truncated) ...\n" + output[-2000:]
+            raise RuntimeError(f"preflight failed (exit {result.returncode}):\n{output}")
+
     def kill(self, run: ContainerRun) -> None:
         """Kill a running container."""
         if run.container_id:

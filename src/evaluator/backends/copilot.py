@@ -105,7 +105,16 @@ class CopilotBackend(AgentBackend):
             return f"copilot: auth probe error: {e}"
 
     def firewall_hosts(self) -> list[str]:
-        return detect_firewall_hosts(self.model)
+        # GitHub Copilot validates/exchanges the GITHUB token at api.github.com
+        # (/copilot_internal/user + /copilot_internal/v2/token) BEFORE it can
+        # reach the inference API at api.githubcopilot.com. Unlike codex/claude —
+        # whose auth host and inference host are the same already-allowlisted
+        # provider domain — Copilot's auth host is distinct, so it must be added
+        # explicitly. Without it the firewall drops the auth request and the CLI
+        # exits before any model call (0 tokens). The agent's own tools still
+        # can't reach it: the GitHub MCP server is off (--disable-builtin-mcps)
+        # and web_fetch is excluded, so this only enables the auth handshake.
+        return detect_firewall_hosts(self.model) + ["api.github.com"]
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

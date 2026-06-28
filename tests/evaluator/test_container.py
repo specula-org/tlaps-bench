@@ -4,6 +4,8 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from common.container import ContainerConfig, ContainerRunner, forward_env
@@ -369,3 +371,46 @@ class TestKill:
         run = MagicMock(container_id="", proc=proc)
         runner.kill(run)
         proc.kill.assert_called_once()
+
+
+class TestCopilotFirewallHosts:
+    def test_includes_github_auth_host(self):
+        # Copilot exchanges its GITHUB token at api.github.com before reaching
+        # the inference API; without this host the firewall drops the auth call.
+        hosts = CopilotBackend().firewall_hosts()
+        assert "api.github.com" in hosts
+        assert "api.githubcopilot.com" in hosts  # inference host still present
+
+
+class TestRunPreflight:
+    @patch("subprocess.run")
+    def test_passes_through_install_and_firewall_path(self, mock_run):
+        # A passing probe must still be routed through the real install +
+        # firewall composite — that is what makes it able to catch an auth-host
+        # block. The old preflight bypassed firewall.sh and so could not.
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        runner = ContainerRunner()
+        config = ContainerConfig(
+            workspace="/tmp/ws",
+            result_dir="/tmp/res",
+            firewall_hosts=["api.githubcopilot.com", "api.github.com"],
+            install_script="install-copilot.sh",
+        )
+        runner.run_preflight(config, ["copilot", "-p", "ok"], "say ok")
+
+        composite = mock_run.call_args.args[0][-1]
+        assert "/opt/install-scripts/install-copilot.sh" in composite
+        assert "/opt/firewall.sh" in composite
+        assert mock_run.call_args.kwargs["input"] == "say ok"
+
+    @patch("subprocess.run")
+    def test_raises_on_nonzero_exit_with_output(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="Authentication token found but could not be validated.",
+        )
+        runner = ContainerRunner()
+        config = ContainerConfig(firewall_hosts=["api.githubcopilot.com"])
+        with pytest.raises(RuntimeError, match="preflight failed"):
+            runner.run_preflight(config, ["copilot"], "say ok")

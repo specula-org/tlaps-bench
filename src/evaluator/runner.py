@@ -814,6 +814,50 @@ def _parse_grader_result(exit_code: int, stdout: str, result: dict) -> None:
             result["obligations_total"] = int(fail_match.group(2))
 
 
+# A one-word prompt that needs no tools and no workspace files — keeps the
+# preflight model call as cheap and as deterministic as possible.
+PREFLIGHT_PROMPT = "Reply with the single word: ok. Do not use any tools."
+
+
+def _run_preflight(backend) -> None:
+    """Validate a backend end-to-end (install + auth + model + firewall) before
+    the run, aborting the process on failure.
+
+    Runs the backend's real build_command inside a throwaway container — same
+    install script, env, credentials and firewall as a real run — on a one-word
+    prompt. A broken model id, an unknown CLI flag, missing credentials, or an
+    auth host the firewall blocks all surface here in ~1 min, instead of as a
+    full sweep of silent 0-token FAILs.
+    """
+    runner = ContainerRunner()
+    workspace = tempfile.mkdtemp(prefix="preflight_ws_")
+    result_dir = tempfile.mkdtemp(prefix="preflight_res_")
+    # Mirror a real run's workspace: the per-benchmark flow git-inits it, and
+    # some CLIs (e.g. codex exec) refuse to run outside a git repo. Without this
+    # the preflight would false-fail for those backends.
+    subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
+    try:
+        config = ContainerConfig(
+            workspace=workspace,
+            result_dir=result_dir,
+            env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
+            firewall_hosts=backend.firewall_hosts(),
+            install_script=backend.install_script,
+            credential_mounts=backend.get_credential_mounts(),
+        )
+        cmd = backend.build_command("/workspace", "/results")
+        print(f"Preflight: validating '{backend.name}' (install + auth + model + firewall)...", flush=True)
+        runner.run_preflight(config, cmd, PREFLIGHT_PROMPT)
+        print("Preflight: OK", flush=True)
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
+        print("Aborting before the run. Re-run with --skip-preflight to bypass this check.")
+        sys.exit(1)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(result_dir, ignore_errors=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run an agent CLI on TLAPS benchmarks")
     parser.add_argument("--backend", default="codex", choices=list_backends(), help="Agent backend (default: codex)")
@@ -867,6 +911,12 @@ def main():
         action="store_true",
         help="Force rebuild the Docker base image before running",
     )
+    parser.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="Skip the container preflight check (validate install + auth + model + firewall "
+        "on a trivial prompt before the run). Container mode only.",
+    )
     args = parser.parse_args()
 
     backend = get_backend(args.backend, model=args.model)
@@ -890,6 +940,14 @@ def main():
 
         ensure_image(force=args.force_build)
         print("Container mode: ON (image: tlaps-bench-base)")
+
+        # Preflight: validate install + auth + model + firewall on a trivial
+        # prompt before committing to the full run. A broken backend (bad model
+        # id, unknown CLI flag, missing credentials, or an auth host the
+        # firewall blocks) otherwise produces a whole sweep of silent 0-token
+        # FAILs that look like honest "couldn't prove it" results.
+        if not args.skip_preflight:
+            _run_preflight(backend)
     else:
         # Local mode: require tlapm and checker on host
         ensure_tlapm()
