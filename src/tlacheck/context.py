@@ -61,7 +61,7 @@ class CheckContext:
     # -- text signatures (match unnamed declarations against the baseline) ----
     #
     # Named declarations are matched by name; UNNAMED ones (e.g. `ASSUME N \in
-    # Nat`, or an unnamed `THEOREM ... PROOF OMITTED` given as an auto-complete lemma) have
+    # Nat`, or an unnamed `THEOREM ... PROOF OMITTED` given as an proof-completion lemma) have
     # name == None and cannot be matched by name. We fall back to the normalized
     # statement text, sliced from source via the SANY location.
 
@@ -155,7 +155,7 @@ def build_context(
         summaries[""] = _safe_summary(sol_path, solution_dir, fallback_timeout)
         if summaries[""] is not None:
             summary = summaries[""]
-        # Baseline summary lets us subtract GIVEN admitted lemmas (auto-complete ships
+        # Baseline summary lets us subtract GIVEN admitted lemmas (proof-completion ships
         # preceding PROOF OMITTED lemmas; their lines are unchanged in the
         # solution, so a line-set diff isolates agent-introduced admissions).
         if os.path.exists(base_path):

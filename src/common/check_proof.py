@@ -6,12 +6,12 @@ Designed for AI agents to get quick feedback during proof writing.
 
 Usage:
     python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla \\
-        [--mode {auto-complete,synthesis-from-scratch}] [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+        [--mode {proof-completion,proof-from-scratch}] [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
 
 Modes:
-    auto-complete (default) — proof completion. The preamble (above PROOF
+    proof-completion (default) — proof completion. The preamble (above PROOF
                   OBVIOUS) must be byte-identical to the baseline.
-    synthesis-from-scratch — proof from scratch. The agent may add new LEMMAs
+    proof-from-scratch — proof from scratch. The agent may add new LEMMAs
                   above the target theorem; preamble integrity is not enforced.
                   Other cheating checks (PROOF OMITTED, axiom injection, bare
                   QED, dependency tampering) still apply.
@@ -234,8 +234,8 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
     """Check for cheating by comparing against the canonical baseline.
 
     Args:
-        strict_preamble: True (auto-complete) = strict preamble + proof-section
-            checks; False (synthesis-from-scratch) = preamble may grow (the
+        strict_preamble: True (proof-completion) = strict preamble + proof-section
+            checks; False (proof-from-scratch) = preamble may grow (the
             agent can add lemmas), so the preamble-integrity check is skipped
             and PROOF OMITTED is scanned across the whole current file.
         benchmark_dir: canonical (tamper-proof) baseline dir; when given the
@@ -269,16 +269,16 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
         )
         return issues
 
-    # 1. Preamble modification — auto-complete only.
-    # synthesis-from-scratch permits new declarations above the target theorem,
+    # 1. Preamble modification — proof-completion only.
+    # proof-from-scratch permits new declarations above the target theorem,
     # so a byte-for-byte preamble check would reject legitimate proofs.
     if strict_preamble:
         for ci in detect_preamble_modification(main_lines, current_lines, po_line):
             issues.append((ci.line or 0, ci.description))
 
     # 2. PROOF OMITTED / bare OMITTED.
-    # auto-complete: only the proof section can plausibly contain it (and must not).
-    # synthesis-from-scratch: scan the whole current file — the agent may add proofs anywhere.
+    # proof-completion: only the proof section can plausibly contain it (and must not).
+    # proof-from-scratch: scan the whole current file — the agent may add proofs anywhere.
     if strict_preamble:
         proof_section = "\n".join(current_lines[po_line:])
         for ci in detect_proof_omitted(proof_section):
@@ -513,7 +513,7 @@ def parse_strict_status(tlapm_exit, tlapm_output):
     ``--strict`` reports incompleteness MODULE-WIDE as "N missing, M omitted".
     Only MISSING steps (no proof at all — a bare QED, an unproven helper lemma,
     an unfinished target) are an agent gap. OMITTED steps are the benchmark's
-    GIVEN admitted lemmas (auto-complete preceding ``PROOF OMITTED``) and must NOT by
+    GIVEN admitted lemmas (proof-completion preceding ``PROOF OMITTED``) and must NOT by
     themselves fail a valid solution — agent-ADDED omitted is caught separately
     by the proof-omitted check.
 
@@ -594,9 +594,9 @@ def main():
     parser.add_argument("file", help="Path to the benchmark .tla file")
     parser.add_argument(
         "--mode",
-        default="auto-complete",
-        choices=["auto-complete", "synthesis-from-scratch"],
-        help="Benchmark mode — controls cheating rules (default: auto-complete)",
+        default="proof-completion",
+        choices=["proof-completion", "proof-from-scratch"],
+        help="Benchmark mode — controls cheating rules (default: proof-completion)",
     )
     parser.add_argument("--tlapm", default=None, help="Path to tlapm binary")
     parser.add_argument("--tlapm-lib", default=None, help="Path to tlapm lib directory")
@@ -783,7 +783,7 @@ def main():
     benchmark_dir = resolve_benchmark_dir(args.benchmark_dir, filepath, target_name)
 
     cheating_issues = check_cheating(
-        filepath, strict_preamble=(args.mode == "auto-complete"), benchmark_dir=benchmark_dir
+        filepath, strict_preamble=(args.mode == "proof-completion"), benchmark_dir=benchmark_dir
     )
     real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
     warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
@@ -793,8 +793,8 @@ def main():
         with open(filepath) as f:
             cur_lines = f.read().split("\n")
 
-        if args.mode == "auto-complete":
-            # auto-complete: PROOF OBVIOUS in the baseline is the boundary; slice
+        if args.mode == "proof-completion":
+            # proof-completion: PROOF OBVIOUS in the baseline is the boundary; slice
             # current at the same index (the preamble is required to be unchanged).
             main_content = get_baseline_text(filepath, benchmark_dir)
             if main_content:
@@ -810,7 +810,7 @@ def main():
                     for ci in detect_missing_proof(main_lines, cur_lines, po_line):
                         real_issues.append((ci.line or 0, ci.description))
         else:
-            # synthesis-from-scratch: the agent may grow the preamble (new lemmas above target),
+            # proof-from-scratch: the agent may grow the preamble (new lemmas above target),
             # so there's no stable boundary. Scan the whole file; the bare-QED
             # check via --summary below catches what detect_missing_proof did.
             clean = strip_comments("\n".join(cur_lines))
@@ -866,7 +866,7 @@ def main():
     emit("VERDICT")
     emit("=" * 60)
 
-    # Legacy-only signals not yet a tlacheck vector (auto-complete preamble byte-match,
+    # Legacy-only signals not yet a tlacheck vector (proof-completion preamble byte-match,
     # agent-added PROOF OMITTED), computed with the same detectors the legacy
     # path uses, so the gates capture everything the old checker did.
     legacy_preamble_modified = False
@@ -874,7 +874,7 @@ def main():
     try:
         with open(filepath) as _f:
             _sol_text = _f.read()
-        if args.mode == "auto-complete":
+        if args.mode == "proof-completion":
             _main = get_baseline_text(filepath, benchmark_dir)
             if _main:
                 _main_lines = _main.split("\n")
