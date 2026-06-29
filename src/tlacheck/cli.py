@@ -7,7 +7,7 @@ detection.
 
 Usage:
     python -m tlacheck.cli <solution_dir> --target NAME --benchmark-dir DIR
-    python -m tlacheck.cli --scan results/synthesis-from-scratch --benchmark-root benchmark
+    python -m tlacheck.cli --scan results/proof-from-scratch --benchmark-root benchmark
 
 Exit code: 0 = clean (PASS/no cheating), 2 = cheating found, 3 = error.
 """
@@ -35,9 +35,9 @@ def _infer(bdir: str, benchmark_root: str | None):
     """From a result benchmark dir, infer (target, benchmark_dir)."""
     name = os.path.basename(bdir.rstrip("/"))
     group = os.path.basename(os.path.dirname(bdir.rstrip("/")))
-    # find the enclosing mode (auto-complete/synthesis-from-scratch) in the path
+    # find the enclosing mode (proof-completion/proof-from-scratch) in the path
     parts = bdir.split(os.sep)
-    mode = next((p for p in parts if p in ("auto-complete", "synthesis-from-scratch")), None)
+    mode = next((p for p in parts if p in ("proof-completion", "proof-from-scratch")), None)
     bench_dir = None
     if benchmark_root and mode:
         bench_dir = os.path.join(benchmark_root, mode, group)

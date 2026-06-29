@@ -6,7 +6,7 @@ itself parsed the solution (it had to, to verify it), so we fall back to its
 ``--summary`` accounting: every admitted statement (bare theorem / PROOF OMITTED
 / bare QED) shows up as an "incomplete proof of theorem at line N".
 
-Given (allowed) admitted lemmas — the auto-complete preamble's preceding OMITTED lemmas —
+Given (allowed) admitted lemmas — the proof-completion preamble's preceding OMITTED lemmas —
 are subtracted by line: the agent only fills the target's proof and leaves the
 preamble intact, so a given lemma keeps its line; a line-set diff against the
 baseline summary isolates what the agent introduced.
