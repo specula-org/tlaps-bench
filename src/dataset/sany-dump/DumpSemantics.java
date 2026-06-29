@@ -8,7 +8,7 @@ import tla2sany.st.Location;
 import util.UniqueString;
 
 /**
- * SANY semantic dumper for tlaps-bench synthesis-from-scratch generator.
+ * SANY semantic dumper for tlaps-bench proof-from-scratch generator.
  *
  * Reads a single .tla file, parses it via SANY's frontEndMain,
  * and emits a JSON description of its module-level declarations
@@ -86,7 +86,7 @@ public class DumpSemantics {
       if (us != null) moduleTheoremNames.add(us.toString());
     }
 
-    // Build the set of names that the synthesis-from-scratch reachability pass can keep: in-module
+    // Build the set of names that the proof-from-scratch reachability pass can keep: in-module
     // operator definitions plus INSTANCE bindings. A reference to any of these
     // from the target theorem's statement (transitively) marks the definition
     // as "needed to state the goal", so it survives stripping; everything else
@@ -189,7 +189,7 @@ public class DumpSemantics {
       String bodyKind = classifyBody(op.getBody(), specFormulas);
       j.field("body_kind", bodyKind);
       // References from the body: the edges of the definition-dependency graph
-      // the synthesis-from-scratch reachability pass walks. Includes params' default exprs etc. via
+      // the proof-from-scratch reachability pass walks. Includes params' default exprs etc. via
       // the generic child walk.
       Set<String> refs = new LinkedHashSet<>();
       collectOpRefs(op.getBody(), refs, moduleDefNames);
@@ -253,7 +253,7 @@ public class DumpSemantics {
     for (String r : refs) j.stringElem(r);
     j.closeArray();
     // statement_references: the operator/INSTANCE definitions the *statement*
-    // depends on. These seed the synthesis-from-scratch reachability pass — only definitions
+    // depends on. These seed the proof-from-scratch reachability pass — only definitions
     // reachable from here (transitively) are needed to state the goal.
     Set<String> stmtRefs = new LinkedHashSet<>();
     collectOpRefs(stmt, stmtRefs, moduleDefNames);
@@ -322,12 +322,12 @@ public class DumpSemantics {
     return symbolName(app.getOperator());
   }
 
-  // ----- definition-dependency graph (for synthesis-from-scratch reachability) -----------------
+  // ----- definition-dependency graph (for proof-from-scratch reachability) -----------------
 
   /**
    * Walk an arbitrary semantic subtree and collect the names of in-module
    * operator / INSTANCE definitions it applies. This builds the edges of the
-   * definition-dependency graph the synthesis-from-scratch generator uses to decide which `==`
+   * definition-dependency graph the proof-from-scratch generator uses to decide which `==`
    * definitions are needed to state the goal (kept) versus pure proof
    * artifacts (stripped).
    *

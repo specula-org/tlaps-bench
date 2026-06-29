@@ -1,14 +1,14 @@
-# synthesis-from-scratch Benchmark Generator — Design
+# proof-from-scratch Benchmark Generator — Design
 
 ## Goal
 
-Transform a complete TLA+ + TLAPS source file into a synthesis-from-scratch benchmark: keep the model specification, hollow out all proofs, and force the AI to design the proof structure from scratch (including reinventing invariants, helper lemmas, and inductive decomposition).
+Transform a complete TLA+ + TLAPS source file into a proof-from-scratch benchmark: keep the model specification, hollow out all proofs, and force the AI to design the proof structure from scratch (including reinventing invariants, helper lemmas, and inductive decomposition).
 
 ## Generation rule (core principle, one sentence)
 
 > **Keep only what is needed to *state* the top-level theorem; delete every other definition, all other theorems/lemmas, all proof content, and all comments.**
 
-This is the **strict** synthesis-from-scratch contract Ruize nailed down in Issue #1 / #3 (Tianyin
+This is the **strict** proof-from-scratch contract Ruize nailed down in Issue #1 / #3 (Tianyin
 approved): "strip everything that is a proof artifact — inductive invariants,
 helper lemmas, and all proof bodies — keeping only the system model (Init,
 Next, Spec), the target property, and the bare THEOREM statement. AI must
@@ -39,7 +39,7 @@ the statement, so it is **stripped**. The rule self-selects correctly per target
 
 For each **top-level theorem** `T` in source file `X.tla`, generate one benchmark file `X_T.tla`:
 
-| Source element | synthesis-from-scratch treatment |
+| Source element | proof-from-scratch treatment |
 |---|---|
 | Module header / EXTENDS | Keep |
 | CONSTANT / VARIABLE / ASSUME / AXIOM | Keep |
@@ -181,7 +181,7 @@ Common to all: delete the 5 LEMMAs, the other 2 non-target THEOREMs, the target'
 
 ## AI's view
 
-A typical synthesis-from-scratch benchmark presents the AI with this shape:
+A typical proof-from-scratch benchmark presents the AI with this shape:
 ```
 MODULE X_T
 EXTENDS ...
@@ -217,19 +217,19 @@ scratch. (Exception: when the target property *is* an invariant, as in
    - Delete every operator definition / named INSTANCE binding **not in the reachable set** (the inductive invariants and helper operators)
    - Strip all comments; collapse blank-line runs
    - Rename the module header to `<File>_<TheoremName>` (or `<File>_<TheoremName>_L<line>` on collision)
-5. **Handle dependency modules**: copy the EXTENDS deps and the deps of *kept* INSTANCEs into the output directory, strip their proofs to `PROOF OMITTED` (reusing `src/dataset/auto_complete/generate.py`) and strip their comments. Deps of stripped INSTANCEs are not copied.
+5. **Handle dependency modules**: copy the EXTENDS deps and the deps of *kept* INSTANCEs into the output directory, strip their proofs to `PROOF OMITTED` (reusing `src/dataset/proof_completion/generate.py`) and strip their comments. Deps of stripped INSTANCEs are not copied.
 
 ## Out of scope
 
 - **Deciding which generated benchmarks have weak signal and should be skipped**: this is a human evaluation call, not a generator concern. The generator carries no hardcoded "skip if target is an inductive invariant" — though note the reachability rule *does* keep an invariant when it is the target's goal (`Spec => []Inv`), since the goal cannot be hidden.
-- **Anti-cheating extensions for synthesis-from-scratch**: an AI solving synthesis-from-scratch may need to introduce new top-level `==` definitions (its own invariant / lemma). The current `check_proof.py` rule that "preamble must not be modified" needs to be loosened. That work is **deferred** until the synthesis-from-scratch generator lands and we have a baseline.
+- **Anti-cheating extensions for proof-from-scratch**: an AI solving proof-from-scratch may need to introduce new top-level `==` definitions (its own invariant / lemma). The current `check_proof.py` rule that "preamble must not be modified" needs to be loosened. That work is **deferred** until the proof-from-scratch generator lands and we have a baseline.
 - **Wiring Apalache or TLAPS into the generator**: we only use SANY for parsing in this round.
 
 ## Input / output
 
 - **Input**: `source/<Module>/<File>.tla`
-- **Output**: `benchmark/synthesis-from-scratch/<Module>/<File>_<TheoremName>.tla` (one file per top-level theorem, plus copied INSTANCE dependency `.tla` files)
-- **CLI**: `python3 src/dataset/synthesis_from_scratch/generate.py [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/synthesis-from-scratch/]`
+- **Output**: `benchmark/proof-from-scratch/<Module>/<File>_<TheoremName>.tla` (one file per top-level theorem, plus copied INSTANCE dependency `.tla` files)
+- **CLI**: `python3 src/dataset/proof_from_scratch/generate.py [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/proof-from-scratch/]`
 
 ## Implementation milestones
 

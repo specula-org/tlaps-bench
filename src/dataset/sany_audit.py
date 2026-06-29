@@ -7,7 +7,7 @@ operator parameter that shadows a state VARIABLE, which the model-split EXTENDS
 layout turns into a cross-module multiply-definition). This module is the single
 SANY-validity check used two ways:
 
-  * post-generation gate — the auto-complete/synthesis-from-scratch generators call ``gate()`` on their output;
+  * post-generation gate — the proof-completion/proof-from-scratch generators call ``gate()`` on their output;
   * standalone audit     — ``python3 src/dataset/sany_audit.py benchmark``.
 
 Policy: a SANY-failing task is FLAGGED (written to a manifest + the audit log),

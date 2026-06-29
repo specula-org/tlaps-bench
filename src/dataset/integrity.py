@@ -115,8 +115,8 @@ def default_roots() -> list[str]:
         # source (proof dangling after ====) propagates into every derived task.
         os.path.join(repo, "source"),
         # The generated benchmark suites the agent actually sees.
-        os.path.join(repo, "benchmark", "auto-complete"),
-        os.path.join(repo, "benchmark", "synthesis-from-scratch"),
+        os.path.join(repo, "benchmark", "proof-completion"),
+        os.path.join(repo, "benchmark", "proof-from-scratch"),
     ]
 
 

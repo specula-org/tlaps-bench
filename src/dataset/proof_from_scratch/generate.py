@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generate synthesis-from-scratch benchmarks from source .tla files.
+"""Generate proof-from-scratch benchmarks from source .tla files.
 
-Core principle (strict mode, from src/dataset/synthesis_from_scratch/design.md, Issue #1/#3):
+Core principle (strict mode, from src/dataset/proof_from_scratch/design.md, Issue #1/#3):
   Keep only what is needed to STATE the top-level theorem; delete every
   other definition, all other theorems/lemmas, all proof content, and all
   comments. The AI must rediscover the inductive invariant and design the
   proof structure from scratch.
 
 For each top-level THEOREM in source/<Module>/<File>.tla we emit one
-file benchmark/synthesis-from-scratch/<Module>/<File>_<TheoremName>.tla in which:
+file benchmark/proof-from-scratch/<Module>/<File>_<TheoremName>.tla in which:
   - The module + EXTENDS + CONSTANT/VARIABLE/ASSUME/AXIOM are kept.
   - Only the `==` definitions / named INSTANCE bindings reachable from the
     target theorem's STATEMENT (transitive closure over the definition-
@@ -30,7 +30,7 @@ Top-level selection (OR rule, applied to THEOREM-keyword decls only):
 
 Post-selection filters:
   A. Manual-proof filter: drop candidates whose source has no structured
-     TLAPS proof (bare statement / PROOF OMITTED / PROOF OBVIOUS). synthesis-from-scratch's
+     TLAPS proof (bare statement / PROOF OMITTED / PROOF OBVIOUS). proof-from-scratch's
      contract is "AI writes a proof, compared against a human reference",
      so candidates without ground truth are out of scope for now.
      Known cost: PaxosTuple.tla:79 `Spec => V!Spec` (proof lives in the
@@ -44,19 +44,19 @@ Post-selection filters:
      no honest proof, so it cannot be a benchmark. This is now the ONLY reason
      an OMITTED-sub-step theorem is dropped: every other such theorem is a
      published/verified result and is KEPT as a (hard) from-scratch benchmark,
-     since synthesis-from-scratch grades by tlapm rather than by the human reference proof.
+     since proof-from-scratch grades by tlapm rather than by the human reference proof.
      See KNOWN_FALSE_TARGETS for the per-target TLC evidence.
   B. Within-file dedup: collapse exact-text-duplicate statements. Catches
      Peterson.tla L124/L134/L183 — three identical
      `THEOREM Spec => []MutualExclusion` decls the author wrote to
-     showcase different prover backends; as synthesis-from-scratch prompts they are
+     showcase different prover backends; as proof-from-scratch prompts they are
      indistinguishable, so keep the first by line.
   C. Cross-directory dedup: across all output directories, collapse
      byte-identical target benchmarks. Catches the seven `Sets_*.tla`
      pairs that arise because source/Consensus/Sets.tla and
      source/Data/Sets.tla are near-identical copies of the same
      utility library (only two prover-hint lines differ, both inside
-     proof bodies that synthesis-from-scratch strips, so the emitted synthesis-from-scratch prompts are
+     proof bodies that proof-from-scratch strips, so the emitted proof-from-scratch prompts are
      byte-identical). When duplicates are detected, the copy under
      `Data/` is kept (utility libraries are at home in `Data/`); the
      copies in other directories are removed and the audit log records
@@ -80,11 +80,11 @@ import sys
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
-BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "synthesis-from-scratch")
+BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "proof-from-scratch")
 SANY_DUMP = os.path.join(PROJECT_ROOT, "src", "dataset", "sany-dump", "run.sh")
 
-# Reuse auto-complete's proof-stripping logic for dependency .tla copies.
-from dataset.auto_complete.generate import (  # noqa: E402
+# Reuse proof-completion's proof-stripping logic for dependency .tla copies.
+from dataset.proof_completion.generate import (  # noqa: E402
     STDLIB_MODULES,
     parse_extends,
     parse_instances,
@@ -361,7 +361,7 @@ def apply_edits(lines, edits):
 def build_benchmark(source_lines, dump, target_thm, benchmark_module_name, reachable):
     """Build the benchmark .tla text by editing source_lines.
 
-    Strict synthesis-from-scratch (per Issue #1 / #3): keep only the model + target property + the
+    Strict proof-from-scratch (per Issue #1 / #3): keep only the model + target property + the
     bare THEOREM statement; strip every proof artifact. Concretely we:
       - replace the target theorem's proof body with `PROOF OBVIOUS`,
       - delete all other THEOREM/LEMMA declarations,
@@ -728,7 +728,7 @@ def process_file(
     skip_model_modules=(),
     allow_no_proof=False,
 ):
-    """Generate synthesis-from-scratch benchmarks for one source .tla file. Returns count emitted.
+    """Generate proof-from-scratch benchmarks for one source .tla file. Returns count emitted.
 
     If `generated_paths` is a list, each generated target benchmark path is
     appended to it (for downstream cross-directory dedup).
@@ -795,7 +795,7 @@ def process_file(
         elif _proof_has_omitted_substep(target_thm, source_lines):
             # An OMITTED sub-step is NO LONGER grounds for dropping: the proof is
             # structured (an OMITTED leaf still "counts as a proof"), the goal is
-            # a published/verified result, and synthesis-from-scratch grades by tlapm — not by the
+            # a published/verified result, and proof-from-scratch grades by tlapm — not by the
             # human reference — so a missing reference proof is fine. Keep it as
             # a (hard) from-scratch benchmark. Record that it carries an OMITTED
             # sub-step for traceability.
@@ -808,7 +808,7 @@ def process_file(
         elif not has_proof:
             # --allow-no-proof: the source carries only PROOF OBVIOUS/OMITTED
             # (no reference proof), but the goal is a vetted hard property
-            # (e.g. the ZooKeeper Zab safety theorems). synthesis-from-scratch grades by tlapm, not
+            # (e.g. the ZooKeeper Zab safety theorems). proof-from-scratch grades by tlapm, not
             # by the human reference, so keep it as a from-scratch benchmark.
             audit_writer.write(
                 f"[audit] {source_path}: top-level THEOREM {name} at line "
@@ -1011,7 +1011,7 @@ def main():
         # tla2sany. Flags failures (manifest + audit log); does not drop.
         sany_gate(output_root, audit_writer=audit_writer, label="sany-gate-l2")
 
-    print(f"\nTotal synthesis-from-scratch benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
+    print(f"\nTotal proof-from-scratch benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
 
 
