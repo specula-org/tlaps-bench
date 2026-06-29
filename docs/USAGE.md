@@ -13,7 +13,7 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --filter GCD_GCD3
 
 On the first run, the tool builds a Docker image that includes tlapm, SANY, and the proof checker. Subsequent runs reuse the cached image.
 
-Results are saved to `results/auto-complete/codex/<timestamp>/`. Nothing else to install.
+Results are saved to `results/proof-completion/codex/<timestamp>/`. Nothing else to install.
 
 ### Full benchmark suite
 
@@ -28,10 +28,10 @@ export ANTHROPIC_API_KEY=sk-ant-...
 uv run tlaps-bench run --backend claude_code --model claude-opus-4-8 --jobs 10
 ```
 
-### Synthesis-from-scratch mode
+### Proof-from-scratch mode
 
 ```bash
-uv run tlaps-bench run --backend codex --model gpt-5.5 --mode synthesis-from-scratch --jobs 10
+uv run tlaps-bench run --backend codex --model gpt-5.5 --mode proof-from-scratch --jobs 10
 ```
 
 ---
@@ -85,17 +85,17 @@ A mode defines what the agent is asked to do.
 
 | Mode | What the agent sees | What it must do |
 |------|---------------------|-----------------|
-| `auto-complete` | Full scaffolding. Preceding proofs marked `PROOF OMITTED`. Last theorem has `PROOF OBVIOUS`. | Replace `PROOF OBVIOUS` with a valid proof. Cannot change anything above it. |
-| `synthesis-from-scratch` | Only the model (definitions, constants, variables) and the target theorem statement with `PROOF OBVIOUS`. | Invent the entire proof structure, including helper lemmas. |
+| `proof-completion` | Full scaffolding. Preceding proofs marked `PROOF OMITTED`. Last theorem has `PROOF OBVIOUS`. | Replace `PROOF OBVIOUS` with a valid proof. Cannot change anything above it. |
+| `proof-from-scratch` | Only the model (definitions, constants, variables) and the target theorem statement with `PROOF OBVIOUS`. | Invent the entire proof structure, including helper lemmas. |
 
 Select a mode with `--mode`:
 
 ```bash
-uv run tlaps-bench run --backend codex --model gpt-5.5 --mode auto-complete
-uv run tlaps-bench run --backend codex --model gpt-5.5 --mode synthesis-from-scratch
+uv run tlaps-bench run --backend codex --model gpt-5.5 --mode proof-completion
+uv run tlaps-bench run --backend codex --model gpt-5.5 --mode proof-from-scratch
 ```
 
-Benchmark files live in `benchmark/auto-complete/` and `benchmark/synthesis-from-scratch/` respectively.
+Benchmark files live in `benchmark/proof-completion/` and `benchmark/proof-from-scratch/` respectively.
 
 ---
 
@@ -112,7 +112,7 @@ uv run tlaps-bench run [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--backend` | `codex` | Agent backend to use |
-| `--mode` | `auto-complete` | Benchmark mode |
+| `--mode` | `proof-completion` | Benchmark mode |
 | `--model` | (backend default) | Override the model |
 | `--filter` | (all benchmarks) | Substring match on path, comma-separated |
 | `--jobs` | `1` | Number of parallel agent runs |
@@ -130,8 +130,8 @@ Run `uv run tlaps-bench run --help` for the full flag list.
 Check a single proof file for correctness and cheating.
 
 ```bash
-uv run tlaps-bench check path/to/file.tla --mode auto-complete
-uv run tlaps-bench check path/to/file.tla --mode synthesis-from-scratch
+uv run tlaps-bench check path/to/file.tla --mode proof-completion
+uv run tlaps-bench check path/to/file.tla --mode proof-from-scratch
 uv run tlaps-bench check path/to/file.tla --sany-only
 ```
 
@@ -142,8 +142,8 @@ Exit codes: `0` = PASS, `1` = FAIL, `3` = ERROR.
 Compute pass rates from one or more result files.
 
 ```bash
-uv run tlaps-bench score results/synthesis-from-scratch/pi/20260626_220712/results.json
-uv run tlaps-bench score results/auto-complete/*/results.json
+uv run tlaps-bench score results/proof-from-scratch/pi/20260626_220712/results.json
+uv run tlaps-bench score results/proof-completion/*/results.json
 ```
 
 Pass rate = passed tasks / (total tasks minus skipped tasks). Cheating verdicts count as failures.
@@ -163,7 +163,7 @@ Regenerate benchmark files from annotated source specs.
 
 ```bash
 uv run tlaps-bench generate
-uv run tlaps-bench generate --mode synthesis-from-scratch
+uv run tlaps-bench generate --mode proof-from-scratch
 ```
 
 ---
@@ -199,7 +199,7 @@ results/<mode>/<backend>/<timestamp>/
 If a run is interrupted or you want to retry only the failures:
 
 ```bash
-uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/auto-complete/codex/20260626_120000 --resume
+uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proof-completion/codex/20260626_120000 --resume
 ```
 
 The runner skips any benchmark already recorded as PASS in that directory and reruns the rest.

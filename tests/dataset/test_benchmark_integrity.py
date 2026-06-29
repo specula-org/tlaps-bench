@@ -19,8 +19,8 @@ from dataset.integrity import check_dir, iter_leaks
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ROOTS = [
     os.path.join(REPO, "source"),  # the origin — a malformed source leaks into every derived task
-    os.path.join(REPO, "benchmark", "auto-complete"),
-    os.path.join(REPO, "benchmark", "synthesis-from-scratch"),
+    os.path.join(REPO, "benchmark", "proof-completion"),
+    os.path.join(REPO, "benchmark", "proof-from-scratch"),
 ]
 
 
