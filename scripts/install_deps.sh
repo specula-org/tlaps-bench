@@ -124,9 +124,30 @@ else
     echo "[install_deps] ERROR: downloaded archive does not contain an executable bin/tlapm." >&2
     exit 1
   fi
-  installed="$("${STAGED_TLAPM}/bin/tlapm" --version 2>/dev/null | sed -n '1p' || true)"
+  # Capture stderr so a binary that fails to *run* (e.g. host glibc too old for
+  # the prebuilt asset) is reported as an environment problem, not swallowed and
+  # misattributed to a moved release asset.
+  version_err="${TLAPM_TMP}/version.err"
+  if version_out="$("${STAGED_TLAPM}/bin/tlapm" --version 2>"${version_err}")"; then
+    version_ok=1
+  else
+    version_ok=0
+  fi
+  installed="$(printf '%s' "${version_out}" | sed -n '1p')"
+  if [[ "${version_ok}" -ne 1 || -z "${installed}" ]]; then
+    echo "[install_deps] ERROR: the downloaded tlapm binary failed to run." >&2
+    echo "[install_deps]        The prebuilt asset needs a compatible host: Linux x86_64" >&2
+    echo "[install_deps]        with glibc >= 2.38 (Ubuntu 24.04+, Debian 13+) or macOS arm64." >&2
+    echo "[install_deps]        On older Linux, use the Docker workflow instead." >&2
+    if [[ -s "${version_err}" ]]; then
+      echo "[install_deps]        'tlapm --version' reported:" >&2
+      sed 's/^/[install_deps]          /' "${version_err}" >&2
+    fi
+    echo "[install_deps]        Any existing ~/.tlapm installation was left unchanged." >&2
+    exit 1
+  fi
   if [[ "${installed}" != *"${TLAPM_COMMIT}"* ]]; then
-    echo "[install_deps] ERROR: downloaded tlapm version '${installed:-unknown}'" >&2
+    echo "[install_deps] ERROR: downloaded tlapm version '${installed}'" >&2
     echo "[install_deps]        does not contain expected commit ${TLAPM_COMMIT}." >&2
     echo "[install_deps]        The rolling ${TLAPM_TAG} asset has moved. Run 'git pull'" >&2
     echo "[install_deps]        and retry; if this persists, TLAPM_COMMIT and the" >&2
