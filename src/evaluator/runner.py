@@ -8,7 +8,7 @@ For each benchmark:
 4. Saves all outputs
 
 Usage:
-    python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--mode auto-complete|synthesis-from-scratch] \\
+    python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--mode proof-completion|proof-from-scratch] \\
                       [--model NAME] [--jobs N] [--filter PATTERN] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """
@@ -847,7 +847,7 @@ def _run_preflight(backend) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Run an agent CLI on TLAPS benchmarks")
     parser.add_argument("--backend", default="codex", choices=list_backends(), help="Agent backend (default: codex)")
-    parser.add_argument("--mode", default="auto-complete", choices=list_modes(), help="Benchmark mode (default: auto-complete)")
+    parser.add_argument("--mode", default="proof-completion", choices=list_modes(), help="Benchmark mode (default: proof-completion)")
     parser.add_argument("--model", default=None, help="Override the backend default model")
     parser.add_argument("--jobs", type=int, default=1, help="Parallel agent runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")

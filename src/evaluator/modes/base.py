@@ -1,7 +1,7 @@
 """Abstract base class for benchmark modes.
 
-A `Mode` is one benchmark suite — e.g. auto-complete (proof completion) or
-synthesis-from-scratch (proof from scratch). It owns everything that varies
+A `Mode` is one benchmark suite — e.g. proof-completion (proof completion) or
+proof-from-scratch (proof from scratch). It owns everything that varies
 between suites:
 
   - where the benchmark files live

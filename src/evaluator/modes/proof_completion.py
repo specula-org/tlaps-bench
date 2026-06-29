@@ -1,4 +1,4 @@
-"""auto-complete — proof completion.
+"""proof-completion — proof completion.
 
 The benchmark file has its last theorem's body replaced with `PROOF OBVIOUS`.
 Preceding theorems are admitted with `PROOF OMITTED`. The agent must fill in
@@ -9,6 +9,6 @@ expected to be byte-identical to the baseline.
 from .base import Mode
 
 
-class AutoComplete(Mode):
-    name = "auto-complete"
+class ProofCompletion(Mode):
+    name = "proof-completion"
     description = "Proof completion — fill in the last theorem's PROOF OBVIOUS"

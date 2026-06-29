@@ -1,12 +1,12 @@
 """Mode registry."""
 
-from .auto_complete import AutoComplete
 from .base import Mode
-from .synthesis_from_scratch import SynthesisFromScratch
+from .proof_completion import ProofCompletion
+from .proof_from_scratch import ProofFromScratch
 
 _REGISTRY: dict[str, type[Mode]] = {
-    AutoComplete.name: AutoComplete,
-    SynthesisFromScratch.name: SynthesisFromScratch,
+    ProofCompletion.name: ProofCompletion,
+    ProofFromScratch.name: ProofFromScratch,
 }
 
 
