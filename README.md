@@ -15,10 +15,10 @@ Each task presents a TLA+ theorem whose proof body is replaced by `PROOF OBVIOUS
 the AI must replace it with a real proof that `tlapm` accepts. Tasks come in two
 types:
 
-- **Proof completion** (`--mode auto-complete`) — the full scaffolding (inductive
+- **Proof completion** (`--mode proof-completion`) — the full scaffolding (inductive
   invariants, lemma decomposition, and preceding lemmas marked `PROOF OMITTED`)
   is given, and the AI fills in one target proof.
-- **Proof from scratch** (`--mode synthesis-from-scratch`) — only the model and
+- **Proof from scratch** (`--mode proof-from-scratch`) — only the model and
   the target theorem statement remain; the AI must invent the entire proof
   structure, including any helper lemmas.
 
@@ -60,7 +60,7 @@ Scale up, or switch task type:
 uv run tlaps-bench run --jobs 10 --timeout 7200
 
 # Proof from scratch
-uv run tlaps-bench run --mode synthesis-from-scratch --jobs 10
+uv run tlaps-bench run --mode proof-from-scratch --jobs 10
 ```
 
 Each run writes `results.json` and `summary.md` (with the headline pass rate);

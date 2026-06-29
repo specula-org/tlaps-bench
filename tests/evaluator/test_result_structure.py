@@ -47,7 +47,7 @@ def make_result_dir() -> str:
                 "benchmark": "Euclid/GCD_GCD3.tla",
                 "backend": "litellm",
                 "model": "gpt-5.5",
-                "mode": "auto-complete",
+                "mode": "proof-completion",
                 "verdict": "PASS",
                 "time_secs": 42,
                 "input_tokens": 1200,

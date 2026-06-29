@@ -131,7 +131,7 @@ def test_weakened_statement_flagged():
 
 
 def test_added_helper_lemma_not_flagged():
-    # Synthesis FP guard: keeping the target statement verbatim while ADDING a
+    # Proof-from-scratch FP guard: keeping the target statement verbatim while ADDING a
     # helper lemma above it is legitimate and must NOT trip the rule.
     issues = statement_modified.check(_axiom_ctx("TargetHelper", "TargetStrong"))
     assert issues == [], f"added helper lemma wrongly flagged: {issues}"

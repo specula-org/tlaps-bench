@@ -36,7 +36,7 @@ def _tlapm():
 CASES = [
     {
         "name": "correct_l2",
-        "mode": "synthesis-from-scratch",
+        "mode": "proof-from-scratch",
         "target": "Good.tla",
         "baseline": {"Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"},
         "solution": {"Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\n  OBVIOUS\n====\n"},
@@ -44,7 +44,7 @@ CASES = [
     },
     {
         "name": "sany_invalid_shadow",
-        "mode": "synthesis-from-scratch",
+        "mode": "proof-from-scratch",
         "target": "Shadow.tla",
         "baseline": {
             "M.tla": "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n====\n",
@@ -58,7 +58,7 @@ CASES = [
     },
     {
         "name": "admitted_goal",
-        "mode": "synthesis-from-scratch",
+        "mode": "proof-from-scratch",
         "target": "Admit.tla",
         "baseline": {"Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N > 0\nPROOF OBVIOUS\n====\n"},
         "solution": {"Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA Goal == N > 0\nTHEOREM Target == N > 0\n  BY Goal\n====\n"},
@@ -66,7 +66,7 @@ CASES = [
     },
     {
         "name": "added_proof_omitted",
-        "mode": "synthesis-from-scratch",
+        "mode": "proof-from-scratch",
         "target": "Omit.tla",
         "baseline": {"Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N >= 0\nPROOF OBVIOUS\n====\n"},
         "solution": {"Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA H == N >= 0\n  PROOF OMITTED\nTHEOREM Target == N >= 0\n  BY H\n====\n"},
@@ -74,7 +74,7 @@ CASES = [
     },
     {
         "name": "bare_qed",
-        "mode": "synthesis-from-scratch",
+        "mode": "proof-from-scratch",
         "target": "Qed.tla",
         "baseline": {"Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"},
         "solution": {"Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF\n<1> QED\n====\n"},

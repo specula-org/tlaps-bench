@@ -5,7 +5,7 @@ SUBCOMMANDS = [
     ("run", "Run an agent backend (codex / claude_code / copilot / litellm) on the benchmarks"),
     ("check", "Check a single benchmark proof for correctness and cheating"),
     ("validate", "Batch-validate source proofs with tlapm"),
-    ("generate", "Generate benchmarks (--mode auto-complete|synthesis-from-scratch; default auto-complete)"),
+    ("generate", "Generate benchmarks (--mode proof-completion|proof-from-scratch; default proof-completion)"),
     ("score", "Score results (pass rate, per-module breakdown) from results.json"),
 ]
 
@@ -50,7 +50,7 @@ def _dispatch(prog: str, module_name: str, attr: str, passthrough: list[str]) ->
 
 def _extract_mode(args: list[str]) -> tuple[str, list[str]]:
 
-    mode = "auto-complete"
+    mode = "proof-completion"
     rest: list[str] = []
     i = 0
     while i < len(args):
@@ -67,11 +67,11 @@ def _extract_mode(args: list[str]) -> tuple[str, list[str]]:
             continue
         rest.append(a)
         i += 1
-    valid = {"auto-complete", "synthesis-from-scratch"}
+    valid = {"proof-completion", "proof-from-scratch"}
     if mode not in valid:
         raise SystemExit(
             f"{PROG} generate: argument --mode: invalid choice: {mode!r} "
-            "(choose auto-complete or synthesis-from-scratch)"
+            "(choose proof-completion or proof-from-scratch)"
         )
     return mode, rest
 
@@ -97,13 +97,13 @@ def main(argv: list[str] | None = None) -> int:
     if sub == "validate":
         return _dispatch(f"{PROG} validate", "common.validate", "main", rest)
     if sub == "generate":
-        # --help before --mode: show which modes exist plus the auto-complete flags
+        # --help before --mode: show which modes exist plus the proof-completion flags
         # (the default) — the mode-specific flags then come from that module.
         mode, gen_args = _extract_mode(rest)
         module = (
-            "dataset.auto_complete.generate"
-            if mode == "auto-complete"
-            else "dataset.synthesis_from_scratch.generate"
+            "dataset.proof_completion.generate"
+            if mode == "proof-completion"
+            else "dataset.proof_from_scratch.generate"
         )
         return _dispatch(f"{PROG} generate --mode {mode}", module, "main", gen_args)
     if sub == "score":

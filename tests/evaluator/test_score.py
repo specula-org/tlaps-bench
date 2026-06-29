@@ -58,7 +58,7 @@ def test_empty_is_zero_not_crash():
 
 def test_scorecard_module_breakdown_and_no_cheating_row():
     results = [_r("PASS", module="A"), _r("CHEATING", module="A"), _r("PASS", module="B")]
-    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "auto-complete", "results": results}
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
     md = scorecard_md(run, EQUAL, "equal")
     assert "CHEATING" not in md  # a cheat is folded into fail, never its own category
     assert "| A | 1 | 2 | 50.0% |" in md
@@ -69,22 +69,22 @@ def test_scorecard_module_breakdown_and_no_cheating_row():
 
 def test_comparison_row_per_run():
     runs = [
-        {"id": "r1", "backend": "codex", "mode": "auto-complete", "results": [_r("PASS"), _r("FAIL")]},
-        {"id": "r2", "backend": "claude_code", "mode": "auto-complete", "results": [_r("PASS"), _r("PASS")]},
+        {"id": "r1", "backend": "codex", "mode": "proof-completion", "results": [_r("PASS"), _r("FAIL")]},
+        {"id": "r2", "backend": "claude_code", "mode": "proof-completion", "results": [_r("PASS"), _r("PASS")]},
     ]
     md = comparison_md(runs, EQUAL, "equal")
     assert "Comparison — 2 runs" in md
-    assert "| r1 | codex | auto-complete | 50.0% | 1/2 |" in md
-    assert "| r2 | claude_code | auto-complete | 100.0% | 2/2 |" in md
+    assert "| r1 | codex | proof-completion | 50.0% | 1/2 |" in md
+    assert "| r2 | claude_code | proof-completion | 100.0% | 2/2 |" in md
 
 
 def test_load_run_from_dir(tmp_path):
     d = tmp_path / "run"
     d.mkdir()
-    (d / "results.json").write_text(json.dumps([_r("PASS", backend="codex", mode="auto-complete")]))
+    (d / "results.json").write_text(json.dumps([_r("PASS", backend="codex", mode="proof-completion")]))
     run = load_run(str(d))
     assert run["backend"] == "codex"
-    assert run["mode"] == "auto-complete"
+    assert run["mode"] == "proof-completion"
     assert len(run["results"]) == 1
 
 
@@ -114,7 +114,7 @@ def test_all_skip_is_zero_not_crash():
 def test_scorecard_excludes_skip_and_reports_it():
     # Module A: PASS + SKIP -> 1/1 (skip gone). Module B: all SKIP -> absent.
     results = [_r("PASS", module="A"), _r("SKIP", module="A"), _r("SKIP", module="B")]
-    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "auto-complete", "results": results}
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
     md = scorecard_md(run, EQUAL, "equal")
     assert "**Pass rate**: 1/1 (100.0%) · 2 skipped" in md
     assert "| A | 1 | 1 | 100.0% |" in md  # skip not counted against module A
@@ -124,7 +124,7 @@ def test_scorecard_excludes_skip_and_reports_it():
 
 def test_scorecard_no_skip_has_no_skipped_note():
     results = [_r("PASS"), _r("FAIL")]
-    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "auto-complete", "results": results}
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
     md = scorecard_md(run, EQUAL, "equal")
     assert "**Pass rate**: 1/2 (50.0%)" in md
     assert "skipped" not in md
@@ -132,12 +132,12 @@ def test_scorecard_no_skip_has_no_skipped_note():
 
 def test_comparison_discloses_skip_inline():
     runs = [
-        {"id": "r1", "backend": "codex", "mode": "auto-complete", "results": [_r("PASS"), _r("FAIL"), _r("SKIP")]},
-        {"id": "r2", "backend": "claude_code", "mode": "auto-complete", "results": [_r("PASS"), _r("PASS")]},
+        {"id": "r1", "backend": "codex", "mode": "proof-completion", "results": [_r("PASS"), _r("FAIL"), _r("SKIP")]},
+        {"id": "r2", "backend": "claude_code", "mode": "proof-completion", "results": [_r("PASS"), _r("PASS")]},
     ]
     md = comparison_md(runs, EQUAL, "equal")
-    assert "| r1 | codex | auto-complete | 50.0% | 1/2 (+1 skipped) |" in md
-    assert "| r2 | claude_code | auto-complete | 100.0% | 2/2 |" in md  # no note when nothing skipped
+    assert "| r1 | codex | proof-completion | 50.0% | 1/2 (+1 skipped) |" in md
+    assert "| r2 | claude_code | proof-completion | 100.0% | 2/2 |" in md  # no note when nothing skipped
 
 
 # --- load_run / main entry point ------------------------------------------
@@ -145,7 +145,7 @@ def test_comparison_discloses_skip_inline():
 
 def test_load_run_from_file_path(tmp_path):
     f = tmp_path / "results.json"
-    f.write_text(json.dumps([_r("PASS", backend="codex", mode="auto-complete")]))
+    f.write_text(json.dumps([_r("PASS", backend="codex", mode="proof-completion")]))
     run = load_run(str(f))
     assert run["path"] == str(f)
     assert run["backend"] == "codex"
@@ -160,7 +160,7 @@ def _write_run(tmp_path, name, results):
 
 
 def test_main_single_prints_scorecard(tmp_path, monkeypatch, capsys):
-    d = _write_run(tmp_path, "run1", [_r("PASS", backend="codex", mode="auto-complete"), _r("FAIL")])
+    d = _write_run(tmp_path, "run1", [_r("PASS", backend="codex", mode="proof-completion"), _r("FAIL")])
     monkeypatch.setattr(sys, "argv", ["tlaps-bench score", d])
     assert main() == 0
     out = capsys.readouterr().out
@@ -169,8 +169,8 @@ def test_main_single_prints_scorecard(tmp_path, monkeypatch, capsys):
 
 
 def test_main_multiple_prints_comparison(tmp_path, monkeypatch, capsys):
-    d1 = _write_run(tmp_path, "run1", [_r("PASS", backend="codex", mode="auto-complete")])
-    d2 = _write_run(tmp_path, "run2", [_r("FAIL", backend="codex", mode="auto-complete")])
+    d1 = _write_run(tmp_path, "run1", [_r("PASS", backend="codex", mode="proof-completion")])
+    d2 = _write_run(tmp_path, "run2", [_r("FAIL", backend="codex", mode="proof-completion")])
     monkeypatch.setattr(sys, "argv", ["tlaps-bench score", d1, d2])
     assert main() == 0
     assert "# Comparison — 2 runs" in capsys.readouterr().out
