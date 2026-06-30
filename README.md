@@ -28,11 +28,11 @@ types:
 |---|--:|--:|--:|
 | tlaplus/Examples | 381 | 126 | 507 |
 | TLAPS distribution examples | 154 | 80 | 234 |
-| ZooKeeper / Zab (Remix) | 0 | 18 | 18 |
+| ZooKeeper (Remix) | 0 | 18 | 18 |
 | Ivy liveness | 0 | 12 | 12 |
 | etcd (Specula) | 0 | 8 | 8 |
-| AbstractRaft (Stephan Merz) | 0 | 4 | 4 |
-| OpenAddressing (Markus Kuppe) | 1 | 5 | 6 |
+| AbstractRaft | 0 | 4 | 4 |
+| OpenAddressing (lemmy/Examples) | 1 | 5 | 6 |
 | Anvil | 0 | 1 | 1 |
 | **Total** | **536** | **254** | **790** |
 
