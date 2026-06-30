@@ -121,11 +121,41 @@ def codex_turn_failed(ctx: TerminationContext) -> Optional[str]:
     return None
 
 
-# Registry of INFRA_ERROR criteria. ONE rule today; append more here (rules for
-# other backends, or other codex patterns) — classify() returns the first that
-# fires. This list IS the extension point.
+def claude_code_result_error(ctx: TerminationContext) -> Optional[str]:
+    """claude_code rule: the run ended on an execution error (or never emitted a
+    terminal result at all).
+
+    Claude Code closes a run with one ``type == "result"`` event whose
+    ``subtype`` is ``success`` on a clean finish, or an ``error_*`` value
+    otherwise (observed: ``error_during_execution``). We flag INFRA_ERROR for
+    such an execution error, or when the stream has events but no terminal
+    ``result`` (cut off mid-run). ``error_max_turns`` — the agent exhausting its
+    turn budget — is a LIMIT, not infrastructure, so it is NOT flagged here.
+    """
+    if ctx.backend != "claude_code":
+        return None
+    events = ctx.events()
+    if not events:
+        return None
+    last_result = None
+    for ev in events:
+        if ev.get("type") == "result":
+            last_result = ev
+    if last_result is None:
+        # Had a stream but no terminal result event: cut off mid-run.
+        return TerminationReason.INFRA_ERROR
+    subtype = last_result.get("subtype", "")
+    if subtype.startswith("error") and subtype != "error_max_turns":
+        return TerminationReason.INFRA_ERROR
+    return None
+
+
+# Registry of INFRA_ERROR criteria. One rule per backend today; append more here
+# (other backends, or additional patterns for an existing one) — classify()
+# returns the first that fires. This list IS the extension point.
 INFRA_RULES: list[Rule] = [
     codex_turn_failed,
+    claude_code_result_error,
 ]
 
 

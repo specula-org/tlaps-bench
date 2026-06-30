@@ -16,6 +16,7 @@ from evaluator.termination import (
     INFRA_RULES,
     TerminationContext,
     TerminationReason,
+    claude_code_result_error,
     classify,
     codex_turn_failed,
 )
@@ -84,11 +85,11 @@ def test_errored_without_completing_a_turn_is_infra(tmp_path):
 
 
 def test_rule_only_applies_to_its_backend(tmp_path):
-    # Same failing stream, but a non-codex backend: the codex rule must abstain,
-    # so it classifies OK (until that backend's own rule is added).
+    # The codex rule keys off codex's event vocabulary and must abstain for any
+    # other backend; a backend with no rule of its own classifies OK.
     p = _write_jsonl(tmp_path / "infra.jsonl", INFRA_STREAM)
     assert codex_turn_failed(_ctx(p, backend="claude_code")) is None
-    assert classify(_ctx(p, backend="claude_code")) == TerminationReason.OK
+    assert classify(_ctx(p, backend="litellm")) == TerminationReason.OK
 
 
 def test_missing_stream_is_ok(tmp_path):
@@ -97,5 +98,55 @@ def test_missing_stream_is_ok(tmp_path):
 
 
 def test_registry_is_the_extension_point():
-    # The interface contract: classify() runs INFRA_RULES in order. One rule today.
+    # The interface contract: classify() runs INFRA_RULES in order.
     assert codex_turn_failed in INFRA_RULES
+    assert claude_code_result_error in INFRA_RULES
+
+
+# --- claude_code rule -------------------------------------------------------
+
+# claude_code closes with a `result` event; subtype `success` vs `error_*`.
+CC_SUCCESS = [
+    {"type": "system", "subtype": "init"},
+    {"type": "assistant", "message": {"role": "assistant"}},
+    {"type": "result", "subtype": "success", "is_error": False, "result": "done"},
+]
+CC_EXEC_ERROR = [
+    {"type": "system", "subtype": "init"},
+    {"type": "result", "subtype": "error_during_execution", "is_error": True},
+]
+CC_MAX_TURNS = [
+    {"type": "system", "subtype": "init"},
+    {"type": "result", "subtype": "error_max_turns", "is_error": True},
+]
+CC_TRUNCATED = [  # stream cut off before the terminal result event
+    {"type": "system", "subtype": "init"},
+    {"type": "assistant", "message": {"role": "assistant"}},
+]
+
+
+def test_cc_success_is_ok(tmp_path):
+    p = _write_jsonl(tmp_path / "ok.jsonl", CC_SUCCESS)
+    assert classify(_ctx(p, backend="claude_code")) == TerminationReason.OK
+
+
+def test_cc_exec_error_is_infra(tmp_path):
+    p = _write_jsonl(tmp_path / "err.jsonl", CC_EXEC_ERROR)
+    assert classify(_ctx(p, backend="claude_code")) == TerminationReason.INFRA_ERROR
+
+
+def test_cc_max_turns_is_not_infra(tmp_path):
+    # error_max_turns is a turn-budget LIMIT, not infrastructure — must NOT flag.
+    p = _write_jsonl(tmp_path / "maxturns.jsonl", CC_MAX_TURNS)
+    assert classify(_ctx(p, backend="claude_code")) == TerminationReason.OK
+
+
+def test_cc_truncated_is_infra(tmp_path):
+    p = _write_jsonl(tmp_path / "trunc.jsonl", CC_TRUNCATED)
+    assert classify(_ctx(p, backend="claude_code")) == TerminationReason.INFRA_ERROR
+
+
+def test_cc_rule_only_applies_to_claude_code(tmp_path):
+    # codex stream through the claude rule must abstain.
+    p = _write_jsonl(tmp_path / "infra.jsonl", INFRA_STREAM)
+    assert claude_code_result_error(_ctx(p, backend="codex")) is None
