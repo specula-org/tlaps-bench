@@ -37,6 +37,7 @@ from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import AgentBackend
 from evaluator.modes import get_mode, list_modes
 from evaluator.modes.base import Mode
+from evaluator.termination import TerminationContext, TerminationReason, classify
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
@@ -331,6 +332,10 @@ def run_single_benchmark(item: WorkItem):
         "check_verdict": "ERROR",
         "time_secs": 0,
         "error": "",
+        # How the agent run ended; reclassified after the run (see termination.py).
+        # INFRA_ERROR marks a result that was cut short by infrastructure rather
+        # than a genuine model attempt, so a FAIL can be filtered/retried.
+        "termination_reason": TerminationReason.OK,
     }
 
     if not quota.wait_for_quota(
@@ -437,6 +442,18 @@ def run_single_benchmark(item: WorkItem):
         transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
         result["input_tokens"] = input_tokens
         result["output_tokens"] = output_tokens
+
+        # Tag how the run terminated so an INFRA_ERROR (agent cut short by
+        # infrastructure, not a genuine attempt) is distinguishable from a real
+        # FAIL downstream. Classification only — no retry here.
+        result["termination_reason"] = classify(
+            TerminationContext(
+                backend=backend.name,
+                jsonl_path=agent_jsonl,
+                agent_exit=result.get("agent_exit"),
+                error=result.get("error", ""),
+            )
+        )
 
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
