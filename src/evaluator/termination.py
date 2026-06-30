@@ -8,12 +8,14 @@ overload — the resulting FAIL says nothing about the model. We tag such runs
 with ``termination_reason = INFRA_ERROR`` so they can be filtered out (and,
 later, auto-retried) instead of being read as genuine failures.
 
-Detection is a registry of RULES (criteria). Each rule inspects a
-``TerminationContext`` and returns a reason if it fires, else ``None``; the
-first rule that fires wins (see :func:`classify`). Today there is exactly one
-rule — :func:`codex_turn_failed`. Add more (other backends, which branch on
-``ctx.backend`` and read their own event vocabulary; or other patterns) by
-appending to :data:`INFRA_RULES`.
+:func:`classify` first checks for a wall-clock timeout (a backend-independent
+LIMIT — the model was working, it just ran out of time — reported as TIMEOUT,
+never INFRA_ERROR), then runs a registry of INFRA RULES (criteria). Each rule
+inspects a ``TerminationContext`` and returns a reason if it fires, else
+``None``; the first that fires wins. There is one rule per backend today
+(:func:`codex_turn_failed`, :func:`claude_code_result_error`,
+:func:`copilot_session_error`), each branching on ``ctx.backend`` to read its
+own event vocabulary. Add more by appending to :data:`INFRA_RULES`.
 
 This module only CLASSIFIES. Acting on the classification (e.g. auto-retrying
 an INFRA_ERROR run) is intentionally left to the caller.
@@ -22,21 +24,24 @@ an INFRA_ERROR run) is intentionally left to the caller.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 
 class TerminationReason:
     """How an agent run ended.
 
     Plain string constants so the value serializes verbatim into results.json.
-    Only OK and INFRA_ERROR exist today; extend with e.g. TIMEOUT / USAGE_LIMIT
-    as new rules are added — keep the values stable, downstream filters match
-    on them.
+    Extend with e.g. USAGE_LIMIT as new rules are added — keep the values
+    stable, downstream filters match on them.
     """
 
     OK = "OK"
     INFRA_ERROR = "INFRA_ERROR"
+    # The runner SIGKILLed the agent for exceeding its wall-clock budget: a time
+    # LIMIT (the model was working), NOT infrastructure. Detected the same way
+    # for every backend so they agree (see is_wall_clock_timeout / classify).
+    TIMEOUT = "TIMEOUT"
 
 
 @dataclass
@@ -51,10 +56,10 @@ class TerminationContext:
     """
 
     backend: str
-    jsonl_path: Optional[str]
-    agent_exit: Optional[int] = None
+    jsonl_path: str | None
+    agent_exit: int | None = None
     error: str = ""
-    _events: Optional[list] = None
+    _events: list | None = None
 
     def events(self) -> list:
         if self._events is None:
@@ -62,7 +67,7 @@ class TerminationContext:
         return self._events
 
 
-def _read_events(path: Optional[str]) -> list:
+def _read_events(path: str | None) -> list:
     """Parse a JSONL event stream into a list of dicts, tolerantly (skip blank
     and unparseable lines; empty list if the file is absent)."""
     if not path:
@@ -85,10 +90,10 @@ def _read_events(path: Optional[str]) -> list:
 
 # A rule inspects the context and returns a TerminationReason if it fires, else
 # None. Rules must be cheap and side-effect free.
-Rule = Callable[[TerminationContext], Optional[str]]
+Rule = Callable[[TerminationContext], str | None]
 
 
-def codex_turn_failed(ctx: TerminationContext) -> Optional[str]:
+def codex_turn_failed(ctx: TerminationContext) -> str | None:
     """codex rule: the run ended on a failed turn rather than a completed one.
 
     codex emits one ``turn.started`` … ``turn.completed`` per turn. An
@@ -121,7 +126,7 @@ def codex_turn_failed(ctx: TerminationContext) -> Optional[str]:
     return None
 
 
-def claude_code_result_error(ctx: TerminationContext) -> Optional[str]:
+def claude_code_result_error(ctx: TerminationContext) -> str | None:
     """claude_code rule: the run ended on an execution error (or never emitted a
     terminal result at all).
 
@@ -150,7 +155,7 @@ def claude_code_result_error(ctx: TerminationContext) -> Optional[str]:
     return None
 
 
-def copilot_session_error(ctx: TerminationContext) -> Optional[str]:
+def copilot_session_error(ctx: TerminationContext) -> str | None:
     """copilot rule: the run did not reach a clean terminal.
 
     The GitHub Copilot CLI ends a clean run with a terminal event — ``result``
@@ -177,9 +182,7 @@ def copilot_session_error(ctx: TerminationContext) -> Optional[str]:
     reached_clean_terminal = False
     for ev in events:
         t = ev.get("type")
-        if t == "result":
-            reached_clean_terminal = True
-        elif t == "session.shutdown" and ev.get("shutdownType") != "error":
+        if t == "result" or (t == "session.shutdown" and ev.get("shutdownType") != "error"):
             reached_clean_terminal = True
     if reached_clean_terminal:
         return None
@@ -196,8 +199,29 @@ INFRA_RULES: list[Rule] = [
 ]
 
 
+def is_wall_clock_timeout(ctx: TerminationContext) -> bool:
+    """Whether the runner SIGKILLed the agent for exceeding its wall-clock budget.
+
+    The runner records this identically for every backend — ``agent_exit == -1``
+    and ``error`` = ``"<backend> timeout after <N>s"`` — so the check is backend
+    independent. This is a time LIMIT, not infrastructure: the model was working,
+    it just didn't finish in the budget (TLAPS proofs are slow, so timeouts are
+    common). A SIGKILL also leaves a truncated event stream — no terminal turn /
+    result — which the per-backend INFRA rules would otherwise read as a cut-off;
+    classify() checks this first so a timeout is never mislabeled INFRA_ERROR.
+    """
+    return ctx.agent_exit == -1 and "timeout after" in (ctx.error or "")
+
+
 def classify(ctx: TerminationContext) -> str:
-    """Return the run's TerminationReason: the first INFRA rule that fires, else OK."""
+    """Return the run's TerminationReason.
+
+    A wall-clock timeout (a LIMIT, backend-independent) takes precedence over the
+    per-backend INFRA rules, so every backend agrees on it; otherwise the first
+    INFRA rule that fires wins, else OK.
+    """
+    if is_wall_clock_timeout(ctx):
+        return TerminationReason.TIMEOUT
     for rule in INFRA_RULES:
         reason = rule(ctx)
         if reason:

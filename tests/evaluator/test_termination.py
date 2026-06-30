@@ -16,10 +16,11 @@ from evaluator.termination import (
     INFRA_RULES,
     TerminationContext,
     TerminationReason,
-    claude_code_result_error,
     classify,
+    claude_code_result_error,
     codex_turn_failed,
     copilot_session_error,
+    is_wall_clock_timeout,
 )
 
 # codex stream cut short by a corrupted/refused request (no turn.completed).
@@ -61,8 +62,8 @@ def _write_jsonl(path, events):
     return str(path)
 
 
-def _ctx(path, backend="codex"):
-    return TerminationContext(backend=backend, jsonl_path=path)
+def _ctx(path, backend="codex", agent_exit=None, error=""):
+    return TerminationContext(backend=backend, jsonl_path=path, agent_exit=agent_exit, error=error)
 
 
 def test_turn_failed_is_infra(tmp_path):
@@ -96,6 +97,47 @@ def test_rule_only_applies_to_its_backend(tmp_path):
 def test_missing_stream_is_ok(tmp_path):
     # No event file (e.g. agent never launched) must not crash and is not INFRA.
     assert classify(_ctx(str(tmp_path / "nope.jsonl"))) == TerminationReason.OK
+
+
+# --- wall-clock timeout: a LIMIT, consistent across backends, never INFRA -----
+
+# A SIGKILLed run leaves a truncated stream (no terminal turn/result) — exactly
+# what each INFRA rule would otherwise read as a cut-off — plus the runner's
+# agent_exit == -1 and "<backend> timeout after <N>s" error.
+TRUNCATED_BY_BACKEND = {
+    "codex": [{"type": "thread.started"}, {"type": "turn.started"}],
+    "claude_code": [{"type": "system", "subtype": "init"}, {"type": "assistant", "message": {}}],
+    "copilot": [{"type": "assistant.message", "data": {"content": "working"}}],
+}
+
+
+def test_is_wall_clock_timeout_signal():
+    ctx = TerminationContext(backend="codex", jsonl_path=None, agent_exit=-1, error="codex timeout after 7200s")
+    assert is_wall_clock_timeout(ctx) is True
+    # a non-timeout error, or a clean exit, is not a timeout
+    assert is_wall_clock_timeout(TerminationContext("codex", None, agent_exit=1, error="")) is False
+    assert is_wall_clock_timeout(TerminationContext("codex", None, agent_exit=-1, error="provider usage limit")) is False
+
+
+def test_timeout_is_timeout_not_infra_for_every_backend(tmp_path):
+    # Same wall-clock timeout, every backend → TIMEOUT (not INFRA, not OK) — the
+    # truncated stream alone would read as a cut-off, but the timeout wins.
+    for backend, stream in TRUNCATED_BY_BACKEND.items():
+        p = _write_jsonl(tmp_path / f"{backend}.jsonl", stream)
+        err = f"{backend} timeout after 7200s"
+        verdict = classify(_ctx(p, backend=backend, agent_exit=-1, error=err))
+        assert verdict == TerminationReason.TIMEOUT, f"{backend}: {verdict}"
+
+
+def test_same_truncation_without_timeout_is_still_infra(tmp_path):
+    # Without the timeout signal, a truncated stream is a genuine cut-off (crash /
+    # dropped connection) → INFRA_ERROR. Asserts the timeout precheck is the only
+    # thing reclassifying these, and only for codex does a clean SIGKILL-less
+    # truncation read as OK (no error/turn.failed to key on).
+    expected = {"codex": TerminationReason.OK, "claude_code": TerminationReason.INFRA_ERROR, "copilot": TerminationReason.INFRA_ERROR}
+    for backend, stream in TRUNCATED_BY_BACKEND.items():
+        p = _write_jsonl(tmp_path / f"{backend}.jsonl", stream)
+        assert classify(_ctx(p, backend=backend)) == expected[backend], backend
 
 
 def test_registry_is_the_extension_point():
