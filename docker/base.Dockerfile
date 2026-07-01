@@ -114,6 +114,12 @@ RUN chmod 0755 /usr/local/bin/check_proof_bin \
 COPY docker/install-scripts /opt/install-scripts
 RUN chmod -R +x /opt/install-scripts
 
+# Bundled agent skills, staged into the image. The agent CLIs (Copilot, Claude
+# Code, Codex) each discover skills from their personal ~/.<agent>/skills
+# directory; container.py links those to this dir at container start (after any
+# credential mount is applied), so no symlink is baked here.
+COPY docs/skill /opt/agent-skills
+
 COPY docker/firewall.sh /opt/firewall.sh
 RUN chmod +x /opt/firewall.sh
 
