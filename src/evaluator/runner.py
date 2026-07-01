@@ -343,7 +343,13 @@ def run_single_benchmark(item: WorkItem):
         result["output_tokens"] = 0
         return result
 
-    workspace = tempfile.mkdtemp(prefix=f"{backend.name}_bench_{name_no_ext}_")
+    # Agent works in a persistent workspace under the result dir, bind-mounted
+    # directly as /workspace, so edits land in the output tree with no throwaway
+    # tempdir (one container runs one task). Wiped and recreated fresh each run
+    # for a clean git baseline; the copy-out below still records solution.tla.
+    workspace = os.path.join(result_dir, "workspace")
+    shutil.rmtree(workspace, ignore_errors=True)
+    os.makedirs(workspace, exist_ok=True)
     canonical_dir = None
     try:
         # Resolve dependencies ONCE — the EXTENDS-closure walk parses files and may
@@ -476,7 +482,6 @@ def run_single_benchmark(item: WorkItem):
             json.dump(result, f, indent=2)
 
     finally:
-        shutil.rmtree(workspace, ignore_errors=True)
         if canonical_dir:
             shutil.rmtree(canonical_dir, ignore_errors=True)
 
