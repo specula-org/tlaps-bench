@@ -541,7 +541,11 @@ def _run_agent_container(
                         chunk = proc.stderr.read()
                         if chunk:
                             stderr_chunks.append(chunk)
-                    except (OSError, BlockingIOError):
+                    except (OSError, BlockingIOError, TypeError):
+                        # Non-blocking read with no data: a text-mode pipe raises
+                        # TypeError ("can't concat NoneType to bytes") from the
+                        # codec when the raw read returns None, rather than
+                        # BlockingIOError. Treat all three as "no data yet".
                         pass
                 if ready:
                     line = proc.stdout.readline()
@@ -568,7 +572,7 @@ def _run_agent_container(
                 remaining = proc.stderr.read()
                 if remaining:
                     stderr_chunks.append(remaining)
-            except (OSError, BlockingIOError):
+            except (OSError, BlockingIOError, TypeError):
                 pass
         stderr = "".join(stderr_chunks)
         if stderr:
