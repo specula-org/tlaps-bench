@@ -72,6 +72,23 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && cp /tmp/CommunityModules-${COMMUNITY_TAG}/modules/*.tla /opt/community/ \
     && rm -rf /tmp/CommunityModules-${COMMUNITY_TAG}
 
+# Layer 5b: endive (inductive-invariant discovery tool, vendored at tools/endive)
+# It bundles its own modified TLC jar and drives the JDK already installed above.
+# Its one Python dependency (pyeda) is a C-extension package with no prebuilt
+# wheel, so a compiler toolchain is installed only to build it and then purged
+# in the same layer to keep the image small.
+COPY tools/endive /opt/endive
+ENV ENDIVE_DIR=/opt/endive
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       python3-dev build-essential \
+    && pip3 install --break-system-packages --no-cache-dir \
+       -r /opt/endive/requirements.txt \
+    && apt-get purge -y python3-dev build-essential gcc cpp \
+    && apt-get autoremove -y
+
 # Layer 6: SANY DumpSemantics compilation (needs tla2tools.jar + JDK)
 COPY src/dataset/sany-dump /opt/sany/src/dataset/sany-dump
 RUN cp -r /opt/community /opt/sany/lib/community \
