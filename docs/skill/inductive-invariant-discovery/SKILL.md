@@ -1,14 +1,23 @@
 ---
 name: inductive-invariant-discovery
 description: >-
-  Discover and strengthen an inductive invariant when a safety property is true
-  but not inductive, so the inductive step of a proof will not close. Use when
-  you need an `IndInv` and the missing conjuncts are not obvious; the tool
-  reports concrete counterexamples to induction that name the exact state and
-  action that break induction.
+  Last-resort fallback for strengthening an inductive invariant, used ONLY
+  after you have already hand-written a candidate `IndInv`, attempted it with
+  tlapm, and found the inductive step still will not close with the missing
+  conjunct not apparent from the failed obligation. Not a starting point and
+  not a silver bullet — always attempt the proof by hand first, since it can
+  fail to converge. When invoked, it reports concrete counterexamples to
+  induction (CTIs) naming the exact state and action that break induction.
 ---
 
 # Discovering inductive invariants
+
+**Before using this skill, attempt the proof by hand first.** Propose an
+`IndInv` from your understanding of the protocol, run tlapm, and read the failed
+obligations to strengthen it manually. Only reach for the `endive` tool below
+once that hand-written attempt has stalled — the inductive step will not close
+and the missing conjunct is not apparent from the failed obligation. It is a
+fallback, not an opening move, and it can fail to converge.
 
 A safety property usually fails to prove because it is **true but not
 inductive**: it does not imply its own primed version, so the inductive step
