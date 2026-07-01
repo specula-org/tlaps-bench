@@ -37,6 +37,7 @@ from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import AgentBackend
 from evaluator.modes import get_mode, list_modes
 from evaluator.modes.base import Mode
+from evaluator.termination import TerminationContext, TerminationReason, classify
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
@@ -331,6 +332,10 @@ def run_single_benchmark(item: WorkItem):
         "check_verdict": "ERROR",
         "time_secs": 0,
         "error": "",
+        # How the agent run ended; reclassified after the run (see termination.py).
+        # INFRA_ERROR marks a result that was cut short by infrastructure rather
+        # than a genuine model attempt, so a FAIL can be filtered/retried.
+        "termination_reason": TerminationReason.OK,
     }
 
     if not quota.wait_for_quota(
@@ -341,6 +346,7 @@ def run_single_benchmark(item: WorkItem):
         result["error"] = "quota exceeded (max waits reached); skipped"
         result["input_tokens"] = 0
         result["output_tokens"] = 0
+        result["termination_reason"] = TerminationReason.QUOTA_EXHAUSTED
         return result
 
     workspace = tempfile.mkdtemp(prefix=f"{backend.name}_bench_{name_no_ext}_")
@@ -456,13 +462,29 @@ def run_single_benchmark(item: WorkItem):
         if quota_exhausted:
             # Provider hard-capped us past the retry budget. Mark ERROR (retriable
             # via --resume) and skip grading; the artifacts above keep the result
-            # dir consistent with a normal run.
+            # dir consistent with a normal run. Tag QUOTA_EXHAUSTED directly — the
+            # runner owns the quota signal — rather than running classify() on the
+            # no-work, truncated stream, which would misread it as INFRA_ERROR.
             result["agent_exit"] = -3
             result["check_verdict"] = "ERROR"
             result["error"] = "provider usage limit; exhausted quota retries"
+            result["termination_reason"] = TerminationReason.QUOTA_EXHAUSTED
             with open(os.path.join(result_dir, "result.json"), "w") as f:
                 json.dump(result, f, indent=2)
             return result
+
+        # Tag how the run terminated so an INFRA_ERROR (agent cut short by
+        # infrastructure, not a genuine attempt) is distinguishable from a real
+        # FAIL downstream. Only genuine, completed runs reach here — a quota-
+        # exhausted run returned above. Classification only — no retry here.
+        result["termination_reason"] = classify(
+            TerminationContext(
+                backend=backend.name,
+                jsonl_path=agent_jsonl,
+                agent_exit=result.get("agent_exit"),
+                error=result.get("error", ""),
+            )
+        )
 
         # Run grader
         check_result_path = os.path.join(grading_dir, "check.result")
