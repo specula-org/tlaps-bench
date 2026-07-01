@@ -6,8 +6,8 @@ description: >-
   tlapm, and found the inductive step still will not close with the missing
   conjunct not apparent from the failed obligation. Not a starting point and
   not a silver bullet — always attempt the proof by hand first, since it can
-  fail to converge. When invoked, it reports concrete counterexamples to
-  induction (CTIs) naming the exact state and action that break induction.
+  fail to converge. When invoked, it reports the concrete state and action
+  that break induction.
 ---
 
 # Discovering inductive invariants
@@ -49,11 +49,11 @@ python3 endive.py --spec benchmarks/<name> \
 
 Add `--debug --log_file run.log` to record the full feedback.
 
-## The feedback: counterexamples to induction (CTIs)
+## The feedback: a state and action that break induction
 
 The tool samples transitions with **random simulation** (not exhaustive model
 checking), and whenever the current candidate is not inductive it emits a
-**CTI** — a concrete two-state counterexample:
+concrete two-state counterexample:
 
 - **State1** — a state satisfying the current candidate, printed as a TLA+
   conjunction `/\ var = val /\ ...`,
@@ -84,5 +84,5 @@ IndAuto ==
 - The result is simulation-derived: treat it as a strong hint to verify, not
   ground truth. A candidate can still be missing a conjunct on too small a model.
 - If the search stalls, add more semantic `preds`.
-- A CTI shows a candidate is not *inductive*; it does not mean the safety
-  property itself is false.
+- Such a counterexample shows a candidate is not *inductive*; it does not mean
+  the safety property itself is false.
