@@ -9,21 +9,26 @@ EXTENDS Integers, FiniteSets, Sequences, Naturals, TLAPS
 -----------------------------------------------------------------------------
 \* The set of server identifiers
 CONSTANT Server
+\* Sentinel server id meaning "no leader".
+CONSTANT NullPoint
+\* Cardinality is defined only for finite sets; Quorums uses Cardinality(Server).
+ASSUME ServerFinite == IsFiniteSet(Server)
+ASSUME NullPointNotServer == NullPoint \notin Server
 
 \* Server states
-CONSTANTS LOOKING, FOLLOWING, LEADING
+LOOKING   == "LOOKING"
+FOLLOWING == "FOLLOWING"
+LEADING   == "LEADING"
 (* NOTE: In spec, we do not discuss servers whose ServerState is OBSERVING.
 *)
 
 \* Message types
-CONSTANTS NOTIFICATION
+NOTIFICATION == "NOTIFICATION"
 
 \* Timeout signal
-CONSTANT NONE
+NONE == "NONE"
 -----------------------------------------------------------------------------
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
-
-NullPoint == CHOOSE p: p \notin Server
 
 -----------------------------------------------------------------------------
 \* Server's state(LOOKING, FOLLOWING, LEADING).

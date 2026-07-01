@@ -6,15 +6,20 @@ EXTENDS Integers, FiniteSets, Sequences, Naturals, TLAPS
 
 CONSTANT Server
 
-CONSTANTS LOOKING, FOLLOWING, LEADING
+CONSTANT NullPoint
 
-CONSTANTS NOTIFICATION
+ASSUME ServerFinite == IsFiniteSet(Server)
+ASSUME NullPointNotServer == NullPoint \notin Server
 
-CONSTANT NONE
+LOOKING   == "LOOKING"
+FOLLOWING == "FOLLOWING"
+LEADING   == "LEADING"
+
+NOTIFICATION == "NOTIFICATION"
+
+NONE == "NONE"
 -----------------------------------------------------------------------------
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
-
-NullPoint == CHOOSE p: p \notin Server
 
 -----------------------------------------------------------------------------
 

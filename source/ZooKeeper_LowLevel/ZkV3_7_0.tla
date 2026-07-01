@@ -10,29 +10,43 @@
  *)
 EXTENDS FastLeaderElection
 -----------------------------------------------------------------------------
+\* Bound on the epoch space.
+CONSTANT MAXEPOCH
+ASSUME MaxEpochNat == MAXEPOCH \in Nat \ {0}
 \* The set of requests that can go into history
 \* CONSTANT Value \* Replaced by recorder.nClientRequest
 Value == Nat
  
 \* Zab states
-CONSTANTS ELECTION, DISCOVERY, SYNCHRONIZATION, BROADCAST
+ELECTION        == "ELECTION"
+DISCOVERY       == "DISCOVERY"
+SYNCHRONIZATION == "SYNCHRONIZATION"
+BROADCAST       == "BROADCAST"
 
 \* Sync modes & message types
-CONSTANTS DIFF, TRUNC, SNAP
+DIFF  == "DIFF"
+TRUNC == "TRUNC"
+SNAP  == "SNAP"
 
 \* Message types
-CONSTANTS FOLLOWERINFO, LEADERINFO, ACKEPOCH, NEWLEADER, ACKLD, 
-          UPTODATE, PROPOSAL, ACK, COMMIT
+FOLLOWERINFO == "FOLLOWERINFO"
+LEADERINFO   == "LEADERINFO"
+ACKEPOCH     == "ACKEPOCH"
+NEWLEADER    == "NEWLEADER"
+ACKLD        == "ACKLD"
+UPTODATE     == "UPTODATE"
+PROPOSAL     == "PROPOSAL"
+ACK          == "ACK"
+COMMIT       == "COMMIT"
 (* NOTE: In production, there is no message type ACKLD. Server judges if counter 
          of ACK is 0 to distinguish one ACK represents ACKLD or not. Here we
          divide ACK into ACKLD and ACK, to enhance readability of spec.*)
 
 \* Node status
-CONSTANTS ONLINE, OFFLINE
+ONLINE  == "ONLINE"
+OFFLINE == "OFFLINE"
 
 \* [MaxTimeoutFailures, MaxTransactionNum, MaxEpoch, MaxCrashes, MaxPartitions]
-
-MAXEPOCH == 10
 -----------------------------------------------------------------------------
 \* Variables in annotations mean variables defined in FastLeaderElection.
 \* Variables that all servers use.

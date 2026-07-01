@@ -5,14 +5,33 @@ EXTENDS Integers, FiniteSets, Sequences, Naturals, TLAPS
 -----------------------------------------------------------------------------
 \* The set of servers
 CONSTANT Server
+\* Bound on the epoch space.
+CONSTANT MAXEPOCH
+\* Sentinel server id meaning "no leader".
+CONSTANT NullPoint
+\* Cardinality is defined only for finite sets; Quorums uses Cardinality(Server).
+ASSUME ServerFinite == IsFiniteSet(Server)
+ASSUME MaxEpochNat == MAXEPOCH \in Nat \ {0}
+ASSUME NullPointNotServer == NullPoint \notin Server
 \* States of server
-CONSTANTS LOOKING, FOLLOWING, LEADING
+LOOKING   == "LOOKING"
+FOLLOWING == "FOLLOWING"
+LEADING   == "LEADING"
 \* Zab states of server
-CONSTANTS ELECTION, DISCOVERY, SYNCHRONIZATION, BROADCAST
+ELECTION        == "ELECTION"
+DISCOVERY       == "DISCOVERY"
+SYNCHRONIZATION == "SYNCHRONIZATION"
+BROADCAST       == "BROADCAST"
 \* Message types
-CONSTANTS CEPOCH, NEWEPOCH, ACKEPOCH, NEWLEADER, ACKLD, COMMITLD, PROPOSE, ACK, COMMIT
-MAXEPOCH == 10
-NullPoint == CHOOSE p: p \notin Server
+CEPOCH    == "CEPOCH"
+NEWEPOCH  == "NEWEPOCH"
+ACKEPOCH  == "ACKEPOCH"
+NEWLEADER == "NEWLEADER"
+ACKLD     == "ACKLD"
+COMMITLD  == "COMMITLD"
+PROPOSE   == "PROPOSE"
+ACK       == "ACK"
+COMMIT    == "COMMIT"
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
 -----------------------------------------------------------------------------
 \* Variables that all servers use.
