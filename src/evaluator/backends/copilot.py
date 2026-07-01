@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 
-from .base import AgentBackend, detect_firewall_hosts
+from .base import AgentBackend
 
 DEFAULT_MODEL = "claude-opus-4.8"
 
@@ -26,6 +26,17 @@ class CopilotBackend(AgentBackend):
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
+
+    def get_credential_mounts(self) -> list[str]:
+        # BYOK or a forwarded GitHub token authenticates via env vars, so no
+        # credential dir is needed. Otherwise mount the host's Copilot login
+        # (~/.copilot/config.json holds the OAuth token) — copied to a throwaway
+        # dir first, never bind-mounting the real host directory.
+        if os.environ.get("COPILOT_PROVIDER_API_KEY"):
+            return []
+        if os.environ.get("COPILOT_GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"):
+            return []
+        return ["copilot"]
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         # Prompt is fed via stdin (the runner pipes it in). copilot's -p flag
@@ -105,16 +116,21 @@ class CopilotBackend(AgentBackend):
             return f"copilot: auth probe error: {e}"
 
     def firewall_hosts(self) -> list[str]:
-        # GitHub Copilot validates/exchanges the GITHUB token at api.github.com
-        # (/copilot_internal/user + /copilot_internal/v2/token) BEFORE it can
-        # reach the inference API at api.githubcopilot.com. Unlike codex/claude —
-        # whose auth host and inference host are the same already-allowlisted
-        # provider domain — Copilot's auth host is distinct, so it must be added
-        # explicitly. Without it the firewall drops the auth request and the CLI
-        # exits before any model call (0 tokens). The agent's own tools still
-        # can't reach it: the GitHub MCP server is off (--disable-builtin-mcps)
-        # and web_fetch is excluded, so this only enables the auth handshake.
-        return detect_firewall_hosts(self.model) + ["api.github.com"]
+        # Copilot runs with NO network isolation. Returning an empty host list
+        # makes the harness set DISABLE_FIREWALL=1 (and skip the NET_ADMIN cap),
+        # so firewall.sh exits immediately and all outbound traffic is allowed.
+        #
+        # Why not an allowlist: GitHub Copilot validates/exchanges the GITHUB
+        # token at api.github.com (/copilot_internal/user + /v2/token) before it
+        # can reach the inference API at api.githubcopilot.com. api.github.com is
+        # served from a large rotating IP pool (140.82.112.0/20, ...), but
+        # firewall.sh pins a single resolved IP per host at startup, so the
+        # token-validation request frequently lands on a different, dropped IP
+        # ("network fetch failed"). Rather than special-case a CIDR allowlist for
+        # Copilot's auth host, we disable the firewall for this backend. The
+        # agent's own reach is still limited elsewhere: the GitHub MCP server is
+        # off (--disable-builtin-mcps) and web_fetch is excluded.
+        return []
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []
