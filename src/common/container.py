@@ -18,6 +18,16 @@ from pathlib import Path
 IMAGE_TAG = "tlaps-bench-base"
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
+# In-image location of the bundled agent skills (see docker/base.Dockerfile,
+# which copies docs/skill here). Each agent CLI discovers skills from its own
+# personal directory (~/.copilot/skills, ~/.claude/skills, ~/.codex/skills), so
+# at container start we link those to _AGENT_SKILLS_DIR. Doing it at start (not
+# in the image) makes it survive a credential mount that replaces ~/.<agent>:
+# the command runs after mounts are in place, and writes into the mounted copy,
+# never the host.
+_AGENT_SKILLS_DIR = "/opt/agent-skills"
+_AGENT_SKILL_HOMES = ("/root/.copilot", "/root/.claude", "/root/.codex")
+
 # All provider API keys to auto-forward from host into containers.
 # Sourced from litellm provider source code (llms/<provider>/).
 API_KEY_VARS = [
@@ -143,6 +153,16 @@ def _copy_claude_credentials(src: Path, dst: Path) -> bool:
     return _copy_named_credential_file(src, dst, ".credentials.json")
 
 
+def _copy_copilot_credentials(src: Path, dst: Path) -> bool:
+    """Copy only the Copilot CLI config file holding the OAuth token.
+
+    ``config.json`` carries ``copilotTokens`` (the GitHub OAuth token) plus the
+    last-logged-in user; it is all the CLI needs to authenticate. Sessions,
+    logs and the session-store DB are deliberately left behind.
+    """
+    return _copy_named_credential_file(src, dst, "config.json")
+
+
 def _copy_pi_credentials(src: Path, dst: Path) -> bool:
     """Copy only Pi's provider auth file"""
     auth_src = src / "agent" / "auth.json"
@@ -203,6 +223,7 @@ class ContainerRunner:
         "aws": CredentialMount("/root/.aws", _copy_all_credentials),
         "claude": CredentialMount("/root/.claude", _copy_claude_credentials),
         "codex": CredentialMount("/root/.codex", _copy_codex_credentials),
+        "copilot": CredentialMount("/root/.copilot", _copy_copilot_credentials),
         "pi": CredentialMount("/root/.pi", _copy_pi_credentials),
     }
 
@@ -267,14 +288,29 @@ class ContainerRunner:
         return args, cid_file
 
     def build_composite_command(self, cmd: list[str], install_script: str | None = None) -> str:
-        """Build shell command: install script → firewall → agent command."""
+        """Build shell command: skills setup → install script → firewall → agent."""
         agent_cmd = " ".join(shlex.quote(c) for c in cmd)
-        parts = []
+        parts = [self._skills_setup_command()]
         if install_script:
             parts.append(f"/opt/install-scripts/{install_script} >&2")
         parts.append("/opt/firewall.sh >&2")
         parts.append(f"exec capsh --drop=cap_net_admin -- -c {shlex.quote(agent_cmd)}")
         return " && ".join(parts)
+
+    @staticmethod
+    def _skills_setup_command() -> str:
+        """Link each agent's personal skills dir to the bundled skills.
+
+        Runs after any credential mount is in place, so the link lands inside the
+        mounted (throwaway) copy when present, and in the image layer otherwise —
+        keeping bundled skills discoverable in both cases without touching host
+        files. Skipped silently if the skills dir was not baked into the image.
+        """
+        links = " && ".join(
+            f"ln -sfn {shlex.quote(_AGENT_SKILLS_DIR)} {shlex.quote(home + '/skills')}" for home in _AGENT_SKILL_HOMES
+        )
+        mkdirs = " ".join(shlex.quote(home) for home in _AGENT_SKILL_HOMES)
+        return f"{{ [ -d {shlex.quote(_AGENT_SKILLS_DIR)} ] && mkdir -p {mkdirs} && {links} || true; }} >&2"
 
     def run(self, config: ContainerConfig, cmd: list[str], stdin_data: str | None = None) -> ContainerRun:
         """Launch a container with the given command. Returns handle."""
