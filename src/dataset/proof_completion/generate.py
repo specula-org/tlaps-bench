@@ -1172,6 +1172,18 @@ def _run_sany_gate(directory):
     from dataset.sany_audit import gate
 
     gate(directory, label="sany-gate-l1")
+    _run_triviality_gate(directory)
+
+
+def _run_triviality_gate(directory):
+    """Post-generation triviality gate: a task whose PROOF OBVIOUS placeholder
+    already verifies is degenerate (a no-op submission would PASS grading).
+    Drops such tasks so a fresh generation never re-ships them (manifest + stdout
+    keep the audit trail).
+    """
+    from dataset.triviality_audit import gate
+
+    gate(directory, label="triviality-gate-l1", drop=True)
 
 
 def main():
