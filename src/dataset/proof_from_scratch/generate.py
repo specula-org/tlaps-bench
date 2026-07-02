@@ -92,6 +92,7 @@ from dataset.proof_completion.generate import (  # noqa: E402
     strip_all_proofs,
 )
 from dataset.sany_audit import gate as sany_gate  # noqa: E402
+from dataset.triviality_audit import gate as triviality_gate  # noqa: E402
 
 KEYWORD_PATTERN = re.compile(r"^\s*(THEOREM|LEMMA|AXIOM|COROLLARY|PROPOSITION)\b")
 MODULE_HEADER = re.compile(r"^(-+\s*MODULE\s+)(\w+)(\s*-+)")
@@ -1010,6 +1011,9 @@ def main():
         # Input SANY gate: every emitted task must parse under standalone
         # tla2sany. Flags failures (manifest + audit log); does not drop.
         sany_gate(output_root, audit_writer=audit_writer, label="sany-gate-l2")
+        # Triviality gate: a task whose PROOF OBVIOUS placeholder already
+        # verifies is degenerate (a no-op submission would PASS grading).
+        triviality_gate(output_root, audit_writer=audit_writer, label="triviality-gate-l2", drop=True)
 
     print(f"\nTotal proof-from-scratch benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
