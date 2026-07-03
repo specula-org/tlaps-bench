@@ -119,8 +119,8 @@ uv run tlaps-bench run [flags]
 | `--timeout` | `28800` | Per-benchmark agent timeout in seconds |
 | `--check-timeout` | `600` | Per-benchmark checker (tlapm) timeout in seconds |
 | `--output-dir` | auto-generated | Output directory |
-| `--resume` | off | Skip benchmarks already marked PASS |
-| `--infra-retries` | `3` | Extra attempts after a transient agent startup/infra failure (0 output tokens); `0` = no retries |
+| `--resume` | off | Skip benchmarks already marked `SKIP` or genuine `PASS` |
+| `--infra-retries` | `3` | Extra attempts after a transient agent startup/infra failure (0 output tokens); `0` = no inline retries |
 | `--force-build` | off | Rebuild the Docker image |
 | `--no-container` | off | Run without Docker (requires native setup) |
 
@@ -203,7 +203,9 @@ If a run is interrupted or you want to retry only the failures:
 uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proof-completion/codex/20260626_120000 --resume
 ```
 
-The runner skips any benchmark already recorded as PASS in that directory and reruns the rest.
+The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory, and reruns the rest.
+
+Inline infra retries are intentionally short: the default `--infra-retries 3` gives the original attempt plus three retries with brief backoff. If a longer provider or network outage leaves `INFRA_ERROR` / `QUOTA_EXHAUSTED` results, rerun later with the same `--output-dir --resume`; those non-genuine results are not skipped.
 
 ---
 
@@ -340,4 +342,3 @@ This script runs inside the container with full network access before the firewa
 | `"claude"` | `~/.claude/` | `~/.claude/` |
 
 ---
-
