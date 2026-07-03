@@ -1013,9 +1013,12 @@ def main():
         sany_gate(output_root, audit_writer=audit_writer, label="sany-gate-l2")
         # Triviality gate: a task whose PROOF OBVIOUS placeholder already
         # verifies is degenerate (a no-op submission would PASS grading).
-        triviality_gate(output_root, audit_writer=audit_writer, label="triviality-gate-l2", drop=True)
+        dropped = len(triviality_gate(output_root, audit_writer=audit_writer, label="triviality-gate-l2", drop=True))
 
-    print(f"\nTotal proof-from-scratch benchmarks: {total - removed} ({total} generated, {removed} removed by cross-dir dedup)")
+    print(
+        f"\nTotal proof-from-scratch benchmarks: {total - removed - dropped} "
+        f"({total} generated, {removed} removed by cross-dir dedup, {dropped} dropped as degenerate)"
+    )
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
 
 

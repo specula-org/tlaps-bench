@@ -1159,7 +1159,7 @@ def generate_shared_model_l1(output_root=None):
             total += 1
             print(f"  generated: {os.path.relpath(os.path.join(out_dir, bench + '.tla'), PROJECT_ROOT)}")
         sm.copy_deps(dump, path, out_dir, reachable_all)
-    print(f"\nTotal proof-completion benchmarks (shared-model): {total}")
+    print(f"\nGenerated {total} proof-completion benchmark(s) (shared-model)")
     return total
 
 
@@ -1167,23 +1167,25 @@ def _run_sany_gate(directory):
     """Post-generation input SANY gate over the emitted proof-completion benchmark dir.
 
     Every task file handed to an agent must parse under standalone tla2sany.
-    Flags failures (manifest + stdout); does not drop them.
+    Flags failures (manifest + stdout); does not drop them. Returns the number of
+    degenerate tasks the triviality gate then dropped, so callers can correct the
+    printed benchmark count.
     """
     from dataset.sany_audit import gate
 
     gate(directory, label="sany-gate-l1")
-    _run_triviality_gate(directory)
+    return _run_triviality_gate(directory)
 
 
 def _run_triviality_gate(directory):
     """Post-generation triviality gate: a task whose PROOF OBVIOUS placeholder
     already verifies is degenerate (a no-op submission would PASS grading).
     Drops such tasks so a fresh generation never re-ships them (manifest + stdout
-    keep the audit trail).
+    keep the audit trail). Returns the number of tasks dropped.
     """
     from dataset.triviality_audit import gate
 
-    gate(directory, label="triviality-gate-l1", drop=True)
+    return len(gate(directory, label="triviality-gate-l1", drop=True))
 
 
 def main():
@@ -1200,8 +1202,10 @@ def main():
     args = parser.parse_args()
 
     if args.shared_model:
-        generate_shared_model_l1(output_root=args.output_dir)
-        _run_sany_gate(args.output_dir or BENCHMARK_DIR)
+        total = generate_shared_model_l1(output_root=args.output_dir)
+        dropped = _run_sany_gate(args.output_dir or BENCHMARK_DIR)
+        detail = f" ({total} generated, {dropped} dropped as degenerate)" if dropped else ""
+        print(f"Total proof-completion benchmarks (shared-model): {total - dropped}{detail}")
         return
 
     # Clean benchmark dir
@@ -1221,8 +1225,9 @@ def main():
         if count:
             print(f"  -> {count} benchmarks")
 
-    print(f"\nTotal benchmarks generated: {total}")
-    _run_sany_gate(BENCHMARK_DIR)
+    dropped = _run_sany_gate(BENCHMARK_DIR)
+    detail = f" ({total} generated, {dropped} dropped as degenerate)" if dropped else ""
+    print(f"\nTotal benchmarks generated: {total - dropped}{detail}")
 
 
 if __name__ == "__main__":
