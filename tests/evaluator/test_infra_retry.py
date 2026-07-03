@@ -129,6 +129,46 @@ def _no_sleep(monkeypatch):
     return sleeps
 
 
+def _result(benchmark, verdict, termination_reason="OK", **kw):
+    out = {
+        "benchmark": benchmark,
+        "check_verdict": verdict,
+        "time_secs": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "termination_reason": termination_reason,
+    }
+    out.update(kw)
+    return out
+
+
+def test_summary_excludes_non_genuine_results_from_pass_rate(tmp_path):
+    results = [
+        _result("genuine-pass.tla", "PASS"),
+        _result("genuine-fail.tla", "FAIL"),
+        _result("infra-pass.tla", "PASS", termination_reason=TerminationReason.INFRA_ERROR),
+        _result("quota-error.tla", "ERROR", termination_reason=TerminationReason.QUOTA_EXHAUSTED),
+        _result("skipped.tla", "SKIP"),
+    ]
+    runner.update_summary(results, str(tmp_path), total_benchmarks=5, backend_name="copilot", mode_name="proof-completion")
+    summary = (tmp_path / "summary.md").read_text()
+    assert "**Pass rate**: 1/2 (50.0%) · 1 skipped · 2 infra/quota-cut (excluded — re-run)" in summary
+    assert "`infra-pass.tla` | ✅ PASS" in summary
+    assert "INFRA_ERROR (excluded — re-run)" in summary
+
+
+def test_resume_does_not_skip_non_genuine_pass_results():
+    results = [
+        _result("genuine-pass.tla", "PASS"),
+        _result("legacy-pass.tla", "PASS", termination_reason=None),
+        _result("infra-pass.tla", "PASS", termination_reason=TerminationReason.INFRA_ERROR),
+        _result("quota-pass.tla", "PASS", termination_reason=TerminationReason.QUOTA_EXHAUSTED),
+        _result("skipped.tla", "SKIP"),
+        _result("failed.tla", "FAIL"),
+    ]
+    assert runner._resume_done_benchmarks(results) == {"genuine-pass.tla", "legacy-pass.tla", "skipped.tla"}
+
+
 def test_startup_failure_retried_and_final_attempt_graded(tmp_path, monkeypatch):
     backend = _ScriptedBackend()
     agent = _install_agent(monkeypatch, backend, [STARTUP, GENUINE_FAIL])
