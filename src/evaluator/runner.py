@@ -38,6 +38,7 @@ from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import AgentBackend
 from evaluator.modes import get_mode, list_modes
 from evaluator.modes.base import Mode
+from evaluator.score import SCORERS, is_non_genuine, is_pass, is_skipped, n_non_genuine, n_skipped, weighted_score
 from evaluator.termination import TerminationContext, TerminationReason, classify, startup_error_snippet
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -251,6 +252,15 @@ def _make_canonical_dir(name_no_ext: str, benchmark_path: str, basename: str, de
         raise
 
 
+def _resume_should_skip(result: dict) -> bool:
+    """Resume skips only completed genuine work: SKIP or a non-infra PASS."""
+    return is_skipped(result) or (is_pass(result) and not is_non_genuine(result))
+
+
+def _resume_done_benchmarks(results: list[dict]) -> set[str]:
+    return {r["benchmark"] for r in results if _resume_should_skip(r)}
+
+
 def update_summary(results, output_dir, total_benchmarks, backend_name, mode_name):
     """Incrementally update summary.md + results.json with current results."""
     with _summary_lock:
@@ -266,15 +276,16 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
         lines = []
         lines.append(f"# {backend_name} on {mode_name}\n")
         lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        # SKIP = operator-excluded from scoring; drop it from the pass rate
-        # entirely (neither numerator nor denominator) rather than count it FAIL.
-        n_pass = verdicts.get("PASS", 0)
-        n_skip = verdicts.get("SKIP", 0)
-        scored = total - n_skip
-        pass_pct = (100.0 * n_pass / scored) if scored else 0.0
+        # Match `tlaps-bench score`: SKIP and non-genuine infra/quota-cut runs
+        # are excluded from the pass-rate numerator and denominator.
+        pass_pct, n_pass, scored = weighted_score(results, SCORERS["equal"])
+        n_skip = n_skipped(results)
+        non_genuine = n_non_genuine(results)
         pass_line = f"**Pass rate**: {n_pass}/{scored} ({pass_pct:.1f}%)"
         if n_skip:
             pass_line += f" · {n_skip} skipped"
+        if non_genuine:
+            pass_line += f" · {non_genuine} infra/quota-cut (excluded — re-run)"
         lines.append(f"**Progress**: {total}/{total_benchmarks}")
         lines.append(pass_line)
         lines.append(f"**Total tokens**: {total_input:,} input / {total_output:,} output\n")
@@ -299,6 +310,9 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             # canonical parser, vs a proof that simply didn't verify).
             if r.get("sany_valid") is False:
                 notes = ("SANY✗ " + notes).strip()
+            if is_non_genuine(r):
+                reason = r.get("termination_reason", "non-genuine")
+                notes = (f"{reason} (excluded — re-run) " + notes).strip()
             # Name the tamper/admit check(s) behind a CHEATING verdict so a cheat
             # is distinguishable from an honest incomplete FAIL at a glance.
             if r.get("check_verdict") == "CHEATING" and r.get("cheat_checks"):
@@ -1120,8 +1134,8 @@ def main():
     benchmark_files = mode.get_benchmark_files(args.filter)
     print(f"Found {len(benchmark_files)} benchmarks")
 
-    # Resume: reuse --output-dir, skip benchmarks already recorded PASS there,
-    # and seed `results` so the summary stays cumulative across the rerun.
+    # Resume: reuse --output-dir, skip benchmarks already genuinely completed
+    # there, and seed `results` so the summary stays cumulative across the rerun.
     results = []
     done_pass = set()
     if args.resume:
@@ -1129,13 +1143,18 @@ def main():
         if os.path.isfile(prev_json):
             with open(prev_json) as f:
                 results = json.load(f)
-            # Skip both PASS (already done) and SKIP (operator-marked frontier
-            # benchmarks deliberately excluded from retry, e.g. theorems known
-            # to time out for reasons outside the agent's control).
-            done_pass = {r["benchmark"] for r in results if r.get("check_verdict") in ("PASS", "SKIP")}
-            n_pass = sum(1 for r in results if r.get("check_verdict") == "PASS")
-            n_skip = len(done_pass) - n_pass
-            print(f"Resume: loaded {len(results)} prior results, skipping {n_pass} PASS + {n_skip} SKIP")
+            # Skip genuine PASS (already done) and SKIP (operator-marked
+            # frontier benchmarks deliberately excluded from retry). A PASS
+            # produced by INFRA_ERROR / QUOTA_EXHAUSTED is non-genuine and must
+            # be eligible for rerun.
+            done_pass = _resume_done_benchmarks(results)
+            n_pass = sum(1 for r in results if is_pass(r) and not is_non_genuine(r))
+            n_skip = n_skipped(results)
+            non_genuine = n_non_genuine(results)
+            msg = f"Resume: loaded {len(results)} prior results, skipping {n_pass} genuine PASS + {n_skip} SKIP"
+            if non_genuine:
+                msg += f"; {non_genuine} infra/quota-cut result(s) eligible for rerun"
+            print(msg)
         else:
             print(f"Resume: no prior results.json in {output_dir} — running all")
 

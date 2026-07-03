@@ -19,6 +19,7 @@ from evaluator.score import (
     is_skipped,
     load_run,
     main,
+    n_non_genuine,
     n_skipped,
     scorecard_md,
     weighted_score,
@@ -109,6 +110,43 @@ def test_all_skip_is_zero_not_crash():
     results = [_r("SKIP"), _r("SKIP")]
     assert weighted_score(results, EQUAL) == (0.0, 0, 0)
     assert n_skipped(results) == 2
+
+
+def test_non_genuine_terminations_are_excluded_either_verdict():
+    # A startup failure can leave a no-op workspace that grades PASS on a
+    # defective task. INFRA_ERROR / QUOTA_EXHAUSTED results must count neither
+    # as passes nor failures; they need a rerun.
+    results = [
+        _r("PASS"),
+        _r("FAIL"),
+        _r("PASS", termination_reason="INFRA_ERROR"),
+        _r("FAIL", termination_reason="INFRA_ERROR"),
+        _r("ERROR", termination_reason="QUOTA_EXHAUSTED"),
+    ]
+    pct, n_pass, n_total = weighted_score(results, EQUAL)
+    assert (n_pass, n_total, pct) == (1, 2, 50.0)
+    assert n_non_genuine(results) == 3
+
+
+def test_ok_timeout_and_legacy_results_stay_scored():
+    # TIMEOUT is a limit (graded on workspace artifacts); a missing
+    # termination_reason is a pre-classification run. Both stay scored.
+    results = [
+        _r("PASS", termination_reason="OK"),
+        _r("FAIL", termination_reason="TIMEOUT"),
+        _r("FAIL"),
+    ]
+    pct, n_pass, n_total = weighted_score(results, EQUAL)
+    assert (n_pass, n_total) == (1, 3)
+    assert n_non_genuine(results) == 0
+
+
+def test_scorecard_reports_non_genuine_count():
+    results = [_r("PASS"), _r("PASS", termination_reason="INFRA_ERROR")]
+    run = {"path": "x", "id": "r", "backend": "copilot", "mode": "proof-completion", "results": results}
+    card = scorecard_md(run, EQUAL, "equal")
+    assert "**Pass rate**: 1/1 (100.0%)" in card
+    assert "1 infra/quota-cut (excluded — re-run)" in card
 
 
 def test_scorecard_excludes_skip_and_reports_it():

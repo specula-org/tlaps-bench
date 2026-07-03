@@ -147,7 +147,7 @@ uv run tlaps-bench score results/proof-from-scratch/pi/20260626_220712/results.j
 uv run tlaps-bench score results/proof-completion/*/results.json
 ```
 
-Pass rate = passed tasks / (total tasks minus skipped tasks). Cheating verdicts count as failures.
+Pass rate = passed tasks / scored tasks. `SKIP`, `INFRA_ERROR`, and `QUOTA_EXHAUSTED` results are excluded from scoring and reported separately; cheating verdicts count as failures.
 
 ### `tlaps-bench validate`
 
