@@ -181,7 +181,7 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
         is a fresh CLI session with no memory of the previous one."""
         preamble_path = os.path.join(os.path.dirname(self.prompt_template_path()), "continuation-preamble.txt")
         with open(preamble_path) as f:
-            preamble = f.read().format(benchmark_basename=benchmark_basename)
+            preamble = f.read().format(benchmark_basename=benchmark_basename, mode=self.name)
         return preamble + "\n" + self.build_prompt(benchmark_basename, tlapm_path, tlapm_lib)
 
     def checker_command(
