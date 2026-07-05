@@ -11,6 +11,8 @@ Run: PYTHONPATH=src python3 -m pytest tests/evaluator/test_infra_retry.py
 import json
 import os
 
+import pytest
+
 from evaluator import runner
 from evaluator.termination import TerminationReason
 
@@ -167,6 +169,27 @@ def test_resume_does_not_skip_non_genuine_pass_results():
         _result("failed.tla", "FAIL"),
     ]
     assert runner._resume_done_benchmarks(results) == {"genuine-pass.tla", "legacy-pass.tla", "skipped.tla"}
+
+
+def test_make_workspace_cleans_up_on_setup_failure(tmp_path, monkeypatch):
+    # The temp dir must not leak when workspace setup dies half-way (disk full,
+    # unreadable dep) — same guarantee _make_canonical_dir gives.
+    created = []
+    real_mkdtemp = runner.tempfile.mkdtemp
+
+    def tracking_mkdtemp(**kw):
+        d = real_mkdtemp(**kw)
+        created.append(d)
+        return d
+
+    def broken_copy2(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", tracking_mkdtemp)
+    monkeypatch.setattr(runner.shutil, "copy2", broken_copy2)
+    with pytest.raises(OSError):
+        runner._make_workspace("copilot", "Bar", str(tmp_path / "Bar.tla"), "Bar.tla", [])
+    assert created and not os.path.isdir(created[0])
 
 
 def test_startup_failure_retried_and_final_attempt_graded(tmp_path, monkeypatch):

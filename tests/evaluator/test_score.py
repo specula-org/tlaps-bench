@@ -15,7 +15,11 @@ import sys
 from evaluator.score import (
     SCORERS,
     comparison_md,
+    continuation_budget,
+    continuation_interrupted,
+    continuation_passed,
     is_pass,
+    is_pass_with_continuations,
     is_skipped,
     load_run,
     main,
@@ -176,6 +180,125 @@ def test_comparison_discloses_skip_inline():
     md = comparison_md(runs, EQUAL, "equal")
     assert "| r1 | codex | proof-completion | 50.0% | 1/2 (+1 skipped) |" in md
     assert "| r2 | claude_code | proof-completion | 100.0% | 2/2 |" in md  # no note when nothing skipped
+
+
+# --- continuations are a separate metric, never a replacement for pass@1 ---
+
+
+def _cont(*verdicts):
+    return [{"round": i + 1, "check_verdict": v} for i, v in enumerate(verdicts)]
+
+
+# A chain ended by a non-genuine round (the runner stops continuing on these).
+CUT_CHAIN = [{"round": 1, "check_verdict": "ERROR", "termination_reason": "QUOTA_EXHAUSTED"}]
+
+
+def test_continuation_passed_predicates():
+    recovered = _r("FAIL", continuations=_cont("FAIL", "PASS"))
+    still_failing = _r("FAIL", continuations=_cont("FAIL"))
+    assert continuation_passed(recovered) and is_pass_with_continuations(recovered)
+    assert not continuation_passed(still_failing) and not is_pass_with_continuations(still_failing)
+    assert not continuation_passed(_r("FAIL"))  # no rounds recorded
+    assert is_pass_with_continuations(_r("PASS"))  # first-attempt pass counts too
+
+
+def test_weighted_score_with_continuations_same_denominator():
+    # pass@1 and the continuation rate share the scored set (non-genuine excluded).
+    results = [
+        _r("PASS"),
+        _r("FAIL", continuations=_cont("PASS")),
+        _r("FAIL", continuations=_cont("FAIL")),
+        _r("FAIL", termination_reason="INFRA_ERROR"),
+    ]
+    assert weighted_score(results, EQUAL) == (100.0 / 3, 1, 3)
+    assert weighted_score(results, EQUAL, passed=is_pass_with_continuations) == (200.0 / 3, 2, 3)
+
+
+def test_continuation_interrupted_only_for_unresolved_cut_chains():
+    # Interrupted = the chain-ending round was infra/quota-cut with no PASS.
+    assert continuation_interrupted(_r("FAIL", continuations=CUT_CHAIN))
+    # An exhausted budget of genuine rounds is a real continuation failure.
+    assert not continuation_interrupted(_r("FAIL", continuations=_cont("FAIL", "FAIL")))
+    # A recovered chain resolved, however its stream ended.
+    assert not continuation_interrupted(_r("FAIL", continuations=_cont("FAIL", "PASS")))
+    assert not continuation_interrupted(_r("FAIL"))  # no rounds recorded
+
+
+def test_continuation_budget_uniform_or_none():
+    assert continuation_budget([_r("FAIL", max_continuations=3), _r("PASS")]) == 3
+    assert continuation_budget([_r("FAIL", max_continuations=3), _r("FAIL", max_continuations=5)]) is None
+    assert continuation_budget([_r("FAIL")]) is None  # legacy results: no budget recorded
+
+
+def test_scorecard_reports_continuation_rate_separately():
+    results = [_r("FAIL", continuations=_cont("PASS")), _r("FAIL")]
+    run = {"path": "x", "id": "r", "backend": "copilot", "mode": "proof-completion", "results": results}
+    md = scorecard_md(run, EQUAL, "equal")
+    assert "**Pass rate**: 0/2 (0.0%)" in md  # pass@1 stays first-attempt only
+    assert "**Pass rate with continuations**: 1/2 (50.0%) — 1 recovered by continuation" in md
+
+
+def test_scorecard_labels_continuation_budget_and_excludes_cut_chains():
+    # The rate states its budget (≤N), and an interrupted chain is dropped from
+    # numerator AND denominator with a disclosed count — never a silent failure.
+    results = [
+        _r("FAIL", continuations=_cont("PASS"), max_continuations=3),
+        _r("FAIL", continuations=CUT_CHAIN, max_continuations=3),
+        _r("FAIL"),
+    ]
+    run = {"path": "x", "id": "r", "backend": "copilot", "mode": "proof-completion", "results": results}
+    md = scorecard_md(run, EQUAL, "equal")
+    assert "**Pass rate**: 0/3 (0.0%)" in md  # the cut chain's genuine first FAIL stays scored
+    assert (
+        "**Pass rate with continuations (≤3)**: 1/2 (50.0%) — 1 recovered by continuation "
+        "(pass@1 above is first-attempt only) · 1 chain(s) infra/quota-cut (excluded — re-run)"
+    ) in md
+
+
+def test_scorecard_without_continuations_has_no_continuation_line():
+    results = [_r("PASS"), _r("FAIL")]
+    run = {"path": "x", "id": "r", "backend": "copilot", "mode": "proof-completion", "results": results}
+    assert "continuation" not in scorecard_md(run, EQUAL, "equal")
+
+
+def test_comparison_discloses_continuation_recoveries_inline():
+    # The budget is part of the result: +1 recovery out of ≤1 round and out of
+    # ≤10 must not render identically. Legacy results without a recorded budget
+    # fall back to the unlabeled note.
+    runs = [
+        {
+            "id": "r1",
+            "backend": "codex",
+            "mode": "proof-completion",
+            "results": [_r("PASS"), _r("FAIL", continuations=_cont("PASS"), max_continuations=3)],
+        },
+        {
+            "id": "r2",
+            "backend": "copilot",
+            "mode": "proof-completion",
+            "results": [_r("PASS"), _r("FAIL", continuations=_cont("PASS"))],  # legacy: no budget recorded
+        },
+        {"id": "r3", "backend": "claude_code", "mode": "proof-completion", "results": [_r("PASS"), _r("FAIL")]},
+    ]
+    md = comparison_md(runs, EQUAL, "equal")
+    assert "| r1 | codex | proof-completion | 50.0% | 1/2 (+1 via ≤3 continuations) |" in md
+    assert "| r2 | copilot | proof-completion | 50.0% | 1/2 (+1 via continuation) |" in md
+    assert "| r3 | claude_code | proof-completion | 50.0% | 1/2 |" in md  # no note without rounds
+
+
+def test_comparison_discloses_interrupted_chains_inline():
+    # "(+0 via continuation)" alone would hide that the chain was infra/quota-cut
+    # rather than genuinely exhausted — the cut count must appear next to it.
+    runs = [
+        {
+            "id": "r1",
+            "backend": "codex",
+            "mode": "proof-completion",
+            "results": [_r("PASS"), _r("FAIL", continuations=CUT_CHAIN)],
+        },
+    ]
+    md = comparison_md(runs, EQUAL, "equal")
+    assert "| r1 | codex | proof-completion | 50.0% | 1/2 (+0 via continuation) (+1 chain(s) cut) |" in md
 
 
 # --- load_run / main entry point ------------------------------------------

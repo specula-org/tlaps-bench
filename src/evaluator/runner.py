@@ -38,7 +38,17 @@ from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import AgentBackend
 from evaluator.modes import get_mode, list_modes
 from evaluator.modes.base import Mode
-from evaluator.score import SCORERS, is_non_genuine, is_pass, is_skipped, n_non_genuine, n_skipped, weighted_score
+from evaluator.score import (
+    SCORERS,
+    continuation_interrupted,
+    continuation_rate_line,
+    is_non_genuine,
+    is_pass_with_continuations,
+    is_skipped,
+    n_non_genuine,
+    n_skipped,
+    weighted_score,
+)
 from evaluator.termination import TerminationContext, TerminationReason, classify, startup_error_snippet
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -238,6 +248,10 @@ class WorkItem:
     # Extra agent attempts after a transient startup/infra failure (INFRA_ERROR
     # with 0 output tokens); 0 disables retrying (the failure still ends ERROR).
     infra_retries: int = 3
+    # Continuation rounds after a genuine non-PASS: re-run the agent in the SAME
+    # workspace so it builds on its own partial proof (see _run_continuations).
+    # 0 disables. pass@1 (check_verdict) is unaffected either way.
+    max_continuations: int = 0
 
 
 def _make_canonical_dir(name_no_ext: str, benchmark_path: str, basename: str, deps: list[str]) -> str:
@@ -252,13 +266,213 @@ def _make_canonical_dir(name_no_ext: str, benchmark_path: str, basename: str, de
         raise
 
 
+def _make_workspace(backend_name: str, name_no_ext: str, benchmark_path: str, basename: str, deps: list[str]) -> str:
+    """Fresh isolated workspace: benchmark + dependencies in a git repo (the
+    baseline commit is the cheating check's reference point)."""
+    workspace = tempfile.mkdtemp(prefix=f"{backend_name}_bench_{name_no_ext}_")
+    try:
+        shutil.copy2(benchmark_path, os.path.join(workspace, basename))
+        for dep in deps:
+            shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
+        subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
+        subprocess.run(["git", "add", "."], capture_output=True, cwd=workspace)
+        subprocess.run(
+            ["git", "commit", "-m", "initial benchmark"],
+            capture_output=True,
+            cwd=workspace,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "bench",
+                "GIT_AUTHOR_EMAIL": "bench@bench",
+                "GIT_COMMITTER_NAME": "bench",
+                "GIT_COMMITTER_EMAIL": "bench@bench",
+            },
+        )
+        return workspace
+    except Exception:
+        shutil.rmtree(workspace, ignore_errors=True)
+        raise
+
+
+@dataclass
+class AgentRunOutcome:
+    """What _run_agent_with_retries leaves behind for the caller to grade/record."""
+
+    workspace: str
+    canonical_dir: str
+    transcript: str
+    quota_exhausted: bool
+    infra_retriable: bool  # still a 0-token infra failure after all retries
+    infra_reasons: list[str]
+
+
+def _run_agent_with_retries(
+    item: WorkItem,
+    prompt: str,
+    agent_dir: str,
+    agent_jsonl: str,
+    agent_stderr: str,
+    result: dict,
+    checker_bin: str,
+    deps: list[str],
+    basename: str,
+    name_no_ext: str,
+    fixed_workspace: str | None = None,
+) -> AgentRunOutcome:
+    """One agent-run lifecycle, shared by the first attempt and continuation
+    rounds: run the agent (sleeping through hard provider quota caps, see
+    quota.run_with_quota_retry), parse its output, classify the termination,
+    and retry with backoff while the run died before the model did ANY work
+    (INFRA_ERROR + 0 output tokens). A genuine attempt (any output tokens) is
+    never re-run.
+
+    Every attempt gets a fresh canonical snapshot: both the agent self-check
+    and grader read it, and in local mode the agent can write to the host path,
+    so a failed attempt's copy must never leak into a retry or the grader.
+    With fixed_workspace=None each attempt also gets a fresh workspace (a
+    failed first attempt's partial edits can't leak into a retry); a
+    continuation round passes its existing workspace instead — the partial
+    proof in it IS the input, and a 0-token startup death can't have touched it.
+
+    Fills result's time_secs / input_tokens / output_tokens / agent_exit /
+    error / termination_reason (plus infra_retries / infra_retry_reasons after
+    any retries); the caller owns quota/infra exhaustion verdicts and messages.
+    time_secs counts only active agent time — quota-retry sleeps (which can be
+    hours) and the infra backoff are excluded. Returns the final attempt's
+    workspace + canonical snapshot, which the caller must clean up (earlier
+    attempts' dirs are cleaned here, including when an attempt raises).
+    """
+    backend = item.backend
+    mode = item.mode
+    workspace = fixed_workspace
+    canonical_dir = None
+    active_secs = 0.0
+    quota_exhausted = False
+    infra_retriable = False
+    infra_reasons: list[str] = []
+    transcript = ""
+    try:
+        for attempt in range(max(item.infra_retries, 0) + 1):
+            canonical_dir = _make_canonical_dir(name_no_ext, item.benchmark_path, basename, deps)
+            if fixed_workspace is None:
+                workspace = _make_workspace(backend.name, name_no_ext, item.benchmark_path, basename, deps)
+
+            wait_for_memory(item.min_free_gb, 120, log_prefix=f"[{name_no_ext}] ")
+
+            # Defaults keep the closure bound to this attempt.
+            def _run_once(workspace=workspace, canonical_dir=canonical_dir):
+                nonlocal active_secs
+                result["error"] = ""
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(agent_stderr)
+                t0 = time.time()
+                if item.use_container:
+                    _run_agent_container(
+                        item, backend, workspace, agent_dir, agent_jsonl, prompt, result, canonical_dir
+                    )
+                else:
+                    _run_agent_local(
+                        item,
+                        backend,
+                        mode,
+                        workspace,
+                        agent_dir,
+                        agent_jsonl,
+                        prompt,
+                        result,
+                        checker_bin,
+                        canonical_dir,
+                    )
+                active_secs += time.time() - t0
+
+            quota_exhausted = not quota.run_with_quota_retry(
+                _run_once,
+                lambda: backend.detect_quota_block(agent_jsonl),
+                log_prefix=f"[{name_no_ext}] ",
+            )
+            result["time_secs"] = active_secs
+
+            # Parse agent output on every path — including quota exhaustion — so
+            # the result records any tokens the agent did emit (rather than
+            # forcing them to 0).
+            transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
+            result["input_tokens"] = input_tokens
+            result["output_tokens"] = output_tokens
+
+            if quota_exhausted:
+                break  # quota owns its own retry budget — never infra-retried
+
+            # Tag how the run terminated so an INFRA_ERROR (agent cut short by
+            # infrastructure, not a genuine attempt) is distinguishable from a
+            # real FAIL — and, when the model did no work, retried right here.
+            ctx = TerminationContext(
+                backend=backend.name,
+                jsonl_path=agent_jsonl,
+                agent_exit=result.get("agent_exit"),
+                error=result.get("error", ""),
+                stderr_path=agent_stderr,
+            )
+            result["termination_reason"] = classify(ctx)
+
+            # A genuine attempt (any output tokens) is never re-run.
+            infra_retriable = result["termination_reason"] == TerminationReason.INFRA_ERROR and output_tokens == 0
+            if not infra_retriable:
+                break
+            infra_reasons.append(startup_error_snippet(ctx))
+            if attempt >= item.infra_retries:
+                break  # out of retries — the caller records the exhaustion
+
+            _stash_failed_attempt(agent_dir, attempt)
+            if fixed_workspace is None:
+                shutil.rmtree(workspace, ignore_errors=True)
+                workspace = None
+            shutil.rmtree(canonical_dir, ignore_errors=True)
+            canonical_dir = None
+            base = INFRA_RETRY_BACKOFF[min(attempt, len(INFRA_RETRY_BACKOFF) - 1)]
+            delay = base + random.uniform(0, base / 2)  # jitter: keep --jobs workers out of lockstep
+            print(
+                f"[{name_no_ext}] transient infra failure ({infra_reasons[-1]}) — "
+                f"retrying in {delay:.0f}s (retry {attempt + 1}/{item.infra_retries})",
+                flush=True,
+            )
+            time.sleep(delay)
+    except BaseException:
+        # An attempt blew up mid-flight: the caller only ever owns what we
+        # return, so don't leak this attempt's dirs (never a fixed workspace).
+        if fixed_workspace is None and workspace:
+            shutil.rmtree(workspace, ignore_errors=True)
+        if canonical_dir:
+            shutil.rmtree(canonical_dir, ignore_errors=True)
+        raise
+
+    if infra_reasons:
+        result["infra_retries"] = attempt  # retries performed (0-based final attempt index)
+        result["infra_retry_reasons"] = infra_reasons
+    return AgentRunOutcome(workspace, canonical_dir, transcript, quota_exhausted, infra_retriable, infra_reasons)
+
+
 def _resume_should_skip(result: dict) -> bool:
-    """Resume skips only completed genuine work: SKIP or a non-infra PASS."""
-    return is_skipped(result) or (is_pass(result) and not is_non_genuine(result))
+    """Resume skips genuine completed work: SKIP, first-attempt PASS, or continuation PASS."""
+    return is_skipped(result) or (is_pass_with_continuations(result) and not is_non_genuine(result))
 
 
 def _resume_done_benchmarks(results: list[dict]) -> set[str]:
     return {r["benchmark"] for r in results if _resume_should_skip(r)}
+
+
+def _continuation_note(result: dict) -> str:
+    """One-phrase outcome of a result's continuation rounds ("" without any):
+    the round that recovered a PASS, a chain infra/quota-cut before resolving,
+    or how many genuine rounds still didn't pass."""
+    rounds = result.get("continuations") or []
+    if not rounds:
+        return ""
+    passed = next((r["round"] for r in rounds if r.get("check_verdict") == "PASS"), None)
+    if passed is not None:
+        return f"PASS on continuation {passed}"
+    if continuation_interrupted(result):
+        return f"continuation chain cut at round {len(rounds)} (excluded — re-run)"
+    return f"no PASS after {len(rounds)} continuation(s)"
 
 
 def update_summary(results, output_dir, total_benchmarks, backend_name, mode_name):
@@ -288,6 +502,10 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             pass_line += f" · {non_genuine} infra/quota-cut (excluded — re-run)"
         lines.append(f"**Progress**: {total}/{total_benchmarks}")
         lines.append(pass_line)
+        # Separate, clearly-labeled metric — the pass rate above stays pass@1.
+        cont_line = continuation_rate_line(results, SCORERS["equal"], n_pass)
+        if cont_line:
+            lines.append(cont_line)
         lines.append(f"**Total tokens**: {total_input:,} input / {total_output:,} output\n")
 
         lines.append("## Summary\n")
@@ -317,6 +535,9 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             # is distinguishable from an honest incomplete FAIL at a glance.
             if r.get("check_verdict") == "CHEATING" and r.get("cheat_checks"):
                 notes = (",".join(r["cheat_checks"]) + " " + notes).strip()
+            cont = _continuation_note(r)
+            if cont:
+                notes = (cont + " " + notes).strip()
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
             if "obligations" in r:
                 obs = str(r["obligations"])
@@ -371,6 +592,11 @@ def run_single_benchmark(item: WorkItem):
         # than a genuine model attempt, so a FAIL can be filtered/retried.
         "termination_reason": TerminationReason.OK,
     }
+    if item.max_continuations > 0:
+        # Run-level config, stamped on EVERY result — first-attempt PASSes and
+        # non-genuine early exits included — so the continuation metric can
+        # state its ≤N budget without guessing from the chains that happened to run.
+        result["max_continuations"] = item.max_continuations
 
     if not quota.wait_for_quota(
         item.usage_script, item.quota_5h, item.quota_7d, item.quota_max_waits,
@@ -407,134 +633,21 @@ def run_single_benchmark(item: WorkItem):
         agent_jsonl = os.path.join(agent_dir, "output.jsonl")
         agent_stderr = os.path.join(agent_dir, "stderr.txt")
 
-        # _run_once accumulates only active agent time, so time_secs excludes the
-        # quota retry sleeps (which can be hours) and the infra backoff below.
-        active_secs = 0.0
-
         # Infra retry loop: a run cut short before the model did ANY work
         # (INFRA_ERROR + 0 output tokens) says nothing about the model, so it is
         # retried on a fresh workspace instead of graded. Everything else gets
         # exactly one attempt.
-        quota_exhausted = False
-        infra_retriable = False
-        infra_reasons: list[str] = []
-        for attempt in range(max(item.infra_retries, 0) + 1):
-            # Canonical snapshot for THIS attempt: both the agent self-check and
-            # grader read it, and retries get a fresh copy even in local mode
-            # where the agent can write to the host path.
-            canonical_dir = _make_canonical_dir(name_no_ext, item.benchmark_path, basename, deps)
+        run = _run_agent_with_retries(
+            item, prompt, agent_dir, agent_jsonl, agent_stderr, result, checker_bin, deps, basename, name_no_ext
+        )
+        workspace, canonical_dir = run.workspace, run.canonical_dir
 
-            # Copy benchmark + dependencies into a FRESH isolated workspace per
-            # attempt, so a failed attempt's partial edits can't leak into a retry.
-            workspace = tempfile.mkdtemp(prefix=f"{backend.name}_bench_{name_no_ext}_")
-            shutil.copy2(item.benchmark_path, os.path.join(workspace, basename))
-            for dep in deps:
-                shutil.copy2(dep, os.path.join(workspace, os.path.basename(dep)))
-
-            # Init git repo (baseline for cheating check)
-            subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
-            subprocess.run(["git", "add", "."], capture_output=True, cwd=workspace)
-            subprocess.run(
-                ["git", "commit", "-m", "initial benchmark"],
-                capture_output=True,
-                cwd=workspace,
-                env={
-                    **os.environ,
-                    "GIT_AUTHOR_NAME": "bench",
-                    "GIT_AUTHOR_EMAIL": "bench@bench",
-                    "GIT_COMMITTER_NAME": "bench",
-                    "GIT_COMMITTER_EMAIL": "bench@bench",
-                },
-            )
-
-            wait_for_memory(item.min_free_gb, 120, log_prefix=f"[{name_no_ext}] ")
-
-            # Run the agent, sleeping through any hard provider usage-limit cap that
-            # the proactive gate (above) can't see (see quota.run_with_quota_retry).
-            # Defaults keep the closure bound to this outer infra attempt.
-            def _run_once(workspace=workspace, canonical_dir=canonical_dir):
-                nonlocal active_secs
-                result["error"] = ""
-                with contextlib.suppress(FileNotFoundError):
-                    os.remove(agent_stderr)
-                t0 = time.time()
-                if item.use_container:
-                    _run_agent_container(
-                        item, backend, workspace, agent_dir, agent_jsonl, prompt, result, canonical_dir
-                    )
-                else:
-                    _run_agent_local(
-                        item,
-                        backend,
-                        mode,
-                        workspace,
-                        agent_dir,
-                        agent_jsonl,
-                        prompt,
-                        result,
-                        checker_bin,
-                        canonical_dir,
-                    )
-                active_secs += time.time() - t0
-
-            quota_exhausted = not quota.run_with_quota_retry(
-                _run_once,
-                lambda: backend.detect_quota_block(agent_jsonl),
-                log_prefix=f"[{name_no_ext}] ",
-            )
-            result["time_secs"] = active_secs
-
-            # Parse agent output and save artifacts on every path — including quota
-            # exhaustion — so the result dir keeps a consistent shape and records any
-            # tokens the agent did emit (rather than forcing them to 0).
-            transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
-            result["input_tokens"] = input_tokens
-            result["output_tokens"] = output_tokens
-
-            if quota_exhausted:
-                break  # quota owns its own retry budget — never infra-retried
-
-            # Tag how the run terminated so an INFRA_ERROR (agent cut short by
-            # infrastructure, not a genuine attempt) is distinguishable from a
-            # real FAIL — and, when the model did no work, retried right here.
-            ctx = TerminationContext(
-                backend=backend.name,
-                jsonl_path=agent_jsonl,
-                agent_exit=result.get("agent_exit"),
-                error=result.get("error", ""),
-                stderr_path=agent_stderr,
-            )
-            result["termination_reason"] = classify(ctx)
-
-            # A genuine attempt (any output tokens) is never re-run.
-            infra_retriable = result["termination_reason"] == TerminationReason.INFRA_ERROR and output_tokens == 0
-            if not infra_retriable:
-                break
-            infra_reasons.append(startup_error_snippet(ctx))
-            if attempt >= item.infra_retries:
-                break  # out of retries — recorded below as ERROR, not graded
-
-            _stash_failed_attempt(agent_dir, attempt)
-            shutil.rmtree(workspace, ignore_errors=True)
-            workspace = None
-            shutil.rmtree(canonical_dir, ignore_errors=True)
-            canonical_dir = None
-            base = INFRA_RETRY_BACKOFF[min(attempt, len(INFRA_RETRY_BACKOFF) - 1)]
-            delay = base + random.uniform(0, base / 2)  # jitter: keep --jobs workers out of lockstep
-            print(
-                f"[{name_no_ext}] transient infra failure ({infra_reasons[-1]}) — "
-                f"retrying in {delay:.0f}s (retry {attempt + 1}/{item.infra_retries})",
-                flush=True,
-            )
-            time.sleep(delay)
-
-        elapsed = active_secs
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
-            f.write(f"Time: {elapsed:.0f}s\n")
-            f.write(f"Tokens: {input_tokens:,} input / {output_tokens:,} output\n")
+            f.write(f"Time: {result['time_secs']:.0f}s\n")
+            f.write(f"Tokens: {result['input_tokens']:,} input / {result['output_tokens']:,} output\n")
             f.write("=" * 60 + "\n\n")
-            f.write(transcript)
+            f.write(run.transcript)
 
         solution_path = os.path.join(workspace, basename)
         if os.path.isfile(solution_path):
@@ -544,11 +657,7 @@ def run_single_benchmark(item: WorkItem):
         if os.path.isfile(agent_check_file):
             shutil.copy2(agent_check_file, os.path.join(grading_dir, "agent_check.result"))
 
-        if infra_reasons:
-            result["infra_retries"] = attempt  # retries performed (0-based final attempt index)
-            result["infra_retry_reasons"] = infra_reasons
-
-        if quota_exhausted:
+        if run.quota_exhausted:
             # Provider hard-capped us past the retry budget. Mark ERROR (retriable
             # via --resume) and skip grading; the artifacts above keep the result
             # dir consistent with a normal run. Tag QUOTA_EXHAUSTED directly — the
@@ -562,12 +671,12 @@ def run_single_benchmark(item: WorkItem):
                 json.dump(result, f, indent=2)
             return result
 
-        if infra_retriable:
+        if run.infra_retriable:
             # Out of retries with no genuine attempt made: grading the untouched
             # workspace would turn infra noise into a proof verdict (FAIL, or even
             # a bogus PASS). Mark ERROR (retriable via --resume), skip the grader.
             result["check_verdict"] = "ERROR"
-            result["error"] = f"startup/infra failure ({infra_reasons[-1]}); exhausted infra retries"
+            result["error"] = f"startup/infra failure ({run.infra_reasons[-1]}); exhausted infra retries"
             with open(os.path.join(result_dir, "result.json"), "w") as f:
                 json.dump(result, f, indent=2)
             return result
@@ -578,6 +687,12 @@ def run_single_benchmark(item: WorkItem):
             _run_grader_container(item, workspace, basename, grading_dir, check_result_path, result, canonical_dir)
         else:
             _run_grader_local(item, workspace, basename, grading_dir, check_result_path, result, canonical_dir)
+
+        # Opt-in continuation rounds: a genuine non-PASS keeps its workspace and
+        # the agent is asked to build on its own partial proof. The pass@1 fields
+        # above stay untouched; rounds are recorded under result["continuations"].
+        if item.max_continuations > 0 and result["check_verdict"] != "PASS" and not is_non_genuine(result):
+            _run_continuations(item, workspace, result, result_dir, basename, name_no_ext, deps, checker_bin)
 
         # Write per-benchmark result.json
         with open(os.path.join(result_dir, "result.json"), "w") as f:
@@ -601,6 +716,122 @@ def _stash_failed_attempt(agent_dir: str, attempt: int) -> None:
         src = os.path.join(agent_dir, fname)
         if os.path.isfile(src):
             shutil.move(src, os.path.join(dest, fname))
+
+
+def _run_continuations(
+    item: WorkItem,
+    workspace: str,
+    result: dict,
+    result_dir: str,
+    basename: str,
+    name_no_ext: str,
+    deps: list[str],
+    checker_bin: str,
+) -> None:
+    """Continuation rounds (--max-continuations, off by default).
+
+    A genuine non-PASS mixes two outcomes: the agent stopped early (declared
+    itself done with a repairable partial proof still in the file) or it truly
+    cannot solve the task. Each round re-runs the agent in the SAME workspace —
+    the partial proof is still there — with a continuation prompt telling it to
+    build on that prior work, then re-grades; rounds stop at the first PASS, at
+    the --max-continuations budget, or when a round is cut short by infra/quota.
+    A chain cut short is interrupted, not failed: scoring excludes it from the
+    continuation rate (see score.continuation_interrupted) and --resume reruns
+    the benchmark.
+
+    The top-level result keeps the FIRST attempt's verdict, so pass@1 is
+    reported unchanged; each round's verdict/cost is appended to
+    result["continuations"] (the run's ≤N budget is stamped on every result as
+    max_continuations at init) and the round's tokens/time accumulate into the
+    top-level cost fields (the true cost of the whole chain). Artifacts land in
+    <result_dir>/continuations/round-N/, shaped like the agent/ + grading/ dirs.
+    """
+    mode = item.mode
+    prompt = mode.build_continuation_prompt(basename, item.tlapm_path, item.tlapm_lib)
+    agent_check_file = os.path.join(workspace, name_no_ext + ".result")
+    rounds: list[dict] = result.setdefault("continuations", [])
+    for rnd in range(1, item.max_continuations + 1):
+        prev_verdict = rounds[-1]["check_verdict"] if rounds else result["check_verdict"]
+        print(
+            f"[{name_no_ext}] {prev_verdict} — continuing in same workspace "
+            f"(round {rnd}/{item.max_continuations})",
+            flush=True,
+        )
+        round_dir = os.path.join(result_dir, "continuations", f"round-{rnd}")
+        os.makedirs(round_dir, exist_ok=True)
+        with open(os.path.join(round_dir, "prompt.txt"), "w") as f:
+            f.write(prompt)
+        agent_jsonl = os.path.join(round_dir, "output.jsonl")
+        agent_stderr = os.path.join(round_dir, "stderr.txt")
+        round_result = {
+            "round": rnd,
+            "agent_exit": -1,
+            "check_verdict": "ERROR",
+            "time_secs": 0,
+            "error": "",
+            "termination_reason": TerminationReason.OK,
+        }
+        # The in-workspace self-check file survives from the previous round (the
+        # agent may want to read what failed), so note its state to copy it as
+        # this round's evidence only if this round's agent (re)wrote it.
+        check_mtime_before = os.stat(agent_check_file).st_mtime_ns if os.path.isfile(agent_check_file) else None
+
+        run = _run_agent_with_retries(
+            item,
+            prompt,
+            round_dir,
+            agent_jsonl,
+            agent_stderr,
+            round_result,
+            checker_bin,
+            deps,
+            basename,
+            name_no_ext,
+            fixed_workspace=workspace,
+        )
+        try:
+            result["time_secs"] += round_result["time_secs"]
+            result["input_tokens"] += round_result["input_tokens"]
+            result["output_tokens"] += round_result["output_tokens"]
+            if run.quota_exhausted:
+                round_result["agent_exit"] = -3
+                round_result["error"] = "provider usage limit; exhausted quota retries"
+                round_result["termination_reason"] = TerminationReason.QUOTA_EXHAUSTED
+            elif run.infra_retriable:
+                round_result["error"] = f"startup/infra failure ({run.infra_reasons[-1]}); exhausted infra retries"
+
+            with open(os.path.join(round_dir, "transcript.txt"), "w") as f:
+                f.write(run.transcript)
+            solution_path = os.path.join(workspace, basename)
+            if os.path.isfile(solution_path):
+                shutil.copy2(solution_path, os.path.join(round_dir, "solution.tla"))
+            check_mtime_after = os.stat(agent_check_file).st_mtime_ns if os.path.isfile(agent_check_file) else None
+            if check_mtime_after is not None and check_mtime_after != check_mtime_before:
+                shutil.copy2(agent_check_file, os.path.join(round_dir, "agent_check.result"))
+
+            # Same rule as the first attempt: never grade a round the model
+            # never got to work on (quota cap or 0-token startup death).
+            cut_short = run.quota_exhausted or run.infra_retriable
+            if not cut_short:
+                check_result_path = os.path.join(round_dir, "check.result")
+                if item.use_container:
+                    _run_grader_container(
+                        item, workspace, basename, round_dir, check_result_path, round_result, run.canonical_dir
+                    )
+                else:
+                    _run_grader_local(
+                        item, workspace, basename, round_dir, check_result_path, round_result, run.canonical_dir
+                    )
+        finally:
+            shutil.rmtree(run.canonical_dir, ignore_errors=True)
+
+        rounds.append(round_result)
+        if round_result["check_verdict"] == "PASS":
+            print(f"[{name_no_ext}] recovered: PASS on continuation round {rnd}", flush=True)
+            break
+        if cut_short:
+            break
 
 
 def _run_agent_container(
@@ -1009,7 +1240,9 @@ def main():
         help="Override the backend's usage probe with a custom script path",
     )
     parser.add_argument(
-        "--resume", action="store_true", help="Reuse --output-dir: skip benchmarks already PASS there, run the rest"
+        "--resume",
+        action="store_true",
+        help="Reuse --output-dir: skip benchmarks already SKIP or genuinely passed there (first-attempt or continuation), run the rest",
     )
     parser.add_argument(
         "--min-free-gb",
@@ -1025,6 +1258,15 @@ def main():
         help="Extra agent attempts after a transient startup/infrastructure failure "
         "(agent died with 0 output tokens), so 3 = up to 4 attempts total "
         "(default: 3; 0 = no retries, the failure still ends as ERROR)",
+    )
+    parser.add_argument(
+        "--max-continuations",
+        type=int,
+        default=0,
+        help="After a genuine non-PASS verdict, re-run the agent up to N more times in the "
+        "SAME workspace with a continuation prompt (build on its own partial proof), "
+        "stopping at the first PASS. The first attempt's verdict still scores pass@1; "
+        "continuation rounds are recorded and reported separately (default: 0 = off)",
     )
     parser.add_argument(
         "--no-container",
@@ -1148,10 +1390,15 @@ def main():
             # produced by INFRA_ERROR / QUOTA_EXHAUSTED is non-genuine and must
             # be eligible for rerun.
             done_pass = _resume_done_benchmarks(results)
-            n_pass = sum(1 for r in results if is_pass(r) and not is_non_genuine(r))
+            # Count with the same predicate the skip decision uses, so the
+            # message includes benchmarks solved on a continuation round.
+            n_pass = sum(1 for r in results if _resume_should_skip(r) and not is_skipped(r))
             n_skip = n_skipped(results)
             non_genuine = n_non_genuine(results)
-            msg = f"Resume: loaded {len(results)} prior results, skipping {n_pass} genuine PASS + {n_skip} SKIP"
+            msg = (
+                f"Resume: loaded {len(results)} prior results, skipping {n_pass} genuine PASS "
+                f"(first-attempt or continuation) + {n_skip} SKIP"
+            )
             if non_genuine:
                 msg += f"; {non_genuine} infra/quota-cut result(s) eligible for rerun"
             print(msg)
@@ -1180,6 +1427,7 @@ def main():
                 min_free_gb=args.min_free_gb,
                 use_container=use_container,
                 infra_retries=args.infra_retries,
+                max_continuations=args.max_continuations,
             )
         )
 
@@ -1195,8 +1443,10 @@ def main():
             results.append(r)
             icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
+            cont = _continuation_note(r)
             print(
                 f"[{prior_done + i + 1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
+                + (f" — {cont}" if cont else "")
             )
             update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
     else:
@@ -1207,8 +1457,10 @@ def main():
                 results.append(r)
                 icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
                 tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
+                cont = _continuation_note(r)
                 print(
                     f"[{prior_done + done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
+                    + (f" — {cont}" if cont else "")
                 )
                 update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
 

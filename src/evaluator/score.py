@@ -22,6 +22,17 @@ the numerator and denominator — like SKIP — and reported separately as needi
 re-run. TIMEOUT is a limit, not infrastructure: the agent worked and is graded on
 what it left in the workspace, so it stays scored.
 
+Continuations (``tlaps-bench run --max-continuations``) are a separate metric,
+never a replacement: ``check_verdict`` always holds the FIRST attempt's verdict,
+so the pass rate above stays pass@1. When a run recorded continuation rounds
+(``result["continuations"]``), a second, clearly-labeled "with continuations"
+rate is reported (with the run's ≤N budget), counting a task as passed if any
+round reached PASS — the gap between the two is how often a first-attempt
+failure was an early stop rather than an inability. A chain cut short by
+infra/quota before resolving is interrupted, not failed: like a non-genuine
+first attempt it is excluded from the continuation rate and reported separately
+(see ``continuation_interrupted``).
+
 Pluggable scoring: a scorer assigns a non-negative weight to each task; the
 score of a group of tasks is
 
@@ -63,6 +74,60 @@ def is_non_genuine(result: dict) -> bool:
     return result.get("termination_reason") in NON_GENUINE_TERMINATIONS
 
 
+def continuation_passed(result: dict) -> bool:
+    """Whether any continuation round (--max-continuations) reached PASS.
+
+    A round's PASS means the grader verified the proof in the workspace, so it
+    is ground truth regardless of how that round's event stream terminated."""
+    return any(r.get("check_verdict") == PASS_VERDICT for r in result.get("continuations") or [])
+
+
+def is_pass_with_continuations(result: dict) -> bool:
+    """PASS on the first attempt or on any continuation round — the predicate
+    behind the separate "with continuations" rate (pass@1 uses is_pass)."""
+    return is_pass(result) or continuation_passed(result)
+
+
+def continuation_interrupted(result: dict) -> bool:
+    """Whether the continuation chain was cut short by infra/quota before it
+    could resolve: no round passed and the chain-ending round is non-genuine.
+
+    Like a non-genuine first attempt, the outcome is indeterminate — neither a
+    recovery nor an exhausted budget — so the continuation rate excludes it and
+    reports it separately (rerun the benchmark with --resume)."""
+    rounds = result.get("continuations") or []
+    return bool(rounds) and is_non_genuine(rounds[-1]) and not continuation_passed(result)
+
+
+def continuation_budget(results: list[dict]) -> int | None:
+    """The run's --max-continuations budget, when recorded and uniform across
+    results. Mixed budgets (e.g. a run resumed with a different flag) yield
+    None and reports omit the ≤N label."""
+    budgets = {r["max_continuations"] for r in results if r.get("max_continuations")}
+    return budgets.pop() if len(budgets) == 1 else None
+
+
+def continuation_rate_line(results: list[dict], weight: Callable[[dict], float], n_pass: int) -> str | None:
+    """The "with continuations" pass-rate line shared by summary.md and the
+    scorecard, or None when no continuation rounds were recorded. Interrupted
+    chains are excluded from the rate and disclosed; ``n_pass`` is the pass@1
+    count the recovery delta is measured against."""
+    if not any(r.get("continuations") for r in results):
+        return None
+    resolved = [r for r in results if not continuation_interrupted(r)]
+    cpct, cn_pass, cn_total = weighted_score(resolved, weight, passed=is_pass_with_continuations)
+    budget = continuation_budget(results)
+    label = f" (≤{budget})" if budget else ""
+    line = (
+        f"**Pass rate with continuations{label}**: {cn_pass}/{cn_total} ({cpct:.1f}%) — "
+        f"{cn_pass - n_pass} recovered by continuation (pass@1 above is first-attempt only)"
+    )
+    n_cut = sum(1 for r in results if continuation_interrupted(r))
+    if n_cut:
+        line += f" · {n_cut} chain(s) infra/quota-cut (excluded — re-run)"
+    return line
+
+
 def n_skipped(results: list[dict]) -> int:
     """How many tasks were operator-excluded from scoring."""
     return sum(1 for r in results if is_skipped(r))
@@ -81,18 +146,22 @@ SCORERS: dict[str, Callable[[dict], float]] = {
 }
 
 
-def weighted_score(results: list[dict], weight: Callable[[dict], float]) -> tuple[float, int, int]:
+def weighted_score(
+    results: list[dict], weight: Callable[[dict], float], passed: Callable[[dict], bool] = is_pass
+) -> tuple[float, int, int]:
     """Return (score_percent, n_passed, n_total) over the scored tasks.
 
     SKIP and non-genuine tasks are dropped first, so ``n_total`` is the number
     of *scored* tasks (excluded ones count toward neither the pass count nor the
-    denominator).
+    denominator). ``passed`` is the pass predicate: the default scores pass@1;
+    the "with continuations" rate passes ``is_pass_with_continuations`` after
+    also dropping interrupted chains (see continuation_rate_line).
     """
     scored = [r for r in results if not is_skipped(r) and not is_non_genuine(r)]
     n_total = len(scored)
-    n_pass = sum(1 for r in scored if is_pass(r))
+    n_pass = sum(1 for r in scored if passed(r))
     total_w = sum(max(weight(r), 0.0) for r in scored)
-    pass_w = sum(max(weight(r), 0.0) for r in scored if is_pass(r))
+    pass_w = sum(max(weight(r), 0.0) for r in scored if passed(r))
     pct = (100.0 * pass_w / total_w) if total_w > 0 else 0.0
     return pct, n_pass, n_total
 
@@ -144,8 +213,12 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
         "",
         f"**Source**: {run['path']}",
         pass_line,
-        f"**Cost**: {in_tok:,} in / {out_tok:,} out tokens · {secs:,.0f}s total",
     ]
+    # Separate, clearly-labeled metric — the pass rate above stays pass@1.
+    cont_line = continuation_rate_line(results, weight, n_pass)
+    if cont_line:
+        lines.append(cont_line)
+    lines.append(f"**Cost**: {in_tok:,} in / {out_tok:,} out tokens · {secs:,.0f}s total")
     if scoring_name != "equal":
         lines.append(f"**Scoring**: {scoring_name} (weighted)")
     lines += [
@@ -187,6 +260,18 @@ def comparison_md(runs: list[dict], weight: Callable[[dict], float], scoring_nam
         non_genuine = n_non_genuine(run["results"])
         if non_genuine:
             passed_total += f" (+{non_genuine} infra-cut)"
+        if any(r.get("continuations") for r in run["results"]):
+            _, cn_pass, _ = weighted_score(run["results"], weight, passed=is_pass_with_continuations)
+            # Name the budget: +1 recovery out of ≤1 round and out of ≤10 are
+            # different results, and rows in this table exist to be compared.
+            budget = continuation_budget(run["results"])
+            if budget:
+                passed_total += f" (+{cn_pass - n_pass} via ≤{budget} continuations)"
+            else:
+                passed_total += f" (+{cn_pass - n_pass} via continuation)"
+            n_cut = sum(1 for r in run["results"] if continuation_interrupted(r))
+            if n_cut:
+                passed_total += f" (+{n_cut} chain(s) cut)"
         lines.append(
             f"| {run['id']} | {run['backend']} | {run['mode']} | {pct:.1f}% | "
             f"{passed_total} | {in_tok:,}/{out_tok:,} | {secs:,.0f}s |"

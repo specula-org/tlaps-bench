@@ -119,8 +119,9 @@ uv run tlaps-bench run [flags]
 | `--timeout` | `28800` | Per-benchmark agent timeout in seconds |
 | `--check-timeout` | `600` | Per-benchmark checker (tlapm) timeout in seconds |
 | `--output-dir` | auto-generated | Output directory |
-| `--resume` | off | Skip benchmarks already marked `SKIP` or genuine `PASS` |
+| `--resume` | off | Skip benchmarks already marked `SKIP` or genuine `PASS` (first-attempt or continuation) |
 | `--infra-retries` | `3` | Extra attempts after a transient agent startup/infra failure (0 output tokens); `0` = no inline retries |
+| `--max-continuations` | `0` | Run up to N same-workspace continuation attempts after the first attempt completes without PASS (see [Continuation runs](#continuation-runs)) |
 | `--force-build` | off | Rebuild the Docker image |
 | `--no-container` | off | Run without Docker (requires native setup) |
 
@@ -193,6 +194,8 @@ results/<mode>/<backend>/<timestamp>/
         └── agent_check.result  # Agent's own in-workspace check, if it ran one
 ```
 
+With `--max-continuations`, each continuation round also writes a `continuations/round-N/` directory with that round's prompt, output, solution, and checker result.
+
 ---
 
 ## Resuming a Run
@@ -203,9 +206,23 @@ If a run is interrupted or you want to retry only the failures:
 uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proof-completion/codex/20260626_120000 --resume
 ```
 
-The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory, and reruns the rest.
+The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory (first-attempt or via a continuation round), and reruns the rest.
 
 Inline infra retries are intentionally short: the default `--infra-retries 3` gives the original attempt plus three retries with brief backoff. If a longer provider or network outage leaves `INFRA_ERROR` / `QUOTA_EXHAUSTED` results, rerun later with the same `--output-dir --resume`; those non-genuine results are not skipped.
+
+---
+
+## Continuation Runs
+
+Use `--max-continuations N` to give the agent extra chances to finish a proof it already started:
+
+```bash
+uv run tlaps-bench run --backend codex --model gpt-5.5 --max-continuations 3
+```
+
+Each benchmark still starts with the normal first attempt. If that attempt completes without PASS, the runner starts up to `N` more attempts in the same workspace. Each continuation sees the partial proof from the previous attempt. The chain stops once a continuation passes or the limit is reached.
+
+The first-attempt verdict stays in `check_verdict`. Continuation rounds are saved under `continuations` in `results.json`, and reports show them separately as `Pass rate with continuations (≤N)`.
 
 ---
 
