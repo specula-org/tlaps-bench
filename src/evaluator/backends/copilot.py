@@ -14,6 +14,7 @@ DEFAULT_MODEL = "claude-opus-4.8"
 class CopilotBackend(AgentBackend):
     name = "copilot"
     install_script = "install-copilot.sh"
+    session_state_dir = "/root/.copilot"
     env_keys = [
         "COPILOT_GITHUB_TOKEN",
         "GH_TOKEN",

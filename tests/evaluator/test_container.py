@@ -29,6 +29,80 @@ class TestBuildDockerArgs:
         assert not any(a.startswith("--memory=") for a in args)
         assert not any(a.startswith("--cpus=") for a in args)
 
+    def test_keep_container_drops_rm_and_names_container(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(keep_container=True, container_name="tlaps-bench-foo-abc123")
+        args, _ = runner.build_docker_args(config)
+
+        # --rm removed so the container survives exit; --name makes it discoverable.
+        assert "--rm" not in args
+        assert "--name" in args
+        assert args[args.index("--name") + 1] == "tlaps-bench-foo-abc123"
+
+    def test_keep_container_without_name_omits_name_flag(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(keep_container=True)
+        args, _ = runner.build_docker_args(config)
+
+        assert "--rm" not in args
+        assert "--name" not in args
+
+    def test_name_not_set_by_default(self):
+        runner = ContainerRunner()
+        config = ContainerConfig()
+        args, _ = runner.build_docker_args(config)
+
+        assert "--rm" in args
+        assert "--name" not in args
+
+    def test_session_dir_mounts_for_backend_without_credential_mount(self, tmp_path):
+        # copilot-style: no credential mount, so the persistent session dir is
+        # bind-mounted directly at the backend's session path (and created).
+        session_dir = tmp_path / "sessions" / "copilot" / "bench1"
+        runner = ContainerRunner()
+        config = ContainerConfig(session_dir=str(session_dir), session_container_path="/root/.copilot")
+        args, _ = runner.build_docker_args(config)
+
+        mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+        assert f"{session_dir}:/root/.copilot:rw" in mount_args
+        assert session_dir.is_dir()
+
+    def test_session_dir_merges_credentials_into_single_persistent_mount(self, tmp_path):
+        # claude-style: session path == credential mount path. Credentials must be
+        # copied INTO the persistent session dir (not a throwaway tempdir) and the
+        # path mounted exactly once, so auth + session state persist together.
+        claude_home = tmp_path / ".claude"
+        claude_home.mkdir()
+        (claude_home / ".credentials.json").write_text('{"claudeAiOauth": {"accessToken": "secret"}}\n')
+        session_dir = tmp_path / "sessions" / "claude_code" / "bench1"
+
+        runner = ContainerRunner()
+        config = ContainerConfig(
+            credential_mounts=["claude"],
+            session_dir=str(session_dir),
+            session_container_path="/root/.claude",
+        )
+        try:
+            with patch("common.container.Path.home", return_value=tmp_path):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+            claude_mounts = [m for m in mount_args if m.endswith(":/root/.claude:rw")]
+            assert claude_mounts == [f"{session_dir}:/root/.claude:rw"]
+            assert (session_dir / ".credentials.json").exists()
+            # persistent, so it is never queued for cleanup
+            assert runner._credential_tmps == []
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_no_session_mount_by_default(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(workspace="/tmp/ws")
+        args, _ = runner.build_docker_args(config)
+
+        mount_args = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+        assert not any(m.endswith(":/root/.copilot:rw") for m in mount_args)
+
     def test_workspace_mount(self):
         runner = ContainerRunner()
         config = ContainerConfig(workspace="/tmp/ws")
@@ -414,3 +488,56 @@ class TestRunPreflight:
         config = ContainerConfig(firewall_hosts=["api.githubcopilot.com"])
         with pytest.raises(RuntimeError, match="preflight failed"):
             runner.run_preflight(config, ["copilot"], "say ok")
+
+
+class TestRunAgentContainerSessionWiring:
+    """_run_agent_container composes keep_container / session_dir onto the config."""
+
+    def _capture_config(self, tmp_path, *, keep_container=False, session_dir=""):
+        from evaluator import runner as runner_mod
+
+        backend = CopilotBackend()
+        item = MagicMock(
+            benchmark_path=str(tmp_path / "My-Bench.tla"),
+            timeout=0,
+            check_timeout=600,
+            keep_container=keep_container,
+            session_dir=session_dir,
+        )
+        captured = {}
+
+        class _FakeRunner:
+            def run(self, config, cmd, stdin_data=None):
+                captured["config"] = config
+                raise RuntimeError("stop after capture")  # short-circuit the stream loop
+
+            def kill(self, run):
+                pass
+
+            def cleanup_credential_tmps(self):
+                pass
+
+        result: dict = {}
+        with patch.object(runner_mod, "ContainerRunner", _FakeRunner):
+            runner_mod._run_agent_container(
+                item, backend, str(tmp_path / "ws"), str(tmp_path / "agent"),
+                str(tmp_path / "agent.jsonl"), "prompt", result,
+            )
+        return captured["config"]
+
+    def test_session_dir_sets_per_benchmark_path_and_container_path(self, tmp_path):
+        session_root = tmp_path / "sessions"
+        config = self._capture_config(tmp_path, session_dir=str(session_root))
+        # <root>/<backend>/<sanitized-benchmark>; build_docker_args creates it
+        assert config.session_dir == str(session_root / "copilot" / "My-Bench")
+        assert config.session_container_path == "/root/.copilot"
+
+    def test_no_session_dir_leaves_config_empty(self, tmp_path):
+        config = self._capture_config(tmp_path, session_dir="")
+        assert config.session_dir == ""
+        assert config.session_container_path == ""
+
+    def test_keep_container_names_container(self, tmp_path):
+        config = self._capture_config(tmp_path, keep_container=True)
+        assert config.keep_container is True
+        assert config.container_name.startswith("tlaps-bench-My-Bench-")

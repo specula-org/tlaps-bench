@@ -22,6 +22,7 @@ DEFAULT_MODEL = "claude-opus-4-8"
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
     install_script = "install-claudecode.sh"
+    session_state_dir = "/root/.claude"
     env_keys = [
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_USE_BEDROCK",

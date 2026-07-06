@@ -29,6 +29,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
@@ -252,6 +253,14 @@ class WorkItem:
     # workspace so it builds on its own partial proof (see _run_continuations).
     # 0 disables. pass@1 (check_verdict) is unaffected either way.
     max_continuations: int = 0
+    # Debugging: retain each agent container (drop --rm) so its writable layer,
+    # holding the agent's session state, survives for inspection/resume.
+    keep_container: bool = False
+    # Debugging: persistent host directory under which each run's agent session
+    # state is bind-mounted (instead of a /tmp tempdir), so it survives container
+    # removal and host reboot and can be restored into another container. Empty
+    # disables it. Only used in container mode.
+    session_dir: str = ""
 
 
 def _make_canonical_dir(name_no_ext: str, benchmark_path: str, basename: str, deps: list[str]) -> str:
@@ -858,7 +867,28 @@ def _run_agent_container(
         firewall_hosts=backend.firewall_hosts(),
         install_script=backend.install_script,
         credential_mounts=backend.get_credential_mounts(),
+        keep_container=item.keep_container,
     )
+    name_no_ext = os.path.splitext(os.path.basename(item.benchmark_path))[0]
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name_no_ext)
+    if item.keep_container:
+        # uuid suffix keeps the name unique across retries, continuations and
+        # parallel jobs, so a retained container never collides with a new run.
+        config.container_name = f"tlaps-bench-{safe}-{uuid.uuid4().hex[:8]}"
+    if item.session_dir and backend.session_state_dir:
+        # Persist this benchmark's agent session state to a stable host path
+        # (per backend + benchmark) so it survives container removal / reboot
+        # and can be restored into another container. Stable (no uuid) so an
+        # infra retry or continuation round resumes the same session.
+        # build_docker_args creates the directory.
+        host_session = os.path.join(item.session_dir, backend.name, safe)
+        config.session_dir = host_session
+        config.session_container_path = backend.session_state_dir
+        print(
+            f"[session-dir] persisting {backend.name} session state for '{name_no_ext}' "
+            f"to {host_session} (restore with scripts/restore-session.sh)",
+            flush=True,
+        )
     if canonical_dir:
         config.env["TLAPS_BENCHMARK_DIR"] = "/benchmark"
     # Self-check uses the SAME tlapm budget as the grader (item.check_timeout),
@@ -870,6 +900,15 @@ def _run_agent_container(
     container_run = None
     try:
         container_run = runner.run(config, cmd, stdin_data=prompt)
+        if item.keep_container:
+            name = config.container_name
+            print(
+                f"[keep-container] retaining container '{name}'. After it exits: "
+                f"`docker exec -it {name} bash` to inspect (start it first if stopped: "
+                f"`docker start {name}`), `docker commit {name} <img>` to snapshot, "
+                f"`docker rm -f {name}` to remove.",
+                flush=True,
+            )
         proc = container_run.proc
         assert proc.stdout is not None  # Popen created with stdout=PIPE
 
@@ -933,7 +972,11 @@ def _run_agent_container(
         if container_run:
             runner.kill(container_run)
     finally:
-        runner.cleanup_credential_tmps()
+        # Keep the credential bind-mount sources when retaining the container so
+        # a `docker start` can still authenticate; otherwise remove the throwaway
+        # copies as usual.
+        if not item.keep_container:
+            runner.cleanup_credential_tmps()
 
 
 def _run_agent_local(
@@ -1274,6 +1317,22 @@ def main():
         help="Run agent locally instead of inside a Docker container",
     )
     parser.add_argument(
+        "--keep-container",
+        action="store_true",
+        help="Retain each agent's Docker container after it exits (drop --rm) so its "
+        "writable layer — where the agent's session state lives — survives for "
+        "inspection or an interactive resume. Prints the container name to reattach "
+        "with. Container mode only; remember to `docker rm` the containers when done.",
+    )
+    parser.add_argument(
+        "--session-dir",
+        default=None,
+        help="Persist each run's agent session state to a subdirectory of this "
+        "PERSISTENT host path (instead of a /tmp tempdir that a reboot clears), so "
+        "it survives container removal and reboot and can be restored into another "
+        "container with scripts/restore-session.sh. Container mode only.",
+    )
+    parser.add_argument(
         "--force-build",
         action="store_true",
         help="Force rebuild the Docker base image before running",
@@ -1295,6 +1354,15 @@ def main():
 
     # Container mode is default; --no-container disables it
     use_container = not args.no_container
+
+    if args.keep_container and not use_container:
+        print("WARNING: --keep-container has no effect with --no-container (no container to retain)")
+    if args.session_dir and not use_container:
+        print("WARNING: --session-dir has no effect with --no-container (no container to mount into)")
+
+    session_dir = os.path.abspath(args.session_dir) if (args.session_dir and use_container) else ""
+    if session_dir:
+        os.makedirs(session_dir, exist_ok=True)
 
     if use_container:
         # In container mode, tlapm and checker are inside the image.
@@ -1428,6 +1496,8 @@ def main():
                 use_container=use_container,
                 infra_retries=args.infra_retries,
                 max_continuations=args.max_continuations,
+                keep_container=use_container and args.keep_container,
+                session_dir=session_dir,
             )
         )
 

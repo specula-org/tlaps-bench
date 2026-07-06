@@ -21,6 +21,7 @@ DEFAULT_MODEL = "openai/gpt-5.5"
 class PiBackend(AgentBackend):
     name = "pi"
     install_script = "install-pi.sh"
+    session_state_dir = "/root/.pi"
     env_keys = [
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_OAUTH_TOKEN",
