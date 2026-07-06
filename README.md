@@ -26,15 +26,15 @@ types:
 
 | Source | Proof completion | Proof from scratch | Total |
 |---|--:|--:|--:|
-| tlaplus/Examples | 381 | 126 | 507 |
-| TLAPS distribution examples | 154 | 80 | 234 |
+| tlaplus/Examples | 379 | 126 | 505 |
+| TLAPS distribution examples | 103 | 57 | 160 |
 | ZooKeeper (Remix) | 0 | 18 | 18 |
 | Ivy liveness | 0 | 12 | 12 |
 | etcd (Specula) | 0 | 8 | 8 |
 | AbstractRaft | 0 | 4 | 4 |
 | OpenAddressing (lemmy/Examples) | 1 | 5 | 6 |
 | Anvil | 0 | 1 | 1 |
-| **Total** | **536** | **254** | **790** |
+| **Total** | **483** | **231** | **714** |
 
 ## Running
 
