@@ -131,10 +131,8 @@ class AgentBackend(ABC):
     install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
     env_keys: list[str] = []  # host env vars to forward into container
     credential_mounts: list[str] = []  # host credential dirs to copy into agent containers
-    # Container path holding this backend's agent session state (conversation /
-    # resumable session files). --session-dir bind-mounts a persistent host
-    # directory here so the state survives container removal and host reboot.
-    # None means the backend keeps no separate session dir (e.g. litellm).
+    # Container path holding this backend's session state; --session-dir mounts
+    # a persistent host dir here. None = no session dir (e.g. litellm).
     session_state_dir: str | None = None
 
     def get_credential_mounts(self) -> list[str]:

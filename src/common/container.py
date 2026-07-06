@@ -96,17 +96,12 @@ class ContainerConfig:
     memory: str = ""
     cpus: float = 0
     credential_mounts: list[str] = field(default_factory=list)  # host credential dirs to copy+mount
-    # Debugging: retain the container after it exits instead of passing --rm, so
-    # its writable layer (where agent session state like .copilot/.codex lives)
-    # survives for inspection or an interactive resume. container_name gives the
-    # retained container a discoverable `docker` name.
+    # Debugging: skip --rm so the container (and the agent session state in its
+    # writable layer) survives exit; container_name makes it discoverable.
     keep_container: bool = False
     container_name: str = ""
-    # Debugging: bind-mount a persistent host directory (NOT a /tmp tempdir) at
-    # session_container_path so the agent's session state is written straight to
-    # the host and survives container removal and reboot. When a credential mount
-    # targets the same path, the credentials are copied into this dir too so a
-    # single mount serves both. Empty session_dir disables this.
+    # Debugging: bind-mount this persistent host dir at session_container_path
+    # so agent session state survives container removal and host reboot.
     session_dir: str = ""
     session_container_path: str = ""
 
@@ -230,9 +225,6 @@ class ContainerRunner:
             "linux/amd64",
         ]
         if config.keep_container:
-            # Retain the container after exit for debugging. A --name makes it
-            # discoverable (docker start/exec/commit); without --rm its writable
-            # layer, holding the agent's session state, persists.
             if config.container_name:
                 args.extend(["--name", config.container_name])
         else:
@@ -275,9 +267,8 @@ class ContainerRunner:
             src = Path.home() / f".{name}"
             if not src.is_dir():
                 continue
-            # When a persistent session dir targets this same path, copy the
-            # credentials INTO it (instead of a throwaway tempdir) so auth and
-            # session state live together on the host and survive a reboot.
+            # Session dir targets this path: copy credentials into it (not a
+            # throwaway tempdir) so auth and session state persist together.
             if config.session_dir and mount.mount_path == config.session_container_path:
                 os.makedirs(config.session_dir, exist_ok=True)
                 with contextlib.suppress(Exception):
@@ -289,10 +280,7 @@ class ContainerRunner:
                 if tmp:
                     args.extend(["-v", f"{tmp}:{mount.mount_path}:rw"])
 
-        # Persist agent session state to a host dir when no credential mount
-        # already claimed that path (e.g. copilot, or claude/codex on env auth):
-        # survives container removal and host reboot, and can be restored into
-        # another container later.
+        # Mount the session dir when no credential mount already claimed its path.
         if config.session_dir and config.session_container_path and not session_mounted:
             os.makedirs(config.session_dir, exist_ok=True)
             args.extend(["-v", f"{config.session_dir}:{config.session_container_path}:rw"])

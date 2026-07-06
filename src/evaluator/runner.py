@@ -253,13 +253,9 @@ class WorkItem:
     # workspace so it builds on its own partial proof (see _run_continuations).
     # 0 disables. pass@1 (check_verdict) is unaffected either way.
     max_continuations: int = 0
-    # Debugging: retain each agent container (drop --rm) so its writable layer,
-    # holding the agent's session state, survives for inspection/resume.
+    # Debugging: retain each agent container (drop --rm) for inspection/resume.
     keep_container: bool = False
-    # Debugging: persistent host directory under which each run's agent session
-    # state is bind-mounted (instead of a /tmp tempdir), so it survives container
-    # removal and host reboot and can be restored into another container. Empty
-    # disables it. Only used in container mode.
+    # Debugging: persistent host dir for agent session state ("" = off).
     session_dir: str = ""
 
 
@@ -872,15 +868,10 @@ def _run_agent_container(
     name_no_ext = os.path.splitext(os.path.basename(item.benchmark_path))[0]
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name_no_ext)
     if item.keep_container:
-        # uuid suffix keeps the name unique across retries, continuations and
-        # parallel jobs, so a retained container never collides with a new run.
+        # uuid suffix keeps retained containers unique across retries and jobs
         config.container_name = f"tlaps-bench-{safe}-{uuid.uuid4().hex[:8]}"
     if item.session_dir and backend.session_state_dir:
-        # Persist this benchmark's agent session state to a stable host path
-        # (per backend + benchmark) so it survives container removal / reboot
-        # and can be restored into another container. Stable (no uuid) so an
-        # infra retry or continuation round resumes the same session.
-        # build_docker_args creates the directory.
+        # Stable path (no uuid) so retries/continuations resume the same session.
         host_session = os.path.join(item.session_dir, backend.name, safe)
         config.session_dir = host_session
         config.session_container_path = backend.session_state_dir
@@ -972,9 +963,8 @@ def _run_agent_container(
         if container_run:
             runner.kill(container_run)
     finally:
-        # Keep the credential bind-mount sources when retaining the container so
-        # a `docker start` can still authenticate; otherwise remove the throwaway
-        # copies as usual.
+        # A retained container keeps its credential mount sources so a
+        # `docker start` can still authenticate.
         if not item.keep_container:
             runner.cleanup_credential_tmps()
 
