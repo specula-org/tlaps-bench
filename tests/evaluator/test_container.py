@@ -525,12 +525,19 @@ class TestRunAgentContainerSessionWiring:
             )
         return captured["config"]
 
-    def test_session_dir_sets_per_benchmark_path_and_container_path(self, tmp_path):
+    def test_session_dir_keyed_by_benchmark_without_keep_container(self, tmp_path):
         session_root = tmp_path / "sessions"
         config = self._capture_config(tmp_path, session_dir=str(session_root))
         # <root>/<backend>/<sanitized-benchmark>; build_docker_args creates it
         assert config.session_dir == str(session_root / "copilot" / "My-Bench")
         assert config.session_container_path == "/root/.copilot"
+
+    def test_session_dir_keyed_by_container_name_with_keep_container(self, tmp_path):
+        session_root = tmp_path / "sessions"
+        config = self._capture_config(tmp_path, session_dir=str(session_root), keep_container=True)
+        # Each retained container gets its own session dir, keyed by its name.
+        assert config.session_dir == str(session_root / "copilot" / config.container_name)
+        assert config.container_name.startswith("tlaps-bench-My-Bench-")
 
     def test_no_session_dir_leaves_config_empty(self, tmp_path):
         config = self._capture_config(tmp_path, session_dir="")
@@ -541,3 +548,49 @@ class TestRunAgentContainerSessionWiring:
         config = self._capture_config(tmp_path, keep_container=True)
         assert config.keep_container is True
         assert config.container_name.startswith("tlaps-bench-My-Bench-")
+
+
+class TestResolveSessionDir:
+    def test_explicit_session_dir_wins(self, tmp_path):
+        from evaluator.runner import _resolve_session_dir
+
+        got = _resolve_session_dir(str(tmp_path / "s"), keep_container=False, use_container=True)
+        assert got == str(tmp_path / "s")
+
+    def test_keep_container_defaults_to_home_dir(self):
+        from evaluator.runner import _resolve_session_dir
+
+        got = _resolve_session_dir(None, keep_container=True, use_container=True)
+        assert got == os.path.expanduser("~/.tlaps-bench/sessions")
+
+    def test_off_without_keep_or_explicit(self):
+        from evaluator.runner import _resolve_session_dir
+
+        assert _resolve_session_dir(None, keep_container=False, use_container=True) == ""
+
+    def test_off_without_container(self, tmp_path):
+        from evaluator.runner import _resolve_session_dir
+
+        assert _resolve_session_dir(str(tmp_path), keep_container=True, use_container=False) == ""
+
+
+class TestPrepareSessionDir:
+    def test_creates_dir_and_gitignore_star(self, tmp_path):
+        from evaluator.runner import _prepare_session_dir
+
+        session = tmp_path / "sessions"
+        _prepare_session_dir(str(session))
+        gitignore = session / ".gitignore"
+        assert session.is_dir()
+        # `*` ignores the whole tree so credential-bearing session data can't be
+        # accidentally committed.
+        assert "*" in gitignore.read_text().splitlines()
+
+    def test_does_not_overwrite_existing_gitignore(self, tmp_path):
+        from evaluator.runner import _prepare_session_dir
+
+        session = tmp_path / "sessions"
+        session.mkdir()
+        (session / ".gitignore").write_text("custom\n")
+        _prepare_session_dir(str(session))
+        assert (session / ".gitignore").read_text() == "custom\n"

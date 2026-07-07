@@ -839,6 +839,28 @@ def _run_continuations(
             break
 
 
+def _resolve_session_dir(session_dir_arg: str | None, keep_container: bool, use_container: bool) -> str:
+    """Root dir for persisted agent session state: explicit --session-dir, or a
+    default under --keep-container so debugging needs a single flag. "" = off."""
+    if not use_container:
+        return ""
+    if session_dir_arg:
+        return os.path.abspath(session_dir_arg)
+    if keep_container:
+        return os.path.expanduser(os.path.join("~", ".tlaps-bench", "sessions"))
+    return ""
+
+
+def _prepare_session_dir(session_dir: str) -> None:
+    """Create the session root and, since session data can hold credentials,
+    guard the tree with a .gitignore in case it lands inside a git repo."""
+    os.makedirs(session_dir, exist_ok=True)
+    gitignore = os.path.join(session_dir, ".gitignore")
+    if not os.path.exists(gitignore):
+        with open(gitignore, "w") as f:
+            f.write("# tlaps-bench session data (may contain credentials) — do not commit\n*\n")
+
+
 def _run_agent_container(
     item: WorkItem,
     backend,
@@ -871,8 +893,10 @@ def _run_agent_container(
         # uuid suffix keeps retained containers unique across retries and jobs
         config.container_name = f"tlaps-bench-{safe}-{uuid.uuid4().hex[:8]}"
     if item.session_dir and backend.session_state_dir:
-        # Stable path (no uuid) so retries/continuations resume the same session.
-        host_session = os.path.join(item.session_dir, backend.name, safe)
+        # A retained container keys its session by container name (each kept
+        # container ↔ its own dir); otherwise by benchmark, so retries and
+        # continuations resume the same session.
+        host_session = os.path.join(item.session_dir, backend.name, config.container_name or safe)
         config.session_dir = host_session
         config.session_container_path = backend.session_state_dir
         print(
@@ -1311,16 +1335,19 @@ def main():
         action="store_true",
         help="Retain each agent's Docker container after it exits (drop --rm) so its "
         "writable layer — where the agent's session state lives — survives for "
-        "inspection or an interactive resume. Prints the container name to reattach "
-        "with. Container mode only; remember to `docker rm` the containers when done.",
+        "inspection or an interactive resume. Also persists session state to "
+        "~/.tlaps-bench/sessions by default (override with --session-dir). Prints the "
+        "container name to reattach with. Container mode only; remember to "
+        "`docker rm` the containers when done.",
     )
     parser.add_argument(
         "--session-dir",
         default=None,
-        help="Persist each run's agent session state to a subdirectory of this "
-        "PERSISTENT host path (instead of a /tmp tempdir that a reboot clears), so "
-        "it survives container removal and reboot and can be restored into another "
-        "container with scripts/restore-session.sh. Container mode only.",
+        help="Persist each run's agent session state under this PERSISTENT host path "
+        "(default ~/.tlaps-bench/sessions when --keep-container is set) instead of a "
+        "/tmp tempdir that a reboot clears, so it survives container removal and reboot "
+        "and can be restored into another container with scripts/restore-session.sh. "
+        "Container mode only.",
     )
     parser.add_argument(
         "--force-build",
@@ -1350,9 +1377,9 @@ def main():
     if args.session_dir and not use_container:
         print("WARNING: --session-dir has no effect with --no-container (no container to mount into)")
 
-    session_dir = os.path.abspath(args.session_dir) if (args.session_dir and use_container) else ""
+    session_dir = _resolve_session_dir(args.session_dir, args.keep_container, use_container)
     if session_dir:
-        os.makedirs(session_dir, exist_ok=True)
+        _prepare_session_dir(session_dir)
 
     if use_container:
         # In container mode, tlapm and checker are inside the image.
