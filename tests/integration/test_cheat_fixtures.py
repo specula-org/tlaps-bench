@@ -99,7 +99,7 @@ CASES = [
 VERDICT_RE = re.compile(r"^\s*(PASS|FAIL)\b", re.MULTILINE)
 
 
-def _run_case(case):
+def _run_case(case, *extra_args):
     """Build the workspace, run check_proof.py, return (verdict, output)."""
     w = tempfile.mkdtemp(prefix="cheatfix_")
     try:
@@ -118,7 +118,7 @@ def _run_case(case):
                 f.write(content)
         env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "src"), "SANY_RUN_SH": SRS}
         r = subprocess.run(
-            [sys.executable, CHECK, case["target"], "--mode", case["mode"], "--timeout", "120"],
+            [sys.executable, CHECK, case["target"], "--mode", case["mode"], "--timeout", "120", *extra_args],
             cwd=w,
             capture_output=True,
             text=True,
@@ -167,6 +167,51 @@ def test_added_proof_omitted():
 
 def test_bare_qed():
     _check(CASES[4])
+
+
+def test_default_fail_fast_skip_scope():
+    """Default fail-fast skips disqualified cheats, but still verifies honest
+    incompletes so the agent gets obligation-level feedback."""
+    if _tlapm() is None:
+        print("  SKIP (no tlapm)")
+        return
+
+    skip_cases = {"sany_invalid_shadow", "admitted_goal", "added_proof_omitted"}
+    cheat_marker_cases = {"admitted_goal", "added_proof_omitted"}
+    for case in CASES:
+        verdict, out = _run_case(case)
+        want = "PASS" if case["expect_pass"] else "FAIL"
+        assert verdict == want, f"{case['name']}: expected {want}, got {verdict}\n{out[-800:]}"
+        has_skip = "skipped: cheating detected before verification" in out
+        assert has_skip == (case["name"] in skip_cases), f"{case['name']}: unexpected skip state\n{out[-800:]}"
+        if case["name"] in cheat_marker_cases:
+            assert "CHEAT-DETECTED" in out, f"{case['name']}: skip path lost cheat marker\n{out[-800:]}"
+        if case["name"] == "sany_invalid_shadow":
+            assert "[SANY-INVALID]" in out, f"{case['name']}: skip path lost SANY marker\n{out[-800:]}"
+
+
+def test_all_cases_agree_under_keep_verifying():
+    """Fail-fast only changes WHEN tlapm runs, never the verdict: every case
+    must produce the same verdict with --keep-verifying (full tlapm run)."""
+    if _tlapm() is None:
+        print("  SKIP (no tlapm)")
+        return
+    for case in CASES:
+        verdict, out = _run_case(case, "--keep-verifying")
+        want = "PASS" if case["expect_pass"] else "FAIL"
+        assert verdict == want, f"{case['name']} --keep-verifying: expected {want}, got {verdict}\n{out[-800:]}"
+
+
+def test_all_cases_agree_sharded():
+    """Sharding must never change a verdict: force 2 shards (--keep-verifying
+    so cheats still reach tlapm) and expect the same verdict on every case."""
+    if _tlapm() is None:
+        print("  SKIP (no tlapm)")
+        return
+    for case in CASES:
+        verdict, out = _run_case(case, "--keep-verifying", "--shards", "2")
+        want = "PASS" if case["expect_pass"] else "FAIL"
+        assert verdict == want, f"{case['name']} --shards 2: expected {want}, got {verdict}\n{out[-800:]}"
 
 
 if __name__ == "__main__":

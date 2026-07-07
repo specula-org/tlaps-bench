@@ -141,6 +141,10 @@ uv run tlaps-bench check path/to/file.tla --sany-only
 
 By default, `check` reuses `<target-dir>/.tlacache`; use `--no-cache` for a cold check, or `--timeout 0` for no checker deadline.
 
+Cheating is checked before proving: a detected cheat fails fast and skips the tlapm run (`--keep-verifying` verifies anyway). Each run also snapshots the workspace to a hidden git ref — browse it with `git log refs/tlaps-check/history`; `--no-git-track` disables.
+
+Huge proofs are verified in parallel shards (`tlapm --toolbox` line ranges split at theorem boundaries, one cache dir per shard). Sharding is automatic above `TLAPS_SHARD_MIN_LINES` (5000) lines at nproc/2 shards capped by available memory (`TLAPS_SHARD_MEM_MB` per shard); `--shards N` forces a count, `--shards 1` forces a single run.
+
 Exit codes: `0` = PASS, `1` = FAIL, `3` = ERROR.
 
 ### `tlaps-bench score`

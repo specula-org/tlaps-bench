@@ -7,6 +7,8 @@ CHECKER_SOURCES := \
 .PHONY: setup build clean
 
 check_proof_bin: $(CHECKER_SOURCES)
+	printf 'BUILD_VERSION = "%s"\n' "$$(git describe --always --dirty 2>/dev/null || echo unknown)" \
+		> src/common/_build_version.py
 	uv run --locked pyinstaller --onefile --name check_proof_bin \
 		--paths src/common --paths src \
 		--collect-submodules tlacheck \
@@ -21,5 +23,5 @@ setup:
 	bash scripts/setup.sh
 
 clean:
-	rm -f check_proof_bin
+	rm -f check_proof_bin src/common/_build_version.py
 	rm -rf dist/ build/ *.spec
