@@ -31,7 +31,8 @@ def _make_workspace():
     subprocess.run(["git", "add", "-A"], cwd=w)
     subprocess.run(
         ["git", "-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "baseline"],
-        cwd=w, capture_output=True,
+        cwd=w,
+        capture_output=True,
     )
     return w
 
@@ -40,7 +41,11 @@ def _run_check(w, *extra_args):
     env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "src"), "SANY_RUN_SH": SRS}
     r = subprocess.run(
         [sys.executable, CHECK, "Good.tla", "--mode", "proof-from-scratch", "--timeout", "120", *extra_args],
-        cwd=w, capture_output=True, text=True, timeout=300, env=env,
+        cwd=w,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
     )
     m = VERDICT_RE.search(r.stdout)
     return (m.group(1) if m else "?"), r.stdout

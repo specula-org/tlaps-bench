@@ -38,7 +38,9 @@ CASES = [
         "name": "correct_l2",
         "mode": "proof-from-scratch",
         "target": "Good.tla",
-        "baseline": {"Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"},
+        "baseline": {
+            "Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"
+        },
         "solution": {"Good.tla": "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM G == 1 + 1 = 2\n  OBVIOUS\n====\n"},
         "expect_pass": True,
     },
@@ -60,24 +62,36 @@ CASES = [
         "name": "admitted_goal",
         "mode": "proof-from-scratch",
         "target": "Admit.tla",
-        "baseline": {"Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N > 0\nPROOF OBVIOUS\n====\n"},
-        "solution": {"Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA Goal == N > 0\nTHEOREM Target == N > 0\n  BY Goal\n====\n"},
+        "baseline": {
+            "Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N > 0\nPROOF OBVIOUS\n====\n"
+        },
+        "solution": {
+            "Admit.tla": "---- MODULE Admit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA Goal == N > 0\nTHEOREM Target == N > 0\n  BY Goal\n====\n"
+        },
         "expect_pass": False,
     },
     {
         "name": "added_proof_omitted",
         "mode": "proof-from-scratch",
         "target": "Omit.tla",
-        "baseline": {"Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N >= 0\nPROOF OBVIOUS\n====\n"},
-        "solution": {"Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA H == N >= 0\n  PROOF OMITTED\nTHEOREM Target == N >= 0\n  BY H\n====\n"},
+        "baseline": {
+            "Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nTHEOREM Target == N >= 0\nPROOF OBVIOUS\n====\n"
+        },
+        "solution": {
+            "Omit.tla": "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\nLEMMA H == N >= 0\n  PROOF OMITTED\nTHEOREM Target == N >= 0\n  BY H\n====\n"
+        },
         "expect_pass": False,
     },
     {
         "name": "bare_qed",
         "mode": "proof-from-scratch",
         "target": "Qed.tla",
-        "baseline": {"Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"},
-        "solution": {"Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF\n<1> QED\n====\n"},
+        "baseline": {
+            "Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"
+        },
+        "solution": {
+            "Qed.tla": "---- MODULE Qed ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF\n<1> QED\n====\n"
+        },
         "expect_pass": False,
     },
 ]
@@ -96,7 +110,8 @@ def _run_case(case):
         subprocess.run(["git", "add", "-A"], cwd=w)
         subprocess.run(
             ["git", "-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "baseline"],
-            cwd=w, capture_output=True,
+            cwd=w,
+            capture_output=True,
         )
         for name, content in case["solution"].items():  # overlay the agent solution
             with open(os.path.join(w, name), "w") as f:
@@ -104,7 +119,11 @@ def _run_case(case):
         env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "src"), "SANY_RUN_SH": SRS}
         r = subprocess.run(
             [sys.executable, CHECK, case["target"], "--mode", case["mode"], "--timeout", "120"],
-            cwd=w, capture_output=True, text=True, timeout=300, env=env,
+            cwd=w,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
         )
         m = VERDICT_RE.search(r.stdout)
         return (m.group(1) if m else "?"), r.stdout

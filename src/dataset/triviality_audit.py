@@ -117,7 +117,9 @@ def _walk_tla(directory: str):
                 yield os.path.join(root, f)
 
 
-def gate(directory, *, manifest_path=None, audit_writer=None, label="triviality-gate", timeout=120, jobs=16, drop=False):
+def gate(
+    directory, *, manifest_path=None, audit_writer=None, label="triviality-gate", timeout=120, jobs=16, drop=False
+):
     """Post-generation gate: find degenerate tasks under ``directory``, write a
     manifest, optionally append to an audit-log writer, print a one-line summary.
     Returns the flagged list.
@@ -146,7 +148,9 @@ def gate(directory, *, manifest_path=None, audit_writer=None, label="triviality-
     if flagged:
         verb = "DROPPED" if drop else "DEGENERATE"
         action = "dropped" if drop else "flagged"
-        print(f"⚠️  [{label}] {len(flagged)}/{total} task(s) DEGENERATE (pass unchanged) — {action} (manifest {manifest_path})")
+        print(
+            f"⚠️  [{label}] {len(flagged)}/{total} task(s) DEGENERATE (pass unchanged) — {action} (manifest {manifest_path})"
+        )
         for p, e in flagged:
             if drop:
                 os.remove(p)

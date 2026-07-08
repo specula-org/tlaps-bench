@@ -114,8 +114,10 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
         target_abs = os.path.abspath(benchmark_path)
         target_name = os.path.splitext(os.path.basename(benchmark_path))[0]
 
-        siblings = {os.path.splitext(os.path.basename(f))[0]: os.path.abspath(f) for f in
-                    glob.glob(os.path.join(bench_dir, "*.tla"))}
+        siblings = {
+            os.path.splitext(os.path.basename(f))[0]: os.path.abspath(f)
+            for f in glob.glob(os.path.join(bench_dir, "*.tla"))
+        }
 
         deps: set[str] = set()
         # (1) non-benchmark sibling modules — the shared/model layers.

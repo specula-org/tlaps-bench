@@ -862,8 +862,7 @@ def process_file(
     model_set, main_specs = (set(), set())
     if shared_model and module in skip_model_modules:
         audit_writer.write(
-            f"[audit] {source_path}: module {module} is a local dependency "
-            f"of a sibling — kept full (no shared model)\n"
+            f"[audit] {source_path}: module {module} is a local dependency of a sibling — kept full (no shared model)\n"
         )
     if shared_model and module not in skip_model_modules:
         targets = [entry[0] for entry in top_level]

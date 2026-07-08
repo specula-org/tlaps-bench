@@ -104,14 +104,10 @@ def test_from_tlacheck_buckets_vectors():
 def test_from_tlacheck_legacy_signals_flow_to_gates():
     # proof-completion preamble byte-match (gate A) and agent-added PROOF OMITTED (gate B) are
     # not tlacheck vectors — they come in as explicit caller-computed flags.
-    pre = from_tlacheck(
-        _result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, preamble_modified=True
-    )
+    pre = from_tlacheck(_result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, preamble_modified=True)
     assert not grade(pre).passed
     assert Gate.A_IDENTITY in grade(pre).failed_gates()
-    omit = from_tlacheck(
-        _result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, proof_omitted=True
-    )
+    omit = from_tlacheck(_result(), tlapm_obligations_proved=True, n_missing=0, sany_valid=True, proof_omitted=True)
     assert not grade(omit).passed
     assert Gate.B_DISCHARGE in grade(omit).failed_gates()
 

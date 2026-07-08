@@ -104,8 +104,7 @@ def wait_for_quota(usage_script, quota_5h, quota_7d, max_waits, log_prefix: str 
         waits += 1
         if waits > max_waits:
             print(
-                f"{log_prefix}quota over after {max_waits} waits "
-                f"({', '.join(over)}); aborting this benchmark",
+                f"{log_prefix}quota over after {max_waits} waits ({', '.join(over)}); aborting this benchmark",
                 flush=True,
             )
             return False
@@ -125,9 +124,7 @@ def wait_for_quota(usage_script, quota_5h, quota_7d, max_waits, log_prefix: str 
 MAX_QUOTA_RETRIES = 12
 
 
-def run_with_quota_retry(
-    run_once, detect_block, *, max_retries: int = MAX_QUOTA_RETRIES, log_prefix: str = ""
-) -> bool:
+def run_with_quota_retry(run_once, detect_block, *, max_retries: int = MAX_QUOTA_RETRIES, log_prefix: str = "") -> bool:
     """Run the agent, sleeping through any hard provider usage-limit cap.
 
     The proactive gate (``wait_for_quota``) cannot see this cap: once hard-capped,

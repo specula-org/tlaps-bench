@@ -152,7 +152,9 @@ def test_summary_excludes_non_genuine_results_from_pass_rate(tmp_path):
         _result("quota-error.tla", "ERROR", termination_reason=TerminationReason.QUOTA_EXHAUSTED),
         _result("skipped.tla", "SKIP"),
     ]
-    runner.update_summary(results, str(tmp_path), total_benchmarks=5, backend_name="copilot", mode_name="proof-completion")
+    runner.update_summary(
+        results, str(tmp_path), total_benchmarks=5, backend_name="copilot", mode_name="proof-completion"
+    )
     summary = (tmp_path / "summary.md").read_text()
     assert "**Pass rate**: 1/2 (50.0%) · 1 skipped · 2 infra/quota-cut (excluded — re-run)" in summary
     assert "`infra-pass.tla` | ✅ PASS" in summary

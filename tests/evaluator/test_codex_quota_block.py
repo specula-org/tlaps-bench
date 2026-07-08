@@ -18,7 +18,10 @@ from evaluator.backends.codex import CodexBackend
 USAGE_LIMIT_STREAM = [
     {"type": "thread.started", "thread_id": "t1"},
     {"type": "turn.started"},
-    {"type": "error", "message": "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:24 PM."},
+    {
+        "type": "error",
+        "message": "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:24 PM.",
+    },
     {"type": "turn.failed", "error": {"message": "You've hit your usage limit. ... try again at 7:24 PM."}},
 ]
 

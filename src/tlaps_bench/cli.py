@@ -101,9 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         # (the default) — the mode-specific flags then come from that module.
         mode, gen_args = _extract_mode(rest)
         module = (
-            "dataset.proof_completion.generate"
-            if mode == "proof-completion"
-            else "dataset.proof_from_scratch.generate"
+            "dataset.proof_completion.generate" if mode == "proof-completion" else "dataset.proof_from_scratch.generate"
         )
         return _dispatch(f"{PROG} generate --mode {mode}", module, "main", gen_args)
     if sub == "score":

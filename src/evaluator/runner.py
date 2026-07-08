@@ -604,7 +604,10 @@ def run_single_benchmark(item: WorkItem):
         result["max_continuations"] = item.max_continuations
 
     if not quota.wait_for_quota(
-        item.usage_script, item.quota_5h, item.quota_7d, item.quota_max_waits,
+        item.usage_script,
+        item.quota_5h,
+        item.quota_7d,
+        item.quota_max_waits,
         log_prefix=f"[{name_no_ext}] ",
     ):
         result["agent_exit"] = -3
@@ -759,8 +762,7 @@ def _run_continuations(
     for rnd in range(1, item.max_continuations + 1):
         prev_verdict = rounds[-1]["check_verdict"] if rounds else result["check_verdict"]
         print(
-            f"[{name_no_ext}] {prev_verdict} — continuing in same workspace "
-            f"(round {rnd}/{item.max_continuations})",
+            f"[{name_no_ext}] {prev_verdict} — continuing in same workspace (round {rnd}/{item.max_continuations})",
             flush=True,
         )
         round_dir = os.path.join(result_dir, "continuations", f"round-{rnd}")
@@ -1259,7 +1261,9 @@ def _run_preflight(backend) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Run an agent CLI on TLAPS benchmarks")
     parser.add_argument("--backend", default="codex", choices=list_backends(), help="Agent backend (default: codex)")
-    parser.add_argument("--mode", default="proof-completion", choices=list_modes(), help="Benchmark mode (default: proof-completion)")
+    parser.add_argument(
+        "--mode", default="proof-completion", choices=list_modes(), help="Benchmark mode (default: proof-completion)"
+    )
     parser.add_argument("--model", default=None, help="Override the backend default model")
     parser.add_argument("--jobs", type=int, default=1, help="Parallel agent runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
@@ -1456,8 +1460,7 @@ def main():
                 )
             else:
                 print(
-                    "Quota:   gate OFF — usage probe returned no data "
-                    "(API-key auth or no subscription usage to read)"
+                    "Quota:   gate OFF — usage probe returned no data (API-key auth or no subscription usage to read)"
                 )
         else:
             print(f"Quota:   gate OFF — usage script not found at {candidate}")

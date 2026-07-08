@@ -34,7 +34,11 @@ class TestCheckInDocker:
     def test_check_proof_obvious_fails(self):
         """A benchmark with PROOF OBVIOUS should FAIL (proof not written)."""
         tla = os.path.join(
-            REPO_ROOT, "benchmark", "proof-completion", "tlaplus_examples_allocator", "SimpleAllocator_proof_TypeCorrect.tla"
+            REPO_ROOT,
+            "benchmark",
+            "proof-completion",
+            "tlaplus_examples_allocator",
+            "SimpleAllocator_proof_TypeCorrect.tla",
         )
         result = subprocess.run(
             ["uv", "run", "tlaps-bench", "check", tla, "--timeout", "120"],
@@ -50,7 +54,11 @@ class TestCheckInDocker:
     def test_check_sany_only_passes(self):
         """--sany-only on a valid .tla should PASS (parseable)."""
         tla = os.path.join(
-            REPO_ROOT, "benchmark", "proof-completion", "tlaplus_examples_allocator", "SimpleAllocator_proof_TypeCorrect.tla"
+            REPO_ROOT,
+            "benchmark",
+            "proof-completion",
+            "tlaplus_examples_allocator",
+            "SimpleAllocator_proof_TypeCorrect.tla",
         )
         result = subprocess.run(
             ["uv", "run", "tlaps-bench", "check", "--sany-only", tla],

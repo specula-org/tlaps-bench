@@ -520,8 +520,13 @@ class TestRunAgentContainerSessionWiring:
         result: dict = {}
         with patch.object(runner_mod, "ContainerRunner", _FakeRunner):
             runner_mod._run_agent_container(
-                item, backend, str(tmp_path / "ws"), str(tmp_path / "agent"),
-                str(tmp_path / "agent.jsonl"), "prompt", result,
+                item,
+                backend,
+                str(tmp_path / "ws"),
+                str(tmp_path / "agent"),
+                str(tmp_path / "agent.jsonl"),
+                "prompt",
+                result,
             )
         return captured["config"]
 

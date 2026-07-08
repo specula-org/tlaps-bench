@@ -31,7 +31,7 @@ INFRA_STREAM = [
     {"type": "thread.started", "thread_id": "t1"},
     {"type": "turn.started"},
     {"type": "item.completed", "item": {"id": "i0", "type": "command_execution"}},
-    {"type": "error", "message": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\"}}"},
+    {"type": "error", "message": '{"type":"error","error":{"type":"invalid_request_error"}}'},
     {"type": "turn.failed", "error": {"message": "invalid_request_error"}},
 ]
 
@@ -119,7 +119,9 @@ def test_is_wall_clock_timeout_signal():
     assert is_wall_clock_timeout(ctx) is True
     # a non-timeout error, or a clean exit, is not a timeout
     assert is_wall_clock_timeout(TerminationContext("codex", None, agent_exit=1, error="")) is False
-    assert is_wall_clock_timeout(TerminationContext("codex", None, agent_exit=-1, error="provider usage limit")) is False
+    assert (
+        is_wall_clock_timeout(TerminationContext("codex", None, agent_exit=-1, error="provider usage limit")) is False
+    )
 
 
 def test_timeout_is_timeout_not_infra_for_every_backend(tmp_path):
@@ -137,7 +139,11 @@ def test_same_truncation_without_timeout_is_still_infra(tmp_path):
     # dropped connection) → INFRA_ERROR. Asserts the timeout precheck is the only
     # thing reclassifying these, and only for codex does a clean SIGKILL-less
     # truncation read as OK (no error/turn.failed to key on).
-    expected = {"codex": TerminationReason.OK, "claude_code": TerminationReason.INFRA_ERROR, "copilot": TerminationReason.INFRA_ERROR}
+    expected = {
+        "codex": TerminationReason.OK,
+        "claude_code": TerminationReason.INFRA_ERROR,
+        "copilot": TerminationReason.INFRA_ERROR,
+    }
     for backend, stream in TRUNCATED_BY_BACKEND.items():
         p = _write_jsonl(tmp_path / f"{backend}.jsonl", stream)
         assert classify(_ctx(p, backend=backend)) == expected[backend], backend
@@ -152,6 +158,7 @@ def test_registry_is_the_extension_point():
 
 
 # --- quota exhaustion: runner-owned, never produced by classify() -----------
+
 
 def test_quota_exhausted_is_a_distinct_reason():
     # QUOTA_EXHAUSTED is its own category, distinct from OK/INFRA_ERROR/TIMEOUT.

@@ -52,13 +52,7 @@ def test_nested_submodule_does_not_false_flag():
 
 def test_leak_after_outer_module_still_flagged_with_nesting():
     # Content after the OUTER terminator (depth back to 0) is still a leak.
-    spec = (
-        "---- MODULE Outer ----\n"
-        "---- MODULE Inner ----\n"
-        "====\n"
-        "====\n"
-        "THEOREM Leaked == TRUE\n  BY DEF X\n"
-    )
+    spec = "---- MODULE Outer ----\n---- MODULE Inner ----\n====\n====\nTHEOREM Leaked == TRUE\n  BY DEF X\n"
     assert list(iter_leaks(spec))
 
 
@@ -71,7 +65,9 @@ def test_no_proof_leak_outside_module(root):
         lines = []
         for f, leaks in sorted(bad.items()):
             rel = f.split("benchmark/")[-1]
-            lines.append(f"  {rel}: {len(leaks)} leaked tokens (first @ line {leaks[0][0]}: {leaks[0][1].strip()[:50]!r})")
+            lines.append(
+                f"  {rel}: {len(leaks)} leaked tokens (first @ line {leaks[0][0]}: {leaks[0][1].strip()[:50]!r})"
+            )
         detail = "\n".join(lines)
         pytest.fail(
             f"{len(bad)} benchmark file(s) leak proof/theorem content OUTSIDE a module "

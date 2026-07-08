@@ -155,42 +155,111 @@ def grade(inp: GraderInputs) -> GradeResult:
     """Evaluate the three gates and collapse to a binary verdict."""
     checks = [
         # ── Gate A: IDENTITY — the proved thing IS the canonical target ──────
-        Check("sany_valid", Gate.A_IDENTITY, Status.WIRED, inp.sany_valid,
-              "solution does not parse under standalone tla2sany"),
-        Check("statement_unchanged", Gate.A_IDENTITY, Status.WIRED, not inp.statement_modified,
-              "target theorem statement was changed or weakened"),
-        Check("no_extra_axiom", Gate.A_IDENTITY, Status.WIRED, not inp.extra_axiom,
-              "a new AXIOM/ASSUME was introduced beyond the baseline"),
-        Check("no_smuggled_module", Gate.A_IDENTITY, Status.WIRED, not inp.smuggled_module,
-              "an agent-created module smuggles content into the proof"),
-        Check("preamble_unchanged", Gate.A_IDENTITY, Status.WIRED, not inp.preamble_modified,
-              "the proof-completion preamble (definitions / CONSTANT / VARIABLE / ASSUME above PROOF OBVIOUS) was modified"),
-        Check("no_smuggled_definition", Gate.A_IDENTITY, Status.PLACEHOLDER, True,
-              "TODO(W4) semantic statement-match: catch redefining an operator used in the "
-              "statement so the text is identical but the meaning is weaker"),
+        Check(
+            "sany_valid",
+            Gate.A_IDENTITY,
+            Status.WIRED,
+            inp.sany_valid,
+            "solution does not parse under standalone tla2sany",
+        ),
+        Check(
+            "statement_unchanged",
+            Gate.A_IDENTITY,
+            Status.WIRED,
+            not inp.statement_modified,
+            "target theorem statement was changed or weakened",
+        ),
+        Check(
+            "no_extra_axiom",
+            Gate.A_IDENTITY,
+            Status.WIRED,
+            not inp.extra_axiom,
+            "a new AXIOM/ASSUME was introduced beyond the baseline",
+        ),
+        Check(
+            "no_smuggled_module",
+            Gate.A_IDENTITY,
+            Status.WIRED,
+            not inp.smuggled_module,
+            "an agent-created module smuggles content into the proof",
+        ),
+        Check(
+            "preamble_unchanged",
+            Gate.A_IDENTITY,
+            Status.WIRED,
+            not inp.preamble_modified,
+            "the proof-completion preamble (definitions / CONSTANT / VARIABLE / ASSUME above PROOF OBVIOUS) was modified",
+        ),
+        Check(
+            "no_smuggled_definition",
+            Gate.A_IDENTITY,
+            Status.PLACEHOLDER,
+            True,
+            "TODO(W4) semantic statement-match: catch redefining an operator used in the "
+            "statement so the text is identical but the meaning is weaker",
+        ),
         # ── Gate B: DISCHARGE — the target goal is genuinely proved ──────────
-        Check("obligations_proved", Gate.B_DISCHARGE, Status.WIRED, inp.tlapm_obligations_proved,
-              "tlapm did not prove all generated obligations"),
-        Check("no_missing_steps", Gate.B_DISCHARGE, Status.WIRED, inp.n_missing == 0,
-              f"{inp.n_missing} step(s) have no proof (bare QED / unproven helper / unfinished target)"),
-        Check("no_admitted_goal", Gate.B_DISCHARGE, Status.WIRED, not inp.admitted_goal,
-              "the target goal is restated as an admitted (unproven) helper lemma"),
-        Check("no_added_omitted", Gate.B_DISCHARGE, Status.WIRED, not inp.proof_omitted,
-              "the agent added a PROOF OMITTED / bare OMITTED step (an unproven admit)"),
-        Check("admitted_set_eq_baseline", Gate.B_DISCHARGE, Status.PARTIAL, not inp.admitted_extra,
-              "TODO(W3) tighten to admitted-set == baseline; an admitted lemma was added"),
+        Check(
+            "obligations_proved",
+            Gate.B_DISCHARGE,
+            Status.WIRED,
+            inp.tlapm_obligations_proved,
+            "tlapm did not prove all generated obligations",
+        ),
+        Check(
+            "no_missing_steps",
+            Gate.B_DISCHARGE,
+            Status.WIRED,
+            inp.n_missing == 0,
+            f"{inp.n_missing} step(s) have no proof (bare QED / unproven helper / unfinished target)",
+        ),
+        Check(
+            "no_admitted_goal",
+            Gate.B_DISCHARGE,
+            Status.WIRED,
+            not inp.admitted_goal,
+            "the target goal is restated as an admitted (unproven) helper lemma",
+        ),
+        Check(
+            "no_added_omitted",
+            Gate.B_DISCHARGE,
+            Status.WIRED,
+            not inp.proof_omitted,
+            "the agent added a PROOF OMITTED / bare OMITTED step (an unproven admit)",
+        ),
+        Check(
+            "admitted_set_eq_baseline",
+            Gate.B_DISCHARGE,
+            Status.PARTIAL,
+            not inp.admitted_extra,
+            "TODO(W3) tighten to admitted-set == baseline; an admitted lemma was added",
+        ),
         # ── Gate C: TRUST — graded on trusted files ──────────────────────────
-        Check("deps_unmodified", Gate.C_TRUST, Status.WIRED, not inp.deps_modified,
-              "a given dependency file was modified"),
-        Check("graded_on_canonical", Gate.C_TRUST, Status.PLACEHOLDER, True,
-              "TODO(W5) trusted replay: re-run tlapm on canonical read-only deps + the agent's "
-              "proof so dependency edits are discarded rather than merely detected"),
+        Check(
+            "deps_unmodified", Gate.C_TRUST, Status.WIRED, not inp.deps_modified, "a given dependency file was modified"
+        ),
+        Check(
+            "graded_on_canonical",
+            Gate.C_TRUST,
+            Status.PLACEHOLDER,
+            True,
+            "TODO(W5) trusted replay: re-run tlapm on canonical read-only deps + the agent's "
+            "proof so dependency edits are discarded rather than merely detected",
+        ),
     ]
     return GradeResult(passed=all(c.ok for c in checks), checks=checks)
 
 
-def from_tlacheck(result, *, tlapm_obligations_proved, n_missing, sany_valid,
-                  preamble_modified=False, proof_omitted=False, graded_on_canonical=False):
+def from_tlacheck(
+    result,
+    *,
+    tlapm_obligations_proved,
+    n_missing,
+    sany_valid,
+    preamble_modified=False,
+    proof_omitted=False,
+    graded_on_canonical=False,
+):
     """Migrate existing detection onto the gate inputs (W1).
 
     Buckets a tlacheck ``Result``'s issues (by vector, ignoring WARNINGs) together
