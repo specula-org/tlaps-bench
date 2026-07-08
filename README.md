@@ -44,7 +44,7 @@ Requirements: [uv](https://docs.astral.sh/uv/) and
 ```bash
 git clone https://github.com/specula-org/tlaps-bench.git
 cd tlaps-bench
-export OPENAI_API_KEY=sk-...                 # Codex is the default backend
+export OPENAI_API_KEY=sk-...        # This step is optional: Codex is the default backend if no OpenAI key is provided.
 uv run tlaps-bench run --filter GCD_GCD3
 ```
 
