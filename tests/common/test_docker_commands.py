@@ -61,6 +61,7 @@ class TestCheckDockerDispatch:
             output = None
             benchmark_dir = None
             sany_only = False
+            no_cache = False
 
         with pytest.raises(SystemExit) as exc_info:
             _run_in_container(FIXTURE_TLA, Args())
@@ -87,12 +88,34 @@ class TestCheckDockerDispatch:
             output = None
             benchmark_dir = None
             sany_only = True
+            no_cache = False
 
         with pytest.raises(SystemExit):
             _run_in_container(FIXTURE_TLA, Args())
 
         cmd = mock_run.call_args[0][1]
         assert "--sany-only" in cmd
+
+    @patch("common.container.ContainerRunner.run_with_output")
+    @patch("common.container.ContainerRunner.image_exists", return_value=True)
+    def test_no_cache_flag_passed(self, mock_exists, mock_run):
+        mock_run.return_value = (0, "✅ PASS\n", "")
+
+        from common.check_proof import _run_in_container
+
+        class Args:
+            mode = "proof-completion"
+            timeout = 60
+            output = None
+            benchmark_dir = None
+            sany_only = False
+            no_cache = True
+
+        with pytest.raises(SystemExit):
+            _run_in_container(FIXTURE_TLA, Args())
+
+        cmd = mock_run.call_args[0][1]
+        assert "--no-cache" in cmd
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)
@@ -107,6 +130,7 @@ class TestCheckDockerDispatch:
             output = None
             benchmark_dir = None
             sany_only = False
+            no_cache = False
 
         with pytest.raises(SystemExit):
             _run_in_container(FIXTURE_TLA, Args())

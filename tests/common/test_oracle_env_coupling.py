@@ -114,6 +114,17 @@ def test_timeout_malformed_env_falls_back(monkeypatch):
     assert check_proof.resolve_timeout(None) == 600
 
 
+def test_timeout_zero_means_unbounded(monkeypatch):
+    assert check_proof.resolve_timeout(0) == 0
+    monkeypatch.setenv(CHECK_TIMEOUT_ENV, "0")
+    assert check_proof.resolve_timeout(None) == 0
+    assert check_proof.effective_timeout(0) is None
+
+
+def test_effective_timeout_positive_passthrough():
+    assert check_proof.effective_timeout(600) == 600
+
+
 # --- get_baseline_text: canonical first, git fallback -------------------------
 
 

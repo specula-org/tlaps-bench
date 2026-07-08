@@ -6,7 +6,12 @@ Designed for AI agents to get quick feedback during proof writing.
 
 Usage:
     python3 check_proof.py benchmark/Euclid/GCD_GCD3.tla \\
-        [--mode {proof-completion,proof-from-scratch}] [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS]
+        [--mode {proof-completion,proof-from-scratch}] [--tlapm PATH] [--tlapm-lib PATH] \\
+        [--timeout SECS] [--no-cache]
+
+Fingerprint cache:
+    By default the proving run reuses <target-dir>/.tlacache.
+    --no-cache verifies from scratch.
 
 Modes:
     proof-completion (default) — proof completion. The preamble (above PROOF
@@ -456,6 +461,7 @@ def resolve_timeout(explicit):
     agent self-check and the grader can't diverge on the discharge deadline — a
     proof near the boundary must not pass the self-check yet time out at grading.
     A malformed env value falls back to 600 rather than crashing the check.
+    A value of 0 or less means no deadline.
     """
     if explicit is not None:
         return explicit
@@ -463,6 +469,18 @@ def resolve_timeout(explicit):
         return int(os.environ.get("TLAPS_CHECK_TIMEOUT", "600"))
     except ValueError:
         return 600
+
+
+def effective_timeout(timeout):
+    """Return the subprocess deadline; zero or less disables it."""
+    return timeout if timeout > 0 else None
+
+
+def tlapm_cache_args(bench_dir, no_cache):
+    """Return tlapm fingerprint-cache flags for the proving run."""
+    if no_cache:
+        return []
+    return ["--cache-dir", os.path.join(bench_dir, ".tlacache"), "--safefp"]
 
 
 # Machine-readable marker the runner greps for to set the structured
@@ -561,13 +579,17 @@ def _run_in_container(filepath, args):
         cmd += ["--benchmark-dir", os.path.dirname(container_file)]
     if args.sany_only:
         cmd += ["--sany-only"]
+    if args.no_cache:
+        cmd += ["--no-cache"]
 
     config = ContainerConfig(workspace=workspace, result_dir=result_dir)
     config.env["GIT_CONFIG_COUNT"] = "1"
     config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
     config.env["GIT_CONFIG_VALUE_0"] = "/workspace"
+    # Keep --timeout 0 unbounded in the outer Docker call too.
+    container_timeout = args.timeout + 60 if args.timeout > 0 else None
     try:
-        exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=args.timeout + 60)
+        exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=container_timeout)
         # Print output, filtering container-internal paths
         if stdout:
             for line in stdout.splitlines():
@@ -604,9 +626,14 @@ def main():
         "--timeout",
         type=int,
         default=None,
-        help="Timeout in seconds. If omitted, uses $TLAPS_CHECK_TIMEOUT (set by the "
+        help="Timeout in seconds; 0 means no limit. If omitted, uses $TLAPS_CHECK_TIMEOUT (set by the "
         "runner so the agent's self-check uses the SAME tlapm budget as the grader), "
         "else 600.",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Verify from scratch: do not reuse or write the target-side .tlacache.",
     )
     parser.add_argument("--output", "-o", default=None, help="Write results to this file (default: <input>.result)")
     parser.add_argument(
@@ -733,12 +760,13 @@ def main():
         # failed obligation, 11 incomplete proof, 12 empty target. This is the
         # authoritative replacement for our hand-rolled incomplete-proof heuristics.
         cmd = [tlapm_path, "--strict", "-I", tlapm_lib]
+        cmd += tlapm_cache_args(bench_dir, args.no_cache)
         community_lib = find_community_lib(filepath)
         if community_lib:
             cmd += ["-I", community_lib]
         cmd.append(tmp_file)
         try:
-            out, err, rc = run_killgroup(cmd, args.timeout, tmp_dir)
+            out, err, rc = run_killgroup(cmd, effective_timeout(args.timeout), tmp_dir)
             tlapm_output = out + err
             tlapm_exit = rc
         except subprocess.TimeoutExpired:

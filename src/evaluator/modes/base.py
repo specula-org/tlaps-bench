@@ -191,6 +191,7 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
             self._checker_binary,
             os.path.join(workspace, benchmark_basename),
             "--no-container",
+            "--no-cache",
             "--mode",
             self.name,
             "--output",

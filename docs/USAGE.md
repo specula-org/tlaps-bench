@@ -139,6 +139,8 @@ uv run tlaps-bench check path/to/file.tla --mode proof-from-scratch
 uv run tlaps-bench check path/to/file.tla --sany-only
 ```
 
+By default, `check` reuses `<target-dir>/.tlacache`; use `--no-cache` for a cold check, or `--timeout 0` for no checker deadline.
+
 Exit codes: `0` = PASS, `1` = FAIL, `3` = ERROR.
 
 ### `tlaps-bench score`
