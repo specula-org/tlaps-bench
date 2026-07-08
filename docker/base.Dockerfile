@@ -9,6 +9,11 @@ RUN pip install --no-cache-dir pyinstaller
 COPY pyproject.toml /build/pyproject.toml
 COPY src/ /build/src/
 
+# Version stamp for the `checker:` header (passed by ensure_image from `git
+# describe`; also overwrites any stale locally-generated _build_version.py).
+ARG CHECKER_VERSION=dev
+RUN printf 'BUILD_VERSION = "%s"\n' "$CHECKER_VERSION" > /build/src/common/_build_version.py
+
 RUN cd /build && pyinstaller --onefile --name check_proof_bin \
         --paths src/common --paths src \
         --collect-submodules tlacheck \

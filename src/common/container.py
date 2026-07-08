@@ -448,12 +448,13 @@ class ContainerRunner:
         return ""
 
     @staticmethod
-    def build_image(dockerfile: str, tag: str, context: str) -> None:
+    def build_image(dockerfile: str, tag: str, context: str, build_args: dict | None = None) -> None:
         """Build a Docker image, streaming output to stdout."""
         print(f"[build] docker build -t {tag}...")
-        result = subprocess.run(
-            ["docker", "build", "--platform", "linux/amd64", "-f", dockerfile, "-t", tag, context],
-        )
+        cmd = ["docker", "build", "--platform", "linux/amd64", "-f", dockerfile, "-t", tag]
+        for k, v in (build_args or {}).items():
+            cmd += ["--build-arg", f"{k}={v}"]
+        result = subprocess.run(cmd + [context])
         if result.returncode != 0:
             raise RuntimeError(f"Docker build failed (exit {result.returncode})")
 
@@ -499,4 +500,8 @@ def ensure_image(force: bool = False) -> None:
             print("Building Docker image (--force-build)...")
         else:
             print("Docker image not found, building...")
-        ContainerRunner.build_image(dockerfile, IMAGE_TAG, _REPO_ROOT)
+        describe = subprocess.run(
+            ["git", "describe", "--always", "--dirty"], capture_output=True, text=True, cwd=_REPO_ROOT
+        )
+        version = describe.stdout.strip() if describe.returncode == 0 else "dev"
+        ContainerRunner.build_image(dockerfile, IMAGE_TAG, _REPO_ROOT, {"CHECKER_VERSION": version or "dev"})

@@ -4,11 +4,17 @@ CHECKER_SOURCES := \
 	src/common/cheating_detection.py \
 	$(shell find src/tlacheck src/tlacore -type f -name '*.py')
 
-.PHONY: setup build clean
+.PHONY: setup build clean FORCE
 
-check_proof_bin: $(CHECKER_SOURCES)
-	printf 'BUILD_VERSION = "%s"\n' "$$(git describe --always --dirty 2>/dev/null || echo unknown)" \
-		> src/common/_build_version.py
+# Regenerated on every make; the mtime moves only when the version string
+# actually changes, so an incremental build can never keep a stale stamp.
+src/common/_build_version.py: FORCE
+	@printf 'BUILD_VERSION = "%s"\n' "$$(git describe --always --dirty 2>/dev/null || echo unknown)" > $@.tmp
+	@if cmp -s $@.tmp $@ 2>/dev/null; then rm -f $@.tmp; else mv $@.tmp $@; fi
+
+FORCE:
+
+check_proof_bin: src/common/_build_version.py $(CHECKER_SOURCES)
 	uv run --locked pyinstaller --onefile --name check_proof_bin \
 		--paths src/common --paths src \
 		--collect-submodules tlacheck \
