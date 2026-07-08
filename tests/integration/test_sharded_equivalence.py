@@ -90,14 +90,19 @@ def _run(baseline, solution, name, mode, *extra_args):
         subprocess.run(["git", "add", "-A"], cwd=w)
         subprocess.run(
             ["git", "-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "baseline"],
-            cwd=w, capture_output=True,
+            cwd=w,
+            capture_output=True,
         )
         with open(os.path.join(w, name), "w") as f:
             f.write(solution)
         env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "src"), "SANY_RUN_SH": SRS}
         r = subprocess.run(
             [sys.executable, CHECK, name, "--mode", mode, "--timeout", "120", *extra_args],
-            cwd=w, capture_output=True, text=True, timeout=300, env=env,
+            cwd=w,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
         )
         m = VERDICT_RE.search(r.stdout)
         return (m.group(1) if m else "?"), r.stdout

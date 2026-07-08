@@ -44,7 +44,8 @@ def _make_workspace(baseline, solution, name):
     subprocess.run(["git", "add", "-A"], cwd=w)
     subprocess.run(
         ["git", "-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "baseline"],
-        cwd=w, capture_output=True,
+        cwd=w,
+        capture_output=True,
     )
     with open(os.path.join(w, name), "w") as f:
         f.write(solution)
@@ -55,7 +56,11 @@ def _run_check(w, name, *extra_args):
     env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "src"), "SANY_RUN_SH": SRS}
     r = subprocess.run(
         [sys.executable, CHECK, name, "--mode", "proof-from-scratch", "--timeout", "120", *extra_args],
-        cwd=w, capture_output=True, text=True, timeout=300, env=env,
+        cwd=w,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
     )
     m = VERDICT_RE.search(r.stdout)
     return (m.group(1) if m else "?"), r.stdout
@@ -135,7 +140,9 @@ def test_no_git_track_leaves_no_ref():
         assert "state snapshot:" not in out
         r = subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", "refs/tlaps-check/history"],
-            cwd=w, capture_output=True, text=True,
+            cwd=w,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode != 0, "--no-git-track still created the ref"
     finally:

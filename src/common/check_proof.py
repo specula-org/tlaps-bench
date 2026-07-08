@@ -718,7 +718,10 @@ def snapshot_worktree(filepath):
             env = {**os.environ, "GIT_INDEX_FILE": os.path.join(d, "index")}
             add = subprocess.run(
                 ["git", "add", "-A", "--", ".", f":(exclude){cache}"],
-                capture_output=True, text=True, cwd=repo_root, env=env,
+                capture_output=True,
+                text=True,
+                cwd=repo_root,
+                env=env,
             )
             if add.returncode != 0:
                 return None, None
@@ -734,7 +737,9 @@ def record_check_commit(repo_root, tree, message):
     try:
         tip = subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", GIT_TRACK_REF],
-            capture_output=True, text=True, cwd=repo_root,
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
         ).stdout.strip()
         cmd = ["git", "commit-tree", "-m", message] + (["-p", tip] if tip else []) + [tree]
         ct = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root, env={**os.environ, **_GIT_ID})
