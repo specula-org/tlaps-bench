@@ -840,7 +840,10 @@ def _run_in_container(filepath, args):
     cmd += ["--timeout", str(args.timeout)]
     cmd += ["--output", "/results/check.result"]
     if args.benchmark_dir:
-        cmd += ["--benchmark-dir", os.path.dirname(container_file)]
+        # Mount the canonical dir read-only at /benchmark; pointing the checker
+        # at the workspace instead would make the baseline oracle the solution
+        # itself, silently passing tamper checks.
+        cmd += ["--benchmark-dir", "/benchmark"]
     if args.sany_only:
         cmd += ["--sany-only"]
     if args.no_cache:
@@ -852,7 +855,11 @@ def _run_in_container(filepath, args):
     if args.shards is not None:
         cmd += ["--shards", str(args.shards)]
 
-    config = ContainerConfig(workspace=workspace, result_dir=result_dir)
+    config = ContainerConfig(
+        workspace=workspace,
+        result_dir=result_dir,
+        benchmark_dir=os.path.abspath(args.benchmark_dir) if args.benchmark_dir else "",
+    )
     config.env["GIT_CONFIG_COUNT"] = "1"
     config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
     config.env["GIT_CONFIG_VALUE_0"] = "/workspace"

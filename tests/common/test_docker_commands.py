@@ -104,6 +104,33 @@ class TestCheckDockerDispatch:
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)
+    def test_benchmark_dir_mounted_read_only_not_rewritten(self, mock_exists, mock_run):
+        # The canonical baseline must be mounted at /benchmark, never rewritten
+        # to the workspace: that would make the tamper oracle the solution itself.
+        mock_run.return_value = (0, "✅ PASS\n", "")
+
+        from common.check_proof import _run_in_container
+
+        class Args:
+            mode = "proof-completion"
+            timeout = 60
+            output = None
+            benchmark_dir = "/host/canonical/Euclid"
+            sany_only = False
+            no_cache = False
+            keep_verifying = False
+            shards = None
+            no_git_track = False
+
+        with pytest.raises(SystemExit):
+            _run_in_container(FIXTURE_TLA, Args())
+
+        config, cmd = mock_run.call_args[0][0], mock_run.call_args[0][1]
+        assert cmd[cmd.index("--benchmark-dir") + 1] == "/benchmark"
+        assert config.benchmark_dir == "/host/canonical/Euclid"
+
+    @patch("common.container.ContainerRunner.run_with_output")
+    @patch("common.container.ContainerRunner.image_exists", return_value=True)
     def test_no_cache_flag_passed(self, mock_exists, mock_run):
         mock_run.return_value = (0, "✅ PASS\n", "")
 
