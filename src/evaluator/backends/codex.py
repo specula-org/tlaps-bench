@@ -37,6 +37,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 class CodexBackend(AgentBackend):
     name = "codex"
     install_script = "install-codex.sh"
+    session_state_dir = "/root/.codex"
     env_keys = [
         "OPENAI_API_KEY",
         "AZURE_OPENAI_API_KEY",

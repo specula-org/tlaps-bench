@@ -124,6 +124,8 @@ uv run tlaps-bench run [flags]
 | `--max-continuations` | `0` | Run up to N same-workspace continuation attempts after the first attempt completes without PASS (see [Continuation runs](#continuation-runs)) |
 | `--force-build` | off | Rebuild the Docker image |
 | `--no-container` | off | Run without Docker (requires native setup) |
+| `--keep-container` | off | Retain each agent container after it exits (drop `--rm`) for debugging (see [Debugging a run](#debugging-a-run-keep-container)) |
+| `--session-dir` | off (default `~/.tlaps-bench/sessions` under `--keep-container`) | Persist each run's agent session state to this persistent host path (survives container removal and reboot; restore with `scripts/restore-session.sh`) |
 
 Run `uv run tlaps-bench run --help` for the full flag list.
 
@@ -241,6 +243,54 @@ To skip Docker entirely (for debugging, requires native setup):
 ```bash
 uv run tlaps-bench run --backend codex --model gpt-5.5 --no-container
 ```
+
+### Debugging a run (`--keep-container`)
+
+By default each agent container is started with `--rm`, so it (and its writable layer, where the agent's session state such as `.copilot` / `.codex` lives) is deleted the moment the run finishes or is interrupted. That makes it impossible to resume the agent or ask it follow-up questions afterwards.
+
+Pass `--keep-container` to retain the container instead:
+
+```bash
+uv run tlaps-bench run --backend copilot --keep-container --filter my_benchmark
+```
+
+Each run prints the retained container's name, e.g.:
+
+```text
+[keep-container] retaining container 'tlaps-bench-my_benchmark-1a2b3c4d'. After it exits: `docker exec -it tlaps-bench-my_benchmark-1a2b3c4d bash` to inspect (start it first if stopped: `docker start ...`), `docker commit ... <img>` to snapshot, `docker rm -f ...` to remove.
+```
+
+The name is unique per attempt, so parallel jobs, infra retries and continuation rounds never collide.
+
+`--keep-container` also **persists the session state to the host by default** (see below), so a single flag is enough for debugging and the state survives even a host reboot. Clean up when done — retained containers are **not** auto-removed:
+
+```bash
+docker ps -a --filter name=tlaps-bench- --format '{{.Names}}' | xargs -r docker rm -f
+```
+
+`--keep-container` only applies in container mode (it is ignored with `--no-container`).
+
+### Persisting session state to the host (`--session-dir`)
+
+Session state lives inside the container, and for backends that authenticate from a mounted credential file (`codex` / `claude_code` / `pi`) it is written into a `/tmp` tempdir — so a reboot (e.g. after an OOM) clears it even if the container is kept. To avoid that, the agent's session state is bind-mounted straight to a **persistent host directory**.
+
+With `--keep-container` this happens automatically under `~/.tlaps-bench/sessions/`. Pass `--session-dir` to choose the location explicitly (and to persist without keeping the container):
+
+```bash
+uv run tlaps-bench run --backend copilot --session-dir ./sessions --filter my_benchmark
+```
+
+Each run writes its state to `<session-dir>/<backend>/<benchmark>/` (or `<...>/<container-name>/` under `--keep-container`, one dir per retained container). For `codex`/`claude_code`/`pi` the credential files are stored there too, so a single mount holds both auth and session. Because it is a real host path — not `/tmp` and not tied to the container's lifetime — the state survives container removal *and* reboot, and can be moved to another machine. A `.gitignore` (`*`) is written at the session root so this credential-bearing data can't be accidentally committed. `--session-dir` is ignored with `--no-container`.
+
+### Restoring a session into a container
+
+To resume or inspect a persisted session, mount it back into a fresh container:
+
+```bash
+scripts/restore-session.sh --backend copilot ~/.tlaps-bench/sessions/copilot/<container-name>
+```
+
+This starts an interactive `tlaps-bench-base` shell with the session mounted at the backend's session path (e.g. `/root/.copilot`), so you can read the transcript or run the agent CLI's own resume command (e.g. `copilot --resume`). The container is removed on exit; the host session directory is not. (Network egress is not firewalled in this debug shell, and no benchmark files are mounted — it is for inspecting/continuing the agent session, not for grading.)
 
 ---
 
