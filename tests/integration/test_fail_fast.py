@@ -24,6 +24,11 @@ OMIT_CHEAT = (
     "---- MODULE Omit ----\nEXTENDS Integers\nCONSTANT N\nASSUME Na == N > 0\n"
     "LEMMA H == N >= 0\n  PROOF OMITTED\nTHEOREM Target == N >= 0\n  BY H\n====\n"
 )
+EXTRA_AXIOM_BASE = "---- MODULE Extra ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"
+EXTRA_AXIOM_CHEAT = (
+    "---- MODULE Extra ----\nEXTENDS Integers\nAXIOM ExtraCheat == TRUE\n"
+    "THEOREM Target == 1 + 1 = 2\nPROOF OBVIOUS\n====\n"
+)
 QED_HONEST = "---- MODULE Good ----\nEXTENDS Integers\nTHEOREM Target == 1 + 1 = 2\nPROOF\n<1> QED\n====\n"
 
 VERDICT_RE = re.compile(r"^\s*(PASS|FAIL)\b", re.MULTILINE)
@@ -64,6 +69,39 @@ def _run_check(w, name, *extra_args):
     )
     m = VERDICT_RE.search(r.stdout)
     return (m.group(1) if m else "?"), r.stdout
+
+
+def _fake_tlapm(w):
+    log = os.path.join(w, "tlapm.log")
+    fake = os.path.join(w, "fake_tlapm")
+    with open(fake, "w") as f:
+        f.write(f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {log!r}\necho 'fake tlapm invoked'\nexit 0\n")
+    os.chmod(fake, 0o755)
+    return fake, log
+
+
+def _read_log(log):
+    if not os.path.exists(log):
+        return ""
+    with open(log) as f:
+        return f.read()
+
+
+def test_legacy_cheat_skips_summary_and_preserves_marker():
+    w = _make_workspace(EXTRA_AXIOM_BASE, EXTRA_AXIOM_CHEAT, "Extra.tla")
+    try:
+        fake, log = _fake_tlapm(w)
+        verdict, out = _run_check(w, "Extra.tla", "--no-container", "--tlapm", fake, "--tlapm-lib", w, "--no-git-track")
+        calls = _read_log(log)
+        assert verdict == "FAIL", out[-800:]
+        assert SKIP_NOTE in out
+        assert "GATES-FAILED: A:identity" in out
+        assert "CHEAT-DETECTED: no_extra_axiom" in out
+        assert "legacy safety-net" not in out
+        assert "--summary" not in calls, calls
+        assert "fake tlapm invoked" not in out
+    finally:
+        shutil.rmtree(w, ignore_errors=True)
 
 
 def test_cheat_fails_fast_and_skips_tlapm():

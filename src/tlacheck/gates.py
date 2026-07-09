@@ -259,6 +259,7 @@ def from_tlacheck(
     preamble_modified=False,
     proof_omitted=False,
     graded_on_canonical=False,
+    legacy_issue_vectors=None,
 ):
     """Migrate existing detection onto the gate inputs (W1).
 
@@ -268,16 +269,17 @@ def from_tlacheck(
     ``.issues`` where each issue has ``.vector`` and ``.severity`` (with a
     ``.value``/name distinguishing ``WARNING``).
 
-    ``preamble_modified`` (proof-completion byte-match) and ``proof_omitted`` (agent-added
-    PROOF OMITTED / bare OMITTED) are legacy-only detections that are not tlacheck
-    vectors; the caller computes them. ``graded_on_canonical`` records whether the
-    grade ran on trusted read-only files (W5).
+    ``preamble_modified`` (proof-completion byte-match), ``proof_omitted``
+    (agent-added PROOF OMITTED / bare OMITTED), and ``legacy_issue_vectors`` are
+    caller-computed detections from the older scan path. ``graded_on_canonical``
+    records whether the grade ran on trusted read-only files (W5).
     """
     vectors = {
         i.vector
         for i in getattr(result, "issues", [])
         if getattr(getattr(i, "severity", None), "value", None) != "WARNING"
     }
+    vectors.update(legacy_issue_vectors or ())
     return GraderInputs(
         sany_valid=sany_valid,
         statement_modified="STATEMENT_MODIFIED" in vectors,

@@ -271,14 +271,14 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
             baseline is read from there instead of workspace git (see
             get_baseline_text), so a workspace git rewrite can't fool the check.
 
-    Returns list of (line_number_1indexed, description) issues.
+    Returns list of (line_number_1indexed, description, kind) issues.
     """
     issues = []
 
     # Baseline version (canonical snapshot when available, else git).
     main_content = get_baseline_text(filepath, benchmark_dir)
     if main_content is None:
-        issues.append((0, "WARNING: Could not retrieve baseline version for comparison"))
+        issues.append((0, "WARNING: Could not retrieve baseline version for comparison", "WARNING"))
         return issues
 
     main_lines = main_content.split("\n")
@@ -289,12 +289,16 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
     # Find PROOF OBVIOUS in baseline version - this is the boundary
     po_line = find_proof_obvious_line(main_lines)
     if po_line is None:
-        issues.append((0, "WARNING: No PROOF OBVIOUS found in baseline version"))
+        issues.append((0, "WARNING: No PROOF OBVIOUS found in baseline version", "WARNING"))
         return issues
 
     if strict_preamble and len(current_lines) < po_line:
         issues.append(
-            (len(current_lines), f"File truncated: preamble had {po_line} lines, file has {len(current_lines)}")
+            (
+                len(current_lines),
+                f"File truncated: preamble had {po_line} lines, file has {len(current_lines)}",
+                "PREAMBLE_MODIFIED",
+            )
         )
         return issues
 
@@ -303,7 +307,7 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
     # so a byte-for-byte preamble check would reject legitimate proofs.
     if strict_preamble:
         for ci in detect_preamble_modification(main_lines, current_lines, po_line):
-            issues.append((ci.line or 0, ci.description))
+            issues.append((ci.line or 0, ci.description, ci.kind))
 
     # 2. PROOF OMITTED / bare OMITTED.
     # proof-completion: only the proof section can plausibly contain it (and must not).
@@ -311,14 +315,14 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
     if strict_preamble:
         proof_section = "\n".join(current_lines[po_line:])
         for ci in detect_proof_omitted(proof_section):
-            issues.append((po_line + (ci.line or 0), ci.description))
+            issues.append((po_line + (ci.line or 0), ci.description, ci.kind))
     else:
         for ci in detect_proof_omitted(current_content):
-            issues.append((ci.line or 0, ci.description))
+            issues.append((ci.line or 0, ci.description, ci.kind))
 
     # 3. Extra AXIOM/ASSUME (shared module)
     for ci in detect_extra_axioms(main_content, current_content):
-        issues.append((0, ci.description))
+        issues.append((0, ci.description, ci.kind))
 
     # 4. Dependency file modification (shared module). Baseline per dep comes
     # from the canonical snapshot (else git) — never the amendable workspace.
@@ -335,9 +339,18 @@ def check_cheating(filepath, strict_preamble: bool = True, benchmark_dir=None):
         dep_files[os.path.basename(dep_file)] = (dep_baseline, dep_current)
 
     for ci in detect_dependency_modification(dep_files):
-        issues.append((0, ci.description))
+        issues.append((0, ci.description, ci.kind))
 
     return issues
+
+
+def legacy_gate_vectors(issues):
+    vectors = set()
+    for issue in issues:
+        kind = issue[2] if len(issue) > 2 else ""
+        if kind in {"EXTRA_AXIOM", "DEPENDENCY_MODIFIED"}:
+            vectors.add(kind)
+    return vectors
 
 
 def _git_root(path):
@@ -1078,29 +1091,34 @@ def main():
         )
         real_issues = [i for i in cheating_issues if not i[1].startswith("WARNING:")]
         warnings = [i for i in cheating_issues if i[1].startswith("WARNING:")]
+        legacy_vectors = legacy_gate_vectors(real_issues)
 
         community_lib = find_community_lib(filepath)
 
-        # --summary is frontend-only (no backends), so it is cheap: it feeds
-        # the semantic engine here and the missing-proofs detector after tlapm.
         summary_output = ""
-        summary_cmd = [tlapm_path, "-I", tlapm_lib]
-        if community_lib:
-            summary_cmd += ["-I", community_lib]
-        summary_cmd += ["--summary", tmp_file]
-        try:
-            out, err, _ = run_killgroup(summary_cmd, 30, tmp_dir)
-            summary_output = out + err
-        except Exception:
-            pass
-
-        # tlapm has not run yet; the engine's tlapm_passed input only shapes its
-        # own verdict field, which check_proof never reads (issues only).
-        engine_issues, engine_reason, engine_result = run_tlacheck_engine(
-            filepath, target_name, summary_output, False, benchmark_dir=benchmark_dir
-        )
+        engine_issues, engine_reason, engine_result = [], "", None
 
         sany_status, sany_detail = check_sany_valid(filepath)
+        static_fail = bool(real_issues) or sany_status == "invalid"
+        if args.keep_verifying or not static_fail:
+            # --summary is frontend-only (no backends), but it still walks the
+            # whole module. Once a static check has already failed in default
+            # mode, it cannot change the verdict and can be skipped.
+            summary_cmd = [tlapm_path, "-I", tlapm_lib]
+            if community_lib:
+                summary_cmd += ["-I", community_lib]
+            summary_cmd += ["--summary", tmp_file]
+            try:
+                out, err, _ = run_killgroup(summary_cmd, 30, tmp_dir)
+                summary_output = out + err
+            except Exception:
+                pass
+
+            # tlapm has not run yet; the engine's tlapm_passed input only shapes its
+            # own verdict field, which check_proof never reads (issues only).
+            engine_issues, engine_reason, engine_result = run_tlacheck_engine(
+                filepath, target_name, summary_output, False, benchmark_dir=benchmark_dir
+            )
 
         # Fail fast on tampering (cheat findings / SANY-invalid) only — an
         # honest incomplete proof still gets the full run, keeping the
@@ -1225,12 +1243,14 @@ def main():
     if sany_status == "unavailable" and sany_detail:
         warnings.append((0, f"SANY validity check skipped ({sany_detail[:160]})"))
 
-    for _line_num, desc in warnings:
+    for warning in warnings:
+        _line_num, desc = warning[:2]
         msg = desc.removeprefix("WARNING: ")
         emit(f"  WARNING: {msg}")
 
     if real_issues:
-        for line_num, desc in real_issues:
+        for issue in real_issues:
+            line_num, desc = issue[:2]
             emit(f"  Line {line_num}: {desc}")
     else:
         emit("  No cheating detected.")
@@ -1282,6 +1302,7 @@ def main():
                 sany_valid=(sany_status != "invalid"),
                 preamble_modified=legacy_preamble_modified,
                 proof_omitted=legacy_proof_omitted,
+                legacy_issue_vectors=legacy_vectors,
             )
         )
         grade_passed, grade_reasons = _gr.passed, _gr.reasons
