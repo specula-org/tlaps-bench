@@ -177,16 +177,17 @@ LEMMA MaxInFps ==
 PROOF OMITTED
 
 (***************************************************************************)
-(* Helper: `idx(fpv, p) \in 1..K' for every integer pair `(fpv, p)' when    *)
-(* `fps' is non-empty (so `min(fps)' / `max(fps)' are well-defined          *)
-(* elements of `fps').  The "non-empty" precondition is provided in       *)
-(* practice by `FpInFps' applied to any writer outside `{pick, Done}'.    *)
+(* Helper: `idx(fpv, offset) \in 1..K' for every integer pair               *)
+(* `(fpv, offset)' when `fps' is non-empty (so `min(fps)' / `max(fps)' are  *)
+(* well-defined elements of `fps').  The "non-empty" precondition is       *)
+(* provided in practice by `FpInFps' applied to any writer outside         *)
+(* `{pick, Done}'.                                                         *)
 (***************************************************************************)
 LEMMA IdxInRange ==
-  ASSUME NEW fpv \in Int, NEW p \in Int,
+  ASSUME NEW fpv \in Int, NEW offset \in Int,
          NEW someFp \in fps,
          max(fps) - min(fps) # 0
-  PROVE  idx(fpv, p) \in 1..K
+  PROVE  idx(fpv, offset) \in 1..K
 PROOF OMITTED
 
 (***************************************************************************)
