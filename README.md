@@ -24,17 +24,35 @@ types:
 
 ## Benchmark problems
 
-| Source | Proof completion | Proof from scratch | Total |
-|---|--:|--:|--:|
-| tlaplus/Examples | 379 | 126 | 505 |
-| TLAPS distribution examples | 103 | 57 | 160 |
-| ZooKeeper (Remix) | 0 | 18 | 18 |
-| Ivy liveness | 0 | 12 | 12 |
-| etcd (Specula) | 0 | 8 | 8 |
-| AbstractRaft | 0 | 4 | 4 |
-| OpenAddressing (lemmy/Examples) | 1 | 5 | 6 |
-| Anvil | 0 | 1 | 1 |
-| **Total** | **483** | **231** | **714** |
+The benchmark draws on two kinds of source. A base of classic TLA+ **example
+libraries**, a small set of **systems specifications** — real
+protocols, several with no published proof. Both sets are expected to keep
+growing as more specifications are added.
+A `–` marks a source with no human proofs, from which no proof-completion task
+can be derived.
+
+**Example libraries**
+
+| Source | Examples | Proof completion | Proof from scratch | Total |
+|---|--:|--:|--:|--:|
+| [tlaplus/Examples](https://github.com/tlaplus/Examples) | 45 | 379 | 126 | 505 |
+| [TLAPS distribution examples](https://github.com/tlaplus/tlapm) | 14 | 103 | 57 | 160 |
+| **Subtotal** | **59** | **482** | **183** | **665** |
+
+**Systems specifications**
+
+| Source | Examples | Proof completion | Proof from scratch | Total |
+|---|--:|--:|--:|--:|
+| [ZooKeeper (Remix)](https://arxiv.org/abs/2409.14301) | 2 | – | 18 | 18 |
+| [Ivy liveness](https://github.com/kenmcmil/ivy) | 6 | – | 12 | 12 |
+| [etcd (Specula)](https://github.com/specula-org) | 1 | – | 8 | 8 |
+| [OpenAddressing](https://github.com/lemmy/Examples) | 1 | 1 | 5 | 6 |
+| AbstractRaft | 1 | – | 4 | 4 |
+| [Anvil](https://github.com/anvil-verifier/anvil) | 1 | – | 1 | 1 |
+| **Subtotal** | **12** | **1** | **48** | **49** |
+
+**71 examples, 714 tasks in total.** A per-example breakdown is in
+[`docs/DATASET.md`](docs/DATASET.md).
 
 ## Running
 
