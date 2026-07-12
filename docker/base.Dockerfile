@@ -44,8 +44,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs
 
-# Layer 3: tlapm (pinned version, ~850MB download, rarely changes)
+# Layer 3: tlapm (rolling release asset, pinned by its reported commit)
 ARG TLAPM_TAG=1.6.0-pre
+ARG TLAPM_COMMIT=80172c6
 ARG TLAPM_ASSET=tlapm-${TLAPM_TAG}-x86_64-linux-gnu.tar.gz
 ARG TLAPM_URL=https://github.com/tlaplus/tlapm/releases/download/${TLAPM_TAG}/${TLAPM_ASSET}
 RUN --mount=type=cache,target=/tmp/downloads \
@@ -53,6 +54,7 @@ RUN --mount=type=cache,target=/tmp/downloads \
       curl -fsSL -o /tmp/downloads/${TLAPM_ASSET} "${TLAPM_URL}"; \
     fi \
     && tar -xzf /tmp/downloads/${TLAPM_ASSET} -C /opt/ \
+    && /opt/tlapm/bin/tlapm --version | grep -F "${TLAPM_COMMIT}" \
     && rm -f /opt/tlapm/bin/tlapm_lsp
 
 # Layer 4: tla2tools.jar / SANY (downloaded inside Docker — no host dependency)
