@@ -33,7 +33,7 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
-from common.container import ContainerConfig, ContainerRunner, ensure_image, forward_env
+from common.container import ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image, forward_env
 from evaluator import quota
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import AgentBackend
@@ -1398,7 +1398,11 @@ def main():
         checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
         mode = get_mode(args.mode, benchmark_root, checker_binary)
 
-        ensure_image(force=args.force_build)
+        try:
+            ensure_image(force=args.force_build)
+        except DockerUnavailableError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
         print("Container mode: ON (image: tlaps-bench-base)")
 
         # Preflight: validate install + auth + model + firewall on a trivial

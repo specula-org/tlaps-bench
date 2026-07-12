@@ -58,6 +58,7 @@ can be derived.
 
 Requirements: [uv](https://docs.astral.sh/uv/) and
 [Docker](https://docs.docker.com/get-docker/).
+Windows users should run the benchmark through WSL2; native Windows is not supported.
 
 ```bash
 git clone https://github.com/specula-org/tlaps-bench.git

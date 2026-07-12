@@ -18,6 +18,11 @@ from pathlib import Path
 IMAGE_TAG = "tlaps-bench-base"
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
+
+class DockerUnavailableError(RuntimeError):
+    """Docker is missing, stopped, or otherwise unavailable to the CLI."""
+
+
 # All provider API keys to auto-forward from host into containers.
 # Sourced from litellm provider source code (llms/<provider>/).
 API_KEY_VARS = [
@@ -448,6 +453,32 @@ class ContainerRunner:
         return ""
 
     @staticmethod
+    def require_docker() -> None:
+        """Fail with an actionable message when Docker cannot be used."""
+        try:
+            result = subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except FileNotFoundError as exc:
+            raise DockerUnavailableError(
+                "Docker CLI not found. Install Docker and ensure `docker` is available on PATH."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise DockerUnavailableError(
+                "Docker did not respond. Start or restart the Docker daemon and retry."
+            ) from exc
+        except OSError as exc:
+            raise DockerUnavailableError(f"Could not run Docker: {exc}") from exc
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            suffix = f" ({detail[-1]})" if detail else ""
+            raise DockerUnavailableError(f"Docker daemon is unavailable. Start Docker and retry{suffix}.")
+
+    @staticmethod
     def build_image(dockerfile: str, tag: str, context: str, build_args: dict | None = None) -> None:
         """Build a Docker image, streaming output to stdout."""
         print(f"[build] docker build -t {tag}...")
@@ -494,6 +525,7 @@ def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, 
 
 def ensure_image(force: bool = False) -> None:
     """Build the Docker image if missing or forced."""
+    ContainerRunner.require_docker()
     if force or not ContainerRunner.image_exists(IMAGE_TAG):
         dockerfile = os.path.join(_REPO_ROOT, "docker", "base.Dockerfile")
         if force:
