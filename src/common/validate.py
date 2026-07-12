@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 # Internal imports
 from common.cheating_detection import CheatingIssue, detect_proof_omitted
-from common.container import ContainerConfig, ContainerRunner, ensure_image
+from common.container import ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image
 from dataset.proof_completion.generate import (
     BENCHMARK_DIR,
     PROJECT_ROOT,
@@ -492,7 +492,11 @@ def main():
     use_container = not args.no_container
 
     if use_container:
-        ensure_image(force=args.force_build)
+        try:
+            ensure_image(force=args.force_build)
+        except DockerUnavailableError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
         tlapm_path = "/opt/tlapm/bin/tlapm"  # placeholder, not used directly
         tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
         print("Using tlapm: Docker container")
