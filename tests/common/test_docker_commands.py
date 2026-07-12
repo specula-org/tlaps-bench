@@ -286,6 +286,15 @@ class TestEnsureImage:
 
 
 class TestDockerAvailability:
+    @pytest.fixture(autouse=True)
+    def _uncached(self):
+        """require_docker memoizes success; start each test from a cold cache."""
+        import common.container as container
+
+        container._docker_ok = False
+        yield
+        container._docker_ok = False
+
     @patch("common.container.subprocess.run", side_effect=FileNotFoundError)
     def test_missing_cli_has_actionable_error(self, mock_run):
         from common.container import ContainerRunner, DockerUnavailableError
@@ -300,3 +309,29 @@ class TestDockerAvailability:
         mock_run.return_value = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "daemon stopped"})()
         with pytest.raises(DockerUnavailableError, match="Docker daemon is unavailable"):
             ContainerRunner.require_docker()
+
+    @patch("common.container.subprocess.run")
+    def test_probe_runs_once_across_calls(self, mock_run):
+        """Every container entry goes through ensure_image; don't re-probe per task."""
+        from common.container import ContainerRunner
+
+        mock_run.return_value = type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        ContainerRunner.require_docker()
+        ContainerRunner.require_docker()
+
+        mock_run.assert_called_once()
+
+    @patch("common.container.subprocess.run")
+    def test_failure_is_not_cached(self, mock_run):
+        """A stopped daemon that gets started must be picked up on the next call."""
+        from common.container import ContainerRunner, DockerUnavailableError
+
+        stopped = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "daemon stopped"})()
+        started = type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        mock_run.side_effect = [stopped, started]
+
+        with pytest.raises(DockerUnavailableError):
+            ContainerRunner.require_docker()
+        ContainerRunner.require_docker()
+
+        assert mock_run.call_count == 2

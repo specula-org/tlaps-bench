@@ -23,6 +23,10 @@ class DockerUnavailableError(RuntimeError):
     """Docker is missing, stopped, or otherwise unavailable to the CLI."""
 
 
+# Set once `docker info` has succeeded; see ContainerRunner.require_docker.
+_docker_ok = False
+
+
 # All provider API keys to auto-forward from host into containers.
 # Sourced from litellm provider source code (llms/<provider>/).
 API_KEY_VARS = [
@@ -454,7 +458,17 @@ class ContainerRunner:
 
     @staticmethod
     def require_docker() -> None:
-        """Fail with an actionable message when Docker cannot be used."""
+        """Fail with an actionable message when Docker cannot be used.
+
+        Memoized: `ensure_image` guards every container entry, including the
+        per-task grader, so an un-cached `docker info` would add a round-trip to
+        each check (and a burst of concurrent ones under parallel grading).
+        Availability only ever flips from working to broken mid-run, which the
+        failing docker command itself reports.
+        """
+        global _docker_ok
+        if _docker_ok:
+            return
         try:
             result = subprocess.run(
                 ["docker", "info"],
@@ -477,6 +491,8 @@ class ContainerRunner:
             detail = (result.stderr or result.stdout or "").strip().splitlines()
             suffix = f" ({detail[-1]})" if detail else ""
             raise DockerUnavailableError(f"Docker daemon is unavailable. Start Docker and retry{suffix}.")
+
+        _docker_ok = True
 
     @staticmethod
     def build_image(dockerfile: str, tag: str, context: str, build_args: dict | None = None) -> None:
