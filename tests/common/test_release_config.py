@@ -17,3 +17,10 @@ def test_docker_publish_workflow_references_an_existing_dockerfile():
     dockerfile = _match(r"^\s*file:\s*(\S+)\s*$", workflow, "Dockerfile path in publish workflow")
 
     assert (REPO_ROOT / dockerfile).is_file(), f"publish workflow references missing file: {dockerfile}"
+
+
+def test_native_setup_follows_the_rolling_tlapm_release():
+    installer = (REPO_ROOT / "scripts/install_deps.sh").read_text()
+
+    assert 'TLAPM_TAG="1.6.0-pre"' in installer
+    assert "TLAPM_COMMIT" not in installer
