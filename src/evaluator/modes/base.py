@@ -93,7 +93,7 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
         files = sorted(glob.glob(os.path.join(self.benchmark_dir(), "**", "*.tla"), recursive=True))
         files = [f for f in files if self.is_benchmark_file(f)]
         if filter_pattern:
-            patterns = [p.strip() for p in filter_pattern.split(",")]
+            patterns = [p.strip() for p in filter_pattern.split(",") if p.strip()]
             files = [f for f in files if any(p in f for p in patterns)]
         return files
 

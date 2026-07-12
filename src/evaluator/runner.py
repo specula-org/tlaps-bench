@@ -1371,14 +1371,33 @@ def main():
     args = parser.parse_args()
 
     backend = get_backend(args.backend, model=args.model)
+    # Container mode is default; --no-container disables it
+    use_container = not args.no_container
+
+    # Discover tasks before authentication, image setup, or the model preflight.
+    # A misspelled filter must fail without doing expensive or externally-visible
+    # work (building an image, installing an agent CLI, or making a model request).
+    if use_container:
+        benchmark_root = os.path.join(REPO_ROOT, "benchmark")
+        checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
+    else:
+        benchmark_root, checker_binary = resolve_paths()
+    mode = get_mode(args.mode, benchmark_root, checker_binary)
+    benchmark_files = mode.get_benchmark_files(args.filter)
+    if not benchmark_files:
+        if args.filter:
+            parser.exit(
+                2,
+                f"{parser.prog}: error: no benchmarks matched --filter {args.filter!r} in mode {mode.name!r}\n",
+            )
+        parser.exit(
+            2, f"{parser.prog}: error: no benchmarks found for mode {mode.name!r} under {mode.benchmark_dir()}\n"
+        )
 
     auth_err = backend.check_auth()
     if auth_err:
         print(f"ERROR: {auth_err}")
         sys.exit(1)
-
-    # Container mode is default; --no-container disables it
-    use_container = not args.no_container
 
     if args.keep_container and not use_container:
         print("WARNING: --keep-container has no effect with --no-container (no container to retain)")
@@ -1394,9 +1413,6 @@ def main():
         # Use container-side paths for prompts.
         tlapm_root = "/opt/tlapm"
         tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
-        benchmark_root = os.path.join(REPO_ROOT, "benchmark")
-        checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
-        mode = get_mode(args.mode, benchmark_root, checker_binary)
 
         try:
             ensure_image(force=args.force_build)
@@ -1421,10 +1437,6 @@ def main():
         if not tlapm_lib:
             print(f"ERROR: tlapm lib not found near {tlapm_bin}")
             sys.exit(1)
-
-        benchmark_root, checker_binary = resolve_paths()
-        mode = get_mode(args.mode, benchmark_root, checker_binary)
-
     # results/<mode>/<backend>/<ts>/  (mode first, then agent)
     if args.output_dir:
         output_dir = args.output_dir
@@ -1469,7 +1481,6 @@ def main():
         else:
             print(f"Quota:   gate OFF — usage script not found at {candidate}")
 
-    benchmark_files = mode.get_benchmark_files(args.filter)
     print(f"Found {len(benchmark_files)} benchmarks")
 
     # Resume: reuse --output-dir, skip benchmarks already genuinely completed
