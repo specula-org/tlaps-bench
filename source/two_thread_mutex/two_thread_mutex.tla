@@ -1,8 +1,8 @@
------------------------------ MODULE AnvilLock -----------------------------
+-------------------------- MODULE two_thread_mutex -------------------------
 EXTENDS TLAPS
 
 (***************************************************************************)
-(* TLA+ model corresponding to anvil's src/tla_demo.rs.                    *)
+(* TLA+ model corresponding to anvil-verifier/anvil's src/tla_demo.rs.     *)
 (*                                                                         *)
 (* The Rust model has two thread identifiers, A and B.  Each thread starts *)
 (* in Waiting, can acquire the lock and move to Holding, then can release  *)

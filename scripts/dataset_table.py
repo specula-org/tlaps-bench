@@ -48,8 +48,8 @@ def source_label(group):
         return "AbstractRaft"
     if group == "OpenAddressing":
         return "OpenAddressing"
-    if group == "AnvilLock":
-        return "Anvil"
+    if group == "two_thread_mutex":
+        return "two_thread_mutex (Anvil)"
     return "TLAPS distribution examples"
 
 
@@ -62,7 +62,7 @@ SOURCE_URL = {
     "Ivy liveness": "https://github.com/kenmcmil/ivy",
     "etcd (Specula)": "https://github.com/specula-org",
     "OpenAddressing": "https://github.com/lemmy/Examples",
-    "Anvil": "https://github.com/anvil-verifier/anvil",
+    "two_thread_mutex (Anvil)": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
 }
 
 
@@ -97,7 +97,7 @@ _GROUP_URL = {
     "ZooKeeper": "https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/blob/main/high-level-spec/Zab.tla",
     "ZooKeeper_LowLevel": "https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/tree/main/low-level-spec/zk-3.7",
     "tlaplus_examples_BlockingQueue": "https://github.com/lemmy/BlockingQueue",
-    "AnvilLock": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
+    "two_thread_mutex": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
     # AbstractRaft was contributed directly; the upstream location of
     # tlaplus_examples_GermanProtocol could not be found.
 }
