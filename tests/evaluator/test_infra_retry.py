@@ -180,8 +180,13 @@ def test_resumed_result_replaces_non_genuine_attempt(tmp_path):
     ]
 
     runner._record_result(results, _result("retry.tla", "PASS"))
+    total_benchmarks = runner._total_benchmark_count(results, {"retry.tla"})
     runner.update_summary(
-        results, str(tmp_path), total_benchmarks=2, backend_name="copilot", mode_name="proof-completion"
+        results,
+        str(tmp_path),
+        total_benchmarks=total_benchmarks,
+        backend_name="copilot",
+        mode_name="proof-completion",
     )
 
     assert [(r["benchmark"], r["check_verdict"]) for r in results] == [
@@ -192,6 +197,60 @@ def test_resumed_result_replaces_non_genuine_attempt(tmp_path):
     assert "**Progress**: 2/2" in summary
     assert "**Pass rate**: 2/2 (100.0%)" in summary
     assert json.loads((tmp_path / "results.json").read_text()) == results
+
+
+def test_total_benchmark_count_includes_new_filtered_benchmark():
+    results = [_result("already-recorded.tla", "PASS")]
+
+    assert runner._total_benchmark_count(results, {"newly-selected.tla"}) == 2
+
+
+def test_filtered_resume_keeps_cumulative_progress_total(tmp_path, monkeypatch):
+    bench_dir = tmp_path / "bench"
+    retry = bench_dir / "Suite" / "retry.tla"
+    retry.parent.mkdir(parents=True)
+    retry.write_text(BENCH_TEXT)
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    previous_results = [
+        _result("Suite/already-passed.tla", "PASS"),
+        _result("Suite/retry.tla", "PASS"),
+    ]
+    (output_dir / "results.json").write_text(json.dumps(previous_results))
+
+    backend = _ScriptedBackend()
+    mode = _FakeMode(str(bench_dir))
+    mode.description = "test mode"
+    mode.get_benchmark_files = lambda filter_pattern: [str(retry)]
+    monkeypatch.setattr(backend, "check_auth", lambda: None, raising=False)
+    monkeypatch.setattr(backend, "default_quota", lambda: (0, 0), raising=False)
+    monkeypatch.setattr(backend, "usage_script", lambda: None, raising=False)
+    monkeypatch.setattr(runner, "get_backend", lambda *args, **kwargs: backend)
+    monkeypatch.setattr(runner, "ensure_tlapm", lambda: None)
+    monkeypatch.setattr(runner, "find_tlapm_lib", lambda tlapm_bin: "/tmp/tlapm-lib")
+    monkeypatch.setattr(runner, "resolve_paths", lambda: (str(tmp_path), "/bin/true"))
+    monkeypatch.setattr(runner, "get_mode", lambda *args: mode)
+    monkeypatch.setattr(
+        runner.sys,
+        "argv",
+        [
+            "tlaps-bench-run",
+            "--no-container",
+            "--resume",
+            "--filter",
+            "retry.tla",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    runner.main()
+
+    summary = (output_dir / "summary.md").read_text()
+    assert "**Progress**: 2/2" in summary
+    assert "**Progress**: 2/1" not in summary
+    assert json.loads((output_dir / "results.json").read_text()) == previous_results
 
 
 def test_make_workspace_cleans_up_on_setup_failure(tmp_path, monkeypatch):
