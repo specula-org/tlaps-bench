@@ -14,7 +14,6 @@ Usage:
 """
 
 import argparse
-import glob
 import os
 import re
 import shutil
@@ -38,6 +37,7 @@ from dataset.proof_completion.generate import (
     parse_module_name,
     parse_theorems,
 )
+from evaluator.modes.proof_completion import ProofCompletion
 
 
 @dataclass
@@ -71,6 +71,26 @@ class ValidationResult:
         if self.tlapm_passed:
             return "PASS"
         return "FAIL"
+
+
+def _proof_completion_mode(benchmark_dir: str = BENCHMARK_DIR) -> ProofCompletion:
+    """Build the same proof-completion mode used by the benchmark runner."""
+    return ProofCompletion(os.path.dirname(os.path.abspath(benchmark_dir)), checker_binary="")
+
+
+def discover_benchmarks(filter_pattern: str | None = None, benchmark_dir: str = BENCHMARK_DIR) -> list[str]:
+    """Return real proof-completion tasks, excluding shared dependency modules."""
+    return _proof_completion_mode(benchmark_dir).get_benchmark_files(filter_pattern)
+
+
+def validation_dependencies(benchmark_path: str, benchmark_dir: str = BENCHMARK_DIR) -> list[str]:
+    """Return the sibling modules needed to validate one benchmark task."""
+    return _proof_completion_mode(benchmark_dir).get_dependencies(benchmark_path)
+
+
+def validation_exit_code(results: list[ValidationResult]) -> int:
+    """A validation run succeeds only when every discovered task passes."""
+    return 0 if all(result.status == "PASS" for result in results) else 1
 
 
 def _derive_tlapm_lib(tlapm_path: str) -> str | None:
@@ -330,12 +350,10 @@ def validate_single_benchmark(args_tuple):
         with open(tmp_file, "w") as f:
             f.write(ported_content)
 
-        # Copy dependency files (non-benchmark .tla files in the same directory)
-        bench_dir = os.path.dirname(benchmark_path)
-        for dep_file in glob.glob(os.path.join(bench_dir, "*.tla")):
-            dep_basename = os.path.basename(dep_file)
-            if dep_basename != basename and "_" not in os.path.splitext(dep_basename)[0]:
-                shutil.copy2(dep_file, os.path.join(tmp_dir, dep_basename))
+        # Use the runner's dependency discovery so shared modules whose names
+        # contain underscores (for example CRDT_proof.tla) are not omitted.
+        for dep_file in validation_dependencies(benchmark_path):
+            shutil.copy2(dep_file, os.path.join(tmp_dir, os.path.basename(dep_file)))
 
         exit_code, output, elapsed = (
             run_tlapm_docker(tmp_file, timeout)
@@ -489,6 +507,12 @@ def main():
     )
     args = parser.parse_args()
 
+    benchmark_files = discover_benchmarks(args.filter)
+    if not benchmark_files:
+        if args.filter:
+            parser.error(f"no benchmarks matched --filter {args.filter!r}")
+        parser.error(f"no benchmarks found under {BENCHMARK_DIR}")
+
     use_container = not args.no_container
 
     if use_container:
@@ -536,14 +560,6 @@ def main():
             mod_name = parse_module_name(content)
             if mod_name:
                 source_files.append((mod_name, f))
-
-    # Find all benchmark files (exclude dependency copies that don't have '_' in name)
-    benchmark_files = sorted(glob.glob(os.path.join(BENCHMARK_DIR, "**", "*.tla"), recursive=True))
-    # Benchmark files have format SourceFile_TheoremName.tla (contain underscore)
-    # Dependency copies are plain module names like Consensus.tla, VoteProof.tla
-    benchmark_files = [f for f in benchmark_files if "_" in os.path.splitext(os.path.basename(f))[0]]
-    if args.filter:
-        benchmark_files = [f for f in benchmark_files if args.filter in f]
 
     print(f"Found {len(benchmark_files)} benchmark files to validate")
 
@@ -646,7 +662,8 @@ def main():
     cheating = sum(1 for r in results if r.status == "OMITTED")
     errors = sum(1 for r in results if r.status == "ERROR")
     print(f"\n✅ Passed: {passed}  ❌ Failed: {failed}  ⏭️ Placeholder: {cheating}  💥 Error: {errors}")
+    return validation_exit_code(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
