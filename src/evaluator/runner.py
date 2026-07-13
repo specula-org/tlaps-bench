@@ -476,6 +476,11 @@ def _resume_done_benchmarks(results: list[dict]) -> set[str]:
     return {r["benchmark"] for r in results if _resume_should_skip(r)}
 
 
+def _total_benchmark_count(results: list[dict], selected_benchmarks: set[str]) -> int:
+    """Count unique benchmarks in the cumulative results and current selection."""
+    return len(selected_benchmarks | {result["benchmark"] for result in results})
+
+
 def _continuation_note(result: dict) -> str:
     """One-phrase outcome of a result's continuation rounds ("" without any):
     the round that recovered a PASS, a chain infra/quota-cut before resolving,
@@ -1510,9 +1515,11 @@ def main():
         else:
             print(f"Resume: no prior results.json in {output_dir} — running all")
 
+    selected_benchmarks = set()
     work_items = []
     for bf in benchmark_files:
         rel = os.path.relpath(bf, mode.benchmark_dir())
+        selected_benchmarks.add(rel)
         if rel in done_pass:
             continue
         work_items.append(
@@ -1539,7 +1546,9 @@ def main():
         )
 
     start_time = time.time()
-    total_benchmarks = len(benchmark_files)
+    # A filtered resume keeps results from the rest of the original run, so
+    # the cumulative report's denominator must cover both sets of benchmarks.
+    total_benchmarks = _total_benchmark_count(results, selected_benchmarks)
     prior_done = total_benchmarks - len(work_items)
     if args.resume:
         print(f"Resume: {len(work_items)} benchmarks left to run")
