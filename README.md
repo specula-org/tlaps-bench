@@ -5,6 +5,8 @@
 
 A benchmark for evaluating AI's ability to write [TLAPS](https://proofs.tlaplus.net/doc/) (TLA+ Proof System) proofs.
 
+Benchmark results are available on the [TLAPS-Bench website](https://specula-org.github.io/tlaps-bench-website/).
+
 ## Overview
 
 TLAPS proofs are checked mechanically by `tlapm`: a proof is either accepted or
@@ -48,7 +50,7 @@ can be derived.
 | [etcd (Specula)](https://github.com/specula-org) | 1 | – | 8 | 8 |
 | [OpenAddressing](https://github.com/lemmy/Examples) | 1 | 1 | 5 | 6 |
 | AbstractRaft | 1 | – | 4 | 4 |
-| [Anvil](https://github.com/anvil-verifier/anvil) | 1 | – | 1 | 1 |
+| [two_thread_mutex (Anvil)](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | 1 | – | 1 | 1 |
 | **Subtotal** | **12** | **1** | **48** | **49** |
 
 **71 examples, 714 tasks in total.** A per-example breakdown is in

@@ -1,4 +1,4 @@
------------------------------ MODULE AnvilLock_Liveness -----------------------------
+-------------------------- MODULE two_thread_mutex_Liveness -------------------------
 EXTENDS TLAPS
 
 VARIABLES lock, threads
