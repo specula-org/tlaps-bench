@@ -7,8 +7,7 @@ per-source summary.
 Each row is a benchmark **example** — one directory under `benchmark/<mode>/`,
 i.e. one coherent protocol or example. A protocol whose proof is split across
 several TLA+ modules stays a single row. The example name links to its upstream
-location; two have none (`AbstractRaft` was contributed directly and
-`GermanProtocol` could not be located upstream).
+location; the upstream location of `GermanProtocol` could not be found.
 
 `–` marks a mode with no task for that example: a source with no human proofs
 yields no proof-completion task, and an example whose only proven theorems are
@@ -19,7 +18,6 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 
 | Example | Source | Proof completion | Proof from scratch | Total |
 |---|---|--:|--:|--:|
-| AbstractRaft | AbstractRaft | – | 4 | 4 |
 | [hybrid_reliable_broadcast_cisa](https://github.com/kenmcmil/ivy/blob/master/examples/liveness/hybrid_reliable_broadcast_cisa.ivy) | Ivy liveness | – | 3 | 3 |
 | [alternating_bit_protocol](https://github.com/kenmcmil/ivy/blob/master/examples/liveness/alternating_bit_protocol.ivy) | Ivy liveness | – | 2 | 2 |
 | [ticket](https://github.com/kenmcmil/ivy/blob/master/examples/liveness/ticket.ivy) | Ivy liveness | – | 2 | 2 |
@@ -91,4 +89,4 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
-**Total: 71 examples — 483 proof-completion + 231 proof-from-scratch = 714 tasks.**
+**Total: 70 examples — 483 proof-completion + 227 proof-from-scratch = 710 tasks.**

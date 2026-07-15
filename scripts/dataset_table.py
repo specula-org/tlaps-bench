@@ -44,8 +44,6 @@ def source_label(group):
         return "ZooKeeper (Remix)"
     if group == "etcd_raft":
         return "etcd (Specula)"
-    if group == "AbstractRaft":
-        return "AbstractRaft"
     if group == "OpenAddressing":
         return "OpenAddressing"
     if group == "two_thread_mutex":
@@ -54,7 +52,6 @@ def source_label(group):
 
 
 # Upstream provenance per source (see NOTICE for full attribution).
-# AbstractRaft was contributed directly (Stephan Merz), with no upstream repo.
 SOURCE_URL = {
     "tlaplus/Examples": "https://github.com/tlaplus/Examples",
     "TLAPS distribution examples": "https://github.com/tlaplus/tlapm",
@@ -98,8 +95,7 @@ _GROUP_URL = {
     "ZooKeeper_LowLevel": "https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/tree/main/low-level-spec/zk-3.7",
     "tlaplus_examples_BlockingQueue": "https://github.com/lemmy/BlockingQueue",
     "two_thread_mutex": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
-    # AbstractRaft was contributed directly; the upstream location of
-    # tlaplus_examples_GermanProtocol could not be found.
+    # The upstream location of tlaplus_examples_GermanProtocol could not be found.
 }
 
 

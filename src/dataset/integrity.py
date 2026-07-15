@@ -117,6 +117,9 @@ def default_roots() -> list[str]:
         # The generated benchmark suites the agent actually sees.
         os.path.join(repo, "benchmark", "proof-completion"),
         os.path.join(repo, "benchmark", "proof-from-scratch"),
+        # Non-canonical exercises are excluded from scoring but still distributed,
+        # so keep enforcing the same answer-leak guard on them.
+        os.path.join(repo, "unvalidated-proof-exercises"),
     ]
 
 
