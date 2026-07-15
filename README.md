@@ -55,9 +55,6 @@ can be derived.
 **70 examples, 710 tasks in total.** A per-example breakdown is in
 [`docs/DATASET.md`](docs/DATASET.md).
 
-Standalone exercises excluded from the canonical dataset are retained under
-[`unvalidated-proof-exercises/`](unvalidated-proof-exercises/).
-
 ## Running
 
 Requirements: [uv](https://docs.astral.sh/uv/) and
