@@ -311,7 +311,6 @@ def test_litellm_makes_one_call_with_no_tools_system_or_retries(monkeypatch):
             "model": "provider/model",
             "messages": [{"role": "user", "content": "EXACT PROMPT"}],
             "stream": False,
-            "temperature": 0.0,
             "max_tokens": 32_768,
             "num_retries": 0,
         }
@@ -390,7 +389,10 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
 
 def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatch, capsys, tmp_path):
     fake_litellm = types.ModuleType("litellm")
-    fake_litellm.completion = lambda **_kwargs: SimpleNamespace(choices=[], usage=None)
+    fake_litellm.completion = lambda **_kwargs: SimpleNamespace(
+        choices=[],
+        usage=SimpleNamespace(prompt_tokens=123, completion_tokens=45),
+    )
     monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
     monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
 
@@ -409,10 +411,86 @@ def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatc
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 1
-    assert [event["type"] for event in events] == ["request_audit", "error", "result"]
-    assert events[0]["litellm_completion_invocations"] == 1
-    assert events[0]["wire_audited"] is False
+    assert [event["type"] for event in events] == ["usage", "request_audit", "error", "result"]
+    assert events[0] == {
+        "type": "usage",
+        "input_tokens": 123,
+        "output_tokens": 45,
+        "model_requests": 1,
+    }
+    assert events[1]["litellm_completion_invocations"] == 1
+    assert events[1]["wire_audited"] is False
     assert events[-1] == {"type": "result", "status": "error", "model_requests": 1}
+
+
+def test_main_emits_received_copilot_usage_on_failure(monkeypatch, capsys, tmp_path):
+    async def fake_run_copilot(*_args, **_kwargs):
+        raise oneshot_runner.ProviderRunError(
+            "invalid final response",
+            {"provider": "copilot", "inference_requests": 1},
+            input_tokens=55,
+            output_tokens=13,
+        )
+
+    monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "copilot",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "test-model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 1
+    assert events[0] == {
+        "type": "usage",
+        "input_tokens": 55,
+        "output_tokens": 13,
+        "model_requests": 1,
+    }
+    assert events[1] == {"type": "request_audit", "provider": "copilot", "inference_requests": 1}
+    assert events[-1] == {"type": "result", "status": "error", "model_requests": 1}
+
+
+def test_main_marks_provider_deadline_as_timeout(monkeypatch, capsys, tmp_path):
+    async def fake_run_copilot(*_args, **_kwargs):
+        raise oneshot_runner.ProviderTimeoutError(
+            "Copilot request timed out after 37s",
+            {"provider": "copilot", "inference_requests": 1},
+            input_tokens=55,
+            output_tokens=13,
+        )
+
+    monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "copilot",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "test-model",
+            "--timeout",
+            "37",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 1
+    assert events[-1] == {"type": "result", "status": "timeout", "model_requests": 1}
+    assert events[-2] == {"type": "error", "message": "Copilot request timed out after 37s"}
 
 
 def test_litellm_import_failure_records_zero_completion_invocations(monkeypatch):
@@ -423,6 +501,7 @@ def test_litellm_import_failure_records_zero_completion_invocations(monkeypatch)
 
     assert exc_info.value.audit["litellm_completion_invocations"] == 0
     assert exc_info.value.audit["wire_audited"] is False
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (0, 0)
 
 
 def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, tmp_path):
@@ -521,7 +600,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
     assert captured["send"] == {
         "prompt": "EXACT PROMPT",
         "agent_mode": "interactive",
-        "timeout": 123.0,
+        "timeout": None,
     }
     assert result.text == "MODEL RESPONSE"
     assert (result.input_tokens, result.output_tokens) == (20, 8)
@@ -529,3 +608,138 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
     assert result.audit["wire_audited"] is True
     assert result.audit["finish_reason"] == "stop"
     assert json.loads(handler.forwarded[0].content)["input"][0]["content"][0]["text"] == "EXACT PROMPT"
+
+
+@pytest.mark.parametrize(
+    ("failure_mode", "error_message"),
+    [
+        ("final", "Copilot returned no final assistant message"),
+        ("guard", "strict one-shot: expected exactly one inference attempt and one forwarded request"),
+        ("session", "session failed after usage"),
+        ("transport_timeout", "transport timed out"),
+        ("timeout", "Copilot request timed out after 0.1s"),
+    ],
+)
+def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure_mode, error_message):
+    class MessageData:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class UsageData:
+        def __init__(self, input_tokens: int, output_tokens: int, finish_reason: str | None = None) -> None:
+            self.input_tokens = input_tokens
+            self.output_tokens = output_tokens
+            self.finish_reason = finish_reason
+
+    class FakeSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event) -> None:
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            await self.guard.send_request(
+                _request(
+                    "https://api.githubcopilot.com/responses",
+                    {"model": "test-model", "input": [], "stream": True},
+                ),
+                SimpleNamespace(session_id=self.session_id),
+            )
+            self.on_event(SimpleNamespace(data=UsageData(20, 8, "length")))
+            if failure_mode == "session":
+                raise RuntimeError("session failed after usage")
+            if failure_mode == "transport_timeout":
+                raise TimeoutError("transport timed out")
+            if failure_mode == "timeout":
+                await asyncio.sleep(60)
+            if failure_mode == "guard":
+                self.guard.blocked_requests += 1
+                return SimpleNamespace(data=MessageData("MODEL RESPONSE"))
+            return SimpleNamespace(data=object())
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return FakeSession(self.guard, kwargs["on_event"])
+
+    handler = _RecordingHandler("EXACT PROMPT")
+    monkeypatch.setattr(
+        oneshot_runner,
+        "_load_copilot_sdk",
+        lambda: (FakeClient, MessageData, UsageData),
+    )
+    for key in oneshot_runner._COPILOT_TOKEN_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError, match=error_message) as exc_info:
+        timeout = 0.1 if failure_mode == "timeout" else 123.0
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                timeout,
+                handler=handler,
+            )
+        )
+
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (20, 8)
+    assert exc_info.value.audit["inference_requests"] == 1
+    assert exc_info.value.audit["finish_reason"] == "length"
+    if failure_mode == "timeout":
+        assert isinstance(exc_info.value, oneshot_runner.ProviderTimeoutError)
+    if failure_mode == "transport_timeout":
+        assert not isinstance(exc_info.value, oneshot_runner.ProviderTimeoutError)
+
+
+@pytest.mark.parametrize("timeout_arg", ["0", "-5"])
+def test_main_maps_nonpositive_copilot_timeout_to_none(monkeypatch, capsys, tmp_path, timeout_arg):
+    captured_timeouts: list[float | None] = []
+
+    async def fake_run_copilot(_prompt, _model, _workspace, timeout, handler=None):
+        captured_timeouts.append(timeout)
+        return oneshot_runner.ProviderResult(
+            "MODEL RESPONSE",
+            12,
+            7,
+            {"provider": "copilot", "inference_requests": 1},
+        )
+
+    monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "copilot",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "test-model",
+            "--timeout",
+            timeout_arg,
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    assert captured_timeouts == [None]
+    assert events[-1] == {"type": "result", "status": "success", "model_requests": 1}

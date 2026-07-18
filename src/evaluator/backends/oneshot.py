@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import suppress
@@ -13,8 +14,6 @@ from typing import Any
 
 from .base import AgentBackend
 
-_MODULE_HEADER = re.compile(r"^-{4,}\s*MODULE\s+[A-Za-z_][A-Za-z0-9_]*\s*-{4,}\s*$")
-_MODULE_END = re.compile(r"^={4,}\s*$")
 _FENCED_BLOCK = re.compile(r"```(?P<language>[^\n`]*)\r?\n(?P<body>.*?)```", re.DOTALL)
 _REQUEST_COUNT_KEYS = (
     "model_requests",
@@ -60,53 +59,17 @@ def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _complete_module(text: str) -> str | None:
-    """Normalize ``text`` iff it is exactly one complete TLA+ module."""
-    candidate = text.strip()
-    if not candidate:
-        return None
-
-    lines = candidate.splitlines()
-    if not _MODULE_HEADER.fullmatch(lines[0].strip()) or not _MODULE_END.fullmatch(lines[-1].strip()):
-        return None
-
-    # Reject a second top-level module and content after the outer terminator.
-    # Nested modules remain valid: each nested header increments the depth.
-    depth = 0
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if _MODULE_HEADER.fullmatch(stripped):
-            if depth == 0 and index != 0:
-                return None
-            depth += 1
-        elif _MODULE_END.fullmatch(stripped):
-            if depth == 0:
-                return None
-            depth -= 1
-            if depth == 0 and index != len(lines) - 1:
-                return None
-    if depth != 0:
-        return None
-    return candidate + "\n"
-
-
-def _extract_complete_module(response: str) -> str | None:
-    """Accept a raw module or the sole ``tla`` Markdown code block."""
-    raw_module = _complete_module(response)
-    if raw_module is not None:
-        return raw_module
-    if "```" not in response:
-        return None
-
+def _unwrap_tla_fence(response: str) -> str:
+    """Unwrap a sole ``tla`` Markdown fence, leaving all other text unchanged."""
     matches = list(_FENCED_BLOCK.finditer(response))
     if len(matches) != 1 or response.count("```") != 2:
-        return None
+        return response
     match = matches[0]
     if response[: match.start()].strip() or response[match.end() :].strip():
-        return None
+        return response
     if match.group("language").strip().lower() != "tla":
-        return None
-    return _complete_module(match.group("body"))
+        return response
+    return match.group("body")
 
 
 class OneShotBackend(AgentBackend):
@@ -120,14 +83,13 @@ class OneShotBackend(AgentBackend):
     default_infra_retries = 0
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        runner_path = (
-            "/opt/oneshot_runner.py"
+        runner = (
+            ["python3", "/opt/oneshot_runner.py"]
             if workspace == "/workspace"
-            else str(Path(__file__).with_name("oneshot_runner.py"))
+            else [sys.executable, "-m", "evaluator.backends.oneshot_runner"]
         )
         return [
-            "python3",
-            runner_path,
+            *runner,
             "--provider",
             self.provider,
             "--workspace",
@@ -160,21 +122,16 @@ class OneShotBackend(AgentBackend):
         return "\n".join(lines), input_tokens, output_tokens
 
     def materialize_solution(self, jsonl_path: str, destination: str) -> bool:
-        """Write the unique complete-module response without mutating on failure."""
-        responses: list[str] = []
+        """Atomically write the sole non-empty response for grader validation."""
+        responses: list[object] = []
         for event in _iter_events(jsonl_path):
             if event.get("type") != "response":
                 continue
-            response = _event_payload(event).get("text")
-            if not isinstance(response, str) or not response.strip():
-                continue
-            responses.append(response)
+            responses.append(_event_payload(event).get("text"))
 
-        if len(responses) != 1:
+        if len(responses) != 1 or not isinstance(responses[0], str) or not responses[0].strip():
             return False
-        module = _extract_complete_module(responses[0])
-        if module is None:
-            return False
+        solution = _unwrap_tla_fence(responses[0])
 
         target = Path(destination)
         temporary: str | None = None
@@ -188,7 +145,7 @@ class OneShotBackend(AgentBackend):
                 delete=False,
             ) as stream:
                 temporary = stream.name
-                stream.write(module)
+                stream.write(solution)
             os.replace(temporary, target)
         except OSError:
             if temporary is not None:
@@ -208,6 +165,11 @@ class OneShotBackend(AgentBackend):
             payload = _event_payload(event)
             if event_type in {"response", "usage"}:
                 saw_model_output = True
+
+            if event_type == "error":
+                message = payload.get("message")
+                if isinstance(message, str) and message:
+                    metadata["error"] = message
 
             if event_type in {"metadata", "request_audit", "result"}:
                 metadata.update(payload)

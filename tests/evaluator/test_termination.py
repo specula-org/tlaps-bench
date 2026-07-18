@@ -171,6 +171,50 @@ def test_one_shot_provider_error_is_infra(tmp_path):
     assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.INFRA_ERROR
 
 
+def test_one_shot_provider_deadline_is_timeout(tmp_path):
+    stream = [
+        {"type": "usage", "input_tokens": 10, "output_tokens": 4, "model_requests": 1},
+        {
+            "type": "request_audit",
+            "provider": "copilot",
+            "wire_audited": True,
+            "inference_requests": 1,
+            "inference_attempts": 1,
+            "blocked_requests": 0,
+            "system_removed": True,
+            "tools_removed": True,
+        },
+        {"type": "error", "message": "Copilot request timed out after 37s"},
+        {"type": "result", "status": "timeout", "model_requests": 1},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-timeout.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
+
+
+@pytest.mark.parametrize(
+    ("provider", "requests"),
+    [("wrong", 1), ("copilot", 0), ("copilot", 2)],
+)
+def test_one_shot_provider_deadline_requires_strict_single_request_audit(tmp_path, provider, requests):
+    stream = [
+        {
+            "type": "request_audit",
+            "provider": provider,
+            "wire_audited": True,
+            "inference_requests": requests,
+            "inference_attempts": requests,
+            "blocked_requests": 0,
+            "system_removed": True,
+            "tools_removed": True,
+        },
+        {"type": "result", "status": "timeout", "model_requests": requests},
+    ]
+    path = _write_jsonl(tmp_path / f"oneshot-invalid-timeout-{provider}-{requests}.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.INFRA_ERROR
+
+
 def test_one_shot_clean_response_is_genuine(tmp_path):
     stream = [
         {"type": "response", "text": "not a complete module"},

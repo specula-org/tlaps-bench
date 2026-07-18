@@ -405,7 +405,10 @@ def _run_agent_with_retries(
             result["output_tokens"] = output_tokens
             parse_metadata = getattr(backend, "parse_run_metadata", None)
             if parse_metadata:
+                runner_error = result.get("error")
                 result.update(parse_metadata(agent_jsonl))
+                if runner_error:
+                    result["error"] = runner_error
 
             if quota_exhausted:
                 break  # quota owns its own retry budget — never infra-retried
@@ -599,6 +602,7 @@ def run_single_benchmark(item: WorkItem):
     input_dir = os.path.join(result_dir, "input")
     agent_dir = os.path.join(result_dir, "agent")
     grading_dir = os.path.join(result_dir, "grading")
+    _reset_benchmark_artifacts(item.output_dir, result_dir)
     for d in (input_dir, agent_dir, grading_dir):
         os.makedirs(d, exist_ok=True)
 
@@ -681,12 +685,12 @@ def run_single_benchmark(item: WorkItem):
         workspace, canonical_dir = run.workspace, run.canonical_dir
 
         materialized: bool | None = None
-        if is_one_shot and not run.quota_exhausted and result["termination_reason"] != TerminationReason.INFRA_ERROR:
+        if is_one_shot and not run.quota_exhausted and result["termination_reason"] == TerminationReason.OK:
             destination = os.path.join(workspace, basename)
             materialized = backend.materialize_solution(agent_jsonl, destination)
             result["materialized"] = materialized
             if not materialized:
-                result["materialization_error"] = "one-shot response did not contain exactly one complete TLA+ module"
+                result["materialization_error"] = "one-shot response could not be uniquely materialized"
 
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
@@ -737,6 +741,15 @@ def run_single_benchmark(item: WorkItem):
                 json.dump(result, f, indent=2)
             return result
 
+        if is_one_shot and result["termination_reason"] == TerminationReason.TIMEOUT:
+            # Preserve the outer watchdog or propagated provider deadline instead
+            # of materializing a truncated response and replacing the timeout with
+            # a malformed-response failure.
+            result["check_verdict"] = "TIMEOUT"
+            with open(os.path.join(result_dir, "result.json"), "w") as f:
+                json.dump(result, f, indent=2)
+            return result
+
         if is_one_shot and materialized is not True:
             # This is a genuine model attempt, but not a gradeable submission.
             # Do not grade the untouched canonical placeholder: a trivial task
@@ -771,6 +784,40 @@ def run_single_benchmark(item: WorkItem):
             shutil.rmtree(canonical_dir, ignore_errors=True)
 
     return result
+
+
+def _reset_benchmark_artifacts(output_dir: str, result_dir: str) -> None:
+    """Remove runner-owned artifacts without following generated-path symlinks."""
+    output_root = os.path.abspath(output_dir)
+    result_path = os.path.abspath(result_dir)
+    if os.path.commonpath((output_root, result_path)) != output_root:
+        raise RuntimeError(f"benchmark result path escapes output directory: {result_dir}")
+
+    # The user may intentionally make --output-dir itself a symlink, but the
+    # runner-generated module/theorem components must be real directories. A
+    # symlink there could redirect cleanup into unrelated data outside the run.
+    current = output_root
+    for component in os.path.relpath(result_path, output_root).split(os.sep):
+        if component == ".":
+            continue
+        current = os.path.join(current, component)
+        if os.path.islink(current):
+            raise RuntimeError(f"refusing to clean symlinked benchmark result path: {current}")
+
+    resolved_root = os.path.realpath(output_root)
+    resolved_result = os.path.realpath(result_path)
+    if os.path.commonpath((resolved_root, resolved_result)) != resolved_root:
+        raise RuntimeError(f"benchmark result path resolves outside output directory: {result_dir}")
+
+    os.makedirs(result_dir, exist_ok=True)
+    for name in ("input", "agent", "grading", "continuations", "result.json"):
+        path = os.path.join(result_dir, name)
+        if not os.path.lexists(path):
+            continue
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
 
 
 def _stash_failed_attempt(agent_dir: str, attempt: int) -> None:
@@ -933,7 +980,7 @@ def _run_agent_container(
 ) -> None:
     """Run agent inside a Docker container with live output streaming."""
     runner = ContainerRunner()
-    cmd = backend.build_command("/workspace", "/results")
+    cmd = _build_agent_command(backend, "/workspace", "/results", item.timeout)
 
     config = ContainerConfig(
         workspace=workspace,
@@ -1070,7 +1117,7 @@ def _run_agent_local(
     canonical_dir: str | None = None,
 ) -> None:
     """Run agent as a local subprocess (existing behavior)."""
-    cmd = backend.build_command(workspace, agent_dir)
+    cmd = _build_agent_command(backend, workspace, agent_dir, item.timeout)
     shell_cmd = "source ~/.zshrc 2>/dev/null; source ~/.bashrc 2>/dev/null; exec " + " ".join(
         shlex.quote(c) for c in cmd
     )
@@ -1139,6 +1186,14 @@ def _run_agent_local(
         result["error"] = str(e)
         if proc is not None:
             kill_agent_tree(proc, workspace)
+
+
+def _build_agent_command(backend, workspace: str, result_dir: str, timeout: int) -> list[str]:
+    """Build a backend command, forwarding the outer limit to one-shot drivers."""
+    cmd = backend.build_command(workspace, result_dir)
+    if getattr(backend, "is_one_shot", False) is True:
+        cmd.extend(("--timeout", str(timeout if timeout > 0 else 0)))
+    return cmd
 
 
 def _run_grader_container(

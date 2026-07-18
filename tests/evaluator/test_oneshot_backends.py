@@ -71,14 +71,13 @@ def test_shared_command_and_capabilities(tmp_path):
     assert backend.default_infra_retries == 0
 
 
-def test_shared_command_uses_source_runner_for_native_execution(tmp_path):
+def test_shared_command_uses_module_runner_for_native_execution(tmp_path):
     backend = CopilotOneShotBackend(model="gpt-5")
 
     command = backend.build_command(str(tmp_path), str(tmp_path / "results"))
 
-    assert command[0] == "python3"
-    assert command[1].endswith("/src/evaluator/backends/oneshot_runner.py")
-    assert command[2:5] == ["--provider", "copilot", "--workspace"]
+    assert command[:3] == [sys.executable, "-m", "evaluator.backends.oneshot_runner"]
+    assert command[3:6] == ["--provider", "copilot", "--workspace"]
 
 
 def test_parse_output_and_request_metadata(tmp_path):
@@ -118,14 +117,25 @@ def test_parse_output_and_request_metadata(tmp_path):
     }
 
 
-def test_materializes_raw_complete_module_atomically(tmp_path):
+def test_materializes_raw_response_verbatim_atomically(tmp_path):
     events = tmp_path / "output.jsonl"
     destination = tmp_path / "Example.tla"
     destination.write_text("original\n")
-    _write_events(events, {"type": "response", "text": f"\n{MODULE}\n"})
+    response = f"\n{MODULE}\n"
+    _write_events(events, {"type": "response", "text": response})
 
     assert LiteLLMOneShotBackend().materialize_solution(str(events), str(destination)) is True
-    assert destination.read_text() == MODULE
+    assert destination.read_text() == response
+
+
+def test_materializes_module_with_leading_comments_verbatim(tmp_path):
+    events = tmp_path / "output.jsonl"
+    destination = tmp_path / "Example.tla"
+    response = "\\* Contributor: Example Author\n\\* Source: Example Paper\n\n" + MODULE
+    _write_events(events, {"type": "response", "text": response})
+
+    assert LiteLLMOneShotBackend().materialize_solution(str(events), str(destination)) is True
+    assert destination.read_text() == response
 
 
 def test_materializes_unique_tla_fence(tmp_path):
@@ -137,11 +147,11 @@ def test_materializes_unique_tla_fence(tmp_path):
     assert destination.read_text() == MODULE
 
 
-def test_materialize_rejects_snippets_patches_and_multiple_fences(tmp_path):
+def test_materializes_non_tla_structures_verbatim_for_grader_validation(tmp_path):
     backend = LiteLLMOneShotBackend()
     destination = tmp_path / "Example.tla"
     destination.write_text("original\n")
-    invalid_responses = [
+    responses = [
         "PROOF OBVIOUS",
         f"@@ -1,2 +1,2 @@\n+{MODULE}",
         f"```tla\n{MODULE}```\n```tla\n{MODULE}```",
@@ -150,17 +160,31 @@ def test_materialize_rejects_snippets_patches_and_multiple_fences(tmp_path):
         f"{MODULE}\nignored after the module",
     ]
 
-    for index, response in enumerate(invalid_responses):
+    for index, response in enumerate(responses):
         events = tmp_path / f"output-{index}.jsonl"
         _write_events(events, {"type": "response", "text": response})
-        assert backend.materialize_solution(str(events), str(destination)) is False
-        assert destination.read_text() == "original\n"
+        assert backend.materialize_solution(str(events), str(destination)) is True
+        assert destination.read_text() == response
 
 
 def test_materialize_rejects_ambiguous_response_events(tmp_path):
     events = tmp_path / "output.jsonl"
     destination = tmp_path / "Example.tla"
     _write_events(events, {"type": "response", "text": MODULE}, {"type": "response", "text": MODULE})
+
+    assert LiteLLMOneShotBackend().materialize_solution(str(events), str(destination)) is False
+    assert not destination.exists()
+
+
+def test_materialize_rejects_extra_empty_response_event(tmp_path):
+    events = tmp_path / "output.jsonl"
+    destination = tmp_path / "Example.tla"
+    response = "PROOF OBVIOUS"
+    _write_events(
+        events,
+        {"type": "response", "text": "\n  "},
+        {"type": "response", "text": response},
+    )
 
     assert LiteLLMOneShotBackend().materialize_solution(str(events), str(destination)) is False
     assert not destination.exists()
@@ -201,7 +225,7 @@ def test_litellm_oneshot_reuses_litellm_auth_and_firewall(monkeypatch):
     assert backend.check_auth() is None
 
 
-def test_malformed_response_is_genuine_fail_without_grading_untouched_target(tmp_path, monkeypatch):
+def test_unstructured_response_is_materialized_and_left_to_grader(tmp_path, monkeypatch):
     benchmark_root = tmp_path / "benchmark"
     benchmark = benchmark_root / "Suite" / "Example.tla"
     benchmark.parent.mkdir(parents=True)
@@ -258,11 +282,11 @@ def test_malformed_response_is_genuine_fail_without_grading_untouched_target(tmp
     solution = output_dir / "Suite" / "Example" / "agent" / "solution.tla"
 
     assert result["termination_reason"] == "OK"
-    assert result["check_verdict"] == "FAIL"
-    assert result["materialized"] is False
+    assert result["check_verdict"] == "PASS"
+    assert result["materialized"] is True
     assert result["model_requests"] == 1
-    assert grader_calls == []
-    assert not solution.exists()
+    assert len(grader_calls) == 1
+    assert solution.read_text() == "PROOF OBVIOUS"
 
 
 def test_second_request_violation_is_error_even_after_model_output(tmp_path, monkeypatch):

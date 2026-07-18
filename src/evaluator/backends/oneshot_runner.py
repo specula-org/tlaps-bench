@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -346,11 +347,27 @@ class ProviderResult:
 
 
 class ProviderRunError(RuntimeError):
-    """Provider failure carrying the request audit accumulated before it failed."""
+    """Provider failure carrying the audit and usage accumulated before it failed."""
 
-    def __init__(self, message: str, audit: dict[str, object]) -> None:
+    def __init__(
+        self,
+        message: str,
+        audit: dict[str, object],
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
         super().__init__(message)
         self.audit = audit
+        self.input_tokens = _nonnegative_int(input_tokens)
+        self.output_tokens = _nonnegative_int(output_tokens)
+
+
+class ProviderTimeoutError(ProviderRunError):
+    """The provider-side wait reached the benchmark's propagated deadline."""
+
+
+class _CopilotDeadlineExceeded(RuntimeError):
+    """Internal marker for the deadline owned by this runner."""
 
 
 def _response_text(response: object) -> str:
@@ -416,13 +433,14 @@ def run_litellm(prompt: str, model: str) -> ProviderResult:
     # This disables LiteLLM's own retry orchestration. Provider transports may
     # have behavior below this adapter boundary, so this is intentionally not
     # described as a wire-level request count.
+    input_tokens = 0
+    output_tokens = 0
     try:
         audit["litellm_completion_invocations"] = 1
         response = litellm.completion(
             model=model,
             messages=request["messages"],
             stream=False,
-            temperature=0.0,
             max_tokens=max_tokens,
             num_retries=0,
         )
@@ -434,7 +452,7 @@ def run_litellm(prompt: str, model: str) -> ProviderResult:
         if finish_reason is not None:
             audit["finish_reason"] = finish_reason
     except Exception as exc:
-        raise ProviderRunError(str(exc), audit) from exc
+        raise ProviderRunError(str(exc), audit, input_tokens, output_tokens) from exc
     return ProviderResult(
         text=text,
         input_tokens=input_tokens,
@@ -460,83 +478,130 @@ def _copilot_token() -> str:
     raise RuntimeError("COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN is required")
 
 
-async def run_copilot(
-    prompt: str,
-    model: str,
-    workspace: str,
-    timeout: float,
-    handler: StrictCopilotRequestHandler | None = None,
-) -> ProviderResult:
-    CopilotClient, AssistantMessageData, AssistantUsageData = _load_copilot_sdk()
-    token = _copilot_token()
-    guard = handler or StrictCopilotRequestHandler(prompt)
-    guard.model = model
-    events: list[object] = []
-
-    with tempfile.TemporaryDirectory(prefix="tlaps-bench-copilot-") as base_directory:
-        async with CopilotClient(
-            github_token=token,
-            use_logged_in_user=False,
-            base_directory=base_directory,
-            working_directory=workspace,
-            mode="empty",
-            request_handler=guard,
-            log_level="none",
-        ) as client:
-            session = await client.create_session(
-                model=model,
-                tools=[],
-                available_tools=[],
-                system_message={"mode": "replace", "content": ""},
-                tool_search={"enabled": False},
-                capi={"enable_web_socket_responses": False},
-                enable_session_telemetry=False,
-                skip_custom_instructions=True,
-                streaming=True,
-                include_sub_agent_streaming_events=False,
-                mcp_servers={},
-                custom_agents=[],
-                enable_config_discovery=False,
-                skip_embedding_retrieval=True,
-                enable_on_demand_instruction_discovery=False,
-                enable_file_hooks=False,
-                enable_host_git_operations=False,
-                enable_session_store=False,
-                enable_skills=False,
-                plugin_directories=[],
-                instruction_directories=[],
-                infinite_sessions={"enabled": False},
-                memory={"enabled": False},
-                on_event=events.append,
-            )
-            guard.bind_session(session.session_id)
-            async with session:
-                final_event = await session.send_and_wait(
-                    prompt,
-                    agent_mode="interactive",
-                    timeout=timeout,
-                )
-
-    guard.assert_complete()
-    if final_event is None or not isinstance(final_event.data, AssistantMessageData):
-        raise RuntimeError("Copilot returned no final assistant message")
-    text = final_event.data.content
-    if not isinstance(text, str) or not text.strip():
-        raise RuntimeError("Copilot returned an empty assistant message")
-    if getattr(final_event.data, "tool_requests", None):
-        raise RuntimeError("Copilot returned tool requests in strict one-shot mode")
-
+def _copilot_usage(events: list[object], usage_data_type: type | None) -> tuple[int, int, str | None]:
     input_tokens = 0
     output_tokens = 0
     finish_reason: str | None = None
+    if usage_data_type is None:
+        return input_tokens, output_tokens, finish_reason
+
     for event in events:
         data = getattr(event, "data", None)
-        if isinstance(data, AssistantUsageData):
+        if isinstance(data, usage_data_type):
             input_tokens += _nonnegative_int(data.input_tokens)
             output_tokens += _nonnegative_int(data.output_tokens)
             event_finish_reason = getattr(data, "finish_reason", None)
             if isinstance(event_finish_reason, str) and event_finish_reason:
                 finish_reason = event_finish_reason
+    return input_tokens, output_tokens, finish_reason
+
+
+async def _send_copilot_and_wait(session: object, prompt: str, timeout: float | None) -> object:
+    """Wait for Copilot with a distinguishable runner-owned deadline."""
+
+    async def send() -> object:
+        return await session.send_and_wait(  # type: ignore[attr-defined]
+            prompt,
+            agent_mode="interactive",
+            timeout=None,
+        )
+
+    if timeout is None:
+        return await send()
+
+    task = asyncio.create_task(send())
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        # A provider/network TimeoutError raised by the task remains a normal
+        # provider failure; only our own elapsed deadline gets the marker below.
+        return task.result()
+
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+    raise _CopilotDeadlineExceeded
+
+
+async def run_copilot(
+    prompt: str,
+    model: str,
+    workspace: str,
+    timeout: float | None,
+    handler: StrictCopilotRequestHandler | None = None,
+) -> ProviderResult:
+    guard = handler or StrictCopilotRequestHandler(prompt)
+    guard.model = model
+    events: list[object] = []
+    usage_data_type: type | None = None
+
+    try:
+        CopilotClient, AssistantMessageData, AssistantUsageData = _load_copilot_sdk()
+        usage_data_type = AssistantUsageData
+        token = _copilot_token()
+
+        with tempfile.TemporaryDirectory(prefix="tlaps-bench-copilot-") as base_directory:
+            async with CopilotClient(
+                github_token=token,
+                use_logged_in_user=False,
+                base_directory=base_directory,
+                working_directory=workspace,
+                mode="empty",
+                request_handler=guard,
+                log_level="none",
+            ) as client:
+                session = await client.create_session(
+                    model=model,
+                    tools=[],
+                    available_tools=[],
+                    system_message={"mode": "replace", "content": ""},
+                    tool_search={"enabled": False},
+                    capi={"enable_web_socket_responses": False},
+                    enable_session_telemetry=False,
+                    skip_custom_instructions=True,
+                    streaming=True,
+                    include_sub_agent_streaming_events=False,
+                    mcp_servers={},
+                    custom_agents=[],
+                    enable_config_discovery=False,
+                    skip_embedding_retrieval=True,
+                    enable_on_demand_instruction_discovery=False,
+                    enable_file_hooks=False,
+                    enable_host_git_operations=False,
+                    enable_session_store=False,
+                    enable_skills=False,
+                    plugin_directories=[],
+                    instruction_directories=[],
+                    infinite_sessions={"enabled": False},
+                    memory={"enabled": False},
+                    on_event=events.append,
+                )
+                guard.bind_session(session.session_id)
+                async with session:
+                    final_event = await _send_copilot_and_wait(session, prompt, timeout)
+
+        guard.assert_complete()
+        if final_event is None or not isinstance(final_event.data, AssistantMessageData):
+            raise RuntimeError("Copilot returned no final assistant message")
+        text = final_event.data.content
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Copilot returned an empty assistant message")
+        if getattr(final_event.data, "tool_requests", None):
+            raise RuntimeError("Copilot returned tool requests in strict one-shot mode")
+    except Exception as exc:
+        input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
+        audit = guard.audit()
+        if finish_reason is not None:
+            audit["finish_reason"] = finish_reason
+        if timeout is not None and isinstance(exc, _CopilotDeadlineExceeded):
+            raise ProviderTimeoutError(
+                f"Copilot request timed out after {timeout:g}s",
+                audit,
+                input_tokens,
+                output_tokens,
+            ) from exc
+        raise ProviderRunError(str(exc), audit, input_tokens, output_tokens) from exc
+
+    input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
     audit = guard.audit()
     if finish_reason is not None:
         audit["finish_reason"] = finish_reason
@@ -560,11 +625,6 @@ def main(argv: list[str] | None = None) -> int:
         _emit("error", message="empty prompt on stdin")
         _emit("result", status="error", model_requests=0)
         return 1
-    if args.timeout <= 0:
-        _emit("error", message="timeout must be positive")
-        _emit("result", status="error", model_requests=0)
-        return 1
-
     guard = StrictCopilotRequestHandler(prompt, args.model) if args.provider == "copilot" else None
     if args.provider == "litellm":
         audit: dict[str, object] = {
@@ -580,7 +640,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.provider == "litellm":
             result = run_litellm(prompt, args.model)
         else:
-            result = asyncio.run(run_copilot(prompt, args.model, args.workspace, args.timeout, handler=guard))
+            timeout = args.timeout if args.timeout > 0 else None
+            result = asyncio.run(run_copilot(prompt, args.model, args.workspace, timeout, handler=guard))
         audit = result.audit
         _emit("response", text=result.text)
         _emit(
@@ -593,17 +654,30 @@ def main(argv: list[str] | None = None) -> int:
         _emit("result", status="success", model_requests=1)
         return 0
     except Exception as exc:
-        if guard is not None:
-            audit = guard.audit()
-        elif isinstance(exc, ProviderRunError):
+        input_tokens = 0
+        output_tokens = 0
+        if isinstance(exc, ProviderRunError):
             audit = exc.audit
-        _emit("request_audit", **audit)
-        _emit("error", message=str(exc))
+            input_tokens = exc.input_tokens
+            output_tokens = exc.output_tokens
+        elif guard is not None:
+            audit = guard.audit()
         request_count = audit.get(
             "litellm_completion_invocations",
             audit.get("inference_requests", 0),
         )
-        _emit("result", status="error", model_requests=_nonnegative_int(request_count))
+        model_requests = _nonnegative_int(request_count)
+        if model_requests > 0:
+            _emit(
+                "usage",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                model_requests=model_requests,
+            )
+        _emit("request_audit", **audit)
+        _emit("error", message=str(exc))
+        status = "timeout" if isinstance(exc, ProviderTimeoutError) else "error"
+        _emit("result", status=status, model_requests=model_requests)
         return 1
 
 

@@ -18,7 +18,8 @@ inspects a ``TerminationContext`` and returns a reason if it fires, else
 :func:`copilot_session_error`), each branching on ``ctx.backend`` to read its
 own event vocabulary, plus one backend-independent startup rule
 (:func:`agent_startup_failure`) for the CLI dying before emitting a single
-event. Add more by appending to :data:`INFRA_RULES`.
+event. The one-shot rule may also return TIMEOUT for a strictly audited
+provider deadline. Add more by appending to :data:`INFRA_RULES`.
 
 This module only CLASSIFIES. Acting on the classification (the runner auto-
 retries an INFRA_ERROR run whose model did no work) is left to the caller.
@@ -220,16 +221,20 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
 
 
 def one_shot_result_error(ctx: TerminationContext) -> str | None:
-    """One-shot rule: require one response, audit, and clean provider result.
+    """One-shot rule: require an audited terminal result and one clean response.
 
     The shared one-shot driver emits a terminal ``result`` event. Provider,
     authentication, transport, or request-guard failures end with
-    ``status == "error"`` and no complete response; grading the untouched
+    ``status == "error"`` and no successful response; grading the untouched
     ``PROOF OBVIOUS`` file would misreport that infrastructure failure as a
     model capability failure.
 
-    A clean response whose text is not a complete TLA+ module remains a genuine
-    attempt: the runner records the materialization failure as FAIL without
+    A propagated provider deadline ends with ``status == "timeout"`` and is a
+    time limit just like the outer runner watchdog, not infrastructure.
+
+    A clean, unique, non-empty response remains a genuine attempt regardless of
+    its text: the runner materializes it and leaves TLA+ syntax and semantics to
+    the grader. Missing or ambiguous response content is recorded as FAIL without
     grading the untouched placeholder.
     """
     if not ctx.backend.endswith("_oneshot"):
@@ -237,18 +242,18 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
     events = ctx.events()
     if not events:
         return None
-    responses = [event for event in events if event.get("type") == "response"]
     audits = [event for event in events if event.get("type") == "request_audit"]
     results = [event for event in events if event.get("type") == "result"]
-    if len(responses) != 1 or len(audits) != 1 or len(results) != 1:
+    if len(audits) != 1 or len(results) != 1:
         return TerminationReason.INFRA_ERROR
 
     def is_count(value: object, expected: int) -> bool:
         return isinstance(value, int) and not isinstance(value, bool) and value == expected
 
     terminal = results[0]
-    if terminal.get("status") != "success" or not is_count(terminal.get("model_requests"), 1):
+    if not is_count(terminal.get("model_requests"), 1):
         return TerminationReason.INFRA_ERROR
+
     audit = audits[0]
     provider = ctx.backend.removesuffix("_oneshot")
     if audit.get("provider") != provider:
@@ -269,6 +274,17 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
         and audit.get("system_supplied") is False
         and audit.get("tools_supplied") is False
     ):
+        return TerminationReason.INFRA_ERROR
+    if provider not in {"copilot", "litellm"}:
+        return TerminationReason.INFRA_ERROR
+
+    responses = [event for event in events if event.get("type") == "response"]
+    if terminal.get("status") == "timeout":
+        return TerminationReason.TIMEOUT if not responses else TerminationReason.INFRA_ERROR
+
+    if len(responses) != 1:
+        return TerminationReason.INFRA_ERROR
+    if terminal.get("status") != "success":
         return TerminationReason.INFRA_ERROR
     return None
 
@@ -328,8 +344,8 @@ def classify(ctx: TerminationContext) -> str:
     """Return the run's TerminationReason.
 
     A wall-clock timeout (a LIMIT, backend-independent) takes precedence over the
-    per-backend INFRA rules, so every backend agrees on it; otherwise the first
-    INFRA rule that fires wins, else OK.
+    per-backend rules, so every backend agrees on it; otherwise the first rule
+    that fires wins (including an audited one-shot provider deadline), else OK.
     """
     if is_wall_clock_timeout(ctx):
         return TerminationReason.TIMEOUT
