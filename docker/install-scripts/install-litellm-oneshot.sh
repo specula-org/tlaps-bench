@@ -1,0 +1,4 @@
+#!/bin/bash
+set -e
+
+pip install --no-cache-dir --break-system-packages litellm==1.89.3

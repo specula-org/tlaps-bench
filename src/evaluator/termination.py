@@ -219,6 +219,60 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
     return TerminationReason.INFRA_ERROR
 
 
+def one_shot_result_error(ctx: TerminationContext) -> str | None:
+    """One-shot rule: require one response, audit, and clean provider result.
+
+    The shared one-shot driver emits a terminal ``result`` event. Provider,
+    authentication, transport, or request-guard failures end with
+    ``status == "error"`` and no complete response; grading the untouched
+    ``PROOF OBVIOUS`` file would misreport that infrastructure failure as a
+    model capability failure.
+
+    A clean response whose text is not a complete TLA+ module remains a genuine
+    attempt: the runner records the materialization failure as FAIL without
+    grading the untouched placeholder.
+    """
+    if not ctx.backend.endswith("_oneshot"):
+        return None
+    events = ctx.events()
+    if not events:
+        return None
+    responses = [event for event in events if event.get("type") == "response"]
+    audits = [event for event in events if event.get("type") == "request_audit"]
+    results = [event for event in events if event.get("type") == "result"]
+    if len(responses) != 1 or len(audits) != 1 or len(results) != 1:
+        return TerminationReason.INFRA_ERROR
+
+    def is_count(value: object, expected: int) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value == expected
+
+    terminal = results[0]
+    if terminal.get("status") != "success" or not is_count(terminal.get("model_requests"), 1):
+        return TerminationReason.INFRA_ERROR
+    audit = audits[0]
+    provider = ctx.backend.removesuffix("_oneshot")
+    if audit.get("provider") != provider:
+        return TerminationReason.INFRA_ERROR
+    if provider == "copilot" and not (
+        audit.get("wire_audited") is True
+        and is_count(audit.get("inference_requests"), 1)
+        and is_count(audit.get("inference_attempts"), 1)
+        and is_count(audit.get("blocked_requests"), 0)
+        and audit.get("system_removed") is True
+        and audit.get("tools_removed") is True
+    ):
+        return TerminationReason.INFRA_ERROR
+    if provider == "litellm" and not (
+        audit.get("wire_audited") is False
+        and is_count(audit.get("litellm_completion_invocations"), 1)
+        and audit.get("litellm_retries_disabled") is True
+        and audit.get("system_supplied") is False
+        and audit.get("tools_supplied") is False
+    ):
+        return TerminationReason.INFRA_ERROR
+    return None
+
+
 def agent_startup_failure(ctx: TerminationContext) -> str | None:
     """Backend-independent rule: the CLI died before emitting a single event
     (observed on Copilot: transient model-list/auth/DNS startup failures with a
@@ -251,6 +305,7 @@ INFRA_RULES: list[Rule] = [
     codex_turn_failed,
     claude_code_result_error,
     copilot_session_error,
+    one_shot_result_error,
     agent_startup_failure,
 ]
 

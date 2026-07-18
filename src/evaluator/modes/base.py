@@ -167,6 +167,10 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
         )
         return os.path.join(prompts_dir, f"{self.name}.txt")
 
+    def one_shot_prompt_template_path(self) -> str:
+        """Prompt template for backends that get exactly one model response."""
+        return os.path.join(os.path.dirname(self.prompt_template_path()), f"{self.name}-one-shot.txt")
+
     def build_prompt(self, benchmark_basename: str, tlapm_path: str, tlapm_lib: str) -> str:
         with open(self.prompt_template_path()) as f:
             template = f.read()
@@ -174,6 +178,47 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
             benchmark_basename=benchmark_basename,
             tlapm_path=tlapm_path,
             tlapm_lib=tlapm_lib,
+        )
+
+    def build_one_shot_prompt(self, benchmark_path: str, dependencies: list[str]) -> str:
+        """Build a self-contained prompt for a single, tool-free model call.
+
+        Unlike :meth:`build_prompt`, this prompt cannot assume that the model can
+        inspect a workspace. The target and every dependency are therefore
+        embedded verbatim. Dependencies are de-duplicated and ordered by
+        basename so the same benchmark always produces the same request even if
+        its caller supplies them in a different order.
+        """
+        target_path = os.path.abspath(benchmark_path)
+        benchmark_basename = os.path.basename(target_path)
+
+        with open(target_path, encoding="utf-8") as f:
+            target_contents = f.read()
+
+        dependency_paths = {os.path.abspath(path) for path in dependencies}
+        dependency_paths.discard(target_path)
+        ordered_dependencies = sorted(dependency_paths, key=lambda path: (os.path.basename(path), path))
+
+        dependency_blocks: list[str] = []
+        seen_basenames: set[str] = set()
+        for path in ordered_dependencies:
+            basename = os.path.basename(path)
+            if basename in seen_basenames:
+                raise ValueError(f"duplicate one-shot dependency basename: {basename}")
+            seen_basenames.add(basename)
+            with open(path, encoding="utf-8") as f:
+                contents = f.read()
+            dependency_blocks.append(
+                f"<<<BEGIN DEPENDENCY FILE: {basename}>>>\n{contents}\n<<<END DEPENDENCY FILE: {basename}>>>"
+            )
+
+        dependencies_text = "\n\n".join(dependency_blocks) if dependency_blocks else "(none)"
+        with open(self.one_shot_prompt_template_path(), encoding="utf-8") as f:
+            template = f.read()
+        return template.format(
+            benchmark_basename=benchmark_basename,
+            target_contents=target_contents,
+            dependencies=dependencies_text,
         )
 
     def build_continuation_prompt(self, benchmark_basename: str, tlapm_path: str, tlapm_lib: str) -> str:

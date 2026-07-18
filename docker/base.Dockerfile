@@ -90,8 +90,9 @@ ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
     COMMUNITY_LIB=/opt/community \
     TLAPS_IN_CONTAINER=1
 
-# Layer 8: LiteLLM agent script
+# Layer 8: Provider runners
 COPY src/evaluator/backends/litellm_agent.py /opt/litellm_agent.py
+COPY src/evaluator/backends/oneshot_runner.py /opt/oneshot_runner.py
 
 # Lock down checker + SANY
 RUN chmod 0755 /usr/local/bin/check_proof_bin \

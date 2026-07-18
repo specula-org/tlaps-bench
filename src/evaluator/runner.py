@@ -403,6 +403,9 @@ def _run_agent_with_retries(
             transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
             result["input_tokens"] = input_tokens
             result["output_tokens"] = output_tokens
+            parse_metadata = getattr(backend, "parse_run_metadata", None)
+            if parse_metadata:
+                result.update(parse_metadata(agent_jsonl))
 
             if quota_exhausted:
                 break  # quota owns its own retry budget — never infra-retried
@@ -584,6 +587,7 @@ def run_single_benchmark(item: WorkItem):
     """Run the agent backend on a single benchmark. Returns result dict."""
     backend = item.backend
     mode = item.mode
+    is_one_shot = getattr(backend, "is_one_shot", False) is True
 
     rel_path = os.path.relpath(item.benchmark_path, mode.benchmark_dir())
     module_dir = os.path.basename(os.path.dirname(item.benchmark_path))
@@ -613,6 +617,11 @@ def run_single_benchmark(item: WorkItem):
         # than a genuine model attempt, so a FAIL can be filtered/retried.
         "termination_reason": TerminationReason.OK,
     }
+    if is_one_shot:
+        result["one_shot"] = True
+        # The provider driver replaces this after the run. Keeping an explicit
+        # zero makes pre-run quota skips and startup failures auditable too.
+        result["model_requests"] = 0
     if item.max_continuations > 0:
         # Run-level config, stamped on EVERY result — first-attempt PASSes and
         # non-genuine early exits included — so the continuation metric can
@@ -648,8 +657,13 @@ def run_single_benchmark(item: WorkItem):
         for dep in deps:
             shutil.copy2(dep, os.path.join(input_dir, os.path.basename(dep)))
 
-        # Build prompt
-        prompt = mode.build_prompt(basename, item.tlapm_path, item.tlapm_lib)
+        # One-shot providers cannot inspect the workspace, so the mode packs the
+        # canonical target and dependencies into a provider-neutral prompt.
+        # Agentic backends retain the existing tool-oriented prompt unchanged.
+        if is_one_shot:
+            prompt = mode.build_one_shot_prompt(item.benchmark_path, deps)
+        else:
+            prompt = mode.build_prompt(basename, item.tlapm_path, item.tlapm_lib)
         with open(os.path.join(input_dir, "prompt.txt"), "w") as f:
             f.write(prompt)
 
@@ -666,6 +680,14 @@ def run_single_benchmark(item: WorkItem):
         )
         workspace, canonical_dir = run.workspace, run.canonical_dir
 
+        materialized: bool | None = None
+        if is_one_shot and not run.quota_exhausted and result["termination_reason"] != TerminationReason.INFRA_ERROR:
+            destination = os.path.join(workspace, basename)
+            materialized = backend.materialize_solution(agent_jsonl, destination)
+            result["materialized"] = materialized
+            if not materialized:
+                result["materialization_error"] = "one-shot response did not contain exactly one complete TLA+ module"
+
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
             f.write(f"Time: {result['time_secs']:.0f}s\n")
@@ -674,7 +696,7 @@ def run_single_benchmark(item: WorkItem):
             f.write(run.transcript)
 
         solution_path = os.path.join(workspace, basename)
-        if os.path.isfile(solution_path):
+        if os.path.isfile(solution_path) and (not is_one_shot or materialized is True):
             shutil.copy2(solution_path, os.path.join(agent_dir, "solution.tla"))
 
         agent_check_file = os.path.join(workspace, name_no_ext + ".result")
@@ -701,6 +723,26 @@ def run_single_benchmark(item: WorkItem):
             # a bogus PASS). Mark ERROR (retriable via --resume), skip the grader.
             result["check_verdict"] = "ERROR"
             result["error"] = f"startup/infra failure ({run.infra_reasons[-1]}); exhausted infra retries"
+            with open(os.path.join(result_dir, "result.json"), "w") as f:
+                json.dump(result, f, indent=2)
+            return result
+
+        if is_one_shot and result["termination_reason"] == TerminationReason.INFRA_ERROR:
+            # Strict one-shot auditing is fail-closed even if the first request
+            # produced tokens before the SDK tried a forbidden second request.
+            # Such a run violated the measurement contract and is not gradeable.
+            result["check_verdict"] = "ERROR"
+            result["error"] = "one-shot request contract violation"
+            with open(os.path.join(result_dir, "result.json"), "w") as f:
+                json.dump(result, f, indent=2)
+            return result
+
+        if is_one_shot and materialized is not True:
+            # This is a genuine model attempt, but not a gradeable submission.
+            # Do not grade the untouched canonical placeholder: a trivial task
+            # could otherwise turn malformed model output into a bogus PASS.
+            result["check_verdict"] = "FAIL"
+            result["error"] = result["materialization_error"]
             with open(os.path.join(result_dir, "result.json"), "w") as f:
                 json.dump(result, f, indent=2)
             return result
@@ -1335,10 +1377,11 @@ def main():
     parser.add_argument(
         "--infra-retries",
         type=int,
-        default=3,
+        default=None,
         help="Extra agent attempts after a transient startup/infrastructure failure "
         "(agent died with 0 output tokens), so 3 = up to 4 attempts total "
-        "(default: 3; 0 = no retries, the failure still ends as ERROR)",
+        "(default: 3 for agentic backends, 0 for one-shot; 0 = no retries, "
+        "the failure still ends as ERROR)",
     )
     parser.add_argument(
         "--max-continuations",
@@ -1410,6 +1453,18 @@ def main():
             2, f"{parser.prog}: error: no benchmarks found for mode {mode.name!r} under {mode.benchmark_dir()}\n"
         )
 
+    # Resolve capability-dependent defaults only after task discovery. This
+    # preserves the useful fail-fast behavior for a misspelled --filter: no
+    # backend validation, auth probe, image build, or model request happens.
+    is_one_shot = getattr(backend, "is_one_shot", False) is True
+    supports_continuations = getattr(backend, "supports_continuations", True) is not False
+    if args.infra_retries is None:
+        args.infra_retries = getattr(backend, "default_infra_retries", 3)
+    if is_one_shot and args.infra_retries != 0:
+        parser.error("strict one-shot backends require --infra-retries 0")
+    if not supports_continuations and args.max_continuations != 0:
+        parser.error(f"backend {backend.name!r} does not support --max-continuations")
+
     auth_err = backend.check_auth()
     if auth_err:
         print(f"ERROR: {auth_err}")
@@ -1442,8 +1497,10 @@ def main():
         # id, unknown CLI flag, missing credentials, or an auth host the
         # firewall blocks) otherwise produces a whole sweep of silent 0-token
         # FAILs that look like honest "couldn't prove it" results.
-        if not args.skip_preflight:
+        if not args.skip_preflight and getattr(backend, "supports_model_preflight", True) is not False:
             _run_preflight(backend)
+        elif not args.skip_preflight:
+            print("Preflight: skipped — strict one-shot backends cannot spend an extra model request")
     else:
         # Local mode: require tlapm and checker on host
         ensure_tlapm()

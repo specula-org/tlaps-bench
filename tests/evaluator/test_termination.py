@@ -13,6 +13,8 @@ Run: PYTHONPATH=src python3 -m pytest tests/evaluator/test_termination.py
 import json
 import os
 
+import pytest
+
 from evaluator.termination import (
     INFRA_RULES,
     TerminationContext,
@@ -23,6 +25,7 @@ from evaluator.termination import (
     codex_turn_failed,
     copilot_session_error,
     is_wall_clock_timeout,
+    one_shot_result_error,
     startup_error_snippet,
 )
 
@@ -154,7 +157,159 @@ def test_registry_is_the_extension_point():
     assert codex_turn_failed in INFRA_RULES
     assert claude_code_result_error in INFRA_RULES
     assert copilot_session_error in INFRA_RULES
+    assert one_shot_result_error in INFRA_RULES
     assert agent_startup_failure in INFRA_RULES
+
+
+def test_one_shot_provider_error_is_infra(tmp_path):
+    stream = [
+        {"type": "request_audit", "inference_requests": 0},
+        {"type": "error", "message": "authentication failed"},
+        {"type": "result", "status": "error", "model_requests": 0},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-error.jsonl", stream)
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.INFRA_ERROR
+
+
+def test_one_shot_clean_response_is_genuine(tmp_path):
+    stream = [
+        {"type": "response", "text": "not a complete module"},
+        {"type": "usage", "input_tokens": 10, "output_tokens": 4, "model_requests": 1},
+        {
+            "type": "request_audit",
+            "provider": "litellm",
+            "litellm_completion_invocations": 1,
+            "wire_audited": False,
+            "litellm_retries_disabled": True,
+            "system_supplied": False,
+            "tools_supplied": False,
+        },
+        {"type": "result", "status": "success", "model_requests": 1},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-success.jsonl", stream)
+    assert classify(_ctx(path, backend="litellm_oneshot")) == TerminationReason.OK
+
+
+def test_one_shot_clean_copilot_response_is_genuine(tmp_path):
+    stream = [
+        {"type": "response", "text": "not a complete module"},
+        {
+            "type": "request_audit",
+            "provider": "copilot",
+            "wire_audited": True,
+            "inference_requests": 1,
+            "inference_attempts": 1,
+            "blocked_requests": 0,
+            "system_removed": True,
+            "tools_removed": True,
+        },
+        {"type": "result", "status": "success", "model_requests": 1},
+    ]
+
+    path = _write_jsonl(tmp_path / "copilot-oneshot-success.jsonl", stream)
+    assert classify(_ctx(path, backend="copilot_oneshot")) == TerminationReason.OK
+
+
+@pytest.mark.parametrize(
+    "backend,audit",
+    [
+        (
+            "litellm_oneshot",
+            {
+                "provider": "litellm",
+                "wire_audited": False,
+                "litellm_completion_invocations": 1,
+                "litellm_retries_disabled": True,
+                "system_supplied": True,
+                "tools_supplied": False,
+            },
+        ),
+        (
+            "copilot_oneshot",
+            {
+                "provider": "copilot",
+                "wire_audited": True,
+                "inference_requests": 1,
+                "inference_attempts": 1,
+                "blocked_requests": 0,
+                "system_removed": False,
+                "tools_removed": True,
+            },
+        ),
+    ],
+)
+def test_one_shot_context_audit_regression_is_infra(tmp_path, backend, audit):
+    stream = [
+        {"type": "response", "text": "not a complete module"},
+        {"type": "request_audit", **audit},
+        {"type": "result", "status": "success", "model_requests": 1},
+    ]
+
+    path = _write_jsonl(tmp_path / f"{backend}-context-regression.jsonl", stream)
+    assert classify(_ctx(path, backend=backend)) == TerminationReason.INFRA_ERROR
+
+
+def test_one_shot_truncated_stream_is_infra(tmp_path):
+    path = _write_jsonl(tmp_path / "oneshot-truncated.jsonl", [{"type": "request_audit"}])
+    assert classify(_ctx(path, backend="litellm_oneshot")) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize("event_type", ["response", "request_audit", "result"])
+def test_one_shot_duplicate_contract_event_is_infra(tmp_path, event_type):
+    stream = [
+        {"type": "response", "text": "not a complete module"},
+        {
+            "type": "request_audit",
+            "provider": "litellm",
+            "litellm_completion_invocations": 1,
+            "wire_audited": False,
+            "litellm_retries_disabled": True,
+            "system_supplied": False,
+            "tools_supplied": False,
+        },
+        {"type": "result", "status": "success", "model_requests": 1},
+    ]
+    stream.append(next(event.copy() for event in stream if event["type"] == event_type))
+
+    path = _write_jsonl(tmp_path / f"oneshot-duplicate-{event_type}.jsonl", stream)
+    assert classify(_ctx(path, backend="litellm_oneshot")) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize(
+    "backend,audit",
+    [
+        (
+            "litellm_oneshot",
+            {
+                "provider": "litellm",
+                "litellm_completion_invocations": 2,
+                "wire_audited": False,
+                "litellm_retries_disabled": True,
+                "system_supplied": False,
+                "tools_supplied": False,
+            },
+        ),
+        (
+            "copilot_oneshot",
+            {
+                "provider": "copilot",
+                "wire_audited": True,
+                "inference_requests": 2,
+                "inference_attempts": 2,
+                "blocked_requests": 0,
+            },
+        ),
+    ],
+)
+def test_one_shot_success_with_two_requests_is_infra(tmp_path, backend, audit):
+    stream = [
+        {"type": "response", "text": "not a complete module"},
+        {"type": "request_audit", **audit},
+        {"type": "result", "status": "success", "model_requests": 2},
+    ]
+
+    path = _write_jsonl(tmp_path / f"{backend}-two-requests.jsonl", stream)
+    assert classify(_ctx(path, backend=backend)) == TerminationReason.INFRA_ERROR
 
 
 # --- quota exhaustion: runner-owned, never produced by classify() -----------

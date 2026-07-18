@@ -134,6 +134,12 @@ class AgentBackend(ABC):
     # Container path holding this backend's session state; --session-dir mounts
     # a persistent host dir here. None = no session dir (e.g. litellm).
     session_state_dir: str | None = None
+    # Capability flags used by the runner. Agentic backends keep the historical
+    # behavior; strict one-shot backends override these defaults.
+    is_one_shot: bool = False
+    supports_model_preflight: bool = True
+    supports_continuations: bool = True
+    default_infra_retries: int = 3
 
     def get_credential_mounts(self) -> list[str]:
         """Credential directories this backend needs mounted for the current run."""
@@ -187,3 +193,16 @@ class AgentBackend(ABC):
         with a usage_script overrides this with its subscription's sensible caps.
         """
         return (0.0, 0.0)
+
+    def materialize_solution(self, jsonl_path: str, destination: str) -> bool:
+        """Materialize a model response at ``destination`` when needed.
+
+        Agentic backends edit the workspace themselves, so the default is a
+        no-op. One-shot backends override this hook because their sole model
+        response must be converted into the target module before grading.
+        """
+        return False
+
+    def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
+        """Return backend-specific, JSON-serializable result metadata."""
+        return {}
