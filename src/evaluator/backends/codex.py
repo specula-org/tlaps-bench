@@ -12,8 +12,8 @@ from pathlib import Path
 
 from evaluator import quota
 
+from .agentic import AgenticBackend
 from .base import (
-    AgentBackend,
     detect_firewall_hosts,
     has_aws_bedrock_bearer_token,
     has_aws_env_credentials,
@@ -34,7 +34,7 @@ _RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
-class CodexBackend(AgentBackend):
+class CodexBackend(AgenticBackend):
     name = "codex"
     install_script = "install-codex.sh"
     session_state_dir = "/root/.codex"

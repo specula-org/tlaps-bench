@@ -60,7 +60,8 @@ class TerminationContext:
     """The evidence a rule may inspect.
 
     ``backend`` lets a rule apply only to the backend whose event format it
-    understands. ``events()`` lazily parses the agent's JSONL event stream
+    understands. ``approach`` and ``provider`` identify cross-provider contracts
+    without encoding semantics in a backend-name suffix. ``events()`` lazily parses the backend's JSONL event stream
     (empty list on a missing/unreadable file), so rules that don't need it pay
     nothing. ``agent_exit`` and ``error`` are the runner's already-recorded
     fields, available to rules that key off them instead of the stream.
@@ -70,16 +71,25 @@ class TerminationContext:
 
     backend: str
     jsonl_path: str | None
+    approach: str = "agentic"
+    provider: str | None = None
+    request_audit_validator: Callable[[dict[str, object], int], bool] | None = None
     agent_exit: int | None = None
     error: str = ""
     stderr_path: str | None = None
     _events: list | None = None
+    _event_stream_valid: bool | None = None
     _stderr: str | None = None
 
     def events(self) -> list:
         if self._events is None:
-            self._events = _read_events(self.jsonl_path)
+            self._events, self._event_stream_valid = _read_event_stream(self.jsonl_path)
         return self._events
+
+    def event_stream_valid(self) -> bool:
+        if self._events is None:
+            self._events, self._event_stream_valid = _read_event_stream(self.jsonl_path)
+        return self._event_stream_valid is True
 
     def stderr(self) -> str:
         if self._stderr is None:
@@ -87,12 +97,18 @@ class TerminationContext:
         return self._stderr
 
 
-def _read_events(path: str | None) -> list:
-    """Parse a JSONL event stream into a list of dicts, tolerantly (skip blank
-    and unparseable lines; empty list if the file is absent)."""
+def _read_event_stream(path: str | None) -> tuple[list[dict], bool]:
+    """Parse JSONL dictionaries and separately retain stream-integrity evidence.
+
+    Agentic rules keep their historical tolerance by consuming only ``events``.
+    Strict approaches can fail closed when a non-blank line is malformed, is not
+    a JSON object, or the stream cannot be read.
+    """
+
     if not path:
-        return []
-    out: list = []
+        return [], False
+    out: list[dict] = []
+    valid = True
     try:
         with open(path) as f:
             for raw in f:
@@ -100,12 +116,17 @@ def _read_events(path: str | None) -> list:
                 if not raw:
                     continue
                 try:
-                    out.append(json.loads(raw))
+                    event = json.loads(raw)
                 except json.JSONDecodeError:
+                    valid = False
                     continue
-    except FileNotFoundError:
-        return []
-    return out
+                if isinstance(event, dict):
+                    out.append(event)
+                else:
+                    valid = False
+    except (OSError, UnicodeError):
+        return [], False
+    return out, valid
 
 
 def _read_text(path: str | None) -> str:
@@ -237,11 +258,11 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
     the grader. Missing or ambiguous response content is recorded as FAIL without
     grading the untouched placeholder.
     """
-    if not ctx.backend.endswith("_oneshot"):
+    if ctx.approach != "one_shot":
         return None
     events = ctx.events()
-    if not events:
-        return None
+    if not ctx.event_stream_valid() or not events:
+        return TerminationReason.INFRA_ERROR
     audits = [event for event in events if event.get("type") == "request_audit"]
     results = [event for event in events if event.get("type") == "result"]
     if len(audits) != 1 or len(results) != 1:
@@ -251,38 +272,19 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
         return isinstance(value, int) and not isinstance(value, bool) and value == expected
 
     terminal = results[0]
-    if not is_count(terminal.get("model_requests"), 1):
+    request_count = terminal.get("model_requests")
+    if not isinstance(request_count, int) or isinstance(request_count, bool) or request_count not in {0, 1}:
         return TerminationReason.INFRA_ERROR
 
     audit = audits[0]
-    provider = ctx.backend.removesuffix("_oneshot")
-    if audit.get("provider") != provider:
-        return TerminationReason.INFRA_ERROR
-    if provider == "copilot" and not (
-        audit.get("wire_audited") is True
-        and is_count(audit.get("inference_requests"), 1)
-        and is_count(audit.get("inference_attempts"), 1)
-        and is_count(audit.get("blocked_requests"), 0)
-        and audit.get("system_removed") is True
-        and audit.get("tools_removed") is True
-    ):
-        return TerminationReason.INFRA_ERROR
-    if provider == "litellm" and not (
-        audit.get("wire_audited") is False
-        and is_count(audit.get("litellm_completion_invocations"), 1)
-        and audit.get("litellm_retries_disabled") is True
-        and audit.get("system_supplied") is False
-        and audit.get("tools_supplied") is False
-    ):
-        return TerminationReason.INFRA_ERROR
-    if provider not in {"copilot", "litellm"}:
+    if ctx.request_audit_validator is None or not ctx.request_audit_validator(audit, request_count):
         return TerminationReason.INFRA_ERROR
 
     responses = [event for event in events if event.get("type") == "response"]
     if terminal.get("status") == "timeout":
         return TerminationReason.TIMEOUT if not responses else TerminationReason.INFRA_ERROR
 
-    if len(responses) != 1:
+    if not is_count(request_count, 1) or len(responses) != 1:
         return TerminationReason.INFRA_ERROR
     if terminal.get("status") != "success":
         return TerminationReason.INFRA_ERROR

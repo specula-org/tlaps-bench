@@ -7,7 +7,7 @@ limits the account:
   backend's subscription utilization (via its usage probe, see ``scripts/usage/``)
   and sleep until the window resets when it is over threshold.
 - Reactive retry (``run_with_quota_retry``): after a run, if the backend reports
-  a hard usage cap — the agent did no work (``AgentBackend.detect_quota_block``) —
+  a hard usage cap — the backend did no work (``Backend.detect_quota_block``) —
   sleep until the stated reset and retry rather than grade the no-op run as FAIL.
 
 Both share ``secs_until_reset``, the single "how long until this resets" helper.

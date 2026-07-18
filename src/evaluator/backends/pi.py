@@ -7,8 +7,8 @@ import os
 import shlex
 from pathlib import Path
 
+from .agentic import AgenticBackend
 from .base import (
-    AgentBackend,
     detect_firewall_hosts,
     has_aws_env_credentials,
     has_aws_region,
@@ -18,7 +18,7 @@ from .base import (
 DEFAULT_MODEL = "openai/gpt-5.5"
 
 
-class PiBackend(AgentBackend):
+class PiBackend(AgenticBackend):
     name = "pi"
     install_script = "install-pi.sh"
     session_state_dir = "/root/.pi"

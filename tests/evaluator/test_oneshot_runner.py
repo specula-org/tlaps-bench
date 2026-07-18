@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import sys
+import time
 import types
 from types import SimpleNamespace
 
@@ -68,6 +69,73 @@ def test_inference_endpoint_matching(url, endpoint):
 )
 def test_auxiliary_endpoint_matching(url, endpoint):
     assert oneshot_runner._auxiliary_endpoint(url) == endpoint
+
+
+def test_expired_deadline_never_starts_copilot_inference():
+    class Session:
+        async def send_and_wait(self, *_args, **_kwargs):
+            pytest.fail("an expired benchmark deadline must not start inference")
+
+    deadline_events = []
+
+    async def scenario():
+        with pytest.raises(oneshot_runner._CopilotDeadlineExceeded):
+            await oneshot_runner._send_copilot_and_wait(
+                Session(),
+                "EXACT PROMPT",
+                time.time() - 1,
+                lambda: deadline_events.append("timeout"),
+            )
+
+    asyncio.run(scenario())
+
+    assert deadline_events == ["timeout"]
+
+
+def test_deadline_freezes_guard_before_late_runtime_request():
+    handler = _RecordingHandler("EXACT PROMPT")
+    handler.bind_session("session-1")
+    deadline = time.time() + 0.01
+    handler.set_deadline(deadline)
+
+    class Session:
+        runtime_task = None
+
+        async def send_and_wait(self, *_args, **_kwargs):
+            async def runtime_work():
+                await asyncio.sleep(0.03)
+                with pytest.raises(RuntimeError, match="after benchmark deadline"):
+                    await handler.send_request(
+                        _request(
+                            "https://api.githubcopilot.com/responses",
+                            {"model": "test-model", "input": [], "stream": True},
+                        ),
+                        SimpleNamespace(session_id="session-1"),
+                    )
+
+            self.runtime_task = asyncio.create_task(runtime_work())
+            await asyncio.sleep(60)
+
+    snapshots = []
+
+    async def scenario():
+        session = Session()
+
+        def on_deadline():
+            handler.freeze()
+            snapshots.append(handler.audit())
+
+        with pytest.raises(oneshot_runner._CopilotDeadlineExceeded):
+            await oneshot_runner._send_copilot_and_wait(session, "EXACT PROMPT", deadline, on_deadline)
+        await session.runtime_task
+
+    asyncio.run(scenario())
+
+    assert snapshots[0]["deadline_closed"] is True
+    assert snapshots[0]["model_requests"] == 0
+    assert handler.audit()["model_requests"] == 0
+    assert handler.audit()["blocked_requests"] == 1
+    assert handler.forwarded == []
 
 
 @pytest.mark.parametrize(
@@ -184,6 +252,13 @@ def test_copilot_handler_forwards_only_rewritten_first_inference():
     assert forwarded.headers["content-length"] == str(len(forwarded.content))
     assert handler.audit() == {
         "provider": "copilot",
+        "model_requests": 1,
+        "request_attempts": 1,
+        "system_prompt_present": False,
+        "tools_present": False,
+        "retries_enabled": False,
+        "audit_scope": "wire",
+        "contract_ok": True,
         "wire_audited": True,
         "inference_requests": 1,
         "inference_attempts": 1,
@@ -191,6 +266,7 @@ def test_copilot_handler_forwards_only_rewritten_first_inference():
         "unknown_requests": 0,
         "system_removed": True,
         "tools_removed": True,
+        "deadline_closed": False,
         "endpoint": "/responses",
         "request_sha256": handler.request_sha256,
     }
@@ -387,6 +463,53 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
     assert events[-1] == {"type": "result", "status": "success", "model_requests": 1}
 
 
+def test_provider_registry_adds_backend_without_runner_branch(monkeypatch, capsys, tmp_path):
+    captured = {}
+
+    class FakeProvider:
+        audit = {
+            "provider": "fake",
+            "model_requests": 1,
+            "audit_scope": "adapter",
+            "contract_ok": True,
+        }
+
+        def invoke(self, on_timeout):
+            return oneshot_runner.ProviderResult("FAKE RESPONSE", 4, 2, self.audit)
+
+    def factory(prompt, model, workspace, deadline):
+        captured.update(prompt=prompt, model=model, workspace=workspace, deadline=deadline)
+        return FakeProvider()
+
+    oneshot_runner.register_provider("fake", factory)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+    try:
+        exit_code = oneshot_runner.main(
+            [
+                "--provider",
+                "fake",
+                "--workspace",
+                str(tmp_path),
+                "--result-dir",
+                str(tmp_path),
+                "--model",
+                "fake-model",
+            ]
+        )
+    finally:
+        oneshot_runner._PROVIDER_REGISTRY.pop("fake")
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 0
+    assert captured == {
+        "prompt": "EXACT PROMPT",
+        "model": "fake-model",
+        "workspace": str(tmp_path),
+        "deadline": None,
+    }
+    assert [event["type"] for event in events] == ["response", "usage", "request_audit", "result"]
+
+
 def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatch, capsys, tmp_path):
     fake_litellm = types.ModuleType("litellm")
     fake_litellm.completion = lambda **_kwargs: SimpleNamespace(
@@ -482,8 +605,8 @@ def test_main_marks_provider_deadline_as_timeout(monkeypatch, capsys, tmp_path):
             str(tmp_path),
             "--model",
             "test-model",
-            "--timeout",
-            "37",
+            "--deadline",
+            str(time.time() + 37),
         ]
     )
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
@@ -581,7 +704,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
             "EXACT PROMPT",
             "test-model",
             str(tmp_path),
-            123.0,
+            time.time() + 123.0,
             handler=handler,
         )
     )
@@ -617,7 +740,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
         ("guard", "strict one-shot: expected exactly one inference attempt and one forwarded request"),
         ("session", "session failed after usage"),
         ("transport_timeout", "transport timed out"),
-        ("timeout", "Copilot request timed out after 0.1s"),
+        ("timeout", "Copilot request reached benchmark deadline"),
     ],
 )
 def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure_mode, error_message):
@@ -688,13 +811,13 @@ def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure
     monkeypatch.setenv("GH_TOKEN", "secret-token")
 
     with pytest.raises(oneshot_runner.ProviderRunError, match=error_message) as exc_info:
-        timeout = 0.1 if failure_mode == "timeout" else 123.0
+        deadline = time.time() + 0.1 if failure_mode == "timeout" else None
         asyncio.run(
             oneshot_runner.run_copilot(
                 "EXACT PROMPT",
                 "test-model",
                 str(tmp_path),
-                timeout,
+                deadline,
                 handler=handler,
             )
         )
@@ -708,12 +831,135 @@ def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure
         assert not isinstance(exc_info.value, oneshot_runner.ProviderTimeoutError)
 
 
-@pytest.mark.parametrize("timeout_arg", ["0", "-5"])
-def test_main_maps_nonpositive_copilot_timeout_to_none(monkeypatch, capsys, tmp_path, timeout_arg):
-    captured_timeouts: list[float | None] = []
+def test_copilot_timeout_is_reported_before_slow_sdk_teardown(monkeypatch, tmp_path):
+    class MessageData:
+        pass
 
-    async def fake_run_copilot(_prompt, _model, _workspace, timeout, handler=None):
-        captured_timeouts.append(timeout)
+    class UsageData:
+        def __init__(self, input_tokens, output_tokens):
+            self.input_tokens = input_tokens
+            self.output_tokens = output_tokens
+            self.finish_reason = "length"
+
+    class SlowExitSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event):
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            await asyncio.sleep(60)
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            await self.guard.send_request(
+                _request(
+                    "https://api.githubcopilot.com/responses",
+                    {"model": "test-model", "input": [], "stream": True},
+                ),
+                SimpleNamespace(session_id=self.session_id),
+            )
+            self.on_event(SimpleNamespace(data=UsageData(21, 8)))
+            await asyncio.sleep(60)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return SlowExitSession(self.guard, kwargs["on_event"])
+
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+    captured = []
+
+    async def scenario():
+        emitted = asyncio.Event()
+
+        def on_timeout(exc):
+            captured.append(exc)
+            emitted.set()
+
+        task = asyncio.create_task(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                time.time() + 0.02,
+                handler=_RecordingHandler("EXACT PROMPT"),
+                on_timeout=on_timeout,
+            )
+        )
+        await asyncio.wait_for(emitted.wait(), timeout=0.5)
+        assert not task.done(), "timeout must be durable before slow SDK teardown completes"
+        task.cancel()
+        with pytest.raises(oneshot_runner.ProviderTimeoutError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert len(captured) == 1
+    assert isinstance(captured[0], oneshot_runner.ProviderTimeoutError)
+    assert (captured[0].input_tokens, captured[0].output_tokens) == (21, 8)
+    assert captured[0].audit["model_requests"] == 1
+
+
+def test_copilot_deadline_watchdog_covers_sdk_startup(monkeypatch, tmp_path):
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class SlowStartClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            await asyncio.sleep(60)
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (SlowStartClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+    captured = []
+
+    async def scenario():
+        task = asyncio.create_task(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                time.time() + 0.02,
+                on_timeout=captured.append,
+            )
+        )
+        with pytest.raises(oneshot_runner.ProviderTimeoutError):
+            await asyncio.wait_for(task, timeout=0.5)
+
+    asyncio.run(scenario())
+
+    assert len(captured) == 1
+    assert captured[0].audit["deadline_closed"] is True
+    assert captured[0].audit["model_requests"] == 0
+
+
+@pytest.mark.parametrize("deadline_arg", ["0", "-5"])
+def test_main_maps_nonpositive_copilot_deadline_to_none(monkeypatch, capsys, tmp_path, deadline_arg):
+    captured_deadlines: list[float | None] = []
+
+    async def fake_run_copilot(_prompt, _model, _workspace, deadline, handler=None, on_timeout=None):
+        captured_deadlines.append(deadline)
         return oneshot_runner.ProviderResult(
             "MODEL RESPONSE",
             12,
@@ -734,12 +980,12 @@ def test_main_maps_nonpositive_copilot_timeout_to_none(monkeypatch, capsys, tmp_
             str(tmp_path),
             "--model",
             "test-model",
-            "--timeout",
-            timeout_arg,
+            "--deadline",
+            deadline_arg,
         ]
     )
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 0
-    assert captured_timeouts == [None]
+    assert captured_deadlines == [None]
     assert events[-1] == {"type": "result", "status": "success", "model_requests": 1}

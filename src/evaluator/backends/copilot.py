@@ -6,12 +6,13 @@ import json
 import os
 import subprocess
 
-from .base import AgentBackend, detect_firewall_hosts
+from .agentic import AgenticBackend
+from .base import detect_firewall_hosts
 
 DEFAULT_MODEL = "claude-opus-4.8"
 
 
-class CopilotBackend(AgentBackend):
+class CopilotBackend(AgenticBackend):
     name = "copilot"
     install_script = "install-copilot.sh"
     session_state_dir = "/root/.copilot"

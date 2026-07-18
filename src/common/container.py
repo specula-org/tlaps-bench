@@ -1,4 +1,4 @@
-"""Programmatic Docker container interface for running agent backends."""
+"""Programmatic Docker container interface for running evaluator backends."""
 
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ def _copy_codex_bedrock_config(src: Path, dst: Path) -> bool:
 
 
 class ContainerRunner:
-    """Programmatic interface to Docker for running agent backends in isolation."""
+    """Programmatic interface to Docker for running evaluator backends in isolation."""
 
     _CREDENTIAL_MOUNTS = {
         "aws": CredentialMount("/root/.aws", _copy_all_credentials),

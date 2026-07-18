@@ -1,12 +1,15 @@
-"""Agent backend registry."""
+"""Evaluator backend registry and public approach contracts."""
 
-from .base import AgentBackend
+from .agentic import AgenticBackend as AgenticBackend
+from .base import AgentBackend as AgentBackend
+from .base import Backend
 from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend
 from .copilot import CopilotBackend
 from .copilot_oneshot import CopilotOneShotBackend
 from .litellm import LiteLLMBackend
 from .litellm_oneshot import LiteLLMOneShotBackend
+from .oneshot import OneShotBackend as OneShotBackend
 from .pi import PiBackend
 
 _REGISTRY = {
@@ -20,7 +23,7 @@ _REGISTRY = {
 }
 
 
-def get_backend(name: str, model: str | None = None) -> AgentBackend:
+def get_backend(name: str, model: str | None = None) -> Backend:
     if name not in _REGISTRY:
         raise ValueError(f"unknown backend {name!r}; available: {sorted(_REGISTRY)}")
     return _REGISTRY[name](model=model)

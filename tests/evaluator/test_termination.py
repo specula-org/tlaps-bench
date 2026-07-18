@@ -15,6 +15,8 @@ import os
 
 import pytest
 
+from evaluator.backends import get_backend
+from evaluator.backends.agentic import AgenticBackend
 from evaluator.termination import (
     INFRA_RULES,
     TerminationContext,
@@ -68,8 +70,56 @@ def _write_jsonl(path, events):
     return str(path)
 
 
-def _ctx(path, backend="codex", agent_exit=None, error=""):
-    return TerminationContext(backend=backend, jsonl_path=path, agent_exit=agent_exit, error=error)
+def _ctx(path, backend="codex", agent_exit=None, error="", approach=None, provider=None):
+    if approach is None:
+        approach = "one_shot" if backend.endswith("_oneshot") else "agentic"
+    if provider is None and approach == "one_shot":
+        provider = backend.removesuffix("_oneshot")
+    validator = (
+        get_backend(backend).validate_request_audit if approach == "one_shot" and backend.endswith("_oneshot") else None
+    )
+    return TerminationContext(
+        backend=backend,
+        jsonl_path=path,
+        approach=approach,
+        provider=provider,
+        request_audit_validator=validator,
+        agent_exit=agent_exit,
+        error=error,
+    )
+
+
+def _strict_audit(provider, requests=1, contract_ok=True, **evidence):
+    audit = {
+        "provider": provider,
+        "model_requests": requests,
+        "request_attempts": requests,
+        "blocked_requests": 0,
+        "system_prompt_present": False,
+        "tools_present": False,
+        "retries_enabled": False,
+        "audit_scope": "wire" if provider == "copilot" else "adapter",
+        "contract_ok": contract_ok,
+    }
+    if provider == "copilot":
+        audit.update(
+            wire_audited=True,
+            inference_requests=requests,
+            inference_attempts=requests,
+            unknown_requests=0,
+            system_removed=requests == 1,
+            tools_removed=requests == 1,
+        )
+    else:
+        audit.update(
+            wire_audited=False,
+            litellm_completion_invocations=requests,
+            litellm_retries_disabled=True,
+            system_supplied=False,
+            tools_supplied=False,
+        )
+    audit.update(evidence)
+    return audit
 
 
 def test_turn_failed_is_infra(tmp_path):
@@ -163,7 +213,7 @@ def test_registry_is_the_extension_point():
 
 def test_one_shot_provider_error_is_infra(tmp_path):
     stream = [
-        {"type": "request_audit", "inference_requests": 0},
+        {"type": "request_audit", **_strict_audit("copilot", requests=0)},
         {"type": "error", "message": "authentication failed"},
         {"type": "result", "status": "error", "model_requests": 0},
     ]
@@ -176,7 +226,7 @@ def test_one_shot_provider_deadline_is_timeout(tmp_path):
         {"type": "usage", "input_tokens": 10, "output_tokens": 4, "model_requests": 1},
         {
             "type": "request_audit",
-            "provider": "copilot",
+            **_strict_audit("copilot"),
             "wire_audited": True,
             "inference_requests": 1,
             "inference_attempts": 1,
@@ -193,14 +243,14 @@ def test_one_shot_provider_deadline_is_timeout(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("provider", "requests"),
-    [("wrong", 1), ("copilot", 0), ("copilot", 2)],
+    ("provider", "requests", "contract_ok"),
+    [("wrong", 1, True), ("copilot", 2, False), ("copilot", 1, False)],
 )
-def test_one_shot_provider_deadline_requires_strict_single_request_audit(tmp_path, provider, requests):
+def test_one_shot_provider_deadline_requires_valid_audit(tmp_path, provider, requests, contract_ok):
     stream = [
         {
             "type": "request_audit",
-            "provider": provider,
+            **_strict_audit(provider, requests=requests, contract_ok=contract_ok),
             "wire_audited": True,
             "inference_requests": requests,
             "inference_attempts": requests,
@@ -215,13 +265,24 @@ def test_one_shot_provider_deadline_requires_strict_single_request_audit(tmp_pat
     assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.INFRA_ERROR
 
 
+def test_one_shot_deadline_before_request_is_still_timeout(tmp_path):
+    stream = [
+        {"type": "request_audit", **_strict_audit("copilot", requests=0)},
+        {"type": "error", "message": "benchmark deadline reached during startup"},
+        {"type": "result", "status": "timeout", "model_requests": 0},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-startup-timeout.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
+
+
 def test_one_shot_clean_response_is_genuine(tmp_path):
     stream = [
         {"type": "response", "text": "not a complete module"},
         {"type": "usage", "input_tokens": 10, "output_tokens": 4, "model_requests": 1},
         {
             "type": "request_audit",
-            "provider": "litellm",
+            **_strict_audit("litellm"),
             "litellm_completion_invocations": 1,
             "wire_audited": False,
             "litellm_retries_disabled": True,
@@ -239,7 +300,7 @@ def test_one_shot_clean_copilot_response_is_genuine(tmp_path):
         {"type": "response", "text": "not a complete module"},
         {
             "type": "request_audit",
-            "provider": "copilot",
+            **_strict_audit("copilot"),
             "wire_audited": True,
             "inference_requests": 1,
             "inference_attempts": 1,
@@ -260,7 +321,7 @@ def test_one_shot_clean_copilot_response_is_genuine(tmp_path):
         (
             "litellm_oneshot",
             {
-                "provider": "litellm",
+                **_strict_audit("litellm", contract_ok=True),
                 "wire_audited": False,
                 "litellm_completion_invocations": 1,
                 "litellm_retries_disabled": True,
@@ -271,7 +332,7 @@ def test_one_shot_clean_copilot_response_is_genuine(tmp_path):
         (
             "copilot_oneshot",
             {
-                "provider": "copilot",
+                **_strict_audit("copilot", contract_ok=True),
                 "wire_audited": True,
                 "inference_requests": 1,
                 "inference_attempts": 1,
@@ -293,9 +354,95 @@ def test_one_shot_context_audit_regression_is_infra(tmp_path, backend, audit):
     assert classify(_ctx(path, backend=backend)) == TerminationReason.INFRA_ERROR
 
 
+@pytest.mark.parametrize(
+    ("backend", "field", "value"),
+    [
+        ("litellm_oneshot", "model_requests", True),
+        ("litellm_oneshot", "request_attempts", 1.0),
+        ("litellm_oneshot", "blocked_requests", False),
+        ("litellm_oneshot", "litellm_completion_invocations", True),
+        ("copilot_oneshot", "model_requests", 1.0),
+        ("copilot_oneshot", "request_attempts", True),
+        ("copilot_oneshot", "blocked_requests", 0.0),
+        ("copilot_oneshot", "inference_requests", True),
+        ("copilot_oneshot", "inference_attempts", 1.0),
+        ("copilot_oneshot", "unknown_requests", False),
+    ],
+)
+def test_one_shot_audit_counts_require_exact_integers(tmp_path, backend, field, value):
+    provider = backend.removesuffix("_oneshot")
+    audit = _strict_audit(provider)
+    audit[field] = value
+    stream = [
+        {"type": "response", "text": "candidate"},
+        {"type": "request_audit", **audit},
+        {"type": "result", "status": "success", "model_requests": 1},
+    ]
+    path = _write_jsonl(tmp_path / f"{backend}-{field}.jsonl", stream)
+
+    assert classify(_ctx(path, backend=backend)) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize("field", ["system_removed", "tools_removed"])
+def test_copilot_zero_request_audit_requires_explicit_context_evidence(tmp_path, field):
+    audit = _strict_audit("copilot", requests=0)
+    audit.pop(field)
+    stream = [
+        {"type": "request_audit", **audit},
+        {"type": "result", "status": "timeout", "model_requests": 0},
+    ]
+    path = _write_jsonl(tmp_path / f"copilot-missing-{field}.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot")) == TerminationReason.INFRA_ERROR
+
+
 def test_one_shot_truncated_stream_is_infra(tmp_path):
     path = _write_jsonl(tmp_path / "oneshot-truncated.jsonl", [{"type": "request_audit"}])
     assert classify(_ctx(path, backend="litellm_oneshot")) == TerminationReason.INFRA_ERROR
+
+
+def test_one_shot_non_utf8_stream_fails_closed(tmp_path):
+    path = tmp_path / "oneshot-invalid-utf8.jsonl"
+    path.write_bytes(b'{"type":"response","text":"candidate"}\n\xff\n')
+
+    assert classify(_ctx(str(path), backend="litellm_oneshot")) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize("contents", [None, "", "  \n", "not json\n", "[]\n", "null\n", '"text"\n'])
+def test_one_shot_missing_or_corrupt_stream_fails_closed(tmp_path, contents):
+    path = tmp_path / "invalid-one-shot.jsonl"
+    if contents is not None:
+        path.write_text(contents)
+
+    ctx = TerminationContext(
+        backend="custom-evaluator",
+        jsonl_path=str(path),
+        approach="one_shot",
+        provider="litellm",
+        agent_exit=0,
+    )
+
+    assert classify(ctx) == TerminationReason.INFRA_ERROR
+
+
+def test_one_shot_rejects_junk_mixed_with_valid_contract(tmp_path):
+    path = tmp_path / "mixed-one-shot.jsonl"
+    valid_events = [
+        {"type": "response", "text": "candidate"},
+        {"type": "request_audit", **_strict_audit("litellm")},
+        {"type": "result", "status": "success", "model_requests": 1},
+    ]
+    path.write_text("junk\n" + "".join(json.dumps(event) + "\n" for event in valid_events))
+
+    ctx = TerminationContext(
+        backend="custom-evaluator",
+        jsonl_path=str(path),
+        approach="one_shot",
+        provider="litellm",
+        agent_exit=0,
+    )
+
+    assert classify(ctx) == TerminationReason.INFRA_ERROR
 
 
 @pytest.mark.parametrize("event_type", ["response", "request_audit", "result"])
@@ -304,7 +451,7 @@ def test_one_shot_duplicate_contract_event_is_infra(tmp_path, event_type):
         {"type": "response", "text": "not a complete module"},
         {
             "type": "request_audit",
-            "provider": "litellm",
+            **_strict_audit("litellm"),
             "litellm_completion_invocations": 1,
             "wire_audited": False,
             "litellm_retries_disabled": True,
@@ -325,7 +472,7 @@ def test_one_shot_duplicate_contract_event_is_infra(tmp_path, event_type):
         (
             "litellm_oneshot",
             {
-                "provider": "litellm",
+                **_strict_audit("litellm", requests=2, contract_ok=False),
                 "litellm_completion_invocations": 2,
                 "wire_audited": False,
                 "litellm_retries_disabled": True,
@@ -336,7 +483,7 @@ def test_one_shot_duplicate_contract_event_is_infra(tmp_path, event_type):
         (
             "copilot_oneshot",
             {
-                "provider": "copilot",
+                **_strict_audit("copilot", requests=2, contract_ok=False),
                 "wire_audited": True,
                 "inference_requests": 2,
                 "inference_attempts": 2,
@@ -381,8 +528,11 @@ def test_classify_never_returns_quota_exhausted(tmp_path):
 # them without a real backend, tlapm, or API key.
 
 
-class _FakeBackend:
+class _FakeBackend(AgenticBackend):
     name = "codex"
+
+    def build_command(self, workspace, result_dir):
+        return ["fake-agent"]
 
     def parse_output(self, jsonl_path):
         return ("", 0, 0)  # transcript, input_tokens, output_tokens

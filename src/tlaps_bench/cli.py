@@ -2,7 +2,7 @@ import sys
 
 # (subcommand, one-line help) — order is the order shown in --help.
 SUBCOMMANDS = [
-    ("run", "Run an agent backend (codex / claude_code / copilot / litellm) on the benchmarks"),
+    ("run", "Run an evaluator backend on the benchmarks"),
     ("check", "Check a single benchmark proof for correctness and cheating"),
     ("validate", "Batch-validate source proofs with tlapm"),
     ("generate", "Generate benchmarks (--mode proof-completion|proof-from-scratch; default proof-completion)"),

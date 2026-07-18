@@ -491,7 +491,7 @@ class TestRunPreflight:
 
 
 class TestRunAgentContainerSessionWiring:
-    """_run_agent_container composes keep_container / session_dir onto the config."""
+    """_run_backend_container composes keep_container / session_dir onto the config."""
 
     def _capture_config(self, tmp_path, *, keep_container=False, session_dir=""):
         from evaluator import runner as runner_mod
@@ -519,7 +519,7 @@ class TestRunAgentContainerSessionWiring:
 
         result: dict = {}
         with patch.object(runner_mod, "ContainerRunner", _FakeRunner):
-            runner_mod._run_agent_container(
+            runner_mod._run_backend_container(
                 item,
                 backend,
                 str(tmp_path / "ws"),

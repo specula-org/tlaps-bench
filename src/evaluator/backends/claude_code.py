@@ -6,8 +6,8 @@ import json
 import os
 import subprocess
 
+from .agentic import AgenticBackend
 from .base import (
-    AgentBackend,
     detect_firewall_hosts,
     has_aws_bedrock_bearer_token,
     has_aws_env_credentials,
@@ -19,7 +19,7 @@ from .base import (
 DEFAULT_MODEL = "claude-opus-4-8"
 
 
-class ClaudeCodeBackend(AgentBackend):
+class ClaudeCodeBackend(AgenticBackend):
     name = "claude_code"
     install_script = "install-claudecode.sh"
     session_state_dir = "/root/.claude"

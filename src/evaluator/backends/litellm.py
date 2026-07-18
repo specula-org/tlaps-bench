@@ -3,49 +3,25 @@
 from __future__ import annotations
 
 import json
-import os
 
-from .base import (
-    AgentBackend,
-    detect_firewall_hosts,
-    has_aws_bedrock_bearer_token,
-    has_aws_env_credentials,
-    has_aws_shared_credentials,
-    needs_aws_shared_credentials,
-)
-
-DEFAULT_MODEL = "claude-sonnet-4-6"
+from .agentic import AgenticBackend
+from .base import detect_firewall_hosts
+from .litellm_common import DEFAULT_MODEL, ENV_KEYS, check_auth, credential_mounts, uses_bedrock
 
 
-class LiteLLMBackend(AgentBackend):
+class LiteLLMBackend(AgenticBackend):
     name = "litellm"
     install_script = "install-litellm.sh"
-    env_keys = [
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GOOGLE_API_KEY",
-        "GEMINI_API_KEY",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_API_BASE",
-        "AZURE_API_VERSION",
-        "DEEPSEEK_API_KEY",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_REGION",
-        "AWS_DEFAULT_REGION",
-        "AWS_REGION_NAME",
-    ]
+    env_keys = ENV_KEYS
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
 
     def get_credential_mounts(self) -> list[str]:
-        if self._uses_bedrock() and needs_aws_shared_credentials():
-            return ["aws"]
-        return []
+        return credential_mounts(self.model)
 
     def _uses_bedrock(self) -> bool:
-        return "bedrock" in self.model.lower()
+        return uses_bedrock(self.model)
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         return [
@@ -61,34 +37,7 @@ class LiteLLMBackend(AgentBackend):
         return detect_firewall_hosts(self.model)
 
     def check_auth(self) -> str | None:
-        m = self.model.lower()
-        if "bedrock" in m:
-            if has_aws_bedrock_bearer_token():
-                if not (os.environ.get("AWS_REGION_NAME") or os.environ.get("AWS_REGION")):
-                    return "litellm: AWS_REGION_NAME or AWS_REGION required for bedrock bearer-token auth"
-                return None
-            if has_aws_env_credentials():
-                if not (os.environ.get("AWS_REGION_NAME") or os.environ.get("AWS_REGION")):
-                    return "litellm: AWS_REGION_NAME or AWS_REGION required for bedrock model"
-                return None
-            if has_aws_shared_credentials():
-                return None
-            return "litellm: AWS credentials not found for bedrock model"
-        if "anthropic" in m or "claude" in m:
-            if os.environ.get("ANTHROPIC_API_KEY"):
-                return None
-            return "litellm: ANTHROPIC_API_KEY not set for anthropic model"
-        if "gemini" in m or "google" in m:
-            if os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"):
-                return None
-            return "litellm: GOOGLE_API_KEY or GEMINI_API_KEY not set for google model"
-        if "deepseek" in m:
-            if os.environ.get("DEEPSEEK_API_KEY"):
-                return None
-            return "litellm: DEEPSEEK_API_KEY not set for deepseek model"
-        if os.environ.get("OPENAI_API_KEY") or os.environ.get("AZURE_OPENAI_API_KEY"):
-            return None
-        return "litellm: OPENAI_API_KEY not set"
+        return check_auth(self.model, self.name)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

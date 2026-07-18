@@ -12,7 +12,14 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from .base import AgentBackend
+from evaluator.termination import TerminationReason
+
+from .base import (
+    Backend,
+    BackendCapabilities,
+    SubmissionDisposition,
+    SubmissionPlan,
+)
 
 _FENCED_BLOCK = re.compile(r"```(?P<language>[^\n`]*)\r?\n(?P<body>.*?)```", re.DOTALL)
 _REQUEST_COUNT_KEYS = (
@@ -72,15 +79,26 @@ def _unwrap_tla_fence(response: str) -> str:
     return match.group("body")
 
 
-class OneShotBackend(AgentBackend):
-    """Common command, output, and materialization behavior for one-shot runs."""
+class OneShotBackend(Backend):
+    """Sibling backend approach for one audited, tool-free model request."""
 
     provider: str = ""
     model: str
-    is_one_shot = True
-    supports_model_preflight = False
-    supports_continuations = False
-    default_infra_retries = 0
+    approach = "one_shot"
+    capabilities = BackendCapabilities(
+        model_preflight=False,
+        default_infra_retries=0,
+        max_infra_retries=0,
+        max_continuations=0,
+    )
+
+    @staticmethod
+    def _is_exact_count(value: object, expected: int) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value == expected
+
+    @staticmethod
+    def _is_exact_bool(value: object, expected: bool) -> bool:
+        return value is expected
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         runner = (
@@ -99,6 +117,72 @@ class OneShotBackend(AgentBackend):
             "--model",
             self.model,
         ]
+
+    def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:
+        command = self.build_command(workspace, result_dir)
+        command.extend(("--deadline", f"{deadline:.6f}" if deadline is not None else "0"))
+        return command
+
+    def build_prompt(
+        self,
+        mode: Any,
+        benchmark_path: str,
+        dependencies: list[str],
+        benchmark_basename: str,
+        tlapm_path: str,
+        tlapm_lib: str,
+    ) -> str:
+        return mode.build_one_shot_prompt(benchmark_path, dependencies)
+
+    def initial_result_metadata(self) -> dict[str, object]:
+        return {
+            **super().initial_result_metadata(),
+            "one_shot": True,
+            "model_requests": 0,
+        }
+
+    def prepare_submission(
+        self,
+        jsonl_path: str,
+        destination: str,
+        termination_reason: str,
+        error: str,
+        *,
+        allow_materialization: bool,
+    ) -> SubmissionPlan:
+        if not allow_materialization:
+            return SubmissionPlan(copy_solution=False)
+        if termination_reason == TerminationReason.INFRA_ERROR:
+            return SubmissionPlan(
+                disposition=SubmissionDisposition.ERROR,
+                copy_solution=False,
+                error=error or "one-shot request contract violation",
+            )
+        if termination_reason == TerminationReason.TIMEOUT:
+            return SubmissionPlan(
+                disposition=SubmissionDisposition.TIMEOUT,
+                copy_solution=False,
+                error=error or None,
+            )
+        if termination_reason != TerminationReason.OK:
+            return SubmissionPlan(
+                disposition=SubmissionDisposition.ERROR,
+                copy_solution=False,
+                error=error or f"one-shot run ended with {termination_reason}",
+            )
+
+        materialized = self.materialize_solution(jsonl_path, destination)
+        metadata: dict[str, object] = {"materialized": materialized}
+        if not materialized:
+            message = "one-shot response could not be uniquely materialized"
+            metadata["materialization_error"] = message
+            return SubmissionPlan(
+                disposition=SubmissionDisposition.FAIL,
+                copy_solution=False,
+                error=message,
+                metadata=metadata,
+            )
+        return SubmissionPlan(copy_solution=True, metadata=metadata)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []
@@ -186,3 +270,18 @@ class OneShotBackend(AgentBackend):
         metadata["one_shot"] = True
         metadata["model_requests"] = max(request_counts) if request_counts else int(saw_model_output)
         return metadata
+
+    def validate_request_audit(self, audit: dict[str, object], request_count: int) -> bool:
+        """Validate the provider-neutral strict request contract."""
+
+        return (
+            audit.get("provider") == self.provider
+            and self._is_exact_count(audit.get("model_requests"), request_count)
+            and audit.get("audit_scope") in {"adapter", "wire"}
+            and audit.get("contract_ok") is True
+            and self._is_exact_count(audit.get("request_attempts"), request_count)
+            and self._is_exact_count(audit.get("blocked_requests"), 0)
+            and audit.get("system_prompt_present") is False
+            and audit.get("tools_present") is False
+            and audit.get("retries_enabled") is False
+        )

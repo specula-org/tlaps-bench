@@ -14,6 +14,7 @@ import os
 import pytest
 
 from evaluator import runner
+from evaluator.backends.agentic import AgenticBackend
 from evaluator.termination import TerminationReason
 
 BENCH_TEXT = "---- MODULE Bar ----\n====\n"
@@ -27,7 +28,7 @@ STARTUP = {"exit": 1, "stderr": "Error: Failed to load models\n\nError: Failed t
 GENUINE_FAIL = {"exit": 0, "events": CLEAN_EVENTS, "out_tokens": 500}
 
 
-class _ScriptedBackend:
+class _ScriptedBackend(AgenticBackend):
     """Backend whose per-attempt behavior is scripted (see _install_agent)."""
 
     name = "copilot"
@@ -37,6 +38,9 @@ class _ScriptedBackend:
 
     def parse_output(self, jsonl_path):
         return ("", 0, self.out_tokens)
+
+    def build_command(self, workspace, result_dir):
+        return ["fake-agent"]
 
     def detect_quota_block(self, jsonl_path):
         return None
@@ -80,7 +84,7 @@ def _work_item(tmp_path, backend, infra_retries=3):
 
 
 def _install_agent(monkeypatch, backend, attempts):
-    """Patch _run_agent_local with a scripted agent: one spec dict per attempt
+    """Patch _run_backend_local with a scripted agent: one spec dict per attempt
     ({"exit": int, "events": [...], "stderr": str, "out_tokens": int,
     "error": str, "mutate": fn(workspace)})."""
     calls = {"n": 0, "workspaces": [], "canonical_dirs": []}
@@ -107,7 +111,7 @@ def _install_agent(monkeypatch, backend, attempts):
         if "mutate_canonical" in spec:
             spec["mutate_canonical"](canonical_dir)
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_run)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_run)
     return calls
 
 

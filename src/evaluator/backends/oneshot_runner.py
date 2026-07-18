@@ -15,9 +15,10 @@ import json
 import os
 import sys
 import tempfile
-from contextlib import suppress
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -236,6 +237,9 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         self._prompt = prompt
         self.model = model
         self._expected_session_id: str | None = None
+        self._deadline: float | None = None
+        self._frozen = False
+        self._forward_tasks: set[asyncio.Task[httpx.Response]] = set()
         self.inference_attempts = 0
         self.forwarded_inference_requests = 0
         self.blocked_requests = 0
@@ -252,6 +256,30 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             raise RuntimeError("strict one-shot: handler cannot be rebound to another session")
         self._expected_session_id = session_id
 
+    def set_deadline(self, deadline: float | None) -> None:
+        """Bind the benchmark deadline before the SDK can start inference."""
+
+        if self._deadline is not None and deadline != self._deadline:
+            raise RuntimeError("strict one-shot: handler deadline cannot be rebound")
+        self._deadline = deadline
+        if deadline is not None and time.time() >= deadline:
+            self.freeze()
+
+    def freeze(self) -> None:
+        """Atomically close inference and cancel any forwarding work in flight."""
+
+        self._frozen = True
+        for task in tuple(self._forward_tasks):
+            task.cancel()
+
+    def _inference_closed(self) -> bool:
+        if self._frozen:
+            return True
+        if self._deadline is not None and time.time() >= self._deadline:
+            self.freeze()
+            return True
+        return False
+
     async def _forward(self, request: httpx.Request, ctx: object) -> httpx.Response:
         return await super().send_request(request, ctx)
 
@@ -263,6 +291,11 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             self.blocked_requests += 1
             self.unknown_requests += 1
             raise RuntimeError("strict one-shot: blocked unknown model-layer endpoint")
+
+        if self._inference_closed():
+            self.inference_attempts += 1
+            self.blocked_requests += 1
+            raise RuntimeError("strict one-shot: blocked inference request after benchmark deadline")
 
         self.inference_attempts += 1
         self.endpoint = endpoint
@@ -303,11 +336,19 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         # Reserve the only forwarding slot before the await.  A runtime retry or
         # concurrent attempt therefore observes the slot as consumed even when
         # the first upstream request fails after being sent.
+        if self._inference_closed():
+            self.blocked_requests += 1
+            raise RuntimeError("strict one-shot: blocked inference request after benchmark deadline")
         self.forwarded_inference_requests = 1
         self.request_sha256 = hashlib.sha256(body).hexdigest()
         self.system_removed = True
         self.tools_removed = True
-        return await self._forward(rewritten, ctx)
+        forward_task = asyncio.create_task(self._forward(rewritten, ctx))
+        self._forward_tasks.add(forward_task)
+        try:
+            return await forward_task
+        finally:
+            self._forward_tasks.discard(forward_task)
 
     async def open_websocket(self, _ctx: object) -> object:
         self.inference_attempts += 1
@@ -319,8 +360,21 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             raise RuntimeError("strict one-shot: expected exactly one inference attempt and one forwarded request")
 
     def audit(self) -> dict[str, object]:
+        contract_ok = (
+            self.blocked_requests == 0
+            and self.inference_attempts == self.forwarded_inference_requests
+            and self.forwarded_inference_requests <= 1
+            and (self.forwarded_inference_requests == 0 or (self.system_removed is True and self.tools_removed is True))
+        )
         audit: dict[str, object] = {
             "provider": "copilot",
+            "model_requests": self.forwarded_inference_requests,
+            "request_attempts": self.inference_attempts,
+            "system_prompt_present": self.forwarded_inference_requests > 0 and self.system_removed is not True,
+            "tools_present": self.forwarded_inference_requests > 0 and self.tools_removed is not True,
+            "retries_enabled": False,
+            "audit_scope": "wire",
+            "contract_ok": contract_ok,
             "wire_audited": True,
             "inference_requests": self.forwarded_inference_requests,
             "inference_attempts": self.inference_attempts,
@@ -328,6 +382,7 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             "unknown_requests": self.unknown_requests,
             "system_removed": self.system_removed,
             "tools_removed": self.tools_removed,
+            "deadline_closed": self._frozen,
         }
         if self.model is not None:
             audit["model"] = self.model
@@ -406,22 +461,34 @@ def _litellm_max_tokens(litellm: object, model: str) -> int:
     return 32_768
 
 
-def run_litellm(prompt: str, model: str) -> ProviderResult:
+def _litellm_audit(prompt: str, model: str, max_tokens: int = 32_768) -> dict[str, object]:
     request = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-    request_sha256 = hashlib.sha256(
-        json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    audit: dict[str, object] = {
+    return {
         "provider": "litellm",
         "model": model,
+        "model_requests": 0,
+        "request_attempts": 0,
+        "blocked_requests": 0,
+        "system_prompt_present": False,
+        "tools_present": False,
+        "retries_enabled": False,
+        "audit_scope": "adapter",
+        "contract_ok": True,
         "litellm_completion_invocations": 0,
         "wire_audited": False,
         "litellm_retries_disabled": True,
-        "request_sha256": request_sha256,
+        "request_sha256": hashlib.sha256(
+            json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
         "system_supplied": False,
         "tools_supplied": False,
-        "max_tokens": 32_768,
+        "max_tokens": max_tokens,
     }
+
+
+def run_litellm(prompt: str, model: str) -> ProviderResult:
+    request = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+    audit = _litellm_audit(prompt, model)
     try:
         import litellm
     except ImportError as exc:
@@ -437,6 +504,8 @@ def run_litellm(prompt: str, model: str) -> ProviderResult:
     output_tokens = 0
     try:
         audit["litellm_completion_invocations"] = 1
+        audit["model_requests"] = 1
+        audit["request_attempts"] = 1
         response = litellm.completion(
             model=model,
             messages=request["messages"],
@@ -496,7 +565,12 @@ def _copilot_usage(events: list[object], usage_data_type: type | None) -> tuple[
     return input_tokens, output_tokens, finish_reason
 
 
-async def _send_copilot_and_wait(session: object, prompt: str, timeout: float | None) -> object:
+async def _send_copilot_and_wait(
+    session: object,
+    prompt: str,
+    deadline: float | None,
+    on_deadline: Callable[[], None] | None = None,
+) -> object:
     """Wait for Copilot with a distinguishable runner-owned deadline."""
 
     async def send() -> object:
@@ -506,19 +580,32 @@ async def _send_copilot_and_wait(session: object, prompt: str, timeout: float | 
             timeout=None,
         )
 
-    if timeout is None:
+    if deadline is None:
         return await send()
 
+    remaining = deadline - time.time()
+    if remaining <= 0:
+        if on_deadline is not None:
+            on_deadline()
+        raise _CopilotDeadlineExceeded
+
     task = asyncio.create_task(send())
-    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=remaining)
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
     if task in done:
         # A provider/network TimeoutError raised by the task remains a normal
         # provider failure; only our own elapsed deadline gets the marker below.
         return task.result()
 
     task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    # Emit the terminal timeout evidence before any cancellation wait or SDK
+    # context teardown can hang. The host gives this flush a bounded grace and
+    # hard-kills only after that grace expires.
+    if on_deadline is not None:
+        on_deadline()
     raise _CopilotDeadlineExceeded
 
 
@@ -526,13 +613,75 @@ async def run_copilot(
     prompt: str,
     model: str,
     workspace: str,
-    timeout: float | None,
+    deadline: float | None,
     handler: StrictCopilotRequestHandler | None = None,
+    on_timeout: Callable[[ProviderTimeoutError], None] | None = None,
 ) -> ProviderResult:
     guard = handler or StrictCopilotRequestHandler(prompt)
     guard.model = model
+    guard.set_deadline(deadline)
     events: list[object] = []
     usage_data_type: type | None = None
+    session: object | None = None
+    deadline_reported = False
+    owner_task = asyncio.current_task()
+    abort_tasks: set[asyncio.Task[None]] = set()
+
+    def timeout_error() -> ProviderTimeoutError:
+        input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
+        audit = guard.audit()
+        if finish_reason is not None:
+            audit["finish_reason"] = finish_reason
+        return ProviderTimeoutError(
+            "Copilot request reached benchmark deadline",
+            audit,
+            input_tokens,
+            output_tokens,
+        )
+
+    async def abort_session(target: object) -> None:
+        try:
+            await target.abort()  # type: ignore[attr-defined]
+        except Exception:
+            # The guard is already frozen. Abort is only a best-effort signal to
+            # stop provider work and must never delay or replace durable evidence.
+            return
+
+    def schedule_abort() -> None:
+        if session is None:
+            return
+        task = asyncio.create_task(abort_session(session))
+        abort_tasks.add(task)
+        task.add_done_callback(abort_tasks.discard)
+
+    def report_deadline() -> None:
+        nonlocal deadline_reported
+        if deadline_reported:
+            return
+        deadline_reported = True
+        # Freeze first so the bounded drain window cannot start another model
+        # request. Persist the stable audit before any SDK abort/teardown await.
+        guard.freeze()
+        error = timeout_error()
+        try:
+            if on_timeout is not None:
+                on_timeout(error)
+        finally:
+            schedule_abort()
+
+    async def deadline_watchdog() -> None:
+        assert deadline is not None
+        remaining = deadline - time.time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        report_deadline()
+        if owner_task is not None and not owner_task.done():
+            owner_task.cancel()
+
+    if deadline is not None and deadline <= time.time():
+        report_deadline()
+        raise timeout_error()
+    watchdog_task = asyncio.create_task(deadline_watchdog()) if deadline is not None else None
 
     try:
         CopilotClient, AssistantMessageData, AssistantUsageData = _load_copilot_sdk()
@@ -575,9 +724,12 @@ async def run_copilot(
                     memory={"enabled": False},
                     on_event=events.append,
                 )
+                if deadline_reported:
+                    schedule_abort()
+                    raise _CopilotDeadlineExceeded
                 guard.bind_session(session.session_id)
                 async with session:
-                    final_event = await _send_copilot_and_wait(session, prompt, timeout)
+                    final_event = await _send_copilot_and_wait(session, prompt, deadline, report_deadline)
 
         guard.assert_complete()
         if final_event is None or not isinstance(final_event.data, AssistantMessageData):
@@ -587,19 +739,21 @@ async def run_copilot(
             raise RuntimeError("Copilot returned an empty assistant message")
         if getattr(final_event.data, "tool_requests", None):
             raise RuntimeError("Copilot returned tool requests in strict one-shot mode")
+    except asyncio.CancelledError as exc:
+        if deadline_reported:
+            raise timeout_error() from exc
+        raise
     except Exception as exc:
         input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
         audit = guard.audit()
         if finish_reason is not None:
             audit["finish_reason"] = finish_reason
-        if timeout is not None and isinstance(exc, _CopilotDeadlineExceeded):
-            raise ProviderTimeoutError(
-                f"Copilot request timed out after {timeout:g}s",
-                audit,
-                input_tokens,
-                output_tokens,
-            ) from exc
+        if deadline_reported or (deadline is not None and isinstance(exc, _CopilotDeadlineExceeded)):
+            raise timeout_error() from exc
         raise ProviderRunError(str(exc), audit, input_tokens, output_tokens) from exc
+    finally:
+        if watchdog_task is not None:
+            watchdog_task.cancel()
 
     input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
     audit = guard.audit()
@@ -608,13 +762,77 @@ async def run_copilot(
     return ProviderResult(text, input_tokens, output_tokens, audit)
 
 
+class OneShotProvider(Protocol):
+    """Runtime adapter used by the provider-neutral one-shot process."""
+
+    @property
+    def audit(self) -> dict[str, object]: ...
+
+    def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult: ...
+
+
+ProviderFactory = Callable[[str, str, str, float | None], OneShotProvider]
+
+
+class _LiteLLMProvider:
+    def __init__(self, prompt: str, model: str, _workspace: str, _deadline: float | None) -> None:
+        self.prompt = prompt
+        self.model = model
+
+    @property
+    def audit(self) -> dict[str, object]:
+        return _litellm_audit(self.prompt, self.model)
+
+    def invoke(self, _on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
+        return run_litellm(self.prompt, self.model)
+
+
+class _CopilotProvider:
+    def __init__(self, prompt: str, model: str, workspace: str, deadline: float | None) -> None:
+        self.prompt = prompt
+        self.model = model
+        self.workspace = workspace
+        self.deadline = deadline
+        self.guard = StrictCopilotRequestHandler(prompt, model)
+
+    @property
+    def audit(self) -> dict[str, object]:
+        return self.guard.audit()
+
+    def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
+        return asyncio.run(
+            run_copilot(
+                self.prompt,
+                self.model,
+                self.workspace,
+                self.deadline,
+                handler=self.guard,
+                on_timeout=on_timeout,
+            )
+        )
+
+
+_PROVIDER_REGISTRY: dict[str, ProviderFactory] = {
+    "litellm": _LiteLLMProvider,
+    "copilot": _CopilotProvider,
+}
+
+
+def register_provider(name: str, factory: ProviderFactory) -> None:
+    """Register a one-shot provider without changing the runner lifecycle."""
+
+    if not name or name in _PROVIDER_REGISTRY:
+        raise ValueError(f"one-shot provider already registered or invalid: {name!r}")
+    _PROVIDER_REGISTRY[name] = factory
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one strict one-shot model request")
-    parser.add_argument("--provider", required=True, choices=("litellm", "copilot"))
+    parser.add_argument("--provider", required=True, choices=sorted(_PROVIDER_REGISTRY))
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--result-dir", required=True)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--timeout", type=float, default=28_800.0)
+    parser.add_argument("--deadline", type=float, default=0.0)
     return parser.parse_args(argv)
 
 
@@ -625,46 +843,25 @@ def main(argv: list[str] | None = None) -> int:
         _emit("error", message="empty prompt on stdin")
         _emit("result", status="error", model_requests=0)
         return 1
-    guard = StrictCopilotRequestHandler(prompt, args.model) if args.provider == "copilot" else None
-    if args.provider == "litellm":
-        audit: dict[str, object] = {
-            "provider": "litellm",
-            "model": args.model,
-            "litellm_completion_invocations": 0,
-            "wire_audited": False,
-            "litellm_retries_disabled": True,
-        }
-    else:
-        audit = guard.audit() if guard is not None else {"provider": "copilot", "model": args.model}
-    try:
-        if args.provider == "litellm":
-            result = run_litellm(prompt, args.model)
-        else:
-            timeout = args.timeout if args.timeout > 0 else None
-            result = asyncio.run(run_copilot(prompt, args.model, args.workspace, timeout, handler=guard))
-        audit = result.audit
-        _emit("response", text=result.text)
-        _emit(
-            "usage",
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            model_requests=1,
-        )
-        _emit("request_audit", **audit)
-        _emit("result", status="success", model_requests=1)
-        return 0
-    except Exception as exc:
+    deadline = args.deadline if args.deadline > 0 else None
+    provider = _PROVIDER_REGISTRY[args.provider](prompt, args.model, args.workspace, deadline)
+    terminal_emitted = False
+
+    def emit_failure(exc: Exception) -> None:
+        nonlocal terminal_emitted
+        if terminal_emitted:
+            return
+        terminal_emitted = True
+        audit = provider.audit
         input_tokens = 0
         output_tokens = 0
         if isinstance(exc, ProviderRunError):
             audit = exc.audit
             input_tokens = exc.input_tokens
             output_tokens = exc.output_tokens
-        elif guard is not None:
-            audit = guard.audit()
         request_count = audit.get(
-            "litellm_completion_invocations",
-            audit.get("inference_requests", 0),
+            "model_requests",
+            audit.get("litellm_completion_invocations", audit.get("inference_requests", 0)),
         )
         model_requests = _nonnegative_int(request_count)
         if model_requests > 0:
@@ -678,6 +875,23 @@ def main(argv: list[str] | None = None) -> int:
         _emit("error", message=str(exc))
         status = "timeout" if isinstance(exc, ProviderTimeoutError) else "error"
         _emit("result", status=status, model_requests=model_requests)
+
+    try:
+        result = provider.invoke(emit_failure)
+        if terminal_emitted:
+            return 1
+        _emit("response", text=result.text)
+        _emit(
+            "usage",
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            model_requests=1,
+        )
+        _emit("request_audit", **result.audit)
+        _emit("result", status="success", model_requests=1)
+        return 0
+    except Exception as exc:
+        emit_failure(exc)
         return 1
 
 

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from evaluator import runner
+from evaluator.backends.agentic import AgenticBackend
+from evaluator.backends.copilot_oneshot import CopilotOneShotBackend
 from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
 
 MODULE = "---- MODULE Example ----\nTHEOREM Target == TRUE\nPROOF OBVIOUS\n====\n"
@@ -60,6 +65,14 @@ def _write_clean_response(path: str) -> None:
         {
             "type": "request_audit",
             "provider": "litellm",
+            "model_requests": 1,
+            "request_attempts": 1,
+            "blocked_requests": 0,
+            "system_prompt_present": False,
+            "tools_present": False,
+            "retries_enabled": False,
+            "audit_scope": "adapter",
+            "contract_ok": True,
             "litellm_completion_invocations": 1,
             "wire_audited": False,
             "litellm_retries_disabled": True,
@@ -77,6 +90,14 @@ def _write_provider_timeout(path: str, timeout: int) -> None:
         {
             "type": "request_audit",
             "provider": "litellm",
+            "model_requests": 1,
+            "request_attempts": 1,
+            "blocked_requests": 0,
+            "system_prompt_present": False,
+            "tools_present": False,
+            "retries_enabled": False,
+            "audit_scope": "adapter",
+            "contract_ok": True,
             "litellm_completion_invocations": 1,
             "wire_audited": False,
             "litellm_retries_disabled": True,
@@ -109,7 +130,7 @@ def test_rerun_clears_owned_artifacts_and_preserves_unknown_files(tmp_path, monk
         _write_clean_response(agent_jsonl)
         result["agent_exit"] = 0
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_agent)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_agent)
     monkeypatch.setattr(item.backend, "materialize_solution", lambda *args: False)
     monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("grader must not run"))
 
@@ -170,7 +191,7 @@ def test_oneshot_timeout_skips_materialization_and_grading(tmp_path, monkeypatch
         result["agent_exit"] = -1
         result["error"] = "litellm_oneshot timeout after 37s"
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_agent)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_agent)
     monkeypatch.setattr(
         item.backend,
         "materialize_solution",
@@ -201,7 +222,7 @@ def test_provider_timeout_event_preserves_timeout_and_error(tmp_path, monkeypatc
         _write_provider_timeout(agent_jsonl, item_.timeout)
         result["agent_exit"] = 1
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_agent)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_agent)
     monkeypatch.setattr(
         item.backend,
         "materialize_solution",
@@ -219,17 +240,27 @@ def test_provider_timeout_event_preserves_timeout_and_error(tmp_path, monkeypatc
     assert json.loads((result_dir / "result.json").read_text()) == result
 
 
-@pytest.mark.parametrize(("timeout", "forwarded"), [(40_000, "40000"), (0, "0"), (-5, "0")])
-def test_oneshot_command_forwards_outer_timeout(timeout, forwarded, tmp_path):
+def test_copilot_command_receives_absolute_deadline(tmp_path):
+    backend = CopilotOneShotBackend()
+    deadline = time.time() + 40_000
+
+    command = runner._build_backend_command(backend, str(tmp_path), str(tmp_path / "results"), deadline)
+
+    assert command[-2] == "--deadline"
+    assert float(command[-1]) == pytest.approx(deadline, abs=1e-6)
+
+
+def test_litellm_command_has_no_cooperative_deadline(tmp_path):
     backend = LiteLLMOneShotBackend()
 
-    command = runner._build_agent_command(backend, str(tmp_path), str(tmp_path / "results"), timeout)
+    command = runner._build_backend_command(backend, str(tmp_path), str(tmp_path / "results"), None)
 
-    assert command[-2:] == ["--timeout", forwarded]
+    assert command[-2:] == ["--deadline", "0"]
 
 
-def test_local_runner_launches_oneshot_with_outer_timeout(tmp_path, monkeypatch):
+def test_local_runner_launches_copilot_with_absolute_deadline(tmp_path, monkeypatch):
     item, _result_dir = _make_item(tmp_path, timeout=40_000)
+    item.backend = CopilotOneShotBackend()
     agent_dir = tmp_path / "agent"
     agent_dir.mkdir()
     captured = {}
@@ -249,7 +280,7 @@ def test_local_runner_launches_oneshot_with_outer_timeout(tmp_path, monkeypatch)
     monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
 
     result = {}
-    runner._run_agent_local(
+    runner._run_backend_local(
         item,
         item.backend,
         item.mode,
@@ -261,13 +292,16 @@ def test_local_runner_launches_oneshot_with_outer_timeout(tmp_path, monkeypatch)
         "/bin/true",
     )
 
-    assert "--timeout 40000" in captured["command"][2]
+    match = re.search(r"--deadline ([0-9.]+)", captured["command"][2])
+    assert match is not None
+    assert float(match.group(1)) > time.time() + 39_000
     assert captured["communicate"]["input"] == "prompt"
     assert result["agent_exit"] == 0
 
 
-def test_container_runner_launches_oneshot_with_outer_timeout(tmp_path, monkeypatch):
+def test_container_runner_launches_copilot_with_absolute_deadline(tmp_path, monkeypatch):
     item, _result_dir = _make_item(tmp_path, timeout=40_000)
+    item.backend = CopilotOneShotBackend()
     agent_dir = tmp_path / "agent"
     agent_dir.mkdir()
     captured = {}
@@ -293,7 +327,7 @@ def test_container_runner_launches_oneshot_with_outer_timeout(tmp_path, monkeypa
     monkeypatch.setattr(runner, "ContainerRunner", FakeContainerRunner)
 
     result = {}
-    runner._run_agent_container(
+    runner._run_backend_container(
         item,
         item.backend,
         str(tmp_path),
@@ -303,18 +337,169 @@ def test_container_runner_launches_oneshot_with_outer_timeout(tmp_path, monkeypa
         result,
     )
 
-    assert captured["command"][-2:] == ["--timeout", "40000"]
+    assert captured["command"][-2] == "--deadline"
+    assert float(captured["command"][-1]) > time.time() + 39_000
     assert captured["stdin_data"] == "prompt"
     assert result["agent_exit"] == 0
 
 
 def test_agentic_command_is_unchanged_by_timeout_forwarding():
-    class Backend:
-        is_one_shot = False
-
+    class Backend(AgenticBackend):
         def build_command(self, workspace, result_dir):
             return ["agent", workspace, result_dir]
 
-    command = runner._build_agent_command(Backend(), "/workspace", "/results", 300)
+        def parse_output(self, jsonl_path):
+            return "", 0, 0
+
+    command = runner._build_backend_command(Backend(), "/workspace", "/results", None)
 
     assert command == ["agent", "/workspace", "/results"]
+
+
+def test_copilot_timeout_drains_audit_before_outer_hard_kill(tmp_path, monkeypatch):
+    driver = tmp_path / "cooperative_timeout.py"
+    driver.write_text(
+        """\
+import argparse
+import json
+import time
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--deadline", type=float, required=True)
+args = parser.parse_args()
+while time.time() < args.deadline:
+    time.sleep(0.005)
+events = [
+    {"type": "usage", "input_tokens": 17, "output_tokens": 9, "model_requests": 1},
+    {
+        "type": "request_audit",
+        "provider": "copilot",
+        "model_requests": 1,
+        "audit_scope": "wire",
+        "contract_ok": True,
+        "inference_requests": 1,
+        "inference_attempts": 1,
+        "blocked_requests": 0,
+        "system_removed": True,
+        "tools_removed": True,
+    },
+    {"type": "error", "message": "Copilot request reached benchmark deadline"},
+    {"type": "result", "status": "timeout", "model_requests": 1},
+]
+for event in events:
+    print(json.dumps(event), flush=True)
+# Simulate slow SDK/session cleanup after terminal evidence is already durable.
+time.sleep(0.15)
+raise SystemExit(1)
+"""
+    )
+
+    class CooperativeCopilot(CopilotOneShotBackend):
+        def build_command(self, workspace, result_dir):
+            return [sys.executable, str(driver)]
+
+    item, result_dir = _make_item(tmp_path, timeout=0.2)
+    item.backend = CooperativeCopilot()
+    monkeypatch.setattr(
+        item.backend,
+        "materialize_solution",
+        lambda *args: pytest.fail("timeout must not materialize"),
+    )
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("timeout must not grade"))
+
+    result = runner.run_single_benchmark(item)
+    events = [json.loads(line) for line in (result_dir / "agent" / "output.jsonl").read_text().splitlines()]
+
+    assert [event["type"] for event in events] == ["usage", "request_audit", "error", "result"]
+    assert result["termination_reason"] == "TIMEOUT"
+    assert result["check_verdict"] == "TIMEOUT"
+    assert result["model_requests"] == 1
+    assert (result["input_tokens"], result["output_tokens"]) == (17, 9)
+    assert result["time_secs"] == pytest.approx(0.2, abs=0.02)
+
+
+def test_zero_request_provider_error_preserves_root_cause(tmp_path, monkeypatch):
+    item, result_dir = _make_item(tmp_path)
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        events = [
+            {
+                "type": "request_audit",
+                "provider": "litellm",
+                "model_requests": 0,
+                "audit_scope": "adapter",
+                "contract_ok": True,
+            },
+            {"type": "error", "message": "HTTP 401 Unauthorized"},
+            {"type": "result", "status": "error", "model_requests": 0},
+        ]
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("provider error must not grade"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert result["check_verdict"] == "ERROR"
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["error"] == "HTTP 401 Unauthorized"
+    assert json.loads((result_dir / "result.json").read_text())["error"] == "HTTP 401 Unauthorized"
+
+
+def test_post_request_contract_error_preserves_root_cause(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        events = [
+            {"type": "usage", "input_tokens": 11, "output_tokens": 4, "model_requests": 1},
+            {
+                "type": "request_audit",
+                "provider": "litellm",
+                "model_requests": 1,
+                "audit_scope": "adapter",
+                "contract_ok": False,
+            },
+            {"type": "error", "message": "strict one-shot: blocked second request"},
+            {"type": "result", "status": "error", "model_requests": 1},
+        ]
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("contract error must not grade"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert result["check_verdict"] == "ERROR"
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["error"] == "strict one-shot: blocked second request"
+    assert (result["input_tokens"], result["output_tokens"]) == (11, 4)
+
+
+def test_clean_empty_oneshot_stream_is_infra_not_capability_fail(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        Path(agent_jsonl).write_text("")
+        result["agent_exit"] = 0
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(
+        item.backend,
+        "materialize_solution",
+        lambda *args: pytest.fail("invalid stream must not materialize"),
+    )
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("invalid stream must not grade"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert result["check_verdict"] == "ERROR"
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["model_requests"] == 0

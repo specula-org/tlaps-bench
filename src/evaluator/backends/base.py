@@ -1,10 +1,12 @@
-"""Abstract base class for agent CLI backends."""
+"""Shared contracts for evaluator backends."""
 
 from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 BEDROCK_HOSTS = [
@@ -126,20 +128,56 @@ def has_aws_shared_credentials() -> bool:
     return (Path.home() / ".aws").is_dir()
 
 
-class AgentBackend(ABC):
+@dataclass(frozen=True)
+class BackendCapabilities:
+    """Execution features supported by a backend approach.
+
+    ``max_*`` is ``None`` when the capability is unbounded.  A cooperative
+    deadline lets the backend emit its final audit at the logical benchmark
+    deadline; ``timeout_drain_grace`` is only a bounded flush/cleanup window
+    before the host hard-kills it, never additional model time.
+    """
+
+    model_preflight: bool = True
+    default_infra_retries: int = 3
+    max_infra_retries: int | None = None
+    max_continuations: int | None = None
+    cooperative_deadline: bool = False
+    timeout_drain_grace: float = 0.0
+
+
+class SubmissionDisposition:
+    """What the common runner should do with a backend submission."""
+
+    GRADE = "GRADE"
+    FAIL = "FAIL"
+    ERROR = "ERROR"
+    TIMEOUT = "TIMEOUT"
+
+
+@dataclass(frozen=True)
+class SubmissionPlan:
+    """Backend-owned preparation result consumed by the common runner."""
+
+    disposition: str = SubmissionDisposition.GRADE
+    copy_solution: bool = True
+    error: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+class Backend(ABC):
+    """A first-class evaluator backend, independent of interaction approach."""
+
     name: str = ""
+    approach: str = "agentic"
+    provider: str | None = None
     install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
     env_keys: list[str] = []  # host env vars to forward into container
     credential_mounts: list[str] = []  # host credential dirs to copy into agent containers
     # Container path holding this backend's session state; --session-dir mounts
     # a persistent host dir here. None = no session dir (e.g. litellm).
     session_state_dir: str | None = None
-    # Capability flags used by the runner. Agentic backends keep the historical
-    # behavior; strict one-shot backends override these defaults.
-    is_one_shot: bool = False
-    supports_model_preflight: bool = True
-    supports_continuations: bool = True
-    default_infra_retries: int = 3
+    capabilities = BackendCapabilities()
 
     def get_credential_mounts(self) -> list[str]:
         """Credential directories this backend needs mounted for the current run."""
@@ -147,7 +185,7 @@ class AgentBackend(ABC):
 
     @abstractmethod
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        """Build the agent CLI command. Prompt is fed via stdin.
+        """Build the backend command. Prompt is fed via stdin.
 
         Args:
             workspace: agent's working directory (will be the CLI's cwd).
@@ -157,6 +195,85 @@ class AgentBackend(ABC):
     @abstractmethod
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         """Parse the backend's stdout dump into (transcript, input_tokens, output_tokens)."""
+
+    def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:
+        """Build one execution command.
+
+        Agentic backends retain their existing command unchanged. Approaches
+        with a cooperative logical deadline override this hook and propagate
+        the absolute epoch deadline to their child runner.
+        """
+
+        return self.build_command(workspace, result_dir)
+
+    def build_prompt(
+        self,
+        mode: Any,
+        benchmark_path: str,
+        dependencies: list[str],
+        benchmark_basename: str,
+        tlapm_path: str,
+        tlapm_lib: str,
+    ) -> str:
+        """Build the prompt for this backend's interaction approach."""
+
+        return mode.build_prompt(benchmark_basename, tlapm_path, tlapm_lib)
+
+    def initial_result_metadata(self) -> dict[str, object]:
+        """Stable metadata stamped on every result before execution."""
+
+        metadata: dict[str, object] = {"approach": self.approach}
+        if self.provider is not None:
+            metadata["provider"] = self.provider
+        return metadata
+
+    def prepare_submission(
+        self,
+        jsonl_path: str,
+        destination: str,
+        termination_reason: str,
+        error: str,
+        *,
+        allow_materialization: bool,
+    ) -> SubmissionPlan:
+        """Prepare the workspace submission and decide whether to grade it.
+
+        Agentic backends already edit the workspace, so their default plan is
+        immediately gradeable. Other approaches own their materialization and
+        early-verdict policy in their sibling backend base class.
+        """
+
+        return SubmissionPlan()
+
+    def resolve_infra_retries(self, configured: int | None) -> int:
+        """Resolve and validate a retry count for CLI and direct Python calls."""
+
+        retries = self.capabilities.default_infra_retries if configured is None else configured
+        if not isinstance(retries, int) or isinstance(retries, bool):
+            raise ValueError("--infra-retries must be an integer")
+        if retries < 0:
+            raise ValueError("--infra-retries must be >= 0")
+        maximum = self.capabilities.max_infra_retries
+        if maximum is not None and retries > maximum:
+            if maximum == 0 and self.approach == "one_shot":
+                raise ValueError("strict one-shot backends require --infra-retries 0")
+            raise ValueError(f"backend {self.name!r} supports at most {maximum} infrastructure retries")
+        return retries
+
+    def validate_options(self, infra_retries: int | None, max_continuations: int) -> int:
+        """Validate execution policy and return the resolved retry count."""
+
+        retries = self.resolve_infra_retries(infra_retries)
+        if not isinstance(max_continuations, int) or isinstance(max_continuations, bool):
+            raise ValueError("--max-continuations must be an integer")
+        if max_continuations < 0:
+            raise ValueError("--max-continuations must be >= 0")
+        maximum = self.capabilities.max_continuations
+        if maximum is not None and max_continuations > maximum:
+            if maximum == 0:
+                raise ValueError(f"backend {self.name!r} does not support --max-continuations")
+            raise ValueError(f"backend {self.name!r} supports at most {maximum} continuations")
+        return retries
 
     def check_auth(self) -> str | None:
         """Host-side fast auth check. Returns None if OK, error string otherwise."""
@@ -206,3 +323,13 @@ class AgentBackend(ABC):
     def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
         """Return backend-specific, JSON-serializable result metadata."""
         return {}
+
+    def validate_request_audit(self, audit: dict[str, object], request_count: int) -> bool:
+        """Validate approach-specific model-request evidence, failing closed by default."""
+
+        return False
+
+
+# Compatibility for external backends written against the historical name.
+# New in-tree backends inherit Backend through AgenticBackend or OneShotBackend.
+AgentBackend = Backend

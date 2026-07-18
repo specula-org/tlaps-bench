@@ -14,6 +14,7 @@ import json
 import os
 
 from evaluator import runner
+from evaluator.backends.agentic import AgenticBackend
 from evaluator.termination import TerminationReason
 
 BENCH_TEXT = "---- MODULE Bar ----\n====\n"
@@ -27,7 +28,7 @@ STARTUP = {"exit": 1, "stderr": "Error: Failed to load models\n"}
 GENUINE = {"exit": 0, "events": CLEAN_EVENTS, "out_tokens": 500}
 
 
-class _ScriptedBackend:
+class _ScriptedBackend(AgenticBackend):
     """Backend whose per-call behavior is scripted (see _install_agent)."""
 
     name = "copilot"
@@ -37,6 +38,9 @@ class _ScriptedBackend:
 
     def parse_output(self, jsonl_path):
         return ("", 0, self.out_tokens)
+
+    def build_command(self, workspace, result_dir):
+        return ["fake-agent"]
 
     def detect_quota_block(self, jsonl_path):
         return None
@@ -84,7 +88,7 @@ def _work_item(tmp_path, backend, max_continuations=0, infra_retries=0):
 
 
 def _install_agent(monkeypatch, backend, calls_spec):
-    """Patch _run_agent_local with a scripted agent: one spec dict per call
+    """Patch _run_backend_local with a scripted agent: one spec dict per call
     ({"exit": int, "events": [...], "stderr": str, "out_tokens": int,
     "mutate": fn(workspace)}), recording workspace/prompt/canonical per call."""
     calls = {"n": 0, "workspaces": [], "prompts": [], "agent_dirs": [], "canonical_dirs": []}
@@ -109,7 +113,7 @@ def _install_agent(monkeypatch, backend, calls_spec):
         if "mutate" in spec:
             spec["mutate"](workspace)
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_run)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_run)
     return calls
 
 

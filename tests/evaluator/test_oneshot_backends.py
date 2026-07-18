@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
 from evaluator import runner
 from evaluator.backends import get_backend, list_backends
+from evaluator.backends.agentic import AgenticBackend
 from evaluator.backends.copilot_oneshot import CopilotOneShotBackend
 from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
+from evaluator.backends.oneshot import OneShotBackend
 
 MODULE = "---- MODULE Example ----\nTHEOREM Target == TRUE\nPROOF OBVIOUS\n====\n"
 
@@ -65,10 +68,12 @@ def test_shared_command_and_capabilities(tmp_path):
         "--model",
         "anthropic/claude-sonnet-4-6",
     ]
-    assert backend.is_one_shot is True
-    assert backend.supports_model_preflight is False
-    assert backend.supports_continuations is False
-    assert backend.default_infra_retries == 0
+    assert isinstance(backend, OneShotBackend)
+    assert not isinstance(backend, AgenticBackend)
+    assert backend.approach == "one_shot"
+    assert backend.capabilities.model_preflight is False
+    assert backend.capabilities.max_continuations == 0
+    assert backend.capabilities.default_infra_retries == 0
 
 
 def test_shared_command_uses_module_runner_for_native_execution(tmp_path):
@@ -92,6 +97,9 @@ def test_parse_output_and_request_metadata(tmp_path):
             {
                 "type": "request_audit",
                 "provider": "copilot",
+                "model_requests": 1,
+                "audit_scope": "wire",
+                "contract_ok": True,
                 "inference_requests": 1,
                 "request_sha256": "abc123",
                 "system_removed": True,
@@ -110,6 +118,8 @@ def test_parse_output_and_request_metadata(tmp_path):
     assert metadata == {
         "one_shot": True,
         "provider": "copilot",
+        "audit_scope": "wire",
+        "contract_ok": True,
         "request_sha256": "abc123",
         "system_removed": True,
         "tools_removed": True,
@@ -217,7 +227,7 @@ def test_litellm_oneshot_reuses_litellm_auth_and_firewall(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     backend = LiteLLMOneShotBackend(model="anthropic/claude-sonnet-4-6")
 
-    assert backend.check_auth() == "litellm: ANTHROPIC_API_KEY not set for anthropic model"
+    assert backend.check_auth() == "litellm_oneshot: ANTHROPIC_API_KEY not set for anthropic model"
     assert backend.install_script == "install-litellm-oneshot.sh"
     assert "api.anthropic.com" in backend.firewall_hosts()
 
@@ -259,6 +269,14 @@ def test_unstructured_response_is_materialized_and_left_to_grader(tmp_path, monk
                     {
                         "type": "request_audit",
                         "provider": "litellm",
+                        "model_requests": 1,
+                        "request_attempts": 1,
+                        "blocked_requests": 0,
+                        "system_prompt_present": False,
+                        "tools_present": False,
+                        "retries_enabled": False,
+                        "audit_scope": "adapter",
+                        "contract_ok": True,
                         "litellm_completion_invocations": 1,
                         "wire_audited": False,
                         "litellm_retries_disabled": True,
@@ -275,7 +293,7 @@ def test_unstructured_response_is_materialized_and_left_to_grader(tmp_path, monk
         grader_calls.append(workspace)
         result["check_verdict"] = "PASS"
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_agent)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_agent)
     monkeypatch.setattr(runner, "_run_grader_local", fake_grader)
 
     result = runner.run_single_benchmark(item)
@@ -318,7 +336,21 @@ def test_second_request_violation_is_error_even_after_model_output(tmp_path, mon
             stream.write(
                 json.dumps({"type": "usage", "input_tokens": 40, "output_tokens": 20, "model_requests": 1}) + "\n"
             )
-            stream.write(json.dumps({"type": "request_audit", "inference_requests": 2}) + "\n")
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "request_audit",
+                        "provider": "copilot",
+                        "model_requests": 1,
+                        "audit_scope": "wire",
+                        "contract_ok": False,
+                        "inference_requests": 1,
+                        "inference_attempts": 2,
+                        "blocked_requests": 1,
+                    }
+                )
+                + "\n"
+            )
             stream.write(json.dumps({"type": "result", "status": "error", "model_requests": 2}) + "\n")
         result["agent_exit"] = 1
 
@@ -330,7 +362,7 @@ def test_second_request_violation_is_error_even_after_model_output(tmp_path, mon
         grader_calls.append(workspace)
         result["check_verdict"] = "PASS"
 
-    monkeypatch.setattr(runner, "_run_agent_local", fake_agent)
+    monkeypatch.setattr(runner, "_run_backend_local", fake_agent)
     monkeypatch.setattr(backend, "materialize_solution", fake_materialize)
     monkeypatch.setattr(runner, "_run_grader_local", fake_grader)
 
@@ -424,3 +456,109 @@ def test_cli_rejects_non_oneshot_controls(tmp_path, monkeypatch, capsys, extra_a
     assert expected_error in capsys.readouterr().err
     assert preflight_calls == []
     assert captured_items == []
+
+
+@pytest.mark.parametrize(
+    ("infra_retries", "max_continuations", "expected_error"),
+    [
+        (0.0, 0, "--infra-retries must be an integer"),
+        (False, 0, "--infra-retries must be an integer"),
+        (-1, 0, "--infra-retries must be >= 0"),
+        (1, 0, "strict one-shot backends require --infra-retries 0"),
+        (0, 0.0, "--max-continuations must be an integer"),
+        (0, False, "--max-continuations must be an integer"),
+        (0, 1, "does not support --max-continuations"),
+    ],
+)
+def test_direct_work_item_rejects_unsupported_controls_before_side_effects(
+    tmp_path,
+    monkeypatch,
+    infra_retries,
+    max_continuations,
+    expected_error,
+):
+    benchmark_root = tmp_path / "benchmark"
+    benchmark = benchmark_root / "Suite" / "Example.tla"
+    benchmark.parent.mkdir(parents=True)
+    benchmark.write_text(MODULE)
+    output_dir = tmp_path / "results"
+    result_dir = output_dir / "Suite" / "Example"
+    result_dir.mkdir(parents=True)
+    existing = result_dir / "result.json"
+    existing.write_text('{"keep": true}')
+    item = runner.WorkItem(
+        benchmark_path=str(benchmark),
+        output_dir=str(output_dir),
+        timeout=10,
+        check_timeout=10,
+        backend=LiteLLMOneShotBackend(),
+        mode=_OneShotMode(benchmark_root),  # ty:ignore[invalid-argument-type]
+        tlapm_path="/bin/true",
+        tlapm_lib="",
+        infra_retries=infra_retries,
+        max_continuations=max_continuations,
+    )
+    monkeypatch.setattr(runner.quota, "wait_for_quota", lambda *args: pytest.fail("quota must not run"))
+
+    with pytest.raises(ValueError, match=expected_error):
+        runner.run_single_benchmark(item)
+
+    assert existing.read_text() == '{"keep": true}'
+
+
+def test_direct_work_item_uses_oneshot_retry_default_and_runs_once(tmp_path, monkeypatch):
+    benchmark_root = tmp_path / "benchmark"
+    benchmark = benchmark_root / "Suite" / "Example.tla"
+    benchmark.parent.mkdir(parents=True)
+    benchmark.write_text(MODULE)
+    item = runner.WorkItem(
+        benchmark_path=str(benchmark),
+        output_dir=str(tmp_path / "results"),
+        timeout=10,
+        check_timeout=10,
+        backend=LiteLLMOneShotBackend(),
+        mode=_OneShotMode(benchmark_root),  # ty:ignore[invalid-argument-type]
+        tlapm_path="/bin/true",
+        tlapm_lib="",
+    )
+    calls = []
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        calls.append(workspace)
+        _write_events(
+            Path(agent_jsonl),
+            {"type": "response", "text": MODULE},
+            {"type": "usage", "input_tokens": 3, "output_tokens": 2, "model_requests": 1},
+            {
+                "type": "request_audit",
+                "provider": "litellm",
+                "model_requests": 1,
+                "request_attempts": 1,
+                "blocked_requests": 0,
+                "system_prompt_present": False,
+                "tools_present": False,
+                "retries_enabled": False,
+                "audit_scope": "adapter",
+                "contract_ok": True,
+                "litellm_completion_invocations": 1,
+                "wire_audited": False,
+                "litellm_retries_disabled": True,
+                "system_supplied": False,
+                "tools_supplied": False,
+            },
+            {"type": "result", "status": "success", "model_requests": 1},
+        )
+        result["agent_exit"] = 0
+
+    def fake_grader(item_, workspace, basename, grading_dir, check_result_path, result, canonical_dir=None):
+        result["check_verdict"] = "FAIL"
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", fake_grader)
+
+    runner.run_single_benchmark(item)
+
+    assert item.infra_retries == 0
+    assert len(calls) == 1
