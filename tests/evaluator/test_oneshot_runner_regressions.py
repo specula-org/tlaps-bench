@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -310,8 +311,10 @@ def test_container_runner_launches_copilot_with_absolute_deadline(tmp_path, monk
         def run(self, config, command, stdin_data):
             captured["command"] = command
             captured["stdin_data"] = stdin_data
+            true_bin = shutil.which("true")
+            assert true_bin is not None
             proc = subprocess.Popen(
-                ["/bin/true"],
+                [true_bin],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
