@@ -48,6 +48,7 @@ class CodexBackend(AgenticBackend):
         "AWS_PROFILE",
     ]
     credential_mounts = ["codex"]
+    supports_reasoning_effort = True
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
@@ -71,6 +72,8 @@ class CodexBackend(AgenticBackend):
             "-o",
             last_msg_path,
         ]
+        if self.reasoning_effort is not None:
+            cmd.extend(["-c", f"model_reasoning_effort={self.reasoning_effort}"])
         if self._uses_bedrock():
             cmd.extend(["-c", 'model_provider="amazon-bedrock"'])
         return cmd

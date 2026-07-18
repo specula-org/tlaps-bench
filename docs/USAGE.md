@@ -59,6 +59,14 @@ uv run tlaps-bench run --backend litellm --model claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm_oneshot --model claude-sonnet-4-6
 ```
 
+### Reasoning effort
+
+Use the optional `--reasoning-effort` flag to override a model's reasoning budget:
+
+```bash
+uv run tlaps-bench run --backend codex --model gpt-5.6-sol --reasoning-effort low
+```
+
 ### Authentication
 
 The runner passes credentials into the container in two ways:
@@ -139,6 +147,7 @@ uv run tlaps-bench run [flags]
 | `--backend` | `codex` | Evaluator backend to use |
 | `--mode` | `proof-completion` | Benchmark mode |
 | `--model` | (backend default) | Override the model |
+| `--reasoning-effort` | (backend behavior) | Pass a backend/model-specific reasoning effort; omitted preserves existing behavior |
 | `--filter` | (all benchmarks) | Substring match on path, comma-separated |
 | `--jobs` | `1` | Number of parallel backend runs |
 | `--timeout` | `28800` | Per-benchmark backend timeout in seconds |

@@ -396,6 +396,10 @@ def test_litellm_makes_one_call_with_no_tools_system_or_retries(monkeypatch):
     assert result.audit["litellm_completion_invocations"] == 1
     assert result.audit["wire_audited"] is False
     assert result.audit["litellm_retries_disabled"] is True
+
+    reasoned_result = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model", "low")
+    assert calls[-1]["reasoning_effort"] == "low"
+    assert reasoned_result.audit["reasoning_effort"] == "low"
     assert result.audit["system_supplied"] is False
     assert result.audit["tools_supplied"] is False
     assert result.audit["finish_reason"] == "stop"
@@ -706,6 +710,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
             str(tmp_path),
             time.time() + 123.0,
             handler=handler,
+            reasoning_effort="medium",
         )
     )
 
@@ -720,6 +725,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
     assert session_options["capi"] == {"enable_web_socket_responses": False}
     assert session_options["infinite_sessions"] == {"enabled": False}
     assert session_options["memory"] == {"enabled": False}
+    assert session_options["reasoning_effort"] == "medium"
     assert captured["send"] == {
         "prompt": "EXACT PROMPT",
         "agent_mode": "interactive",
@@ -728,6 +734,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
     assert result.text == "MODEL RESPONSE"
     assert (result.input_tokens, result.output_tokens) == (20, 8)
     assert result.audit["inference_requests"] == 1
+    assert result.audit["reasoning_effort"] == "medium"
     assert result.audit["wire_audited"] is True
     assert result.audit["finish_reason"] == "stop"
     assert json.loads(handler.forwarded[0].content)["input"][0]["content"][0]["text"] == "EXACT PROMPT"

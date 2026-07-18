@@ -178,6 +178,15 @@ class Backend(ABC):
     # a persistent host dir here. None = no session dir (e.g. litellm).
     session_state_dir: str | None = None
     capabilities = BackendCapabilities()
+    reasoning_effort: str | None = None
+    supports_reasoning_effort = False
+
+    def set_reasoning_effort(self, reasoning_effort: str | None) -> None:
+        """Validate and store an optional backend-native reasoning effort."""
+
+        if reasoning_effort is not None and not self.supports_reasoning_effort:
+            raise ValueError(f"backend {self.name!r} does not support --reasoning-effort")
+        self.reasoning_effort = reasoning_effort
 
     def get_credential_mounts(self) -> list[str]:
         """Credential directories this backend needs mounted for the current run."""
@@ -225,6 +234,8 @@ class Backend(ABC):
         metadata: dict[str, object] = {"approach": self.approach}
         if self.provider is not None:
             metadata["provider"] = self.provider
+        if self.reasoning_effort is not None:
+            metadata["reasoning_effort"] = self.reasoning_effort
         return metadata
 
     def prepare_submission(

@@ -233,9 +233,15 @@ def _rewrite_inference_payload(endpoint: str, payload: object, prompt: str) -> d
 class StrictCopilotRequestHandler(_CopilotRequestHandler):
     """Rewrite the sole Copilot inference request and block every later attempt."""
 
-    def __init__(self, prompt: str, model: str | None = None) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
         self._prompt = prompt
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self._expected_session_id: str | None = None
         self._deadline: float | None = None
         self._frozen = False
@@ -386,6 +392,8 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         }
         if self.model is not None:
             audit["model"] = self.model
+        if self.reasoning_effort is not None:
+            audit["reasoning_effort"] = self.reasoning_effort
         if self.endpoint is not None:
             audit["endpoint"] = self.endpoint
         if self.request_sha256 is not None:
@@ -461,9 +469,16 @@ def _litellm_max_tokens(litellm: object, model: str) -> int:
     return 32_768
 
 
-def _litellm_audit(prompt: str, model: str, max_tokens: int = 32_768) -> dict[str, object]:
-    request = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-    return {
+def _litellm_audit(
+    prompt: str,
+    model: str,
+    max_tokens: int = 32_768,
+    reasoning_effort: str | None = None,
+) -> dict[str, object]:
+    request: dict[str, object] = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+    if reasoning_effort is not None:
+        request["reasoning_effort"] = reasoning_effort
+    audit: dict[str, object] = {
         "provider": "litellm",
         "model": model,
         "model_requests": 0,
@@ -484,11 +499,16 @@ def _litellm_audit(prompt: str, model: str, max_tokens: int = 32_768) -> dict[st
         "tools_supplied": False,
         "max_tokens": max_tokens,
     }
+    if reasoning_effort is not None:
+        audit["reasoning_effort"] = reasoning_effort
+    return audit
 
 
-def run_litellm(prompt: str, model: str) -> ProviderResult:
-    request = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-    audit = _litellm_audit(prompt, model)
+def run_litellm(prompt: str, model: str, reasoning_effort: str | None = None) -> ProviderResult:
+    request: dict[str, object] = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+    if reasoning_effort is not None:
+        request["reasoning_effort"] = reasoning_effort
+    audit = _litellm_audit(prompt, model, reasoning_effort=reasoning_effort)
     try:
         import litellm
     except ImportError as exc:
@@ -507,8 +527,7 @@ def run_litellm(prompt: str, model: str) -> ProviderResult:
         audit["model_requests"] = 1
         audit["request_attempts"] = 1
         response = litellm.completion(
-            model=model,
-            messages=request["messages"],
+            **request,
             stream=False,
             max_tokens=max_tokens,
             num_retries=0,
@@ -616,9 +635,11 @@ async def run_copilot(
     deadline: float | None,
     handler: StrictCopilotRequestHandler | None = None,
     on_timeout: Callable[[ProviderTimeoutError], None] | None = None,
+    reasoning_effort: str | None = None,
 ) -> ProviderResult:
     guard = handler or StrictCopilotRequestHandler(prompt)
     guard.model = model
+    guard.reasoning_effort = reasoning_effort
     guard.set_deadline(deadline)
     events: list[object] = []
     usage_data_type: type | None = None
@@ -687,6 +708,7 @@ async def run_copilot(
         CopilotClient, AssistantMessageData, AssistantUsageData = _load_copilot_sdk()
         usage_data_type = AssistantUsageData
         token = _copilot_token()
+        reasoning_options = {"reasoning_effort": reasoning_effort} if reasoning_effort is not None else {}
 
         with tempfile.TemporaryDirectory(prefix="tlaps-bench-copilot-") as base_directory:
             async with CopilotClient(
@@ -723,6 +745,7 @@ async def run_copilot(
                     infinite_sessions={"enabled": False},
                     memory={"enabled": False},
                     on_event=events.append,
+                    **reasoning_options,
                 )
                 if deadline_reported:
                     schedule_abort()
@@ -771,35 +794,56 @@ class OneShotProvider(Protocol):
     def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult: ...
 
 
-ProviderFactory = Callable[[str, str, str, float | None], OneShotProvider]
+ProviderFactory = Callable[..., OneShotProvider]
 
 
 class _LiteLLMProvider:
-    def __init__(self, prompt: str, model: str, _workspace: str, _deadline: float | None) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        model: str,
+        _workspace: str,
+        _deadline: float | None,
+        reasoning_effort: str | None = None,
+    ) -> None:
         self.prompt = prompt
         self.model = model
+        self.reasoning_effort = reasoning_effort
 
     @property
     def audit(self) -> dict[str, object]:
-        return _litellm_audit(self.prompt, self.model)
+        return _litellm_audit(self.prompt, self.model, reasoning_effort=self.reasoning_effort)
 
     def invoke(self, _on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
-        return run_litellm(self.prompt, self.model)
+        if self.reasoning_effort is None:
+            return run_litellm(self.prompt, self.model)
+        return run_litellm(self.prompt, self.model, self.reasoning_effort)
 
 
 class _CopilotProvider:
-    def __init__(self, prompt: str, model: str, workspace: str, deadline: float | None) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        model: str,
+        workspace: str,
+        deadline: float | None,
+        reasoning_effort: str | None = None,
+    ) -> None:
         self.prompt = prompt
         self.model = model
         self.workspace = workspace
         self.deadline = deadline
-        self.guard = StrictCopilotRequestHandler(prompt, model)
+        self.reasoning_effort = reasoning_effort
+        self.guard = StrictCopilotRequestHandler(prompt, model, reasoning_effort)
 
     @property
     def audit(self) -> dict[str, object]:
         return self.guard.audit()
 
     def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
+        reasoning_options = (
+            {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
+        )
         return asyncio.run(
             run_copilot(
                 self.prompt,
@@ -808,6 +852,7 @@ class _CopilotProvider:
                 self.deadline,
                 handler=self.guard,
                 on_timeout=on_timeout,
+                **reasoning_options,
             )
         )
 
@@ -832,6 +877,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--result-dir", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--reasoning-effort", default=None)
     parser.add_argument("--deadline", type=float, default=0.0)
     return parser.parse_args(argv)
 
@@ -844,7 +890,11 @@ def main(argv: list[str] | None = None) -> int:
         _emit("result", status="error", model_requests=0)
         return 1
     deadline = args.deadline if args.deadline > 0 else None
-    provider = _PROVIDER_REGISTRY[args.provider](prompt, args.model, args.workspace, deadline)
+    factory = _PROVIDER_REGISTRY[args.provider]
+    if args.reasoning_effort is None:
+        provider = factory(prompt, args.model, args.workspace, deadline)
+    else:
+        provider = factory(prompt, args.model, args.workspace, deadline, args.reasoning_effort)
     terminal_emitted = False
 
     def emit_failure(exc: Exception) -> None:

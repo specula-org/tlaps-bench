@@ -9,7 +9,7 @@ For each benchmark:
 
 Usage:
     python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--mode proof-completion|proof-from-scratch] \\
-                      [--model NAME] [--jobs N] [--filter PATTERN] \\
+                      [--model NAME] [--reasoning-effort VALUE] [--jobs N] [--filter PATTERN] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """
 
@@ -1409,6 +1409,11 @@ def main():
         "--mode", default="proof-completion", choices=list_modes(), help="Benchmark mode (default: proof-completion)"
     )
     parser.add_argument("--model", default=None, help="Override the backend default model")
+    parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        help="Pass a backend/model-specific reasoning effort (default: preserve existing backend behavior)",
+    )
     parser.add_argument("--jobs", type=int, default=1, help="Parallel backend runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
     parser.add_argument(
@@ -1543,6 +1548,7 @@ def main():
     # preserves the useful fail-fast behavior for a misspelled --filter: no
     # backend validation, auth probe, image build, or model request happens.
     try:
+        backend.set_reasoning_effort(args.reasoning_effort)
         args.infra_retries = backend.validate_options(args.infra_retries, args.max_continuations)
     except ValueError as exc:
         parser.error(str(exc))
@@ -1605,6 +1611,8 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
+    if backend.reasoning_effort is not None:
+        print(f"Effort:  {backend.reasoning_effort}")
     print(f"Mode:   {mode.name} — {mode.description}")
     print(f"Output:  {output_dir}")
 

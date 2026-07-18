@@ -25,6 +25,7 @@ class CopilotBackend(AgenticBackend):
         "COPILOT_PROVIDER_TYPE",
         "COPILOT_MODEL",
     ]
+    supports_reasoning_effort = True
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
@@ -43,8 +44,7 @@ class CopilotBackend(AgenticBackend):
         # release check, so the *only* host it needs is the Copilot
         # inference API (no GitHub repo/web access — anti-cheating parity
         # with the firewalled codex/claude runs).
-        # --effort max mirrors the highest reasoning budget used for the
-        # other backends so the comparison is apples-to-apples.
+        # The existing max effort remains the default unless explicitly overridden.
         return [
             "copilot",
             "--allow-all",
@@ -55,7 +55,7 @@ class CopilotBackend(AgenticBackend):
             "--model",
             self.model,
             "--effort",
-            "max",
+            self.reasoning_effort or "max",
             "--log-level",
             "none",
             "--no-color",

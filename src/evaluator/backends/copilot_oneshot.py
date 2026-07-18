@@ -16,6 +16,7 @@ class CopilotOneShotBackend(OneShotBackend):
     install_script = "install-copilot-sdk.sh"
     session_state_dir = None
     env_keys = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+    supports_reasoning_effort = True
     capabilities = replace(
         OneShotBackend.capabilities,
         cooperative_deadline=True,

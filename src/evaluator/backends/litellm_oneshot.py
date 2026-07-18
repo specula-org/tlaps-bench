@@ -12,6 +12,7 @@ class LiteLLMOneShotBackend(OneShotBackend):
     provider = "litellm"
     install_script = "install-litellm-oneshot.sh"
     env_keys = ENV_KEYS
+    supports_reasoning_effort = True
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL

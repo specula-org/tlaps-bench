@@ -36,6 +36,7 @@ class ClaudeCodeBackend(AgenticBackend):
         "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
         "DISABLE_PROMPT_CACHING",
     ]
+    supports_reasoning_effort = True
 
     # Tools the agent is allowed to use (mirrors SREGym's whitelist).
     # Using --allowedTools instead of --dangerously-skip-permissions
@@ -88,7 +89,7 @@ class ClaudeCodeBackend(AgenticBackend):
             "stream-json",
             "--verbose",
             "--effort",
-            "max",
+            self.reasoning_effort or "max",
             "--model",
             self.model,
             "--allowedTools",

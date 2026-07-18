@@ -100,6 +100,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--reasoning-effort", default=None)
     parser.add_argument("--max-iterations", type=int, default=0)
     args = parser.parse_args()
 
@@ -116,13 +117,16 @@ def main() -> None:
     while args.max_iterations == 0 or i < args.max_iterations:
         i += 1
         try:
-            response = litellm.completion(
+            completion_options = dict(
                 model=args.model,
                 messages=messages,
                 tools=TOOLS,
                 temperature=0.0,
                 max_tokens=16384,
             )
+            if args.reasoning_effort is not None:
+                completion_options["reasoning_effort"] = args.reasoning_effort
+            response = litellm.completion(**completion_options)
         except Exception as e:
             print(json.dumps({"type": "error", "message": str(e), "iteration": i}))
             break
