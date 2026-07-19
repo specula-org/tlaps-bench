@@ -15,8 +15,8 @@ never INFRA_ERROR), then runs a registry of INFRA RULES (criteria). Each rule
 inspects a ``TerminationContext`` and returns a reason if it fires, else
 ``None``; the first that fires wins. There is one rule per backend
 (:func:`codex_turn_failed`, :func:`claude_code_result_error`,
-:func:`copilot_session_error`), each branching on ``ctx.backend`` to read its
-own event vocabulary, plus one backend-independent startup rule
+:func:`copilot_session_error`, :func:`litellm_completion_error`), each branching
+on ``ctx.backend`` to read its own event vocabulary, plus one backend-independent startup rule
 (:func:`agent_startup_failure`) for the CLI dying before emitting a single
 event. The one-shot rule may also return TIMEOUT for a strictly audited
 provider deadline. Add more by appending to :data:`INFRA_RULES`.
@@ -241,6 +241,28 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
     return TerminationReason.INFRA_ERROR
 
 
+def litellm_completion_error(ctx: TerminationContext) -> str | None:
+    """LiteLLM rule: the agent stopped on a completion error.
+
+    The LiteLLM agent emits an ``error`` event and stops its loop when a
+    provider rejects the request or inference otherwise fails. A later
+    ``response`` would indicate recovery, so only the last response/error
+    outcome determines whether the run was cut short.
+    """
+    if ctx.backend != "litellm":
+        return None
+    last_outcome = None
+    for event in ctx.events():
+        event_type = event.get("type")
+        if event_type == "response":
+            last_outcome = "response"
+        elif event_type == "error":
+            last_outcome = "error"
+    if last_outcome == "error":
+        return TerminationReason.INFRA_ERROR
+    return None
+
+
 def one_shot_result_error(ctx: TerminationContext) -> str | None:
     """One-shot rule: require an audited terminal result and one clean response.
 
@@ -323,6 +345,7 @@ INFRA_RULES: list[Rule] = [
     codex_turn_failed,
     claude_code_result_error,
     copilot_session_error,
+    litellm_completion_error,
     one_shot_result_error,
     agent_startup_failure,
 ]

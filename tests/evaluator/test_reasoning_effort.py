@@ -1,20 +1,23 @@
 """Reasoning-effort CLI plumbing across evaluator backends."""
 
+import io
+import json
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from evaluator import runner
-from evaluator.backends import get_backend
+from evaluator.backends import get_backend, litellm_agent
 
 EXPECTED_EFFORT_VALUES = {
-    "codex": ("none", "low", "medium", "high", "xhigh", "max", "ultra"),
+    "codex": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
     "claude_code": ("low", "medium", "high", "xhigh", "max"),
     "copilot": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
     "copilot_oneshot": ("low", "medium", "high", "xhigh"),
-    "litellm": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
-    "litellm_oneshot": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+    "litellm": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "default"),
+    "litellm_oneshot": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "default"),
     "pi": ("off", "minimal", "low", "medium", "high", "xhigh", "max"),
 }
 
@@ -85,6 +88,87 @@ def test_backend_rejects_empty_reasoning_effort(backend_name):
 
     with pytest.raises(ValueError, match="--reasoning-effort cannot be empty"):
         backend.set_reasoning_effort("")
+
+
+@pytest.mark.parametrize(
+    ("backend_name", "reasoning_effort"),
+    [
+        ("codex", "minimal"),
+        ("litellm", "default"),
+        ("litellm_oneshot", "default"),
+    ],
+)
+def test_backend_accepts_supported_edge_reasoning_effort(backend_name, reasoning_effort):
+    backend = get_backend(backend_name)
+
+    backend.set_reasoning_effort(reasoning_effort)
+
+    assert backend.reasoning_effort == reasoning_effort
+
+
+def test_litellm_agent_completion_error_exits_nonzero(monkeypatch, capsys, tmp_path):
+    completion_options = {}
+
+    def reject_completion(**kwargs):
+        completion_options.update(kwargs)
+        raise RuntimeError("reasoning effort is unsupported for this model")
+
+    monkeypatch.setattr(litellm_agent.litellm, "completion", reject_completion)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("Return a short answer."))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "litellm_agent",
+            "--workspace",
+            str(tmp_path),
+            "--model",
+            "gpt-5.5",
+            "--reasoning-effort",
+            "minimal",
+            "--max-iterations",
+            "1",
+        ],
+    )
+
+    assert litellm_agent.main() == 1
+    assert completion_options["reasoning_effort"] == "minimal"
+    assert "temperature" not in completion_options
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["type"] for event in events] == ["error", "usage"]
+    assert events[-1] == {"type": "usage", "input_tokens": 0, "output_tokens": 0}
+
+
+def test_litellm_agent_success_exits_zero(monkeypatch, capsys, tmp_path):
+    message = SimpleNamespace(
+        content="ok",
+        tool_calls=None,
+        model_dump=lambda: {"role": "assistant", "content": "ok"},
+    )
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=4, completion_tokens=1),
+        choices=[SimpleNamespace(message=message)],
+    )
+    monkeypatch.setattr(litellm_agent.litellm, "completion", lambda **_kwargs: response)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("Return a short answer."))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "litellm_agent",
+            "--workspace",
+            str(tmp_path),
+            "--model",
+            "gpt-5.5",
+            "--max-iterations",
+            "1",
+        ],
+    )
+
+    assert litellm_agent.main() == 0
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["type"] for event in events] == ["response", "usage"]
+    assert events[-1] == {"type": "usage", "input_tokens": 4, "output_tokens": 1}
 
 
 def test_omitted_reasoning_effort_preserves_existing_defaults():

@@ -96,7 +96,7 @@ def exec_tool(name: str, args: dict, workspace: str) -> str:
         return f"ERROR: {e}"
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--model", required=True)
@@ -113,6 +113,7 @@ def main() -> None:
     total_in = 0
     total_out = 0
     i = 0
+    failed = False
 
     while args.max_iterations == 0 or i < args.max_iterations:
         i += 1
@@ -121,7 +122,6 @@ def main() -> None:
                 model=args.model,
                 messages=messages,
                 tools=TOOLS,
-                temperature=0.0,
                 max_tokens=16384,
             )
             if args.reasoning_effort is not None:
@@ -129,6 +129,7 @@ def main() -> None:
             response = litellm.completion(**completion_options)
         except Exception as e:
             print(json.dumps({"type": "error", "message": str(e), "iteration": i}))
+            failed = True
             break
 
         usage = response.usage
@@ -170,7 +171,8 @@ def main() -> None:
             )
 
     print(json.dumps({"type": "usage", "input_tokens": total_in, "output_tokens": total_out}))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

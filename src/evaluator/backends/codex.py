@@ -48,7 +48,7 @@ class CodexBackend(AgenticBackend):
         "AWS_PROFILE",
     ]
     credential_mounts = ["codex"]
-    reasoning_effort_values = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
+    reasoning_effort_values = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
