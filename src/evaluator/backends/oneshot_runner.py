@@ -841,9 +841,7 @@ class _CopilotProvider:
         return self.guard.audit()
 
     def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
-        reasoning_options = (
-            {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
-        )
+        reasoning_options = {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
         return asyncio.run(
             run_copilot(
                 self.prompt,
