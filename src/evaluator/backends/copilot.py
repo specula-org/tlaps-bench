@@ -48,11 +48,11 @@ def _span_duration_secs(span: dict[str, Any]) -> float | None:
 
 def _copilot_costs(attributes: dict[str, Any]) -> tuple[UsageCost, ...]:
     costs: list[UsageCost] = []
-    monetary = nonnegative_float(attributes.get("github.copilot.cost"))
-    if monetary is not None:
-        # GitHub documents this as monetary cost but does not publish a currency
-        # on the span, so preserve the provider's unit instead of assuming USD.
-        costs.append(UsageCost(monetary, "provider_monetary", "github.copilot.cost"))
+    model_multiplier = nonnegative_float(attributes.get("github.copilot.cost"))
+    if model_multiplier is not None:
+        # The corresponding SDK assistant.usage field is documented as the
+        # model multiplier cost for billing; it is not a currency amount.
+        costs.append(UsageCost(model_multiplier, "model_multiplier", "github.copilot.cost"))
     aiu = nonnegative_float(attributes.get("github.copilot.aiu"))
     if aiu is not None:
         costs.append(UsageCost(aiu, "aiu", "github.copilot.aiu"))

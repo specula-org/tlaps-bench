@@ -174,7 +174,7 @@ def test_all_chat_spans_include_nested_subagent_usage_without_root_double_counti
         {"amount": 35.0, "unit": "aiu", "source": "github.copilot.aiu"},
         {
             "amount": 0.35,
-            "unit": "provider_monetary",
+            "unit": "model_multiplier",
             "source": "github.copilot.cost",
         },
     ]
@@ -281,12 +281,12 @@ def test_native_nano_aiu_and_missing_subagent_cost_are_reported_as_a_lower_bound
     assert (usage.input_tokens, usage.output_tokens) == (600, 60)
     assert usage.model_requests == 2
     assert [cost.to_dict() for cost in usage.costs] == [
-        {"amount": 400.0, "unit": "nano_aiu", "source": "github.copilot.nano_aiu"},
         {
             "amount": 4.0,
-            "unit": "provider_monetary",
+            "unit": "model_multiplier",
             "source": "github.copilot.cost",
         },
+        {"amount": 400.0, "unit": "nano_aiu", "source": "github.copilot.nano_aiu"},
     ]
     assert any("github.copilot.cost" in warning for warning in usage.warnings)
     assert any("github.copilot.nano_aiu" in warning for warning in usage.warnings)
@@ -368,7 +368,7 @@ def test_root_cost_fields_are_authoritative_without_hiding_other_chat_units(tmp_
         {"amount": 10.0, "unit": "aiu", "source": "github.copilot.aiu"},
         {
             "amount": 0.5,
-            "unit": "provider_monetary",
+            "unit": "model_multiplier",
             "source": "github.copilot.cost",
         },
     ]
