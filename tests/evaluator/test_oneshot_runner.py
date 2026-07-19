@@ -8,6 +8,7 @@ import json
 import sys
 import time
 import types
+from datetime import timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -463,6 +464,100 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
     assert events[-1] == {"type": "result", "status": "success", "model_requests": 1}
 
 
+def test_main_emits_rich_copilot_usage_details(monkeypatch, capsys, tmp_path):
+    details = (
+        {
+            "source": "github_copilot_sdk",
+            "input_tokens": 100,
+            "output_tokens": 40,
+            "cache_read_input_tokens": 60,
+            "cache_write_input_tokens": 10,
+            "reasoning_output_tokens": 25,
+            "model": "test-model-resolved",
+            "duration_secs": 0.9,
+            "costs": [
+                {
+                    "amount": 123_000_000.0,
+                    "unit": "nano_aiu",
+                    "source": "assistant.usage.copilot_usage.total_nano_aiu",
+                }
+            ],
+        },
+    )
+
+    async def fake_run_copilot(*_args, **_kwargs):
+        return oneshot_runner.ProviderResult(
+            "MODEL RESPONSE",
+            100,
+            40,
+            {"provider": "copilot", "inference_requests": 1},
+            details,
+        )
+
+    monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "copilot",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "test-model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    assert events[1] == {
+        "type": "usage",
+        "model_requests": 1,
+        "source": "github_copilot_sdk",
+        "complete": True,
+        "is_lower_bound": False,
+        **details[0],
+    }
+
+
+def test_main_does_not_treat_missing_copilot_usage_event_as_exact_zero(monkeypatch, capsys, tmp_path):
+    async def fake_run_copilot(*_args, **_kwargs):
+        return oneshot_runner.ProviderResult(
+            "MODEL RESPONSE",
+            0,
+            0,
+            {"provider": "copilot", "inference_requests": 1},
+        )
+
+    monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "copilot",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "test-model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    assert events[1] == {
+        "type": "usage",
+        "model_requests": 1,
+        "source": "copilot_oneshot_runner",
+        "complete": False,
+        "is_lower_bound": True,
+    }
+
+
 def test_provider_registry_adds_backend_without_runner_branch(monkeypatch, capsys, tmp_path):
     captured = {}
 
@@ -540,6 +635,9 @@ def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatc
         "input_tokens": 123,
         "output_tokens": 45,
         "model_requests": 1,
+        "source": "litellm_oneshot_runner",
+        "complete": False,
+        "is_lower_bound": True,
     }
     assert events[1]["litellm_completion_invocations"] == 1
     assert events[1]["wire_audited"] is False
@@ -578,6 +676,9 @@ def test_main_emits_received_copilot_usage_on_failure(monkeypatch, capsys, tmp_p
         "input_tokens": 55,
         "output_tokens": 13,
         "model_requests": 1,
+        "source": "copilot_oneshot_runner",
+        "complete": False,
+        "is_lower_bound": True,
     }
     assert events[1] == {"type": "request_audit", "provider": "copilot", "inference_requests": 1}
     assert events[-1] == {"type": "result", "status": "error", "model_requests": 1}
@@ -639,6 +740,16 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
             self.input_tokens = input_tokens
             self.output_tokens = output_tokens
             self.finish_reason = finish_reason
+            self.cache_read_tokens = 12
+            self.cache_write_tokens = 3
+            self.reasoning_tokens = 5
+            self.model = "test-model-resolved"
+            self.api_endpoint = SimpleNamespace(value="/responses")
+            self.duration = timedelta(milliseconds=900)
+            self.api_call_id = "response-1"
+            self.provider_call_id = "github-request-1"
+            self.cost = 0.0123
+            self.copilot_usage = SimpleNamespace(total_nano_aiu=123_000_000)
 
     class FakeSession:
         session_id = "session-1"
@@ -695,6 +806,7 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
         "_load_copilot_sdk",
         lambda: (FakeClient, MessageData, UsageData),
     )
+    monkeypatch.setattr(oneshot_runner.importlib.metadata, "version", lambda _package: "1.0.7")
     for key in oneshot_runner._COPILOT_TOKEN_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("GH_TOKEN", "secret-token")
@@ -730,6 +842,35 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
     assert result.audit["inference_requests"] == 1
     assert result.audit["wire_audited"] is True
     assert result.audit["finish_reason"] == "stop"
+    assert result.usage_details == (
+        {
+            "source": "github_copilot_sdk",
+            "input_tokens": 20,
+            "output_tokens": 8,
+            "cache_read_input_tokens": 12,
+            "cache_write_input_tokens": 3,
+            "reasoning_output_tokens": 5,
+            "model": "test-model-resolved",
+            "endpoint": "/responses",
+            "duration_secs": 0.9,
+            "finish_reason": "stop",
+            "request_id": "response-1",
+            "provider_request_id": "github-request-1",
+            "runtime_version": "1.0.7",
+            "costs": [
+                {
+                    "amount": 0.0123,
+                    "unit": "model_multiplier",
+                    "source": "assistant.usage.cost",
+                },
+                {
+                    "amount": 123_000_000.0,
+                    "unit": "nano_aiu",
+                    "source": "assistant.usage.copilot_usage.total_nano_aiu",
+                },
+            ],
+        },
+    )
     assert json.loads(handler.forwarded[0].content)["input"][0]["content"][0]["text"] == "EXACT PROMPT"
 
 
@@ -753,6 +894,14 @@ def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure
             self.input_tokens = input_tokens
             self.output_tokens = output_tokens
             self.finish_reason = finish_reason
+            self.cache_read_tokens = 12
+            self.cache_write_tokens = 3
+            self.reasoning_tokens = 5
+            self.model = "test-model"
+            self.api_endpoint = SimpleNamespace(value="/responses")
+            self.duration = timedelta(milliseconds=900)
+            self.cost = 0.0123
+            self.copilot_usage = SimpleNamespace(total_nano_aiu=123_000_000)
 
     class FakeSession:
         session_id = "session-1"
@@ -825,6 +974,14 @@ def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure
     assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (20, 8)
     assert exc_info.value.audit["inference_requests"] == 1
     assert exc_info.value.audit["finish_reason"] == "length"
+    assert exc_info.value.usage_details[0]["cache_read_input_tokens"] == 12
+    assert exc_info.value.usage_details[0]["cache_write_input_tokens"] == 3
+    assert exc_info.value.usage_details[0]["reasoning_output_tokens"] == 5
+    assert exc_info.value.usage_details[0]["duration_secs"] == 0.9
+    assert [cost["unit"] for cost in exc_info.value.usage_details[0]["costs"]] == [
+        "model_multiplier",
+        "nano_aiu",
+    ]
     if failure_mode == "timeout":
         assert isinstance(exc_info.value, oneshot_runner.ProviderTimeoutError)
     if failure_mode == "transport_timeout":

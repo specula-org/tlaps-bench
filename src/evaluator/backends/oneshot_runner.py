@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib.metadata
 import json
+import math
 import os
 import sys
 import tempfile
@@ -153,6 +155,41 @@ def _nonnegative_int(value: object) -> int:
         return max(int(value), 0)  # type: ignore[arg-type]
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def _optional_nonnegative_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _optional_nonnegative_float(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed >= 0 and math.isfinite(parsed) else None
+
+
+def _duration_secs(value: object) -> float | None:
+    total_seconds = getattr(value, "total_seconds", None)
+    if not callable(total_seconds):
+        return None
+    try:
+        return _optional_nonnegative_float(total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _enum_value(value: object) -> str | None:
+    candidate = getattr(value, "value", value)
+    return candidate if isinstance(candidate, str) and candidate else None
 
 
 def _get(value: object, name: str, default: object = None) -> object:
@@ -399,6 +436,7 @@ class ProviderResult:
     input_tokens: int
     output_tokens: int
     audit: dict[str, object]
+    usage_details: tuple[dict[str, object], ...] = ()
 
 
 class ProviderRunError(RuntimeError):
@@ -410,11 +448,13 @@ class ProviderRunError(RuntimeError):
         audit: dict[str, object],
         input_tokens: int = 0,
         output_tokens: int = 0,
+        usage_details: tuple[dict[str, object], ...] = (),
     ) -> None:
         super().__init__(message)
         self.audit = audit
         self.input_tokens = _nonnegative_int(input_tokens)
         self.output_tokens = _nonnegative_int(output_tokens)
+        self.usage_details = usage_details
 
 
 class ProviderTimeoutError(ProviderRunError):
@@ -547,22 +587,80 @@ def _copilot_token() -> str:
     raise RuntimeError("COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN is required")
 
 
-def _copilot_usage(events: list[object], usage_data_type: type | None) -> tuple[int, int, str | None]:
+@dataclass(frozen=True)
+class _CopilotUsageSnapshot:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    finish_reason: str | None = None
+    details: tuple[dict[str, object], ...] = ()
+
+
+def _copilot_usage(events: list[object], usage_data_type: type | None) -> _CopilotUsageSnapshot:
     input_tokens = 0
     output_tokens = 0
     finish_reason: str | None = None
+    details: list[dict[str, object]] = []
     if usage_data_type is None:
-        return input_tokens, output_tokens, finish_reason
+        return _CopilotUsageSnapshot()
+
+    try:
+        runtime_version = importlib.metadata.version("github-copilot-sdk")
+    except importlib.metadata.PackageNotFoundError:
+        runtime_version = None
 
     for event in events:
         data = getattr(event, "data", None)
-        if isinstance(data, usage_data_type):
-            input_tokens += _nonnegative_int(data.input_tokens)
-            output_tokens += _nonnegative_int(data.output_tokens)
-            event_finish_reason = getattr(data, "finish_reason", None)
-            if isinstance(event_finish_reason, str) and event_finish_reason:
-                finish_reason = event_finish_reason
-    return input_tokens, output_tokens, finish_reason
+        if not isinstance(data, usage_data_type):
+            continue
+        request_input = _optional_nonnegative_int(getattr(data, "input_tokens", None))
+        request_output = _optional_nonnegative_int(getattr(data, "output_tokens", None))
+        input_tokens += request_input or 0
+        output_tokens += request_output or 0
+        event_finish_reason = getattr(data, "finish_reason", None)
+        if isinstance(event_finish_reason, str) and event_finish_reason:
+            finish_reason = event_finish_reason
+
+        detail: dict[str, object] = {"source": "github_copilot_sdk"}
+        optional_values: dict[str, object | None] = {
+            "input_tokens": request_input,
+            "output_tokens": request_output,
+            "cache_read_input_tokens": _optional_nonnegative_int(getattr(data, "cache_read_tokens", None)),
+            "cache_write_input_tokens": _optional_nonnegative_int(getattr(data, "cache_write_tokens", None)),
+            "reasoning_output_tokens": _optional_nonnegative_int(getattr(data, "reasoning_tokens", None)),
+            "model": _enum_value(getattr(data, "model", None)),
+            "endpoint": _enum_value(getattr(data, "api_endpoint", None)),
+            "duration_secs": _duration_secs(getattr(data, "duration", None)),
+            "finish_reason": event_finish_reason if isinstance(event_finish_reason, str) else None,
+            "request_id": _enum_value(getattr(data, "api_call_id", None)),
+            "provider_request_id": _enum_value(getattr(data, "provider_call_id", None)),
+            "runtime_version": runtime_version,
+        }
+        detail.update({key: value for key, value in optional_values.items() if value is not None})
+
+        costs: list[dict[str, object]] = []
+        model_multiplier = _optional_nonnegative_float(getattr(data, "cost", None))
+        if model_multiplier is not None:
+            costs.append(
+                {
+                    "amount": model_multiplier,
+                    "unit": "model_multiplier",
+                    "source": "assistant.usage.cost",
+                }
+            )
+        copilot_usage = getattr(data, "copilot_usage", None)
+        nano_aiu = _optional_nonnegative_float(getattr(copilot_usage, "total_nano_aiu", None))
+        if nano_aiu is not None:
+            costs.append(
+                {
+                    "amount": nano_aiu,
+                    "unit": "nano_aiu",
+                    "source": "assistant.usage.copilot_usage.total_nano_aiu",
+                }
+            )
+        if costs:
+            detail["costs"] = costs
+        details.append(detail)
+    return _CopilotUsageSnapshot(input_tokens, output_tokens, finish_reason, tuple(details))
 
 
 async def _send_copilot_and_wait(
@@ -628,15 +726,16 @@ async def run_copilot(
     abort_tasks: set[asyncio.Task[None]] = set()
 
     def timeout_error() -> ProviderTimeoutError:
-        input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
+        usage = _copilot_usage(events, usage_data_type)
         audit = guard.audit()
-        if finish_reason is not None:
-            audit["finish_reason"] = finish_reason
+        if usage.finish_reason is not None:
+            audit["finish_reason"] = usage.finish_reason
         return ProviderTimeoutError(
             "Copilot request reached benchmark deadline",
             audit,
-            input_tokens,
-            output_tokens,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.details,
         )
 
     async def abort_session(target: object) -> None:
@@ -744,22 +843,28 @@ async def run_copilot(
             raise timeout_error() from exc
         raise
     except Exception as exc:
-        input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
+        usage = _copilot_usage(events, usage_data_type)
         audit = guard.audit()
-        if finish_reason is not None:
-            audit["finish_reason"] = finish_reason
+        if usage.finish_reason is not None:
+            audit["finish_reason"] = usage.finish_reason
         if deadline_reported or (deadline is not None and isinstance(exc, _CopilotDeadlineExceeded)):
             raise timeout_error() from exc
-        raise ProviderRunError(str(exc), audit, input_tokens, output_tokens) from exc
+        raise ProviderRunError(
+            str(exc),
+            audit,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.details,
+        ) from exc
     finally:
         if watchdog_task is not None:
             watchdog_task.cancel()
 
-    input_tokens, output_tokens, finish_reason = _copilot_usage(events, usage_data_type)
+    usage = _copilot_usage(events, usage_data_type)
     audit = guard.audit()
-    if finish_reason is not None:
-        audit["finish_reason"] = finish_reason
-    return ProviderResult(text, input_tokens, output_tokens, audit)
+    if usage.finish_reason is not None:
+        audit["finish_reason"] = usage.finish_reason
+    return ProviderResult(text, usage.input_tokens, usage.output_tokens, audit, usage.details)
 
 
 class OneShotProvider(Protocol):
@@ -836,6 +941,45 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _emit_usage_events(
+    *,
+    provider: str,
+    input_tokens: int,
+    output_tokens: int,
+    model_requests: int,
+    usage_details: tuple[dict[str, object], ...],
+    complete: bool,
+    is_lower_bound: bool,
+) -> None:
+    """Emit one normalized usage event per captured model request."""
+
+    if usage_details:
+        for detail in usage_details:
+            payload = {
+                "model_requests": 1,
+                "source": f"{provider}_oneshot_runner",
+                "complete": complete,
+                "is_lower_bound": is_lower_bound,
+                **detail,
+            }
+            _emit("usage", **payload)
+        return
+
+    payload: dict[str, object] = {
+        "model_requests": model_requests,
+        "source": f"{provider}_oneshot_runner",
+        "complete": complete,
+        "is_lower_bound": is_lower_bound,
+    }
+    # On a failed request, zero is often "no usage event arrived" rather than
+    # a measured zero. Keep it absent so the host records null, not false data.
+    if complete or input_tokens:
+        payload["input_tokens"] = input_tokens
+    if complete or output_tokens:
+        payload["output_tokens"] = output_tokens
+    _emit("usage", **payload)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     prompt = sys.stdin.read()
@@ -855,21 +999,27 @@ def main(argv: list[str] | None = None) -> int:
         audit = provider.audit
         input_tokens = 0
         output_tokens = 0
+        usage_details: tuple[dict[str, object], ...] = ()
         if isinstance(exc, ProviderRunError):
             audit = exc.audit
             input_tokens = exc.input_tokens
             output_tokens = exc.output_tokens
+            usage_details = exc.usage_details
         request_count = audit.get(
             "model_requests",
             audit.get("litellm_completion_invocations", audit.get("inference_requests", 0)),
         )
         model_requests = _nonnegative_int(request_count)
         if model_requests > 0:
-            _emit(
-                "usage",
+            usage_complete = bool(usage_details) and len(usage_details) >= model_requests
+            _emit_usage_events(
+                provider=args.provider,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 model_requests=model_requests,
+                usage_details=usage_details,
+                complete=usage_complete,
+                is_lower_bound=not usage_complete,
             )
         _emit("request_audit", **audit)
         _emit("error", message=str(exc))
@@ -881,11 +1031,15 @@ def main(argv: list[str] | None = None) -> int:
         if terminal_emitted:
             return 1
         _emit("response", text=result.text)
-        _emit(
-            "usage",
+        usage_complete = args.provider != "copilot" or bool(result.usage_details)
+        _emit_usage_events(
+            provider=args.provider,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             model_requests=1,
+            usage_details=result.usage_details,
+            complete=usage_complete,
+            is_lower_bound=not usage_complete,
         )
         _emit("request_audit", **result.audit)
         _emit("result", status="success", model_requests=1)

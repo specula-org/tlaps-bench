@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from evaluator.usage import UsageSummary
+
 BEDROCK_HOSTS = [
     "bedrock-runtime.us-east-1.amazonaws.com",
     "bedrock-runtime.us-east-2.amazonaws.com",
@@ -195,6 +197,30 @@ class Backend(ABC):
     @abstractmethod
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         """Parse the backend's stdout dump into (transcript, input_tokens, output_tokens)."""
+
+    def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
+        """Return structured usage while preserving the legacy parser contract.
+
+        Backends can override this as richer provider telemetry becomes
+        available. The default adapter keeps third-party and test backends that
+        only implement ``parse_output`` working unchanged.
+        """
+
+        return UsageSummary.from_legacy(
+            input_tokens,
+            output_tokens,
+            source=f"{self.name or self.__class__.__name__}_legacy_output",
+        )
+
+    def execution_environment(self, result_dir: str) -> dict[str, str]:
+        """Backend-owned environment additions for one isolated execution."""
+
+        return {}
+
+    def attempt_output_files(self) -> tuple[str, ...]:
+        """Extra result-dir artifacts that must be isolated across retries."""
+
+        return ()
 
     def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:
         """Build one execution command.

@@ -16,6 +16,7 @@ import os
 from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
 from evaluator.termination import TerminationReason
+from evaluator.usage import RequestUsage, UsageCost, UsageSummary
 
 BENCH_TEXT = "---- MODULE Bar ----\n====\n"
 
@@ -34,10 +35,22 @@ class _ScriptedBackend(AgenticBackend):
     name = "copilot"
 
     def __init__(self):
+        self.in_tokens = 0
         self.out_tokens = 0  # set by the fake agent for the current call
+        self.cost = 0.0
 
     def parse_output(self, jsonl_path):
-        return ("", 0, self.out_tokens)
+        return ("", self.in_tokens, self.out_tokens)
+
+    def parse_usage(self, jsonl_path, *, input_tokens, output_tokens):
+        if not (input_tokens or output_tokens or self.cost):
+            return UsageSummary.from_requests([], source="scripted", complete=True)
+        costs = (UsageCost(self.cost, "provider_monetary", "test.cost"),) if self.cost else ()
+        return UsageSummary.from_requests(
+            [RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, costs=costs)],
+            source="scripted",
+            complete=True,
+        )
 
     def build_command(self, workspace, result_dir):
         return ["fake-agent"]
@@ -109,7 +122,9 @@ def _install_agent(monkeypatch, backend, calls_spec):
             with open(os.path.join(agent_dir, "stderr.txt"), "w") as f:
                 f.write(spec["stderr"])
         result["agent_exit"] = spec.get("exit", 0)
+        backend.in_tokens = spec.get("in_tokens", 0)
         backend.out_tokens = spec.get("out_tokens", 0)
+        backend.cost = spec.get("cost", 0.0)
         if "mutate" in spec:
             spec["mutate"](workspace)
 
@@ -330,11 +345,25 @@ def test_stale_agent_check_not_copied_into_round(tmp_path, monkeypatch):
 def test_costs_accumulate_into_top_level(tmp_path, monkeypatch):
     # Verdict fields stay first-attempt; cost fields cover the whole chain.
     backend = _ScriptedBackend()
-    _install_agent(monkeypatch, backend, [dict(GENUINE, out_tokens=500), dict(GENUINE, out_tokens=300)])
+    _install_agent(
+        monkeypatch,
+        backend,
+        [
+            dict(GENUINE, in_tokens=100, out_tokens=500, cost=0.01),
+            dict(GENUINE, in_tokens=60, out_tokens=300, cost=0.006),
+        ],
+    )
     _install_grader(monkeypatch, ["FAIL", "PASS"])
     result = runner.run_single_benchmark(_work_item(tmp_path, backend, max_continuations=1))
+    assert result["input_tokens"] == 160
     assert result["output_tokens"] == 800
+    assert result["usage"]["costs"] == [{"amount": 0.016, "unit": "provider_monetary", "source": "test.cost"}]
+    assert result["usage"]["requests"][1]["continuation_round"] == 1
+    assert result["continuations"][0]["input_tokens"] == 60
     assert result["continuations"][0]["output_tokens"] == 300
+    assert result["continuations"][0]["usage"]["costs"] == [
+        {"amount": 0.006, "unit": "provider_monetary", "source": "test.cost"}
+    ]
 
 
 def test_resume_skips_benchmarks_recovered_by_continuation():

@@ -91,7 +91,32 @@ def test_parse_output_and_request_metadata(tmp_path):
         "not json\n"
         + json.dumps({"type": "response", "text": MODULE})
         + "\n"
-        + json.dumps({"type": "usage", "input_tokens": 120, "output_tokens": 80})
+        + json.dumps(
+            {
+                "type": "usage",
+                "input_tokens": 120,
+                "output_tokens": 80,
+                "cache_read_input_tokens": 50,
+                "cache_write_input_tokens": 10,
+                "reasoning_output_tokens": 30,
+                "model": "gpt-5-2026-07-01",
+                "endpoint": "/responses",
+                "duration_secs": 1.25,
+                "request_id": "response-1",
+                "provider_request_id": "github-request-1",
+                "costs": [
+                    {
+                        "amount": 123_000_000,
+                        "unit": "nano_aiu",
+                        "source": "assistant.usage.copilot_usage.total_nano_aiu",
+                    }
+                ],
+                "source": "github_copilot_sdk",
+                "runtime_version": "1.0.7",
+                "complete": True,
+                "is_lower_bound": False,
+            }
+        )
         + "\n"
         + json.dumps(
             {
@@ -111,10 +136,20 @@ def test_parse_output_and_request_metadata(tmp_path):
     backend = CopilotOneShotBackend(model="gpt-5")
 
     transcript, input_tokens, output_tokens = backend.parse_output(str(events))
+    usage = backend.parse_usage(str(events), input_tokens=input_tokens, output_tokens=output_tokens)
     metadata = backend.parse_run_metadata(str(events))
 
     assert transcript == f"[AGENT] {MODULE}\n"
     assert (input_tokens, output_tokens) == (120, 80)
+    assert usage.status == "complete"
+    assert usage.cache_read_input_tokens == 50
+    assert usage.cache_write_input_tokens == 10
+    assert usage.reasoning_output_tokens == 30
+    assert usage.model_time_secs == 1.25
+    assert usage.runtime_versions == ("1.0.7",)
+    assert usage.requests[0].requested_model == "gpt-5"
+    assert usage.requests[0].resolved_model == "gpt-5-2026-07-01"
+    assert usage.costs[0].unit == "nano_aiu"
     assert metadata == {
         "one_shot": True,
         "provider": "copilot",
@@ -125,6 +160,23 @@ def test_parse_output_and_request_metadata(tmp_path):
         "tools_removed": True,
         "model_requests": 1,
     }
+
+
+def test_missing_one_shot_usage_is_not_reported_as_zero_cost(tmp_path):
+    events = tmp_path / "output.jsonl"
+    _write_events(
+        events,
+        {"type": "response", "text": MODULE},
+        {"type": "result", "status": "success", "model_requests": 1},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "incomplete"
+    assert usage.model_requests == 1
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
 
 
 def test_materializes_raw_response_verbatim_atomically(tmp_path):

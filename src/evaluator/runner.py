@@ -31,7 +31,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from common.container import ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image, forward_env
 from evaluator import quota
@@ -51,6 +51,7 @@ from evaluator.score import (
     weighted_score,
 )
 from evaluator.termination import TerminationContext, TerminationReason, classify, startup_error_snippet
+from evaluator.usage import UsageSummary
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
@@ -309,6 +310,7 @@ class ExecutionOutcome:
     quota_exhausted: bool
     infra_retriable: bool  # still a 0-token infra failure after all retries
     infra_reasons: list[str]
+    usage: UsageSummary
 
 
 def _run_backend_with_retries(
@@ -356,6 +358,7 @@ def _run_backend_with_retries(
     infra_retriable = False
     infra_reasons: list[str] = []
     transcript = ""
+    aggregate_usage: UsageSummary | None = None
     try:
         for attempt in range(max(item.infra_retries, 0) + 1):
             canonical_dir = _make_canonical_dir(name_no_ext, item.benchmark_path, basename, deps)
@@ -407,14 +410,31 @@ def _run_backend_with_retries(
             # the result records any tokens the agent did emit (rather than
             # forcing them to 0).
             transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
-            result["input_tokens"] = input_tokens
-            result["output_tokens"] = output_tokens
             parse_metadata = getattr(backend, "parse_run_metadata", None)
             if parse_metadata:
                 runner_error = result.get("error")
                 result.update(parse_metadata(agent_jsonl))
                 if runner_error:
                     result["error"] = runner_error
+            try:
+                attempt_usage = backend.parse_usage(
+                    agent_jsonl,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                ).with_context(attempt=attempt)
+            except Exception as exc:
+                attempt_usage = replace(
+                    UsageSummary.from_legacy(
+                        input_tokens,
+                        output_tokens,
+                        source=f"{backend.name}_usage_parser_fallback",
+                    ),
+                    warnings=(f"structured usage parser failed: {type(exc).__name__}: {exc}",),
+                )
+            aggregate_usage = attempt_usage if aggregate_usage is None else aggregate_usage.merge(attempt_usage)
+            result["usage"] = aggregate_usage.to_dict()
+            result["input_tokens"] = aggregate_usage.legacy_input_tokens
+            result["output_tokens"] = aggregate_usage.legacy_output_tokens
 
             if quota_exhausted:
                 break  # quota owns its own retry budget — never infra-retried
@@ -442,7 +462,7 @@ def _run_backend_with_retries(
             if attempt >= item.infra_retries:
                 break  # out of retries — the caller records the exhaustion
 
-            _stash_failed_attempt(agent_dir, attempt)
+            _stash_failed_attempt(agent_dir, attempt, backend)
             if fixed_workspace is None:
                 shutil.rmtree(workspace, ignore_errors=True)
                 workspace = None
@@ -468,7 +488,17 @@ def _run_backend_with_retries(
     if infra_reasons:
         result["infra_retries"] = attempt  # retries performed (0-based final attempt index)
         result["infra_retry_reasons"] = infra_reasons
-    return ExecutionOutcome(workspace, canonical_dir, transcript, quota_exhausted, infra_retriable, infra_reasons)
+    if aggregate_usage is None:
+        aggregate_usage = UsageSummary(available=False, warnings=("backend did not produce usage data",))
+    return ExecutionOutcome(
+        workspace,
+        canonical_dir,
+        transcript,
+        quota_exhausted,
+        infra_retriable,
+        infra_reasons,
+        aggregate_usage,
+    )
 
 
 def _resume_should_skip(result: dict) -> bool:
@@ -634,6 +664,16 @@ def run_single_benchmark(item: WorkItem):
         "termination_reason": TerminationReason.OK,
         **backend.initial_result_metadata(),
     }
+    # Usage is runner-owned structured evidence; backend metadata must not
+    # accidentally replace it with a similarly named custom field.
+    result["usage"] = UsageSummary(
+        input_tokens=0,
+        output_tokens=0,
+        model_requests=0,
+        sources=("runner",),
+        available=True,
+        complete=True,
+    ).to_dict()
     if item.max_continuations > 0:
         # Run-level config, stamped on EVERY result — first-attempt PASSes and
         # non-genuine early exits included — so the continuation metric can
@@ -811,12 +851,12 @@ def _reset_benchmark_artifacts(output_dir: str, result_dir: str) -> None:
             os.remove(path)
 
 
-def _stash_failed_attempt(agent_dir: str, attempt: int) -> None:
+def _stash_failed_attempt(agent_dir: str, attempt: int, backend: Backend) -> None:
     """Move a failed attempt's raw outputs to agent/attempts/attempt-N/: the
     retry starts clean (no stale stderr.txt) and the evidence stays debuggable."""
     dest = os.path.join(agent_dir, "attempts", f"attempt-{attempt}")
     os.makedirs(dest, exist_ok=True)
-    for fname in ("output.jsonl", "stderr.txt"):
+    for fname in ("output.jsonl", "stderr.txt", *backend.attempt_output_files()):
         src = os.path.join(agent_dir, fname)
         if os.path.isfile(src):
             shutil.move(src, os.path.join(dest, fname))
@@ -894,9 +934,15 @@ def _run_continuations(
             fixed_workspace=workspace,
         )
         try:
+            round_usage = run.usage.with_context(continuation_round=rnd)
+            round_result["usage"] = round_usage.to_dict()
+            round_result["input_tokens"] = round_usage.legacy_input_tokens
+            round_result["output_tokens"] = round_usage.legacy_output_tokens
+            aggregate_usage = UsageSummary.from_dict(result.get("usage")).merge(round_usage)
+            result["usage"] = aggregate_usage.to_dict()
             result["time_secs"] += round_result["time_secs"]
-            result["input_tokens"] += round_result["input_tokens"]
-            result["output_tokens"] += round_result["output_tokens"]
+            result["input_tokens"] = aggregate_usage.legacy_input_tokens
+            result["output_tokens"] = aggregate_usage.legacy_output_tokens
             if run.quota_exhausted:
                 round_result["agent_exit"] = -3
                 round_result["error"] = "provider usage limit; exhausted quota retries"
@@ -974,6 +1020,8 @@ def _run_backend_container(
     timeout = item.timeout if item.timeout and item.timeout > 0 else None
     propagated_deadline = time.time() + timeout if timeout and backend.capabilities.cooperative_deadline else None
     cmd = _build_backend_command(backend, "/workspace", "/results", propagated_deadline)
+    backend_env = forward_env(backend.env_keys, model=getattr(backend, "model", None))
+    backend_env.update(backend.execution_environment("/results"))
 
     config = ContainerConfig(
         workspace=workspace,
@@ -981,7 +1029,7 @@ def _run_backend_container(
         # Same canonical snapshot the grader reads, bind-mounted read-only so the
         # agent's own check_proof_bin runs the identical cheat oracle the grader will.
         benchmark_dir=canonical_dir or "",
-        env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
+        env=backend_env,
         firewall_hosts=backend.firewall_hosts(),
         install_script=backend.install_script,
         credential_mounts=backend.get_credential_mounts(),
@@ -1133,6 +1181,7 @@ def _run_backend_local(
     proc = None
 
     agent_env = dict(os.environ)
+    agent_env.update(backend.execution_environment(agent_dir))
     checker_dir = os.path.dirname(os.path.abspath(checker_bin))
     agent_env["PATH"] = checker_dir + os.pathsep + agent_env.get("PATH", "")
     sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")

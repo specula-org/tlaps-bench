@@ -220,6 +220,7 @@ results/<mode>/<backend>/<timestamp>/
     ├── agent/
     │   ├── solution.tla      # The agent's final output
     │   ├── output.jsonl      # Raw agent stdout capture
+    │   ├── copilot-otel.jsonl # Copilot CLI only: official usage telemetry
     │   ├── stderr.txt        # Agent stderr, if any — start here to debug a 0-token run
     │   └── transcript.txt    # Parsed transcript with token summary
     └── grading/
@@ -228,6 +229,27 @@ results/<mode>/<backend>/<timestamp>/
 ```
 
 With `--max-continuations`, each continuation round also writes a `continuations/round-N/` directory with that round's prompt, output, solution, and checker result.
+
+### Usage and cost telemetry
+
+Each `result.json` keeps the existing top-level `input_tokens`, `output_tokens`, and `time_secs` fields for compatibility. It also includes a versioned `usage` record with provider-neutral totals and, when the provider exposes them, one entry per model request:
+
+- input, output, cache-read, cache-write, and reasoning tokens
+- model request count and summed model-call duration
+- requested/resolved model, provider request IDs, retry attempt, and continuation round
+- provider-reported cost values, preserving their native unit and source
+- `complete`, `lower_bound`, `incomplete`, or `unavailable` status plus validation warnings
+
+An unavailable value is `null`, not zero. The legacy top-level token fields still use zero when a value is unavailable, so new analysis should read `usage` and its status. Cache tokens classify input tokens and reasoning tokens classify output tokens; they are not added to the input/output totals a second time.
+
+`time_secs` remains the active wall time for that benchmark task, including agent and tool work but excluding quota waits and infra-retry backoff. Retries and continuation rounds are added to the task total. Parallel tasks can overlap, so summing `time_secs` across a run gives task-time, not the experiment's wall-clock duration. `usage.model_time_secs` separately sums completed model-call spans and can also exceed wall-clock time when requests overlap.
+
+Copilot uses GitHub's supported telemetry surfaces rather than inferring usage from text:
+
+- The agentic CLI writes [official OpenTelemetry JSONL](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#opentelemetry-monitoring) to `copilot-otel.jsonl`. Every completed `chat` span is counted once, including sub-agent requests; each `invoke_agent` span cross-checks only its direct chats, and the top-level root indicates that the trace finished. If a timeout prevents that root from being flushed, completed chats are retained as a lower bound. Message-content capture is explicitly disabled.
+- The one-shot backend records the official SDK's [`assistant.usage` event](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/streaming-events#assistantusage).
+
+Native Copilot cost units are intentionally not relabeled: CLI `github.copilot.cost` is stored as `provider_monetary`, CLI `github.copilot.aiu` as `aiu`, the CLI runtime's `github.copilot.nano_aiu` as `nano_aiu`, and SDK values as `model_multiplier` or `nano_aiu`. GitHub does not attach a currency attribute to the CLI span, so these are auditable provider values rather than a claimed invoice total or a locally reconstructed USD price. If an agent or sub-agent request omits a cost field that other requests report, the known amount is explicitly marked as a lower bound.
 
 ---
 
@@ -432,6 +454,9 @@ This script runs inside the container with full network access before the firewa
 | `get_credential_mounts()` | Override this for dynamic credential logic |
 | `build_command(workspace, result_dir)` | Returns the agent command as a list. The prompt is piped to stdin. The agent works in `workspace/` where the `.tla` file lives. |
 | `parse_output(jsonl_path)` | Reads the captured stdout file. Returns `(transcript, input_tokens, output_tokens)`. |
+| `parse_usage(jsonl_path, *, input_tokens, output_tokens)` | Returns a structured `UsageSummary`. The default implementation adapts the legacy token pair, so existing backends remain compatible. |
+| `execution_environment(result_dir)` | Returns per-execution environment additions, such as an isolated telemetry output path. |
+| `attempt_output_files()` | Lists backend-owned artifacts that must be preserved and cleared across infra retries. |
 | `check_auth()` | Fast host-side check before launching a container. Return `None` if OK, or an error string. |
 | `firewall_hosts()` | List of API hostnames the container must allow. Use `detect_firewall_hosts(model)` to allow all known LLM API endpoints. |
 

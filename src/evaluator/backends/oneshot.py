@@ -9,10 +9,12 @@ import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from evaluator.termination import TerminationReason
+from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
 from .base import (
     Backend,
@@ -204,6 +206,135 @@ class OneShotBackend(Backend):
                 lines.extend((f"[ERROR] {message}", ""))
 
         return "\n".join(lines), input_tokens, output_tokens
+
+    def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
+        payloads: list[dict[str, Any]] = []
+        terminal_status: str | None = None
+        terminal_model_requests: int | None = None
+        for event in _iter_events(jsonl_path):
+            event_type = event.get("type")
+            payload = _event_payload(event)
+            if event_type == "usage":
+                payloads.append(payload)
+            elif event_type == "result":
+                status = payload.get("status")
+                if isinstance(status, str):
+                    terminal_status = status
+                terminal_model_requests = nonnegative_int(payload.get("model_requests"))
+
+        if not payloads:
+            if input_tokens or output_tokens:
+                return UsageSummary(
+                    input_tokens=nonnegative_int(input_tokens),
+                    output_tokens=nonnegative_int(output_tokens),
+                    model_requests=terminal_model_requests,
+                    sources=(f"{self.provider}_oneshot_legacy_event",),
+                    available=True,
+                    complete=False,
+                    is_lower_bound=True,
+                    warnings=("structured one-shot usage event unavailable",),
+                )
+            if terminal_model_requests == 0:
+                return UsageSummary(
+                    input_tokens=0,
+                    output_tokens=0,
+                    model_requests=0,
+                    sources=(f"{self.provider}_oneshot_event",),
+                    available=True,
+                    complete=True,
+                )
+            return UsageSummary(
+                model_requests=terminal_model_requests,
+                sources=(f"{self.provider}_oneshot_event",),
+                available=terminal_model_requests is not None,
+                complete=False,
+                warnings=("structured one-shot usage event unavailable",),
+            )
+
+        requests: list[RequestUsage] = []
+        sources: list[str] = []
+        runtime_versions: list[str] = []
+        complete_flags: list[bool] = []
+        lower_bound_flags: list[bool] = []
+        reported_model_requests: list[int] = []
+        for payload in payloads:
+            costs: list[UsageCost] = []
+            raw_costs = payload.get("costs")
+            if isinstance(raw_costs, list):
+                for raw_cost in raw_costs:
+                    if not isinstance(raw_cost, dict):
+                        continue
+                    amount = nonnegative_float(raw_cost.get("amount"))
+                    unit = raw_cost.get("unit")
+                    source = raw_cost.get("source")
+                    if amount is not None and isinstance(unit, str) and unit and isinstance(source, str) and source:
+                        costs.append(UsageCost(amount, unit, source))
+
+            finish_reasons = payload.get("finish_reasons")
+            if isinstance(finish_reasons, list):
+                normalized_finish_reasons = tuple(
+                    reason for reason in finish_reasons if isinstance(reason, str) and reason
+                )
+            else:
+                finish_reason = payload.get("finish_reason")
+                normalized_finish_reasons = (finish_reason,) if isinstance(finish_reason, str) and finish_reason else ()
+            requests.append(
+                RequestUsage(
+                    input_tokens=nonnegative_int(payload.get("input_tokens")),
+                    output_tokens=nonnegative_int(payload.get("output_tokens")),
+                    cache_read_input_tokens=nonnegative_int(payload.get("cache_read_input_tokens")),
+                    cache_write_input_tokens=nonnegative_int(payload.get("cache_write_input_tokens")),
+                    reasoning_output_tokens=nonnegative_int(payload.get("reasoning_output_tokens")),
+                    requested_model=self.model,
+                    resolved_model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+                    provider=self.provider,
+                    endpoint=payload.get("endpoint") if isinstance(payload.get("endpoint"), str) else None,
+                    duration_secs=nonnegative_float(payload.get("duration_secs")),
+                    finish_reasons=normalized_finish_reasons,
+                    request_id=payload.get("request_id") if isinstance(payload.get("request_id"), str) else None,
+                    provider_request_id=(
+                        payload.get("provider_request_id")
+                        if isinstance(payload.get("provider_request_id"), str)
+                        else None
+                    ),
+                    costs=tuple(costs),
+                )
+            )
+            source = payload.get("source")
+            if isinstance(source, str) and source:
+                sources.append(source)
+            runtime_version = payload.get("runtime_version")
+            if isinstance(runtime_version, str) and runtime_version:
+                runtime_versions.append(runtime_version)
+            explicit_complete = payload.get("complete")
+            complete_flags.append(
+                explicit_complete if isinstance(explicit_complete, bool) else terminal_status == "success"
+            )
+            explicit_lower_bound = payload.get("is_lower_bound")
+            lower_bound_flags.append(
+                explicit_lower_bound
+                if isinstance(explicit_lower_bound, bool)
+                else terminal_status in {"error", "timeout"}
+            )
+            model_requests = nonnegative_int(payload.get("model_requests"))
+            if model_requests is not None:
+                reported_model_requests.append(model_requests)
+
+        totals: dict[str, object] = {}
+        if reported_model_requests:
+            totals["model_requests"] = sum(reported_model_requests)
+
+        usage = UsageSummary.from_requests(
+            requests,
+            source=sources[0] if sources else f"{self.provider}_oneshot_event",
+            complete=all(complete_flags),
+            is_lower_bound=any(lower_bound_flags),
+            runtime_versions=tuple(dict.fromkeys(runtime_versions)),
+            totals=totals,
+        )
+        if len(set(sources)) > 1:
+            usage = replace(usage, sources=tuple(dict.fromkeys(sources)))
+        return usage
 
     def materialize_solution(self, jsonl_path: str, destination: str) -> bool:
         """Atomically write the sole non-empty response for grader validation."""
