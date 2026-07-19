@@ -452,11 +452,38 @@ def test_each_execution_gets_an_isolated_official_otel_file(tmp_path):
     second = backend.execution_environment(str(tmp_path / "task-b"))
 
     assert first == {
+        "COPILOT_OTEL_ENABLED": "true",
+        "COPILOT_OTEL_EXPORTER_TYPE": "file",
         "COPILOT_OTEL_FILE_EXPORTER_PATH": str(tmp_path / "task-a" / COPILOT_OTEL_FILENAME),
         "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "false",
     }
     assert second["COPILOT_OTEL_FILE_EXPORTER_PATH"] != first["COPILOT_OTEL_FILE_EXPORTER_PATH"]
     assert backend.attempt_output_files() == (COPILOT_OTEL_FILENAME,)
+
+
+def test_execution_environment_overrides_host_otel_exporter(tmp_path):
+    backend = CopilotBackend()
+    merged = {
+        "COPILOT_OTEL_ENABLED": "false",
+        "COPILOT_OTEL_EXPORTER_TYPE": "otlp-http",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example",
+    }
+
+    merged.update(backend.execution_environment(str(tmp_path)))
+
+    assert merged["COPILOT_OTEL_ENABLED"] == "true"
+    assert merged["COPILOT_OTEL_EXPORTER_TYPE"] == "file"
+    assert merged["COPILOT_OTEL_FILE_EXPORTER_PATH"] == str(tmp_path / COPILOT_OTEL_FILENAME)
+
+
+def test_copilot_uses_documented_prompt_flag_without_stdin(tmp_path):
+    backend = CopilotBackend(model="test-model")
+    command = backend.build_command(str(tmp_path), str(tmp_path / "results"))
+
+    invocation, stdin_data = backend.prepare_invocation(command, "EXACT PROMPT")
+
+    assert invocation == [*command, "-p", "EXACT PROMPT"]
+    assert stdin_data is None
 
 
 def test_copilot_cli_install_is_pinned_to_verified_otel_version():

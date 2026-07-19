@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from evaluator.backends import oneshot_runner
+from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
 
 
 class _RecordingHandler(oneshot_runner.StrictCopilotRequestHandler):
@@ -394,6 +395,14 @@ def test_litellm_makes_one_call_with_no_tools_system_or_retries(monkeypatch):
     ]
     assert result.text == "MODEL RESPONSE"
     assert (result.input_tokens, result.output_tokens) == (12, 7)
+    assert result.usage_details == (
+        {
+            "source": "litellm_response_usage",
+            "input_tokens": 12,
+            "output_tokens": 7,
+            "finish_reason": "stop",
+        },
+    )
     assert result.audit["litellm_completion_invocations"] == 1
     assert result.audit["wire_audited"] is False
     assert result.audit["litellm_retries_disabled"] is True
@@ -422,6 +431,85 @@ def test_litellm_clamps_output_budget_to_pinned_model_metadata(monkeypatch):
 
     assert calls[0]["max_tokens"] == 8_192
     assert result.audit["max_tokens"] == 8_192
+    assert (result.input_tokens, result.output_tokens) == (None, None)
+
+
+def test_main_preserves_missing_litellm_usage_as_null(monkeypatch, capsys, tmp_path):
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = lambda **_kwargs: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="MODEL RESPONSE"))]
+    )
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "litellm",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "provider/model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    assert events[1] == {
+        "type": "usage",
+        "model_requests": 1,
+        "source": "litellm_response_usage",
+        "complete": False,
+        "is_lower_bound": True,
+    }
+
+    output = tmp_path / "output.jsonl"
+    output.write_text("".join(json.dumps(event) + "\n" for event in events))
+    backend = LiteLLMOneShotBackend(model="provider/model")
+    _transcript, input_tokens, output_tokens = backend.parse_output(str(output))
+    usage = backend.parse_usage(str(output), input_tokens=input_tokens, output_tokens=output_tokens)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 1
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+
+
+def test_main_preserves_explicit_litellm_zero_usage(monkeypatch, capsys, tmp_path):
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = lambda **_kwargs: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="MODEL RESPONSE"))],
+        usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0),
+    )
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "litellm",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "provider/model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    assert events[1] == {
+        "type": "usage",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "model_requests": 1,
+        "source": "litellm_response_usage",
+        "complete": True,
+        "is_lower_bound": False,
+    }
 
 
 def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
@@ -441,6 +529,13 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
                 "system_supplied": False,
                 "tools_supplied": False,
             },
+            (
+                {
+                    "source": "litellm_response_usage",
+                    "input_tokens": 12,
+                    "output_tokens": 7,
+                },
+            ),
         ),
     )
     monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
@@ -526,8 +621,8 @@ def test_main_does_not_treat_missing_copilot_usage_event_as_exact_zero(monkeypat
     async def fake_run_copilot(*_args, **_kwargs):
         return oneshot_runner.ProviderResult(
             "MODEL RESPONSE",
-            0,
-            0,
+            None,
+            None,
             {"provider": "copilot", "inference_requests": 1},
         )
 
@@ -603,6 +698,51 @@ def test_provider_registry_adds_backend_without_runner_branch(monkeypatch, capsy
         "deadline": None,
     }
     assert [event["type"] for event in events] == ["response", "usage", "request_audit", "result"]
+    assert events[1] == {
+        "type": "usage",
+        "input_tokens": 4,
+        "output_tokens": 2,
+        "model_requests": 1,
+        "source": "fake_oneshot_runner",
+        "complete": True,
+        "is_lower_bound": False,
+    }
+
+
+def test_custom_provider_can_report_unavailable_usage(monkeypatch, capsys, tmp_path):
+    class FakeProvider:
+        audit = {"provider": "missing-usage", "model_requests": 1}
+
+        def invoke(self, _on_timeout):
+            return oneshot_runner.ProviderResult("FAKE RESPONSE", None, None, self.audit)
+
+    oneshot_runner.register_provider("missing-usage", lambda *_args: FakeProvider())
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+    try:
+        exit_code = oneshot_runner.main(
+            [
+                "--provider",
+                "missing-usage",
+                "--workspace",
+                str(tmp_path),
+                "--result-dir",
+                str(tmp_path),
+                "--model",
+                "fake-model",
+            ]
+        )
+    finally:
+        oneshot_runner._PROVIDER_REGISTRY.pop("missing-usage")
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 0
+    assert events[1] == {
+        "type": "usage",
+        "model_requests": 1,
+        "source": "missing-usage_oneshot_runner",
+        "complete": False,
+        "is_lower_bound": True,
+    }
 
 
 def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatch, capsys, tmp_path):
@@ -635,9 +775,9 @@ def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatc
         "input_tokens": 123,
         "output_tokens": 45,
         "model_requests": 1,
-        "source": "litellm_oneshot_runner",
-        "complete": False,
-        "is_lower_bound": True,
+        "source": "litellm_response_usage",
+        "complete": True,
+        "is_lower_bound": False,
     }
     assert events[1]["litellm_completion_invocations"] == 1
     assert events[1]["wire_audited"] is False
@@ -725,7 +865,7 @@ def test_litellm_import_failure_records_zero_completion_invocations(monkeypatch)
 
     assert exc_info.value.audit["litellm_completion_invocations"] == 0
     assert exc_info.value.audit["wire_audited"] is False
-    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (0, 0)
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (None, None)
 
 
 def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, tmp_path):

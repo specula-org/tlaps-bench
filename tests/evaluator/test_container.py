@@ -493,6 +493,46 @@ class TestRunPreflight:
 class TestRunAgentContainerSessionWiring:
     """_run_backend_container composes keep_container / session_dir onto the config."""
 
+    def test_copilot_prompt_and_otel_settings_reach_container_runner(self, tmp_path):
+        from evaluator import runner as runner_mod
+
+        backend = CopilotBackend(model="test-model")
+        item = MagicMock(
+            benchmark_path=str(tmp_path / "My-Bench.tla"),
+            timeout=0,
+            check_timeout=600,
+            keep_container=False,
+            session_dir="",
+        )
+        captured = {}
+
+        class _FakeRunner:
+            def run(self, config, cmd, stdin_data=None):
+                captured.update(config=config, cmd=cmd, stdin_data=stdin_data)
+                raise RuntimeError("stop after capture")
+
+            def kill(self, run):
+                pass
+
+            def cleanup_credential_tmps(self):
+                pass
+
+        with patch.object(runner_mod, "ContainerRunner", _FakeRunner):
+            runner_mod._run_backend_container(
+                item,
+                backend,
+                str(tmp_path / "ws"),
+                str(tmp_path / "agent"),
+                str(tmp_path / "agent.jsonl"),
+                "EXACT PROMPT",
+                {},
+            )
+
+        assert captured["cmd"][-2:] == ["-p", "EXACT PROMPT"]
+        assert captured["stdin_data"] is None
+        assert captured["config"].env["COPILOT_OTEL_EXPORTER_TYPE"] == "file"
+        assert captured["config"].env["COPILOT_OTEL_FILE_EXPORTER_PATH"] == "/results/copilot-otel.jsonl"
+
     def _capture_config(self, tmp_path, *, keep_container=False, session_dir=""):
         from evaluator import runner as runner_mod
 

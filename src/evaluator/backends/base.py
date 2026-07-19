@@ -187,7 +187,7 @@ class Backend(ABC):
 
     @abstractmethod
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        """Build the backend command. Prompt is fed via stdin.
+        """Build the backend command before the prompt is attached.
 
         Args:
             workspace: agent's working directory (will be the CLI's cwd).
@@ -231,6 +231,16 @@ class Backend(ABC):
         """
 
         return self.build_command(workspace, result_dir)
+
+    def prepare_invocation(self, command: list[str], prompt: str) -> tuple[list[str], str | None]:
+        """Attach one prompt to a command and return its stdin payload.
+
+        Most backends read the prompt from stdin. Backends whose supported
+        non-interactive mode requires a command-line prompt can override this
+        hook without changing the common container, local, or preflight paths.
+        """
+
+        return command, prompt
 
     def build_prompt(
         self,

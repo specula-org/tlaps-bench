@@ -1020,6 +1020,7 @@ def _run_backend_container(
     timeout = item.timeout if item.timeout and item.timeout > 0 else None
     propagated_deadline = time.time() + timeout if timeout and backend.capabilities.cooperative_deadline else None
     cmd = _build_backend_command(backend, "/workspace", "/results", propagated_deadline)
+    cmd, stdin_data = backend.prepare_invocation(cmd, prompt)
     backend_env = forward_env(backend.env_keys, model=getattr(backend, "model", None))
     backend_env.update(backend.execution_environment("/results"))
 
@@ -1061,7 +1062,7 @@ def _run_backend_container(
 
     container_run = None
     try:
-        container_run = runner.run(config, cmd, stdin_data=prompt)
+        container_run = runner.run(config, cmd, stdin_data=stdin_data)
         if item.keep_container:
             name = config.container_name
             print(
@@ -1172,6 +1173,7 @@ def _run_backend_local(
     timeout = item.timeout if item.timeout and item.timeout > 0 else None
     propagated_deadline = time.time() + timeout if timeout and backend.capabilities.cooperative_deadline else None
     cmd = _build_backend_command(backend, workspace, agent_dir, propagated_deadline)
+    cmd, stdin_data = backend.prepare_invocation(cmd, prompt)
     shell_cmd = "source ~/.zshrc 2>/dev/null; source ~/.bashrc 2>/dev/null; exec " + " ".join(
         shlex.quote(c) for c in cmd
     )
@@ -1234,7 +1236,7 @@ def _run_backend_local(
                 hard_wait = (
                     max(logical_deadline + grace - time.time(), 0.0) + 600 if logical_deadline is not None else None
                 )
-                _, stderr = proc.communicate(input=prompt, timeout=hard_wait)
+                _, stderr = proc.communicate(input=stdin_data, timeout=hard_wait)
             except subprocess.TimeoutExpired:
                 timed_out["v"] = True
                 kill_agent_tree(proc, workspace)
@@ -1437,8 +1439,9 @@ def _run_preflight(backend) -> None:
             credential_mounts=backend.get_credential_mounts(),
         )
         cmd = backend.build_command("/workspace", "/results")
+        cmd, stdin_data = backend.prepare_invocation(cmd, PREFLIGHT_PROMPT)
         print(f"Preflight: validating '{backend.name}' (install + auth + model + firewall)...", flush=True)
-        runner.run_preflight(config, cmd, PREFLIGHT_PROMPT)
+        runner.run_preflight(config, cmd, stdin_data)
         print("Preflight: OK", flush=True)
     except RuntimeError as e:
         print(f"ERROR: {e}")

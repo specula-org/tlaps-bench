@@ -334,9 +334,6 @@ class CopilotBackend(AgenticBackend):
         self.model = model or DEFAULT_MODEL
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        # Prompt is fed via stdin (the runner pipes it in). copilot's -p flag
-        # requires the text as an argument, but with no -p it reads the prompt
-        # from stdin and runs non-interactively, exiting when done.
         # --allow-all is required for non-interactive tool use (no approvals).
         # --output-format json emits JSONL (one event per line) to stdout.
         # --disable-builtin-mcps drops the GitHub MCP server: it needs no
@@ -370,8 +367,18 @@ class CopilotBackend(AgenticBackend):
             "web_fetch",
         ]
 
+    def prepare_invocation(self, command: list[str], prompt: str) -> tuple[list[str], str | None]:
+        # Copilot CLI only instruments its documented non-interactive scripting
+        # path. Feeding an initial prompt to the interactive mode through stdin
+        # can exit successfully without flushing any OTel spans.
+        return [*command, "-p", prompt], None
+
     def execution_environment(self, result_dir: str) -> dict[str, str]:
         return {
+            "COPILOT_OTEL_ENABLED": "true",
+            # A host-level otlp-http selection otherwise wins over the file
+            # path and silently sends no per-task artifact to the result dir.
+            "COPILOT_OTEL_EXPORTER_TYPE": "file",
             "COPILOT_OTEL_FILE_EXPORTER_PATH": os.path.join(result_dir, COPILOT_OTEL_FILENAME),
             # Never put benchmark prompts, model responses, or tool payloads in
             # the telemetry artifact, even if the host enables content capture.
