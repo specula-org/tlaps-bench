@@ -12,6 +12,7 @@ from .base import (
 )
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
+REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "default")
 
 ENV_KEYS = [
     "OPENAI_API_KEY",

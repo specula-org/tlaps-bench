@@ -48,6 +48,7 @@ class PiBackend(AgenticBackend):
         "OPENROUTER_API_KEY",
         "XAI_API_KEY",
     ]
+    reasoning_effort_values = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
@@ -62,6 +63,9 @@ class PiBackend(AgenticBackend):
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         provider, model = self._provider_model()
+        thinking_option = (
+            f"--thinking {shlex.quote(self.reasoning_effort)} " if self.reasoning_effort is not None else ""
+        )
         return [
             "bash",
             "-lc",
@@ -69,6 +73,7 @@ class PiBackend(AgenticBackend):
                 "prompt=$(cat); "
                 f"cd {shlex.quote(workspace)}; "
                 "pi --mode json --no-session "
+                f"{thinking_option}"
                 f"--provider {shlex.quote(provider)} --model {shlex.quote(model)} "
                 '"$prompt"'
             ),

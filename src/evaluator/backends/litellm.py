@@ -8,13 +8,21 @@ from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_f
 
 from .agentic import AgenticBackend
 from .base import detect_firewall_hosts
-from .litellm_common import DEFAULT_MODEL, ENV_KEYS, check_auth, credential_mounts, uses_bedrock
+from .litellm_common import (
+    DEFAULT_MODEL,
+    ENV_KEYS,
+    REASONING_EFFORT_VALUES,
+    check_auth,
+    credential_mounts,
+    uses_bedrock,
+)
 
 
 class LiteLLMBackend(AgenticBackend):
     name = "litellm"
     install_script = "install-litellm.sh"
     env_keys = ENV_KEYS
+    reasoning_effort_values = REASONING_EFFORT_VALUES
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
@@ -26,7 +34,7 @@ class LiteLLMBackend(AgenticBackend):
         return uses_bedrock(self.model)
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        return [
+        command = [
             "python3",
             "/opt/litellm_agent.py",
             "--workspace",
@@ -34,6 +42,9 @@ class LiteLLMBackend(AgenticBackend):
             "--model",
             self.model,
         ]
+        if self.reasoning_effort is not None:
+            command.extend(["--reasoning-effort", self.reasoning_effort])
+        return command
 
     def firewall_hosts(self) -> list[str]:
         return detect_firewall_hosts(self.model)

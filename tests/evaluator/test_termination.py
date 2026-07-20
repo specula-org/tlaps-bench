@@ -27,6 +27,7 @@ from evaluator.termination import (
     codex_turn_failed,
     copilot_session_error,
     is_wall_clock_timeout,
+    litellm_completion_error,
     one_shot_result_error,
     startup_error_snippet,
 )
@@ -147,7 +148,33 @@ def test_rule_only_applies_to_its_backend(tmp_path):
     # other backend; a backend with no rule of its own classifies OK.
     p = _write_jsonl(tmp_path / "infra.jsonl", INFRA_STREAM)
     assert codex_turn_failed(_ctx(p, backend="claude_code")) is None
-    assert classify(_ctx(p, backend="litellm")) == TerminationReason.OK
+    assert classify(_ctx(p, backend="custom")) == TerminationReason.OK
+
+
+def test_litellm_completion_error_is_infra(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "litellm-error.jsonl",
+        [
+            {"type": "error", "message": "reasoning effort is unsupported for this model", "iteration": 1},
+            {"type": "usage", "input_tokens": 0, "output_tokens": 0},
+        ],
+    )
+
+    assert classify(_ctx(path, backend="litellm", agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
+def test_litellm_response_after_error_is_ok(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "litellm-recovered.jsonl",
+        [
+            {"type": "error", "message": "transient provider error", "iteration": 1},
+            {"type": "response", "text": "recovered", "iteration": 2},
+            {"type": "usage", "input_tokens": 10, "output_tokens": 2},
+        ],
+    )
+
+    assert litellm_completion_error(_ctx(path, backend="litellm")) is None
+    assert classify(_ctx(path, backend="litellm")) == TerminationReason.OK
 
 
 def test_missing_stream_is_ok(tmp_path):
@@ -207,6 +234,7 @@ def test_registry_is_the_extension_point():
     assert codex_turn_failed in INFRA_RULES
     assert claude_code_result_error in INFRA_RULES
     assert copilot_session_error in INFRA_RULES
+    assert litellm_completion_error in INFRA_RULES
     assert one_shot_result_error in INFRA_RULES
     assert agent_startup_failure in INFRA_RULES
 

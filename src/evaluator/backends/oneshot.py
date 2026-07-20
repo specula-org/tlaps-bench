@@ -108,7 +108,7 @@ class OneShotBackend(Backend):
             if workspace == "/workspace"
             else [sys.executable, "-m", "evaluator.backends.oneshot_runner"]
         )
-        return [
+        command = [
             *runner,
             "--provider",
             self.provider,
@@ -119,6 +119,9 @@ class OneShotBackend(Backend):
             "--model",
             self.model,
         ]
+        if self.reasoning_effort is not None:
+            command.extend(["--reasoning-effort", self.reasoning_effort])
+        return command
 
     def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:
         command = self.build_command(workspace, result_dir)

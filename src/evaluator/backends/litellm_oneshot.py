@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .base import detect_firewall_hosts
-from .litellm_common import DEFAULT_MODEL, ENV_KEYS, check_auth, credential_mounts
+from .litellm_common import DEFAULT_MODEL, ENV_KEYS, REASONING_EFFORT_VALUES, check_auth, credential_mounts
 from .oneshot import OneShotBackend
 
 
@@ -12,6 +12,7 @@ class LiteLLMOneShotBackend(OneShotBackend):
     provider = "litellm"
     install_script = "install-litellm-oneshot.sh"
     env_keys = ENV_KEYS
+    reasoning_effort_values = REASONING_EFFORT_VALUES
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
