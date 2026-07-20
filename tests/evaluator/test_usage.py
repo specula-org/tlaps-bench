@@ -75,6 +75,49 @@ def test_partial_request_fields_are_explicit_lower_bounds():
     assert "model_time_secs is missing for some model requests; total is a lower bound" in usage.warnings
 
 
+def test_core_field_missing_from_every_request_cannot_be_complete():
+    usage = UsageSummary.from_requests(
+        [RequestUsage(input_tokens=10, output_tokens=None), RequestUsage(input_tokens=20, output_tokens=None)],
+        source="test",
+        complete=True,
+    )
+
+    assert usage.input_tokens == 30
+    assert usage.output_tokens is None
+    assert usage.status == "lower_bound"
+    assert "output_tokens is unavailable for every model request; total is a lower bound" in usage.warnings
+
+
+def test_exact_empty_request_set_requires_authoritative_zero_totals():
+    ambiguous = UsageSummary.from_requests([], source="test", complete=True)
+    exact = UsageSummary.from_requests(
+        [],
+        source="test",
+        complete=True,
+        totals={"input_tokens": 0, "output_tokens": 0, "model_requests": 0},
+    )
+
+    assert ambiguous.status == "incomplete"
+    assert ambiguous.input_tokens is None
+    assert "exact zero-request summary" in ambiguous.warnings[0]
+    assert exact.status == "complete"
+    assert (exact.input_tokens, exact.output_tokens, exact.model_requests) == (0, 0, 0)
+
+
+def test_authoritative_token_totals_are_not_coerced():
+    usage = UsageSummary.from_requests(
+        [RequestUsage(input_tokens=10, output_tokens=5)],
+        source="test",
+        complete=True,
+        totals={"input_tokens": 10.5, "output_tokens": True},
+    )
+
+    assert (usage.input_tokens, usage.output_tokens) == (10, 5)
+    assert usage.status == "incomplete"
+    assert "invalid authoritative input_tokens total" in usage.warnings[0]
+    assert "invalid authoritative output_tokens total" in usage.warnings[1]
+
+
 def test_merge_does_not_present_known_plus_unknown_as_an_exact_total():
     known = UsageSummary(
         input_tokens=100,
@@ -169,6 +212,7 @@ def test_impossible_subset_totals_are_preserved_but_flagged():
 
     assert usage.input_tokens == 100
     assert usage.output_tokens == 20
+    assert usage.status == "incomplete"
     assert usage.warnings == (
         "cache token total exceeds input token total",
         "reasoning token total exceeds output token total",

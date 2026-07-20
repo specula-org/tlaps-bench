@@ -15,6 +15,7 @@ import os
 
 from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
+from evaluator.backends.base import SubmissionPlan
 from evaluator.termination import TerminationReason
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary
 
@@ -38,13 +39,19 @@ class _ScriptedBackend(AgenticBackend):
         self.in_tokens = 0
         self.out_tokens = 0  # set by the fake agent for the current call
         self.cost = 0.0
+        self.submission_metadata = {}
 
     def parse_output(self, jsonl_path):
         return ("", self.in_tokens, self.out_tokens)
 
     def parse_usage(self, jsonl_path, *, input_tokens, output_tokens):
         if not (input_tokens or output_tokens or self.cost):
-            return UsageSummary.from_requests([], source="scripted", complete=True)
+            return UsageSummary.from_requests(
+                [],
+                source="scripted",
+                complete=True,
+                totals={"input_tokens": 0, "output_tokens": 0, "model_requests": 0},
+            )
         costs = (UsageCost(self.cost, "provider_monetary", "test.cost"),) if self.cost else ()
         return UsageSummary.from_requests(
             [RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, costs=costs)],
@@ -57,6 +64,9 @@ class _ScriptedBackend(AgenticBackend):
 
     def detect_quota_block(self, jsonl_path):
         return None
+
+    def prepare_submission(self, *args, **kwargs):
+        return SubmissionPlan(metadata=self.submission_metadata)
 
 
 class _FakeMode:
@@ -364,6 +374,33 @@ def test_costs_accumulate_into_top_level(tmp_path, monkeypatch):
     assert result["continuations"][0]["usage"]["costs"] == [
         {"amount": 0.006, "unit": "provider_monetary", "source": "test.cost"}
     ]
+
+
+def test_submission_metadata_cannot_replace_usage_before_continuation(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    backend.submission_metadata = {
+        "usage": {"complete": True, "input_tokens": 9999, "output_tokens": 9999},
+        "input_tokens": 9999,
+        "output_tokens": 9999,
+    }
+    _install_agent(
+        monkeypatch,
+        backend,
+        [
+            dict(GENUINE, in_tokens=100, out_tokens=500, cost=0.01),
+            dict(GENUINE, in_tokens=60, out_tokens=300, cost=0.006),
+        ],
+    )
+    _install_grader(monkeypatch, ["FAIL", "PASS"])
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, max_continuations=1))
+
+    assert (result["input_tokens"], result["output_tokens"]) == (160, 800)
+    assert result["usage"]["model_requests"] == 2
+    assert len(result["usage"]["requests"]) == 2
+    assert any(
+        "ignored submission metadata for runner-owned fields" in warning for warning in result["usage"]["warnings"]
+    )
 
 
 def test_resume_skips_benchmarks_recovered_by_continuation():

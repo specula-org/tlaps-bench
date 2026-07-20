@@ -183,6 +183,21 @@ def _sum_optional(values: list[int | float | None]) -> int | float | None:
     return sum(known) if known else None
 
 
+def _strict_nonnegative_int(value: object) -> int | None:
+    """Validate a provider aggregate without coercing protocol values."""
+
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _strict_nonnegative_float(value: object) -> float | None:
+    """Validate a provider duration aggregate without coercion."""
+
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    parsed = float(value)
+    return parsed if parsed >= 0 and math.isfinite(parsed) else None
+
+
 def _aggregate_costs(costs: tuple[UsageCost, ...] | list[UsageCost]) -> tuple[UsageCost, ...]:
     totals: dict[tuple[str, str], float] = {}
     for cost in costs:
@@ -292,10 +307,25 @@ class UsageSummary:
         }
         derived["model_requests"] = len(request_tuple)
         derived["model_time_secs"] = _sum_optional([request.duration_secs for request in request_tuple])
+        provider_total_fields: set[str] = set()
+        invalid_total_fields: list[str] = []
         if totals:
-            for key, value in totals.items():
-                if key in {*_TOKEN_FIELDS, "model_requests", "model_time_secs"} and isinstance(value, (int, float)):
+            for key in (*_TOKEN_FIELDS, "model_requests"):
+                if key not in totals:
+                    continue
+                value = _strict_nonnegative_int(totals[key])
+                if value is None:
+                    invalid_total_fields.append(key)
+                else:
                     derived[key] = value
+                    provider_total_fields.add(key)
+            if "model_time_secs" in totals:
+                model_time = _strict_nonnegative_float(totals["model_time_secs"])
+                if model_time is None:
+                    invalid_total_fields.append("model_time_secs")
+                else:
+                    derived["model_time_secs"] = model_time
+                    provider_total_fields.add("model_time_secs")
         request_costs = tuple(cost for request in request_tuple for cost in request.costs)
         aggregate_costs = request_costs
         if totals and isinstance(totals.get("costs"), (list, tuple)):
@@ -306,12 +336,7 @@ class UsageSummary:
             values = [
                 getattr(request, field if field != "model_time_secs" else "duration_secs") for request in request_tuple
             ]
-            has_provider_total = bool(
-                totals
-                and field in totals
-                and isinstance(totals[field], (int, float))
-                and not isinstance(totals[field], bool)
-            )
+            has_provider_total = field in provider_total_fields
             if (
                 values
                 and not has_provider_total
@@ -333,20 +358,50 @@ class UsageSummary:
             )
             if 0 < covered < len(request_tuple):
                 partial_fields.append(f"cost:{cost_source}")
-        if partial_fields:
-            validation_warnings.extend(
-                f"{field} is missing for some model requests; total is a lower bound" for field in partial_fields
+        core_fields_missing_everywhere: list[str] = []
+        empty_exactness_errors: list[str] = []
+        if complete and request_tuple:
+            for field in ("input_tokens", "output_tokens"):
+                values = [getattr(request, field) for request in request_tuple]
+                if field not in provider_total_fields and all(value is None for value in values):
+                    core_fields_missing_everywhere.append(field)
+        elif complete and not request_tuple:
+            for field in ("input_tokens", "output_tokens"):
+                if field not in provider_total_fields or derived[field] != 0:
+                    empty_exactness_errors.append(field)
+            if "model_requests" not in provider_total_fields or derived["model_requests"] != 0:
+                empty_exactness_errors.append("model_requests")
+
+        validation_warnings.extend(
+            f"{field} is missing for some model requests; total is a lower bound" for field in partial_fields
+        )
+        validation_warnings.extend(
+            f"{field} is unavailable for every model request; total is a lower bound"
+            for field in core_fields_missing_everywhere
+        )
+        validation_warnings.extend(
+            f"invalid authoritative {field} total; provider aggregates must use non-negative numeric values"
+            for field in invalid_total_fields
+        )
+        if empty_exactness_errors:
+            validation_warnings.append(
+                "an exact zero-request summary requires authoritative zero input_tokens, "
+                "output_tokens, and model_requests totals"
             )
         input_total = nonnegative_int(derived["input_tokens"])
         cache_read_total = nonnegative_int(derived["cache_read_input_tokens"])
         cache_write_total = nonnegative_int(derived["cache_write_input_tokens"])
         known_cache_total = sum(value for value in (cache_read_total, cache_write_total) if value is not None)
+        integrity_errors: list[str] = []
         if input_total is not None and known_cache_total > input_total:
-            validation_warnings.append("cache token total exceeds input token total")
+            integrity_errors.append("cache token total exceeds input token total")
         output_total = nonnegative_int(derived["output_tokens"])
         reasoning_total = nonnegative_int(derived["reasoning_output_tokens"])
         if output_total is not None and reasoning_total is not None and reasoning_total > output_total:
-            validation_warnings.append("reasoning token total exceeds output token total")
+            integrity_errors.append("reasoning token total exceeds output token total")
+        validation_warnings.extend(integrity_errors)
+        lower_bound_evidence = bool(partial_fields or core_fields_missing_everywhere)
+        invalid_exactness = bool(invalid_total_fields or empty_exactness_errors or integrity_errors)
         return cls(
             input_tokens=input_total,
             output_tokens=output_total,
@@ -360,8 +415,8 @@ class UsageSummary:
             sources=(source,),
             runtime_versions=tuple(dict.fromkeys(runtime_versions)),
             available=available,
-            complete=complete and not partial_fields,
-            is_lower_bound=is_lower_bound or bool(partial_fields),
+            complete=complete and not lower_bound_evidence and not invalid_exactness,
+            is_lower_bound=is_lower_bound or lower_bound_evidence,
             warnings=tuple(dict.fromkeys((*warnings, *validation_warnings))),
         )
 

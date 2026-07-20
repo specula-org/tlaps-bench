@@ -73,6 +73,76 @@ STREAM_AGENT_OUTPUT = True
 # observed startup blips clear within seconds-to-minutes.
 INFRA_RETRY_BACKOFF = (15, 30, 60)
 
+_USAGE_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_write_input_tokens",
+    "reasoning_output_tokens",
+)
+_RUNNER_OWNED_ACCOUNTING_KEYS = frozenset({"usage", "input_tokens", "output_tokens", "time_secs"})
+
+
+def _retry_may_duplicate_model_work(
+    backend: Backend,
+    jsonl_path: str,
+    usage: UsageSummary,
+    legacy_output_tokens: int,
+) -> bool:
+    """Return whether replacing this launch could duplicate model work."""
+
+    if legacy_output_tokens > 0:
+        return True
+    if any((getattr(usage, field) or 0) > 0 for field in _USAGE_TOKEN_FIELDS):
+        return True
+    if (usage.model_requests or 0) > 0 or bool(usage.requests):
+        return True
+    if any(
+        isinstance(cost.amount, (int, float)) and not isinstance(cost.amount, bool) and cost.amount > 0
+        for cost in usage.costs
+    ):
+        return True
+    return backend.retry_may_duplicate_model_work(jsonl_path)
+
+
+def _parse_backend_usage(
+    backend: Backend,
+    jsonl_path: str,
+    *,
+    attempt: int,
+) -> tuple[str, int, int, UsageSummary]:
+    """Read one launch's transcript and usage before its artifacts can move."""
+
+    transcript, input_tokens, output_tokens = backend.parse_output(jsonl_path)
+    try:
+        usage = backend.parse_usage(
+            jsonl_path,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        ).with_context(attempt=attempt)
+    except Exception as exc:
+        usage = replace(
+            UsageSummary.from_legacy(
+                input_tokens,
+                output_tokens,
+                source=f"{backend.name}_usage_parser_fallback",
+            ),
+            warnings=(f"structured usage parser failed: {type(exc).__name__}: {exc}",),
+        )
+    return transcript, input_tokens, output_tokens, usage
+
+
+def _apply_submission_metadata(result: dict, metadata: dict[str, object]) -> None:
+    """Apply backend metadata without allowing it to replace accounting data."""
+
+    conflicts = sorted(_RUNNER_OWNED_ACCOUNTING_KEYS.intersection(metadata))
+    result.update({key: value for key, value in metadata.items() if key not in _RUNNER_OWNED_ACCOUNTING_KEYS})
+    if not conflicts or "usage" not in result:
+        return
+    usage = UsageSummary.from_dict(result["usage"])
+    warning = f"ignored submission metadata for runner-owned fields: {', '.join(conflicts)}"
+    result["usage"] = replace(usage, warnings=tuple(dict.fromkeys((*usage.warnings, warning)))).to_dict()
+
 
 def resolve_paths():
     """Return (benchmark_root, checker_binary) based on environment.
@@ -257,7 +327,8 @@ class WorkItem:
     # Immutable build-specific image tag selected before worker processes start.
     container_image: str = f"{IMAGE_TAG}:latest"
     # Extra agent attempts after a backend-approved transient infrastructure
-    # failure with no output; 0 disables retrying (the failure still ends ERROR).
+    # failure with no evidence of model work; 0 disables retrying (the failure
+    # still ends ERROR).
     infra_retries: int | None = None
     # Continuation rounds after a genuine non-PASS: re-run the agent in the SAME
     # workspace so it builds on its own partial proof (see _run_continuations).
@@ -317,7 +388,8 @@ class ExecutionOutcome:
     canonical_dir: str
     transcript: str
     quota_exhausted: bool
-    infra_retriable: bool  # still a 0-token infra failure after all retries
+    quota_retry_suppressed: bool
+    infra_retriable: bool  # still a no-model-work infra failure after all retries
     infra_reasons: list[str]
     usage: UsageSummary
 
@@ -339,8 +411,8 @@ def _run_backend_with_retries(
     rounds: run the agent (sleeping through hard provider quota caps, see
     quota.run_with_quota_retry), parse its output, classify the termination,
     and retry with backoff while the run died before the model did ANY work
-    (INFRA_ERROR + 0 output tokens). A genuine attempt (any output tokens) is
-    never re-run.
+    (INFRA_ERROR with no structured or legacy evidence of a model call). A
+    genuine attempt is never re-run.
 
     Every attempt gets a fresh canonical snapshot: both the agent self-check
     and grader read it, and in local mode the agent can write to the host path,
@@ -348,7 +420,7 @@ def _run_backend_with_retries(
     With fixed_workspace=None each attempt also gets a fresh workspace (a
     failed first attempt's partial edits can't leak into a retry); a
     continuation round passes its existing workspace instead — the partial
-    proof in it IS the input, and a 0-token startup death can't have touched it.
+    proof in it IS the input, and a no-work startup death can't have touched it.
 
     Fills result's time_secs / usage / input_tokens / output_tokens / agent_exit /
     error / termination_reason (plus infra_retries / infra_retry_reasons after
@@ -364,6 +436,7 @@ def _run_backend_with_retries(
     canonical_dir = None
     active_secs = 0.0
     quota_exhausted = False
+    quota_retry_suppressed = False
     infra_retriable = False
     infra_reasons: list[str] = []
     transcript = ""
@@ -422,17 +495,39 @@ def _run_backend_with_retries(
                     elapsed = min(elapsed, item.timeout)
                 active_secs += elapsed
 
+            def _prepare_quota_retry(quota_attempt: int, infra_attempt: int = attempt) -> bool:
+                nonlocal aggregate_usage, quota_retry_suppressed
+                _quota_transcript, _quota_input, quota_output, quota_usage = _parse_backend_usage(
+                    backend,
+                    agent_jsonl,
+                    attempt=infra_attempt,
+                )
+                if _retry_may_duplicate_model_work(backend, agent_jsonl, quota_usage, quota_output):
+                    # Keep this launch in the canonical output path so the caller
+                    # can report its partial usage; replacing it could double-charge
+                    # the run and would destroy the only native evidence.
+                    quota_retry_suppressed = True
+                    return False
+                aggregate_usage = quota_usage if aggregate_usage is None else aggregate_usage.merge(quota_usage)
+                _stash_quota_attempt(agent_dir, infra_attempt, quota_attempt, backend)
+                return True
+
             quota_exhausted = not quota.run_with_quota_retry(
                 _run_once,
                 lambda: backend.detect_quota_block(agent_jsonl),
                 log_prefix=f"[{name_no_ext}] ",
+                prepare_retry=_prepare_quota_retry,
             )
             result["time_secs"] = active_secs
 
             # Parse agent output on every path — including quota exhaustion — so
             # the result records any tokens the agent did emit (rather than
             # forcing them to 0).
-            transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
+            transcript, _input_tokens, output_tokens, attempt_usage = _parse_backend_usage(
+                backend,
+                agent_jsonl,
+                attempt=attempt,
+            )
             parse_metadata = getattr(backend, "parse_run_metadata", None)
             if parse_metadata:
                 runner_error = result.get("error", "")
@@ -441,27 +536,22 @@ def _run_backend_with_retries(
                 result.update(parsed_metadata)
                 if runner_error:
                     result["error"] = runner_error
-            try:
-                attempt_usage = backend.parse_usage(
-                    agent_jsonl,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                ).with_context(attempt=attempt)
-            except Exception as exc:
-                attempt_usage = replace(
-                    UsageSummary.from_legacy(
-                        input_tokens,
-                        output_tokens,
-                        source=f"{backend.name}_usage_parser_fallback",
-                    ),
-                    warnings=(f"structured usage parser failed: {type(exc).__name__}: {exc}",),
-                )
             aggregate_usage = attempt_usage if aggregate_usage is None else aggregate_usage.merge(attempt_usage)
             result["usage"] = aggregate_usage.to_dict()
             result["input_tokens"] = aggregate_usage.legacy_input_tokens
             result["output_tokens"] = aggregate_usage.legacy_output_tokens
 
             if quota_exhausted:
+                # The final budgeted quota attempt has no following retry, so
+                # run_with_quota_retry does not invoke its preparation hook.
+                # Still classify the result accurately if that last launch did
+                # model work before it hit the cap.
+                quota_retry_suppressed = quota_retry_suppressed or _retry_may_duplicate_model_work(
+                    backend,
+                    agent_jsonl,
+                    attempt_usage,
+                    output_tokens,
+                )
                 break  # quota owns its own retry budget — never infra-retried
 
             # Tag how the run terminated so an INFRA_ERROR (agent cut short by
@@ -479,18 +569,13 @@ def _run_backend_with_retries(
             )
             result["termination_reason"] = classify(ctx)
 
-            # A genuine attempt is never re-run. Structured telemetry can survive
-            # even when the CLI JSONL is cut off before its token event is flushed,
-            # so either current-attempt source is sufficient evidence of output.
-            observed_output_tokens = max(
-                output_tokens,
-                attempt_usage.legacy_output_tokens,
-                attempt_usage.reasoning_output_tokens or 0,
-            )
+            # A genuine attempt is never re-run. Require both backend approval
+            # for the failure shape and the absence of any structured or native
+            # evidence that model work may already have occurred.
             infra_retriable = (
                 result["termination_reason"] == TerminationReason.INFRA_ERROR
-                and observed_output_tokens == 0
                 and backend.is_infra_retryable(ctx)
+                and not _retry_may_duplicate_model_work(backend, agent_jsonl, attempt_usage, output_tokens)
             )
             if not infra_retriable:
                 break
@@ -531,6 +616,7 @@ def _run_backend_with_retries(
         canonical_dir,
         transcript,
         quota_exhausted,
+        quota_retry_suppressed,
         infra_retriable,
         infra_reasons,
         aggregate_usage,
@@ -760,10 +846,9 @@ def run_single_benchmark(item: WorkItem):
         agent_jsonl = os.path.join(agent_dir, "output.jsonl")
         agent_stderr = os.path.join(agent_dir, "stderr.txt")
 
-        # Infra retry loop: a run cut short before the model did ANY work
-        # (INFRA_ERROR + 0 output tokens) says nothing about the model, so it is
-        # retried on a fresh workspace instead of graded. Everything else gets
-        # exactly one attempt.
+        # Infra retry loop: a run cut short before the model did ANY work says
+        # nothing about the model, so it is retried on a fresh workspace instead
+        # of graded. Structured usage is authoritative when available.
         run = _run_backend_with_retries(
             item, prompt, agent_dir, agent_jsonl, agent_stderr, result, checker_bin, deps, basename, name_no_ext
         )
@@ -777,7 +862,7 @@ def run_single_benchmark(item: WorkItem):
             result.get("error", ""),
             allow_materialization=not run.quota_exhausted and not run.infra_retriable,
         )
-        result.update(submission.metadata)
+        _apply_submission_metadata(result, submission.metadata)
         if submission.error is not None:
             result["error"] = submission.error
 
@@ -797,14 +882,19 @@ def run_single_benchmark(item: WorkItem):
             shutil.copy2(agent_check_file, os.path.join(grading_dir, "agent_check.result"))
 
         if run.quota_exhausted:
-            # Provider hard-capped us past the retry budget. Mark ERROR (retriable
-            # via --resume) and skip grading; the artifacts above keep the result
-            # dir consistent with a normal run. Tag QUOTA_EXHAUSTED directly — the
-            # runner owns the quota signal — rather than running classify() on the
-            # no-work, truncated stream, which would misread it as INFRA_ERROR.
+            # The provider cap either persisted through the retry budget or arrived
+            # after paid work, making an automatic retry unsafe. Mark ERROR
+            # (retriable via --resume) and skip grading; the artifacts above keep
+            # the result directory consistent with a normal run. The runner owns
+            # this signal, so tag QUOTA_EXHAUSTED directly instead of classifying
+            # the blocked stream as a generic INFRA_ERROR.
             result["agent_exit"] = -3
             result["check_verdict"] = "ERROR"
-            result["error"] = "provider usage limit; exhausted quota retries"
+            result["error"] = (
+                "provider usage limit with possible prior model activity; automatic retry suppressed"
+                if run.quota_retry_suppressed
+                else "provider usage limit; exhausted quota retries"
+            )
             result["termination_reason"] = TerminationReason.QUOTA_EXHAUSTED
             with open(os.path.join(result_dir, "result.json"), "w") as f:
                 json.dump(result, f, indent=2)
@@ -898,6 +988,21 @@ def _stash_failed_attempt(agent_dir: str, attempt: int, backend: Backend) -> Non
             shutil.move(src, os.path.join(dest, fname))
 
 
+def _stash_quota_attempt(agent_dir: str, infra_attempt: int, quota_attempt: int, backend: Backend) -> None:
+    """Preserve a no-model-work hard-cap launch before the next launch replaces it."""
+
+    dest = os.path.join(
+        agent_dir,
+        "quota-attempts",
+        f"infra-{infra_attempt}-quota-{quota_attempt}",
+    )
+    os.makedirs(dest, exist_ok=True)
+    for fname in ("output.jsonl", "stderr.txt", *backend.attempt_output_files()):
+        src = os.path.join(agent_dir, fname)
+        if os.path.isfile(src):
+            shutil.move(src, os.path.join(dest, fname))
+
+
 def _run_continuations(
     item: WorkItem,
     workspace: str,
@@ -981,7 +1086,11 @@ def _run_continuations(
             result["output_tokens"] = aggregate_usage.legacy_output_tokens
             if run.quota_exhausted:
                 round_result["agent_exit"] = -3
-                round_result["error"] = "provider usage limit; exhausted quota retries"
+                round_result["error"] = (
+                    "provider usage limit with possible prior model activity; automatic retry suppressed"
+                    if run.quota_retry_suppressed
+                    else "provider usage limit; exhausted quota retries"
+                )
                 round_result["termination_reason"] = TerminationReason.QUOTA_EXHAUSTED
             elif run.infra_retriable:
                 round_result["error"] = f"startup/infra failure ({run.infra_reasons[-1]}); exhausted infra retries"
@@ -1572,7 +1681,9 @@ def main():
         type=int,
         default=None,
         help="Extra agent attempts after a transient startup/infrastructure failure "
-        "(agent died with 0 output tokens), so 3 = up to 4 attempts total "
+        "(backend-approved and no token, request, cost, or backend-native activity "
+        "evidence of model work), "
+        "so 3 = up to 4 attempts total "
         "(default: 3; 0 = no retries, the failure still ends as ERROR)",
     )
     parser.add_argument(
