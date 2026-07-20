@@ -1,9 +1,10 @@
 """runner infra-retry loop — retry transient startup failures, never real attempts.
 
-A startup failure (INFRA_ERROR + 0 output tokens: the CLI died before the model
-did any work) must be retried on a fresh workspace, and only the final genuine
-attempt graded; exhaustion is ERROR/INFRA_ERROR, never a proof FAIL. Fakes stand
-in for the agent and grader, so no container, real backend or tlapm is needed.
+A startup failure (INFRA_ERROR with no token, request, cost, or backend-native
+activity evidence: the CLI died before the model did any work) must be retried
+on a fresh workspace, and only the final genuine attempt graded; exhaustion is
+ERROR/INFRA_ERROR, never a proof FAIL. Fakes stand in for the agent and grader,
+so no container, real backend or tlapm is needed.
 
 Run: PYTHONPATH=src python3 -m pytest tests/evaluator/test_infra_retry.py
 """
@@ -15,6 +16,8 @@ import pytest
 
 from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
+from evaluator.backends.base import SubmissionPlan
+from evaluator.backends.codex import CodexBackend
 from evaluator.termination import TerminationReason
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary
 
@@ -38,13 +41,19 @@ class _ScriptedBackend(AgenticBackend):
         self.in_tokens = 0
         self.out_tokens = 0  # set by the fake agent for the current attempt
         self.cost = 0.0
+        self.submission_metadata = {}
 
     def parse_output(self, jsonl_path):
         return ("", self.in_tokens, self.out_tokens)
 
     def parse_usage(self, jsonl_path, *, input_tokens, output_tokens):
         if not (input_tokens or output_tokens or self.cost):
-            return UsageSummary.from_requests([], source="scripted", complete=True)
+            return UsageSummary.from_requests(
+                [],
+                source="scripted",
+                complete=True,
+                totals={"input_tokens": 0, "output_tokens": 0, "model_requests": 0},
+            )
         costs = (UsageCost(self.cost, "provider_monetary", "test.cost"),) if self.cost else ()
         return UsageSummary.from_requests(
             [RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, costs=costs)],
@@ -60,6 +69,9 @@ class _ScriptedBackend(AgenticBackend):
 
     def detect_quota_block(self, jsonl_path):
         return None
+
+    def prepare_submission(self, *args, **kwargs):
+        return SubmissionPlan(metadata=self.submission_metadata)
 
 
 class _FakeMode:
@@ -102,7 +114,7 @@ def _work_item(tmp_path, backend, infra_retries=3):
 def _install_agent(monkeypatch, backend, attempts):
     """Patch _run_backend_local with a scripted agent: one spec dict per attempt
     ({"exit": int, "events": [...], "stderr": str, "out_tokens": int,
-    "error": str, "mutate": fn(workspace)})."""
+    "error": str, "last_message": str, "mutate": fn(workspace)})."""
     calls = {"n": 0, "workspaces": [], "canonical_dirs": []}
 
     def fake_run(
@@ -127,6 +139,9 @@ def _install_agent(monkeypatch, backend, attempts):
         if spec.get("otel"):
             with open(os.path.join(agent_dir, "copilot-otel.jsonl"), "w") as f:
                 f.write(spec["otel"])
+        if spec.get("last_message"):
+            with open(os.path.join(agent_dir, "codex_last_message.txt"), "w") as f:
+                f.write(spec["last_message"])
         if "mutate" in spec:
             spec["mutate"](workspace)
         if "mutate_canonical" in spec:
@@ -321,26 +336,268 @@ def test_startup_failure_retried_and_final_attempt_graded(tmp_path, monkeypatch)
 
 def test_retry_aggregates_usage_and_stashes_provider_telemetry(tmp_path, monkeypatch):
     backend = _ScriptedBackend()
-    charged_failure = {
+    startup_with_artifact = {
         **STARTUP,
-        "in_tokens": 20,
-        "out_tokens": 0,
-        "cost": 0.002,
         "otel": "first-attempt-telemetry\n",
     }
     recovered = {**GENUINE_FAIL, "in_tokens": 100, "out_tokens": 50, "cost": 0.02}
-    _install_agent(monkeypatch, backend, [charged_failure, recovered])
+    _install_agent(monkeypatch, backend, [startup_with_artifact, recovered])
     _install_grader(monkeypatch, verdict="FAIL")
     _no_sleep(monkeypatch)
 
     result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
 
-    assert (result["input_tokens"], result["output_tokens"]) == (120, 50)
-    assert result["usage"]["model_requests"] == 2
-    assert result["usage"]["costs"] == [{"amount": 0.022, "unit": "provider_monetary", "source": "test.cost"}]
-    assert [request["attempt"] for request in result["usage"]["requests"]] == [0, 1]
+    assert (result["input_tokens"], result["output_tokens"]) == (100, 50)
+    assert result["usage"]["model_requests"] == 1
+    assert result["usage"]["costs"] == [{"amount": 0.02, "unit": "provider_monetary", "source": "test.cost"}]
+    assert [request["attempt"] for request in result["usage"]["requests"]] == [1]
     stashed = tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0"
     assert (stashed / "copilot-otel.jsonl").read_text() == "first-attempt-telemetry\n"
+
+
+def test_structured_input_and_cost_prevent_retry_when_legacy_output_is_zero(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    charged_failure = {**STARTUP, "in_tokens": 20, "out_tokens": 0, "cost": 0.002}
+    agent = _install_agent(monkeypatch, backend, [charged_failure])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
+
+    assert agent["n"] == 1 and grader["n"] == 1
+    assert (result["input_tokens"], result["output_tokens"]) == (20, 0)
+    assert result["usage"]["costs"] == [{"amount": 0.002, "unit": "provider_monetary", "source": "test.cost"}]
+    assert "infra_retries" not in result
+    assert sleeps == []
+
+
+def test_codex_item_activity_prevents_retry_when_failed_turn_has_no_usage(tmp_path, monkeypatch):
+    backend = CodexBackend(model="gpt-test")
+    failed_after_model_work = {
+        "exit": 1,
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "turn.started"},
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "item-1",
+                    "type": "command_execution",
+                    "command": "check-proof",
+                    "status": "in_progress",
+                },
+            },
+            {"type": "error", "message": "connection lost"},
+            {"type": "turn.failed", "error": {"message": "connection lost"}},
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_after_model_work])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
+
+    assert agent["n"] == 1
+    assert grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.INFRA_ERROR
+    assert result["usage"]["status"] == "unavailable"
+    assert "infra_retries" not in result
+    assert sleeps == []
+
+
+def test_codex_quota_after_model_work_is_not_retried_or_overwritten(tmp_path, monkeypatch):
+    backend = CodexBackend(model="gpt-test")
+    backend._reset_at_from_probe = lambda: None
+    capped_after_work = {
+        "exit": 1,
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"id": "item-1", "type": "agent_message", "text": "partial paid work"},
+            },
+            {"type": "error", "message": "You've hit your usage limit."},
+            {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}},
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [capped_after_work])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
+
+    assert agent["n"] == 1
+    assert grader["n"] == 0
+    assert sleeps == []
+    assert result["termination_reason"] == TerminationReason.QUOTA_EXHAUSTED
+    assert result["usage"]["status"] == "unavailable"
+    assert "automatic retry suppressed" in result["error"]
+    output = tmp_path / "out" / "Foo" / "Bar" / "agent" / "output.jsonl"
+    assert "partial paid work" in output.read_text()
+
+
+def test_codex_no_work_quota_retry_preserves_and_merges_attempt_evidence(tmp_path, monkeypatch):
+    backend = CodexBackend(model="gpt-test")
+    backend._reset_at_from_probe = lambda: None
+    capped_before_work = {
+        "exit": 1,
+        "last_message": "stale blocked-attempt message\n",
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "turn.started"},
+            {"type": "error", "message": "You've hit your usage limit."},
+            {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}},
+        ],
+    }
+    recovered = {
+        "exit": 0,
+        "last_message": "finished\n",
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-2"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"id": "item-2", "type": "agent_message", "text": "finished"},
+            },
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 100,
+                    "cached_input_tokens": 80,
+                    "output_tokens": 10,
+                    "reasoning_output_tokens": 2,
+                },
+            },
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [capped_before_work, recovered])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=0))
+
+    assert agent["n"] == 2
+    assert grader["n"] == 1
+    assert len(sleeps) == 1
+    assert (result["input_tokens"], result["output_tokens"]) == (100, 10)
+    assert result["usage"]["status"] == "lower_bound"
+    agent_dir = tmp_path / "out" / "Foo" / "Bar" / "agent"
+    stashed = agent_dir / "quota-attempts" / "infra-0-quota-0"
+    assert "usage limit" in (stashed / "output.jsonl").read_text()
+    assert (stashed / "codex_last_message.txt").read_text() == "stale blocked-attempt message\n"
+    assert (agent_dir / "codex_last_message.txt").read_text() == "finished\n"
+
+
+def test_codex_warning_item_does_not_suppress_startup_retry(tmp_path, monkeypatch):
+    backend = CodexBackend(model="gpt-test")
+    failed_before_model_work = {
+        "exit": 1,
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"id": "item-warning", "type": "error", "message": "configuration warning"},
+            },
+            {"type": "error", "message": "request rejected"},
+            {"type": "turn.failed", "error": {"message": "request rejected"}},
+        ],
+    }
+    recovered = {
+        "exit": 0,
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-2"},
+            {"type": "turn.started"},
+            {"type": "item.completed", "item": {"id": "item-1", "type": "agent_message", "text": "done"}},
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 100,
+                    "cached_input_tokens": 80,
+                    "output_tokens": 10,
+                    "reasoning_output_tokens": 2,
+                },
+            },
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_before_model_work, recovered])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
+
+    assert agent["n"] == 2
+    assert grader["n"] == 1
+    assert result["infra_retries"] == 1
+    assert len(sleeps) == 1
+
+
+def test_codex_failure_before_item_activity_remains_retriable(tmp_path, monkeypatch):
+    backend = CodexBackend(model="gpt-test")
+    failed_before_model_work = {
+        "exit": 1,
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "turn.started"},
+            {"type": "error", "message": "request rejected"},
+            {"type": "turn.failed", "error": {"message": "request rejected"}},
+        ],
+    }
+    recovered = {
+        "exit": 0,
+        "events": [
+            {"type": "thread.started", "thread_id": "thread-2"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"id": "item-1", "type": "agent_message", "text": "finished"},
+            },
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 100,
+                    "cached_input_tokens": 80,
+                    "output_tokens": 10,
+                    "reasoning_output_tokens": 2,
+                },
+            },
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_before_model_work, recovered])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
+
+    assert agent["n"] == 2
+    assert grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.OK
+    assert result["infra_retries"] == 1
+    assert (result["input_tokens"], result["output_tokens"]) == (100, 10)
+    assert result["usage"]["status"] == "lower_bound"
+    assert len(sleeps) == 1
+
+
+def test_submission_metadata_cannot_overwrite_runner_accounting(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    backend.submission_metadata = {
+        "usage": {"complete": True, "input_tokens": 9999, "output_tokens": 9999},
+        "input_tokens": 9999,
+        "output_tokens": 9999,
+        "time_secs": 9999,
+        "backend_note": "retained",
+    }
+    _install_agent(monkeypatch, backend, [{**GENUINE_FAIL, "in_tokens": 100, "out_tokens": 50}])
+    _install_grader(monkeypatch, verdict="FAIL")
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=0))
+
+    assert (result["input_tokens"], result["output_tokens"]) == (100, 50)
+    assert result["time_secs"] != 9999
+    assert result["backend_note"] == "retained"
+    assert result["usage"]["input_tokens"] == 100
+    assert "ignored submission metadata for runner-owned fields" in result["usage"]["warnings"][0]
 
 
 def test_retry_exhaustion_is_error_not_fail(tmp_path, monkeypatch):

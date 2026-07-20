@@ -243,6 +243,19 @@ class Backend(ABC):
             source=f"{self.name or self.__class__.__name__}_legacy_output",
         )
 
+    def retry_may_duplicate_model_work(self, jsonl_path: str) -> bool:
+        """Return whether replacing this launch could duplicate model work.
+
+        This supplements usage telemetry for failed or truncated runs whose
+        provider emits token counts only on clean completion. A backend should
+        return true for unambiguous native model activity and when lost native
+        events make the absence of such activity unsafe to assume. It must
+        handle missing or malformed output conservatively. The default keeps
+        legacy backends on the existing token/request/cost retry policy.
+        """
+
+        return False
+
     def execution_environment(self, result_dir: str) -> dict[str, str]:
         """Backend-owned environment additions for one isolated execution."""
 

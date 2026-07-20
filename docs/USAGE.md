@@ -170,7 +170,7 @@ uv run tlaps-bench run [flags]
 | `--check-timeout` | `600` | Per-benchmark checker (tlapm) timeout in seconds |
 | `--output-dir` | auto-generated | Output directory |
 | `--resume` | off | Skip benchmarks already marked `SKIP` or genuine `PASS` (first-attempt or continuation) |
-| `--infra-retries` | `3` agentic; `0` one-shot | Extra attempts after a transient agent startup/infra failure (0 output tokens); strict one-shot backends require `0` |
+| `--infra-retries` | `3` agentic; `0` one-shot | Extra attempts after a transient agent startup/infra failure with no token, request, cost, or backend-native activity evidence of model work; strict one-shot backends require `0` |
 | `--max-continuations` | `0` | Run up to N same-workspace continuation attempts after the first attempt completes without PASS; strict one-shot backends require `0` (see [Continuation runs](#continuation-runs)) |
 | `--force-build` | off | Rebuild the Docker image |
 | `--no-container` | off | Run without Docker (requires native setup) |
@@ -246,6 +246,7 @@ results/<mode>/<backend>/<timestamp>/
     │   ├── solution.tla      # The agent's final output
     │   ├── output.jsonl      # Raw agent stdout capture
     │   ├── copilot-otel.jsonl # Copilot CLI only: official usage telemetry
+    │   ├── quota-attempts/    # Hard-cap launches preserved before a safe retry
     │   ├── stderr.txt        # Agent stderr, if any — start here to debug a 0-token run
     │   └── transcript.txt    # Parsed transcript with token summary
     └── grading/
@@ -268,6 +269,12 @@ Each `result.json` keeps the existing top-level `input_tokens`, `output_tokens`,
 An unavailable value is `null`, not zero. The legacy top-level token fields still use zero when a value is unavailable, so new analysis should read `usage` and its status. Cache tokens classify input tokens and reasoning tokens classify output tokens; they are not added to the input/output totals a second time.
 
 `time_secs` remains the active wall time for that benchmark task, including agent and tool work but excluding quota waits and infra-retry backoff. Retries and continuation rounds are added to the task total. Parallel tasks can overlap, so summing `time_secs` across a run gives task-time, not the experiment's wall-clock duration. `usage.model_time_secs` separately sums completed model-call spans and can also exceed wall-clock time when requests overlap.
+
+Codex consumes the official aggregate on the CLI's [`turn.completed` JSONL event](https://learn.chatgpt.com/docs/non-interactive-mode#json-output). The pinned `@openai/codex@0.144.6` contract reports total input, cached input, total output, and reasoning output tokens. Cached input is already included in input, and reasoning is already included in output. The event does not expose the number, identity, duration, or monetary cost of Codex's internal model requests, so those fields remain unavailable rather than being inferred. In particular, the backend may authenticate through ChatGPT, OpenAI API, Azure, or Bedrock; applying one public price table would not produce a trustworthy invoice cost. Native Codex child-agent features are disabled for benchmark invocations because `codex exec --json` reports the primary thread's aggregate rather than a combined parent-and-child total. If an unexpected collaboration event is nevertheless observed, the parent aggregate is retained only as a lower bound.
+
+A normal run with one validated terminal aggregate is complete for the fields Codex exposes. Failed or truncated turns have no trustworthy partial token event and are unavailable. Native model-driven item types—messages, reasoning, commands, file changes, tool calls, searches, plans, and collaboration calls—prove that activity already occurred, so such a failed turn is not automatically retried and potentially charged twice. Codex represents configuration and stream warnings as `item.type == "error"`; ordinary warning items alone are not treated as model work. A dropped-event warning both downgrades terminal usage to a lower bound and suppresses automatic replacement because the missing events may conceal model activity. A failure before model activity remains eligible for an infrastructure retry. Malformed or duplicated terminal evidence is retained only conservatively, and Codex's synthesized-looking all-zero terminal shape is not treated as proof of a free run.
+
+Reactive hard-cap retries follow the same paid-work rule. If a usage-limit event arrives after model activity—or after event loss makes prior activity unknowable—the current artifacts are kept and automatic retry is suppressed. A cap reached before any model-work evidence may be retried after reset; each replaced launch is first preserved under `quota-attempts/` and its structured evidence is merged into the benchmark total.
 
 Copilot uses GitHub's supported telemetry surfaces rather than inferring usage from text:
 
@@ -480,6 +487,7 @@ This script runs inside the container with full network access before the firewa
 | `build_command(workspace, result_dir)` | Returns the agent command as a list. The prompt is piped to stdin. The agent works in `workspace/` where the `.tla` file lives. |
 | `parse_output(jsonl_path)` | Reads the captured stdout file. Returns `(transcript, input_tokens, output_tokens)`. |
 | `parse_usage(jsonl_path, *, input_tokens, output_tokens)` | Returns a structured `UsageSummary`. The default implementation adapts the legacy token pair, so existing backends remain compatible. |
+| `retry_may_duplicate_model_work(jsonl_path)` | Returns whether native activity—or missing native events—makes automatically replacing a failed/truncated launch unsafe. The default is `False`. |
 | `execution_environment(result_dir)` | Returns per-execution environment additions, such as an isolated telemetry output path. |
 | `attempt_output_files()` | Lists backend-owned artifacts that must be preserved and cleared across infra retries. |
 | `check_auth()` | Fast host-side check before launching a container. Return `None` if OK, or an error string. |

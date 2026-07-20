@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-npm install -g @openai/codex --cache /tmp/.npm && rm -rf /tmp/.npm
+npm install -g @openai/codex@0.144.6 --cache /tmp/.npm && rm -rf /tmp/.npm
 
 # Write auth.json from env vars if no auth file already present (e.g. from mounted copy)
 if [ ! -f /root/.codex/auth.json ]; then
