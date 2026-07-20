@@ -18,6 +18,7 @@ from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
 from evaluator.backends.base import SubmissionPlan
 from evaluator.backends.codex import CodexBackend
+from evaluator.backends.pi import PiBackend
 from evaluator.termination import TerminationReason
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary
 
@@ -418,6 +419,116 @@ def test_codex_item_activity_prevents_retry_when_failed_turn_has_no_usage(tmp_pa
             },
             {"type": "error", "message": "connection lost"},
             {"type": "turn.failed", "error": {"message": "connection lost"}},
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_after_model_work])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
+
+    assert agent["n"] == 1
+    assert grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.INFRA_ERROR
+    assert result["usage"]["status"] == "unavailable"
+    assert "infra_retries" not in result
+    assert sleeps == []
+
+
+def test_pi_session_header_startup_failure_is_retried(tmp_path, monkeypatch):
+    backend = PiBackend(model="openai/gpt-test")
+    failed_before_model_work = {
+        "exit": 1,
+        "stderr": "No API key found for openai.\n",
+        "events": [{"type": "session", "version": 3, "id": "session-1"}],
+    }
+    recovered = {
+        "exit": 0,
+        "events": [
+            {"type": "session", "version": 3, "id": "session-2"},
+            {"type": "agent_start"},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "finished"}],
+                    "api": "openai-responses",
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "usage": {
+                        "input": 20,
+                        "output": 5,
+                        "cacheRead": 10,
+                        "cacheWrite": 0,
+                        "totalTokens": 35,
+                        "cost": {
+                            "input": 0.001,
+                            "output": 0.002,
+                            "cacheRead": 0.0001,
+                            "cacheWrite": 0,
+                            "total": 0.0031,
+                        },
+                    },
+                    "stopReason": "stop",
+                    "timestamp": 1,
+                },
+            },
+            {"type": "agent_end", "messages": [], "willRetry": False},
+            {"type": "agent_settled"},
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_before_model_work, recovered])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
+
+    assert agent["n"] == 2
+    assert grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.OK
+    assert result["infra_retries"] == 1
+    assert result["infra_retry_reasons"] == ["No API key found for openai."]
+    assert (result["input_tokens"], result["output_tokens"]) == (30, 5)
+    assert result["usage"]["costs"] == [{"amount": 0.0031, "unit": "usd", "source": "pi.usage.cost.total"}]
+    assert len(sleeps) == 1
+
+
+def test_pi_terminal_error_after_model_activity_is_not_retried(tmp_path, monkeypatch):
+    backend = PiBackend(model="openai/gpt-test")
+    zero_usage = {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
+    }
+    failed_after_model_work = {
+        "exit": 0,
+        "events": [
+            {"type": "session", "version": 3, "id": "session-1"},
+            {"type": "agent_start"},
+            {
+                "type": "message_update",
+                "message": {"role": "assistant"},
+                "assistantMessageEvent": {"type": "text_delta", "delta": "partial paid work"},
+            },
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "partial paid work"}],
+                    "api": "openai-responses",
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "usage": zero_usage,
+                    "stopReason": "error",
+                    "errorMessage": "stream disconnected",
+                    "timestamp": 1,
+                },
+            },
+            {"type": "agent_end", "messages": [], "willRetry": False},
+            {"type": "agent_settled"},
         ],
     }
     agent = _install_agent(monkeypatch, backend, [failed_after_model_work])
