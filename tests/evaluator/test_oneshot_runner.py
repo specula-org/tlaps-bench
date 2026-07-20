@@ -412,6 +412,65 @@ def test_litellm_makes_one_call_with_no_tools_system_or_retries(monkeypatch):
     assert "EXACT PROMPT" not in json.dumps(result.audit)
 
 
+def test_litellm_records_native_cost_and_token_detail(monkeypatch):
+    def completion(**_kwargs):
+        response = SimpleNamespace(
+            id="chatcmpl-oneshot-1",
+            model="provider/model",
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="MODEL RESPONSE"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=1200,
+                completion_tokens=340,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=800),
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=120),
+            ),
+        )
+        response._hidden_params = {"response_cost": 0.0054}
+        return response
+
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = completion
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+
+    result = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model")
+
+    (detail,) = result.usage_details
+    assert detail["cache_read_input_tokens"] == 800
+    assert detail["reasoning_output_tokens"] == 120
+    assert detail["request_id"] == "chatcmpl-oneshot-1"
+    assert detail["costs"] == [{"amount": 0.0054, "unit": "usd", "source": "litellm.response_cost"}]
+
+
+def test_litellm_falls_back_to_completion_cost_and_omits_unpriceable(monkeypatch):
+    def completion(**_kwargs):
+        return SimpleNamespace(
+            id="chatcmpl-oneshot-2",
+            model="provider/model",
+            choices=[SimpleNamespace(message=SimpleNamespace(content="R"), finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+        )
+
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = completion
+    fake_litellm.completion_cost = lambda **_kwargs: 0.5
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+
+    (detail,) = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model").usage_details
+    assert detail["costs"] == [{"amount": 0.5, "unit": "usd", "source": "litellm.response_cost"}]
+
+    def raising_cost(**_kwargs):
+        raise RuntimeError("no pricing for model")
+
+    fake_litellm.completion_cost = raising_cost
+    (detail,) = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model").usage_details
+    assert "costs" not in detail
+
+
 def test_litellm_clamps_output_budget_to_pinned_model_metadata(monkeypatch):
     calls: list[dict] = []
 

@@ -503,6 +503,23 @@ def _litellm_max_tokens(litellm: object, model: str) -> int:
     return 32_768
 
 
+def _litellm_response_cost(litellm: object, response: object) -> float | None:
+    """Return LiteLLM's own USD cost for one response, without a local price table."""
+
+    hidden = _get(response, "_hidden_params")
+    if isinstance(hidden, dict):
+        cost = _optional_nonnegative_float(hidden.get("response_cost"))
+        if cost is not None:
+            return cost
+    completion_cost = getattr(litellm, "completion_cost", None)
+    if not callable(completion_cost):
+        return None
+    try:
+        return _optional_nonnegative_float(completion_cost(completion_response=response))
+    except Exception:
+        return None
+
+
 def _litellm_audit(prompt: str, model: str, max_tokens: int = 32_768) -> dict[str, object]:
     request = {"model": model, "messages": [{"role": "user", "content": prompt}]}
     return {
@@ -569,9 +586,19 @@ def run_litellm(prompt: str, model: str) -> ProviderResult:
         optional_values: dict[str, object | None] = {
             "input_tokens": request_input,
             "output_tokens": request_output,
+            "cache_read_input_tokens": _optional_nonnegative_int(
+                _get(_get(usage, "prompt_tokens_details"), "cached_tokens")
+            ),
+            "reasoning_output_tokens": _optional_nonnegative_int(
+                _get(_get(usage, "completion_tokens_details"), "reasoning_tokens")
+            ),
             "model": _enum_value(_get(response, "model")),
+            "request_id": _enum_value(_get(response, "id")),
         }
         detail.update({key: value for key, value in optional_values.items() if value is not None})
+        response_cost = _litellm_response_cost(litellm, response)
+        if response_cost is not None:
+            detail["costs"] = [{"amount": response_cost, "unit": "usd", "source": "litellm.response_cost"}]
         usage_details = (detail,)
         text = _response_text(response)
         finish_reason = _response_finish_reason(response)

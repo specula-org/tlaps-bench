@@ -251,6 +251,13 @@ Copilot uses GitHub's supported telemetry surfaces rather than inferring usage f
 
 Native Copilot cost values use provider accounting units: CLI `github.copilot.cost` and SDK `assistant.usage.cost` are stored as `model_multiplier`, CLI `github.copilot.aiu` as `aiu`, and nano-AIU values as `nano_aiu`. These are auditable provider values rather than a claimed invoice total or a locally reconstructed USD price. If an agent or sub-agent request omits a cost field that other requests report, the known amount is explicitly marked as a lower bound.
 
+Claude Code and LiteLLM report settled USD amounts, so their costs are stored in the `usd` unit and must not be compared directly against Copilot's `model_multiplier` or `aiu` values:
+
+- Claude Code takes its authoritative token totals and the natively reported `total_cost_usd` from the terminal `result` event. It streams one `assistant` event per content block and repeats the turn's whole `message.usage` on each, so events are collapsed by `message.id`; a streamed message's input and cache counts are final, but its `output_tokens` is only the partial known at message start, so per-request output is left null and the settled output total comes from the result event. Anthropic reports cache reads/creations beside `input_tokens`; they are folded into the input total exactly once and kept as classifications. The reliable per-message input and cache are cross-checked against the result totals — a mismatch (lost turns), an error result, or a missing `total_cost_usd` downgrades the record to a lower bound. Without a result event the streamed sums stand as an explicit lower bound.
+- LiteLLM emits one `request_usage` event per model call from the in-container agent, priced with LiteLLM's own `response_cost` / `completion_cost` rather than a second price table maintained here. The trailing aggregate `usage` event cross-checks the per-request count. A completion error, a count mismatch, or a request whose cost LiteLLM cannot price keeps the total as an explicit lower bound instead of a silent zero.
+
+Cost values are only summed within a shared unit and source, so a run that mixes priced and unpriced requests reports the known amount plus a warning rather than an understated total.
+
 ---
 
 ## Resuming a Run
