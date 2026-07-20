@@ -81,14 +81,15 @@ ALL_API_HOSTS = (
 )
 
 
-def _azure_openai_hosts() -> list[str]:
-    """Extract Azure OpenAI endpoint host(s) from environment variables.
+def _hosts_from_env(*env_vars: str) -> list[str]:
+    """Extract deduplicated hostnames from endpoint URLs in the given env vars.
 
-    Azure OpenAI uses customer-specific hostnames (e.g.
-    my-resource.openai.azure.com) that cannot be statically enumerated.
+    Used for endpoints with customer/provider-specific hostnames that cannot be
+    statically enumerated (Azure OpenAI, OpenAI-compatible base URLs, etc.). The
+    ``//`` prefix lets ``urlparse`` extract a host even from a scheme-less value.
     """
     hosts: list[str] = []
-    for var in ("AZURE_OPENAI_HOST", "AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT"):
+    for var in env_vars:
         val = os.environ.get(var, "").strip()
         if not val:
             continue
@@ -100,7 +101,16 @@ def _azure_openai_hosts() -> list[str]:
 
 def detect_firewall_hosts(model: str) -> list[str]:
     """All known LLM API hosts. Blocks general internet, allows any provider."""
-    return ALL_API_HOSTS + _azure_openai_hosts()
+    # Azure OpenAI and custom OpenAI-compatible endpoints use non-enumerable
+    # hostnames supplied through env, so derive them at run time.
+    dynamic_hosts = _hosts_from_env(
+        "AZURE_OPENAI_HOST",
+        "AZURE_API_BASE",
+        "AZURE_OPENAI_ENDPOINT",
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
+    )
+    return ALL_API_HOSTS + dynamic_hosts
 
 
 def has_aws_env_credentials() -> bool:

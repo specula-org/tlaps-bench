@@ -59,6 +59,22 @@ uv run tlaps-bench run --backend litellm --model claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm_oneshot --model claude-sonnet-4-6
 ```
 
+### OpenAI-compatible endpoints
+
+To target any OpenAI-compatible endpoint (a self-hosted gateway, a vendor's
+inference API, etc.), use the LiteLLM backend with an `openai/<model>` model id
+and point `OPENAI_API_BASE` (or `OPENAI_BASE_URL`) at the endpoint. The host is
+forwarded into the container and automatically added to the firewall allow-list:
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_API_BASE=https://inference-api.somecompany.com/v1
+uv run tlaps-bench run --backend litellm --model openai/somecompany/some-model
+```
+
+The leading `openai/` selects LiteLLM's OpenAI-compatible transport; everything
+after it is sent to the endpoint as the wire model id.
+
 ### Reasoning effort
 
 Use the optional `--reasoning-effort` flag to override a model's reasoning budget:
