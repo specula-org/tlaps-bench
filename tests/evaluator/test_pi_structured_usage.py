@@ -185,20 +185,79 @@ def test_cache_write_1h_is_not_added_to_tokens_or_native_total_cost(tmp_path):
     assert usage.costs[0].amount == pytest.approx(0.01)
 
 
-def test_message_start_and_end_do_not_duplicate_one_request(tmp_path):
+def test_paired_message_starts_and_ends_count_each_request_once(tmp_path):
     output = tmp_path / "output.jsonl"
-    message = _assistant_message()
+    first = _assistant_message()
+    second = _assistant_message(response_id="response-2")
     _write_jsonl(
         output,
-        {"type": "message_start", "message": message},
-        {"type": "message_end", "message": message},
+        {"type": "message_start", "message": first},
+        {"type": "message_end", "message": first},
+        {"type": "message_start", "message": second},
+        {"type": "message_end", "message": second},
         {"type": "agent_settled"},
     )
 
     usage = PiBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
 
     assert usage.status == "complete"
-    assert usage.model_requests == 1
+    assert usage.model_requests == 2
+
+
+def test_kiro_token_estimates_are_preserved_as_incomplete(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        _message_end(provider="kiro", api="kiro-api", usage=_native_usage(cost_total=0)),
+        {"type": "agent_settled"},
+    )
+
+    usage = PiBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "incomplete"
+    assert usage.is_lower_bound is False
+    assert (usage.input_tokens, usage.output_tokens, usage.model_requests) == (170, 40, 1)
+    assert any("Kiro adapter may estimate token counts" in warning for warning in usage.warnings)
+    assert any("retry provider requests" in warning for warning in usage.warnings)
+
+
+def test_overlapping_assistant_starts_make_request_accounting_a_lower_bound(tmp_path):
+    output = tmp_path / "output.jsonl"
+    partial = _assistant_message(provider="kiro", api="kiro-api", usage=_zero_usage())
+    _write_jsonl(
+        output,
+        {"type": "message_start", "message": partial},
+        {"type": "message_start", "message": partial},
+        _message_end(provider="kiro", api="kiro-api", usage=_native_usage(cost_total=0)),
+        {"type": "agent_settled"},
+    )
+
+    usage = PiBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert len(usage.requests) == 1
+    assert (usage.input_tokens, usage.output_tokens) == (170, 40)
+    assert any("unfinalized assistant attempt" in warning for warning in usage.warnings)
+
+
+def test_unfinished_provider_start_raises_request_floor(tmp_path):
+    output = tmp_path / "output.jsonl"
+    message = _assistant_message()
+    _write_jsonl(
+        output,
+        {"type": "message_start", "message": message},
+        {"type": "message_end", "message": message},
+        {"type": "message_start", "message": message},
+        {"type": "agent_settled"},
+    )
+
+    usage = PiBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert len(usage.requests) == 1
+    assert any("unfinished assistant provider stream" in warning for warning in usage.warnings)
 
 
 def test_valid_error_and_recovered_response_are_each_counted_once(tmp_path):
@@ -483,6 +542,38 @@ def test_schema_invalid_message_candidate_is_lower_bound_and_retry_unsafe(candid
     assert backend.retry_may_duplicate_model_work(str(output)) is True
 
 
+@pytest.mark.parametrize(
+    ("candidate", "warning"),
+    [
+        ({"type": []}, "missing or invalid type"),
+        ({"type": "message_end", "message": {"role": []}}, "missing or invalid message role"),
+        (
+            _message_end(
+                usage=_zero_usage(),
+                response_id=_MISSING,
+                stop_reason=[],
+                content=[{"type": "text", "text": ""}],
+                error_message="schema-invalid fallback",
+            ),
+            "all-zero usage placeholder",
+        ),
+    ],
+)
+def test_non_string_discriminators_are_rejected_without_aborting(candidate, warning, tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(output, candidate, _message_end(), {"type": "agent_settled"})
+    backend = PiBackend()
+
+    transcript, input_tokens, output_tokens = backend.parse_output(str(output))
+    usage = backend.parse_usage(str(output), input_tokens=input_tokens, output_tokens=output_tokens)
+
+    assert transcript == ""
+    assert (input_tokens, output_tokens) == (170, 40)
+    assert usage.status == "lower_bound"
+    assert any(warning in item for item in usage.warnings)
+    assert backend.retry_may_duplicate_model_work(str(output)) is True
+
+
 def test_malformed_json_and_message_candidate_downgrade_known_usage(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
@@ -583,6 +674,19 @@ def test_empty_existing_stream_remains_retry_safe(tmp_path):
                     error_message="failed before provider stream",
                 ),
             },
+            True,
+        ),
+        (
+            {
+                "type": "message_start",
+                "message": _assistant_message(
+                    usage=_zero_usage(),
+                    response_id=_MISSING,
+                    stop_reason="error",
+                    content=[{"type": "text", "text": ""}],
+                    error_message="failed before provider stream",
+                ),
+            },
             False,
         ),
     ],
@@ -606,6 +710,42 @@ def test_missing_output_is_unavailable_and_does_not_fabricate_activity(tmp_path)
     assert usage.status == "unavailable"
     assert any("JSONL output unavailable" in warning for warning in usage.warnings)
     assert backend.retry_may_duplicate_model_work(str(missing)) is False
+
+
+def test_truncated_open_turn_is_retry_unsafe_before_first_assistant_event(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "session", "version": 3, "id": "session-1"},
+        {"type": "agent_start"},
+        {"type": "turn_start"},
+    )
+
+    assert PiBackend().retry_may_duplicate_model_work(str(output)) is True
+
+
+def test_exact_pre_stream_fallback_closes_open_turn_without_model_activity(tmp_path):
+    output = tmp_path / "output.jsonl"
+    fallback = _assistant_message(
+        usage=_zero_usage(),
+        response_id=_MISSING,
+        stop_reason="error",
+        content=[{"type": "text", "text": ""}],
+        error_message="failed before provider stream",
+    )
+    _write_jsonl(
+        output,
+        {"type": "session", "version": 3, "id": "session-1"},
+        {"type": "agent_start"},
+        {"type": "turn_start"},
+        {"type": "message_start", "message": fallback},
+        {"type": "message_end", "message": fallback},
+        {"type": "turn_end", "message": fallback, "toolResults": []},
+        {"type": "agent_end", "messages": [fallback]},
+        {"type": "agent_settled"},
+    )
+
+    assert PiBackend().retry_may_duplicate_model_work(str(output)) is False
 
 
 def test_pi_cli_and_kiro_provider_installs_are_pinned_to_researched_versions():

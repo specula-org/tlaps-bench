@@ -7,6 +7,7 @@ import math
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -25,6 +26,11 @@ from .base import (
     has_aws_shared_credentials,
     needs_aws_shared_credentials,
 )
+from .codex_usage_wrapper import (
+    CODEX_CHILD_USAGE_EVENT,
+    CODEX_CHILD_USAGE_START_EVENT,
+    CODEX_CHILD_USAGE_VERSION,
+)
 
 DEFAULT_MODEL = "gpt-5.5"
 
@@ -37,6 +43,7 @@ _RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 # repo and ~/.codex are available, so it can reuse the usage probe's precise reset.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CODEX_USAGE_SOURCE = "codex_cli_turn_completed"
+_CODEX_CHILD_USAGE_SOURCE = "codex_rollout_child_token_count"
 _MODEL_ACTIVITY_ITEM_TYPES = frozenset(
     {
         "agent_message",
@@ -59,6 +66,18 @@ class _CodexTerminalUsage:
     cache_read_input_tokens: int | None
     reasoning_output_tokens: int | None
     incomplete: bool
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _CodexChildUsageAudit:
+    root_thread_id: str
+    child_count: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    reasoning_output_tokens: int
+    complete: bool
     warnings: tuple[str, ...]
 
 
@@ -133,6 +152,64 @@ def _parse_terminal_usage(event: dict[str, Any]) -> tuple[_CodexTerminalUsage | 
     )
 
 
+def _parse_child_usage_audit(
+    event: dict[str, Any],
+) -> tuple[_CodexChildUsageAudit | None, tuple[str, ...]]:
+    version = event.get("version")
+    if type(version) is not int or version != CODEX_CHILD_USAGE_VERSION:
+        return None, ("Codex child-usage audit has an unsupported version",)
+
+    root_thread_id = event.get("root_thread_id")
+    if not isinstance(root_thread_id, str) or not root_thread_id:
+        return None, ("Codex child-usage audit has no root thread ID",)
+
+    raw_complete = event.get("complete")
+    raw_warning_codes = event.get("warning_codes", [])
+    if (
+        type(raw_complete) is not bool
+        or not isinstance(raw_warning_codes, list)
+        or any(not isinstance(code, str) or not code or len(code) > 80 for code in raw_warning_codes)
+    ):
+        return None, ("Codex child-usage audit has invalid status metadata",)
+
+    child_count = _strict_token(event.get("child_count"))
+    input_tokens = _strict_token(event.get("input_tokens"))
+    cached_input_tokens = _strict_token(event.get("cached_input_tokens"))
+    output_tokens = _strict_token(event.get("output_tokens"))
+    reasoning_output_tokens = _strict_token(event.get("reasoning_output_tokens"))
+    if (
+        child_count is None
+        or input_tokens is None
+        or cached_input_tokens is None
+        or output_tokens is None
+        or reasoning_output_tokens is None
+        or cached_input_tokens > input_tokens
+        or reasoning_output_tokens > output_tokens
+        or (child_count == 0 and (input_tokens > 0 or output_tokens > 0))
+    ):
+        return None, ("Codex child-usage audit has invalid aggregate usage",)
+
+    warning_codes = tuple(dict.fromkeys(raw_warning_codes))
+    warnings = (
+        (f"Codex child-usage audit is incomplete ({', '.join(warning_codes)})",)
+        if warning_codes
+        else (() if raw_complete else ("Codex child-usage audit is incomplete",))
+    )
+    return (
+        _CodexChildUsageAudit(
+            root_thread_id=root_thread_id,
+            child_count=child_count,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cached_input_tokens,
+            reasoning_output_tokens=reasoning_output_tokens,
+            complete=raw_complete and not warning_codes,
+            warnings=warnings,
+        ),
+        (),
+    )
+
+
 def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
     etype = event.get("type")
     if etype == "item.completed":
@@ -170,18 +247,55 @@ def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
 def _retry_may_duplicate_model_work(jsonl_path: str) -> bool:
     """Detect native activity or a stream too incomplete to retry safely."""
 
+    saw_turn_started = False
+    saw_turn_failed = False
+    failure_payload_invalid = False
+    failure_messages: list[str] = []
     try:
         with open(jsonl_path) as f:
             for raw in f:
+                if not raw.strip():
+                    continue
                 try:
                     event = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
-                    continue
+                    return True
                 if not isinstance(event, dict):
-                    continue
+                    return True
                 event_type = event.get("type")
+                if not isinstance(event_type, str):
+                    return True
+                if event_type == CODEX_CHILD_USAGE_EVENT:
+                    audit, audit_warnings = _parse_child_usage_audit(event)
+                    if (
+                        audit is None
+                        or audit_warnings
+                        or not audit.complete
+                        or audit.input_tokens > 0
+                        or audit.output_tokens > 0
+                    ):
+                        return True
+                    continue
+                if event_type == "turn.started":
+                    saw_turn_started = True
+                elif event_type == "turn.completed":
+                    return True
+                elif event_type == "turn.failed":
+                    saw_turn_failed = True
+                    error = event.get("error")
+                    message = error.get("message") if isinstance(error, dict) else None
+                    if isinstance(message, str):
+                        failure_messages.append(message)
+                    else:
+                        failure_payload_invalid = True
+                elif event_type == "error":
+                    message = event.get("message")
+                    if isinstance(message, str):
+                        failure_messages.append(message)
+                    else:
+                        failure_payload_invalid = True
                 item = event.get("item")
-                if not isinstance(event_type, str) or not event_type.startswith("item.") or not isinstance(item, dict):
+                if not event_type.startswith("item.") or not isinstance(item, dict):
                     continue
                 item_type = item.get("type")
                 if isinstance(item_type, str) and item_type in _MODEL_ACTIVITY_ITEM_TYPES:
@@ -193,15 +307,36 @@ def _retry_may_duplicate_model_work(jsonl_path: str) -> bool:
                         # would prove work may be among those dropped. Retrying
                         # such a launch could silently duplicate paid work.
                         return True
-    except (OSError, UnicodeError):
+    except FileNotFoundError:
         return False
-    return False
+    except (OSError, UnicodeError):
+        return True
+
+    if saw_turn_failed and not saw_turn_started:
+        # A terminal failure without its required start event is a damaged
+        # lifecycle, so it cannot prove that dispatch never happened.
+        return True
+    if not saw_turn_started:
+        return False
+    # The explicit provider cap is a rejection, not an interrupted generation.
+    # It owns a separate wait-and-retry path in the runner. Every other started
+    # failure may have reached the provider before its first item event arrived.
+    return not (
+        saw_turn_failed
+        and not failure_payload_invalid
+        and failure_messages
+        and all(_USAGE_LIMIT_RE.search(message) for message in failure_messages)
+    )
 
 
 def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
     lines: list[str] = []
     terminal_events: list[dict[str, Any]] = []
     terminal_usages: list[_CodexTerminalUsage] = []
+    child_audit_events = 0
+    child_audits: list[_CodexChildUsageAudit] = []
+    saw_child_audit_start = False
+    root_thread_ids: list[str] = []
     warnings: list[str] = []
     malformed_lines = 0
     failed_turns = 0
@@ -225,6 +360,18 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
                 _append_transcript_event(lines, event)
                 event_type = event.get("type")
                 item = event.get("item")
+                if event_type == "thread.started":
+                    thread_id = event.get("thread_id")
+                    if isinstance(thread_id, str) and thread_id:
+                        root_thread_ids.append(thread_id)
+                elif event_type == CODEX_CHILD_USAGE_START_EVENT:
+                    saw_child_audit_start = True
+                elif event_type == CODEX_CHILD_USAGE_EVENT:
+                    child_audit_events += 1
+                    child_audit, audit_warnings = _parse_child_usage_audit(event)
+                    warnings.extend(audit_warnings)
+                    if child_audit is not None:
+                        child_audits.append(child_audit)
                 if isinstance(event_type, str) and event_type.startswith("item.") and isinstance(item, dict):
                     item_type = item.get("type")
                     if item_type == "collab_tool_call":
@@ -255,11 +402,45 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
         warnings.append(f"Codex JSONL contains {malformed_lines} malformed nonempty line(s)")
     if saw_stream_lag:
         warnings.append("Codex reported dropped JSONL events; model activity and usage may be incomplete")
+    if child_audit_events > 1:
+        warnings.append("Codex JSONL contains multiple child-usage audits; ignoring ambiguous child totals")
+    child_audit = child_audits[0] if child_audit_events == 1 and len(child_audits) == 1 else None
+    child_audit_matches_root = (
+        child_audit is not None and len(root_thread_ids) == 1 and root_thread_ids[0] == child_audit.root_thread_id
+    )
     if not terminal_usages:
         if not terminal_events:
             warnings.append("Codex turn.completed usage is unavailable")
         if failed_turns:
             warnings.append("Codex turn failed before terminal usage was emitted")
+        if child_audit is not None and not child_audit_matches_root:
+            warnings.append("Codex child-usage audit does not match one primary thread")
+        if (
+            child_audit is not None
+            and child_audit_matches_root
+            and (child_audit.input_tokens > 0 or child_audit.output_tokens > 0)
+        ):
+            warnings.extend(child_audit.warnings)
+            warnings.append("Codex totals include child usage only because primary-thread usage is unavailable")
+            return _ParsedCodexRun(
+                transcript="\n".join(lines),
+                usage=UsageSummary(
+                    input_tokens=child_audit.input_tokens,
+                    output_tokens=child_audit.output_tokens,
+                    cache_read_input_tokens=child_audit.cache_read_input_tokens,
+                    cache_write_input_tokens=None,
+                    reasoning_output_tokens=child_audit.reasoning_output_tokens,
+                    model_requests=None,
+                    model_time_secs=None,
+                    costs=(),
+                    requests=(),
+                    sources=(_CODEX_CHILD_USAGE_SOURCE,),
+                    available=True,
+                    complete=False,
+                    is_lower_bound=True,
+                    warnings=tuple(dict.fromkeys(warnings)),
+                ),
+            )
         return _ParsedCodexRun(
             transcript="\n".join(lines),
             usage=UsageSummary(
@@ -275,32 +456,62 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
     if len(terminal_events) > 1:
         warnings.append("Codex JSONL contains multiple turn.completed events; using the last usable aggregate")
         lower_bound = True
+    if child_audit_events > 1:
+        lower_bound = True
     if malformed_lines:
         lower_bound = True
     if failed_turns:
         warnings.append("Codex JSONL contains both failed and completed turn events")
         lower_bound = True
-    if saw_multi_agent_activity:
+    if child_audit is not None:
+        warnings.extend(child_audit.warnings)
+        if not child_audit_matches_root:
+            warnings.append("Codex child-usage audit does not match one primary thread")
+            lower_bound = True
+        if not child_audit.complete:
+            lower_bound = True
+    elif child_audit_events == 1:
+        warnings.append("Codex child-usage audit is unusable")
+        lower_bound = True
+    elif saw_child_audit_start:
+        warnings.append("Codex child-usage audit did not finish")
+        lower_bound = True
+    elif saw_multi_agent_activity:
         warnings.append(
-            "Codex JSONL contains multi-agent activity; the terminal aggregate covers only the parent thread"
+            "Codex JSONL contains multi-agent activity without a child-usage audit; "
+            "the terminal aggregate covers only the parent thread"
         )
         lower_bound = True
     if saw_stream_lag:
         lower_bound = True
 
+    usable_child_audit = child_audit if child_audit_matches_root else None
+    child_input_tokens = usable_child_audit.input_tokens if usable_child_audit is not None else 0
+    child_output_tokens = usable_child_audit.output_tokens if usable_child_audit is not None else 0
+    cache_read_input_tokens = selected.cache_read_input_tokens
+    reasoning_output_tokens = selected.reasoning_output_tokens
+    if usable_child_audit is not None:
+        if cache_read_input_tokens is not None:
+            cache_read_input_tokens += usable_child_audit.cache_read_input_tokens
+        if reasoning_output_tokens is not None:
+            reasoning_output_tokens += usable_child_audit.reasoning_output_tokens
+    sources = [_CODEX_USAGE_SOURCE]
+    if usable_child_audit is not None and usable_child_audit.child_count:
+        sources.append(_CODEX_CHILD_USAGE_SOURCE)
+
     return _ParsedCodexRun(
         transcript="\n".join(lines),
         usage=UsageSummary(
-            input_tokens=selected.input_tokens,
-            output_tokens=selected.output_tokens,
-            cache_read_input_tokens=selected.cache_read_input_tokens,
+            input_tokens=selected.input_tokens + child_input_tokens,
+            output_tokens=selected.output_tokens + child_output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
             cache_write_input_tokens=None,
-            reasoning_output_tokens=selected.reasoning_output_tokens,
+            reasoning_output_tokens=reasoning_output_tokens,
             model_requests=None,
             model_time_secs=None,
             costs=(),
             requests=(),
-            sources=(_CODEX_USAGE_SOURCE,),
+            sources=tuple(sources),
             available=True,
             complete=not lower_bound and not selected.incomplete,
             is_lower_bound=lower_bound,
@@ -330,10 +541,17 @@ class CodexBackend(AgenticBackend):
 
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
         last_msg_path = os.path.join(result_dir, "codex_last_message.txt")
+        wrapper = (
+            ["python3", "/opt/codex_usage_wrapper.py"]
+            if workspace == "/workspace"
+            else [sys.executable, os.path.join(os.path.dirname(__file__), "codex_usage_wrapper.py")]
+        )
         # Invoke the `codex` binary directly (it must be on PATH). Going through
         # `npx codex` is wrong: npm has no top-level `codex` package (OpenAI's is
         # `@openai/codex`), so `npx codex` resolves to an unrelated bogus package.
         cmd = [
+            *wrapper,
+            "--",
             "codex",
             "exec",
             "--dangerously-bypass-approvals-and-sandbox",
@@ -343,15 +561,6 @@ class CodexBackend(AgenticBackend):
             self.model,
             "-c",
             "web_search=disabled",
-            # codex exec reports usage for its primary thread only. Disable every
-            # native child-agent entry point so a clean terminal aggregate is an
-            # exact total for the whole benchmark invocation.
-            "-c",
-            "features.multi_agent=false",
-            "-c",
-            "features.multi_agent_v2=false",
-            "-c",
-            "features.enable_fanout=false",
             "--json",
             "-o",
             last_msg_path,

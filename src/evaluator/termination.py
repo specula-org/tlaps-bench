@@ -156,25 +156,26 @@ def codex_turn_failed(ctx: TerminationContext) -> str | None:
     prove it" run, by contrast, ends with ``turn.completed`` (the model ran to
     a normal stop; its proof simply didn't verify).
 
-    We flag INFRA_ERROR when the last terminal turn event is a failure, or when
-    the run errored without ever completing a turn. A run that hit a transient
-    error mid-way but recovered and completed a turn is NOT flagged.
+    We flag INFRA_ERROR when the last terminal turn event is a failure, when the
+    stream ends without a terminal, or when the required JSON stream is empty.
+    A run that hit a transient error mid-way but recovered and completed a turn
+    is NOT flagged.
     """
     if ctx.backend != "codex":
         return None
+    events = ctx.events()
+    if not events:
+        return TerminationReason.INFRA_ERROR
     last_terminal = None  # "completed" | "failed"
-    saw_error = False
-    for ev in ctx.events():
+    for ev in events:
         t = ev.get("type")
         if t == "turn.completed":
             last_terminal = "completed"
         elif t == "turn.failed":
             last_terminal = "failed"
-        elif t == "error":
-            saw_error = True
     if last_terminal == "failed":
         return TerminationReason.INFRA_ERROR
-    if last_terminal is None and saw_error:
+    if last_terminal is None:
         return TerminationReason.INFRA_ERROR
     return None
 
@@ -327,17 +328,19 @@ def pi_run_failed(ctx: TerminationContext) -> str | None:
         return None
 
     events = ctx.events()
-    last_settled_index: int | None = None
-    last_activity_index: int | None = None
+    if not ctx.event_stream_valid():
+        return TerminationReason.INFRA_ERROR
+    settled = False
+    activity_after_settled = False
     last_assistant_stop_reason: object = None
     saw_assistant_terminal = False
 
-    for index, event in enumerate(events):
+    for event in events:
         event_type = event.get("type")
-        if event_type in _PI_RUN_ACTIVITY_EVENTS:
-            last_activity_index = index
+        if settled and event_type in _PI_RUN_ACTIVITY_EVENTS:
+            activity_after_settled = True
         if event_type == "agent_settled":
-            last_settled_index = index
+            settled = True
         elif event_type == "message_end":
             message = event.get("message")
             if isinstance(message, dict) and message.get("role") == "assistant":
@@ -346,13 +349,13 @@ def pi_run_failed(ctx: TerminationContext) -> str | None:
 
     if ctx.agent_exit not in {None, 0}:
         return TerminationReason.INFRA_ERROR
-    if last_settled_index is None:
+    if not settled:
         return TerminationReason.INFRA_ERROR
-    if last_activity_index is not None and last_activity_index > last_settled_index:
+    if activity_after_settled:
         return TerminationReason.INFRA_ERROR
     if not saw_assistant_terminal:
         return TerminationReason.INFRA_ERROR
-    if last_assistant_stop_reason in {"error", "aborted"}:
+    if last_assistant_stop_reason not in {"stop", "length", "toolUse"}:
         return TerminationReason.INFRA_ERROR
     return None
 

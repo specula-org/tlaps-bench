@@ -28,6 +28,32 @@ def _completed_usage(**overrides: object) -> dict[str, object]:
     return {"type": "turn.completed", "usage": usage}
 
 
+def _child_audit(
+    *,
+    root_thread_id: str = "parent",
+    child_count: int = 1,
+    complete: bool = True,
+    warning_codes: list[str] | None = None,
+    **usage_overrides: object,
+) -> dict[str, object]:
+    usage: dict[str, object] = {
+        "input_tokens": 40 if child_count else 0,
+        "cached_input_tokens": 20 if child_count else 0,
+        "output_tokens": 10 if child_count else 0,
+        "reasoning_output_tokens": 4 if child_count else 0,
+    }
+    usage.update(usage_overrides)
+    return {
+        "type": "tlaps.codex_child_usage",
+        "version": 1,
+        "root_thread_id": root_thread_id,
+        "child_count": child_count,
+        **usage,
+        "complete": complete,
+        "warning_codes": warning_codes or [],
+    }
+
+
 def test_complete_terminal_aggregate_maps_without_fabricating_request_or_cost(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
@@ -92,25 +118,42 @@ def test_native_item_lifecycle_proves_model_work_without_terminal_usage(tmp_path
     assert CodexBackend().retry_may_duplicate_model_work(str(output)) is True
 
 
-def test_lifecycle_or_malformed_item_shape_does_not_fabricate_model_work(tmp_path):
+def test_ambiguous_failed_turn_without_item_activity_is_retry_unsafe(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
         output,
-        "not-json",
         {"type": "thread.started", "thread_id": "thread-1"},
         {"type": "turn.started"},
-        {"type": "item.started"},
-        {"type": "item.completed", "item": {"id": "item-1", "type": ""}},
-        {
-            "type": "item.completed",
-            "item": {"id": "item-warning", "type": "error", "message": "configuration warning"},
-        },
-        {"type": "error", "message": "request rejected"},
-        {"type": "turn.failed", "error": {"message": "request rejected"}},
+        {"type": "error", "message": "connection lost"},
+        {"type": "turn.failed", "error": {"message": "connection lost"}},
+    )
+
+    assert CodexBackend().retry_may_duplicate_model_work(str(output)) is True
+
+
+def test_stream_that_never_started_a_turn_remains_retry_safe(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "thread-1"},
+        {"type": "error", "message": "failed to load local configuration"},
     )
 
     assert CodexBackend().retry_may_duplicate_model_work(str(output)) is False
     assert CodexBackend().retry_may_duplicate_model_work(str(tmp_path / "missing.jsonl")) is False
+
+
+def test_damaged_usage_limit_failure_is_not_assumed_safe_to_retry(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "thread-1"},
+        {"type": "turn.started"},
+        {"type": "error"},
+        {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}},
+    )
+
+    assert CodexBackend().retry_may_duplicate_model_work(str(output)) is True
 
 
 def test_multi_agent_activity_makes_parent_terminal_only_a_lower_bound(tmp_path):
@@ -136,6 +179,156 @@ def test_multi_agent_activity_makes_parent_terminal_only_a_lower_bound(tmp_path)
     assert usage.status == "lower_bound"
     assert (usage.input_tokens, usage.output_tokens) == (240, 60)
     assert any("covers only the parent thread" in warning for warning in usage.warnings)
+
+
+def test_complete_child_audit_aggregates_parent_and_child_native_usage(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "item-1",
+                "type": "collab_tool_call",
+                "tool": "spawn_agent",
+                "sender_thread_id": "parent",
+                "receiver_thread_ids": ["child"],
+                "status": "completed",
+            },
+        },
+        _completed_usage(),
+        _child_audit(),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=280, output_tokens=70)
+
+    assert usage.status == "complete"
+    assert usage.input_tokens == 280
+    assert usage.cache_read_input_tokens == 200
+    assert usage.output_tokens == 70
+    assert usage.reasoning_output_tokens == 29
+    assert usage.model_requests is None
+    assert usage.sources == (
+        "codex_cli_turn_completed",
+        "codex_rollout_child_token_count",
+    )
+    assert usage.warnings == ()
+
+
+def test_incomplete_child_audit_retains_known_child_delta_as_lower_bound(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        _child_audit(
+            complete=False,
+            warning_codes=["child_lifecycle_invalid"],
+        ),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=280, output_tokens=70)
+
+    assert usage.status == "lower_bound"
+    assert (usage.input_tokens, usage.output_tokens) == (280, 70)
+    assert usage.cache_read_input_tokens == 200
+    assert usage.reasoning_output_tokens == 29
+    assert any("child_lifecycle_invalid" in warning for warning in usage.warnings)
+
+
+def test_invalid_child_audit_usage_never_changes_parent_totals(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        _child_audit(cached_input_tokens=41),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "lower_bound"
+    assert (usage.input_tokens, usage.output_tokens) == (240, 60)
+    assert usage.sources == ("codex_cli_turn_completed",)
+    assert any("invalid aggregate usage" in warning for warning in usage.warnings)
+
+
+def test_multiple_child_audits_never_select_arbitrary_totals(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        _child_audit(),
+        _child_audit(
+            input_tokens=4_000,
+            cached_input_tokens=2_000,
+            output_tokens=1_000,
+            reasoning_output_tokens=400,
+        ),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "lower_bound"
+    assert (usage.input_tokens, usage.output_tokens) == (240, 60)
+    assert usage.sources == ("codex_cli_turn_completed",)
+    assert any("ignoring ambiguous child totals" in warning for warning in usage.warnings)
+
+
+def test_audit_for_another_root_never_changes_parent_totals(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        _child_audit(root_thread_id="another-root"),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "lower_bound"
+    assert (usage.input_tokens, usage.output_tokens) == (240, 60)
+    assert usage.sources == ("codex_cli_turn_completed",)
+    assert any("does not match" in warning for warning in usage.warnings)
+
+
+def test_started_but_missing_child_audit_is_a_lower_bound_even_without_visible_collab(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "tlaps.codex_child_usage.started", "version": 1},
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "lower_bound"
+    assert any("did not finish" in warning for warning in usage.warnings)
+
+
+def test_child_native_usage_makes_failed_launch_unsafe_to_retry(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        {"type": "turn.started"},
+        {"type": "turn.failed", "error": {"message": "connection lost"}},
+        _child_audit(),
+    )
+
+    backend = CodexBackend()
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert backend.retry_may_duplicate_model_work(str(output)) is True
+    assert usage.status == "lower_bound"
+    assert (usage.input_tokens, usage.output_tokens) == (40, 10)
+    assert usage.cache_read_input_tokens == 20
+    assert usage.reasoning_output_tokens == 4
+    assert usage.sources == ("codex_rollout_child_token_count",)
+    assert any("primary-thread usage is unavailable" in warning for warning in usage.warnings)
 
 
 def test_native_stream_lag_warning_downgrades_terminal_usage(tmp_path):
@@ -336,13 +529,22 @@ def test_codex_cli_install_is_pinned_to_verified_jsonl_version():
     assert "@openai/codex@0.144.6" in script
 
 
-def test_codex_command_disables_child_agent_features_for_exact_usage():
+def test_codex_command_wraps_native_multi_agent_execution_without_disabling_it():
     command = CodexBackend(model="gpt-test").build_command("/workspace", "/result")
 
+    assert command[:4] == ["python3", "/opt/codex_usage_wrapper.py", "--", "codex"]
     overrides = {command[index + 1] for index, value in enumerate(command[:-1]) if value == "-c"}
-    assert "features.multi_agent=false" in overrides
-    assert "features.multi_agent_v2=false" in overrides
-    assert "features.enable_fanout=false" in overrides
+    assert not any("multi_agent" in override or "fanout" in override for override in overrides)
+
+    dockerfile = Path("docker/base.Dockerfile").read_text()
+    assert "COPY src/evaluator/backends/codex_usage_wrapper.py /opt/codex_usage_wrapper.py" in dockerfile
+
+
+def test_codex_local_command_uses_the_installed_usage_wrapper(tmp_path):
+    command = CodexBackend(model="gpt-test").build_command(str(tmp_path), str(tmp_path / "result"))
+
+    assert Path(command[1]).resolve() == Path("src/evaluator/backends/codex_usage_wrapper.py").resolve()
+    assert command[2:4] == ["--", "codex"]
 
 
 def test_codex_last_message_is_isolated_across_retries():

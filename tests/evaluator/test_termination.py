@@ -182,6 +182,35 @@ def test_errored_without_completing_a_turn_is_infra(tmp_path):
     assert classify(_ctx(p)) == TerminationReason.INFRA_ERROR
 
 
+def test_codex_wrapper_marker_does_not_hide_nonzero_startup_failure(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "codex-wrapper-startup.jsonl",
+        [{"type": "tlaps.codex_child_usage.started", "version": 1}],
+    )
+
+    assert classify(_ctx(path, agent_exit=127)) == TerminationReason.INFRA_ERROR
+
+
+def test_codex_nonempty_stream_without_terminal_is_infra_even_after_zero_exit(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "codex-truncated.jsonl",
+        [
+            {"type": "tlaps.codex_child_usage.started", "version": 1},
+            {"type": "thread.started", "thread_id": "thread-1"},
+        ],
+    )
+
+    assert classify(_ctx(path, agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
+def test_codex_empty_or_missing_stream_is_infra_even_after_zero_exit(tmp_path):
+    empty = tmp_path / "codex-empty.jsonl"
+    empty.write_text("")
+
+    assert classify(_ctx(str(empty), agent_exit=0)) == TerminationReason.INFRA_ERROR
+    assert classify(_ctx(str(tmp_path / "codex-missing.jsonl"), agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
 def test_rule_only_applies_to_its_backend(tmp_path):
     # The codex rule keys off codex's event vocabulary and must abstain for any
     # other backend; a backend with no rule of its own classifies OK.
@@ -289,6 +318,48 @@ def test_pi_nonzero_exit_and_activity_after_settlement_are_infra(tmp_path):
     assert classify(_ctx(trailing, backend="pi", agent_exit=0)) == TerminationReason.INFRA_ERROR
 
 
+def test_pi_second_lifecycle_after_settlement_stays_infra_after_another_settlement(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "pi-reopened.jsonl",
+        [
+            {"type": "session", "version": 3, "id": "session-1"},
+            _pi_message_end("stop"),
+            {"type": "agent_settled"},
+            {"type": "agent_start"},
+            _pi_message_end("stop"),
+            {"type": "agent_settled"},
+        ],
+    )
+
+    assert classify(_ctx(path, backend="pi", agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize("stop_reason", [None, "", "future_reason"])
+def test_pi_unknown_final_stop_reason_is_infra(tmp_path, stop_reason):
+    path = _write_jsonl(
+        tmp_path / "pi-invalid-terminal.jsonl",
+        [_pi_message_end(stop_reason), {"type": "agent_settled"}],
+    )
+
+    assert classify(_ctx(path, backend="pi", agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
+def test_pi_malformed_stream_is_infra_even_with_a_later_terminal(tmp_path):
+    path = tmp_path / "pi-malformed.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                "{not-json",
+                json.dumps(_pi_message_end("stop")),
+                json.dumps({"type": "agent_settled"}),
+            ]
+        )
+        + "\n"
+    )
+
+    assert classify(_ctx(str(path), backend="pi", agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
 def test_pi_rule_only_applies_to_pi(tmp_path):
     path = _write_jsonl(tmp_path / "pi-error.jsonl", [_pi_message_end("error"), {"type": "agent_settled"}])
 
@@ -296,8 +367,8 @@ def test_pi_rule_only_applies_to_pi(tmp_path):
 
 
 def test_missing_stream_is_ok(tmp_path):
-    # No event file (e.g. agent never launched) must not crash and is not INFRA.
-    assert classify(_ctx(str(tmp_path / "nope.jsonl"))) == TerminationReason.OK
+    # A backend with no strict stream contract must not crash or invent INFRA.
+    assert classify(_ctx(str(tmp_path / "nope.jsonl"), backend="custom")) == TerminationReason.OK
 
 
 # --- wall-clock timeout: a LIMIT, consistent across backends, never INFRA -----
@@ -337,10 +408,9 @@ def test_timeout_is_timeout_not_infra_for_every_backend(tmp_path):
 def test_same_truncation_without_timeout_is_still_infra(tmp_path):
     # Without the timeout signal, a truncated stream is a genuine cut-off (crash /
     # dropped connection) → INFRA_ERROR. Asserts the timeout precheck is the only
-    # thing reclassifying these, and only for codex does a clean SIGKILL-less
-    # truncation read as OK (no error/turn.failed to key on).
+    # thing reclassifying these.
     expected = {
-        "codex": TerminationReason.OK,
+        "codex": TerminationReason.INFRA_ERROR,
         "claude_code": TerminationReason.INFRA_ERROR,
         "copilot": TerminationReason.INFRA_ERROR,
         "cursor": TerminationReason.INFRA_ERROR,

@@ -93,6 +93,14 @@ def _retry_may_duplicate_model_work(
 
     if legacy_output_tokens > 0:
         return True
+    if (usage.output_tokens or 0) > 0 or (usage.reasoning_output_tokens or 0) > 0:
+        return True
+    # One-shot backends audit whether a transient failure occurred before any
+    # response. Forwarded request/input evidence from failed native attempts is
+    # retained in aggregate usage, but the audited terminal decides whether a
+    # replay is safe. Agentic backends need the stricter all-evidence policy.
+    if backend.approach == "one_shot":
+        return backend.retry_may_duplicate_model_work(jsonl_path)
     if any((getattr(usage, field) or 0) > 0 for field in _USAGE_TOKEN_FIELDS):
         return True
     if (usage.model_requests or 0) > 0 or bool(usage.requests):
@@ -1681,9 +1689,7 @@ def main():
         type=int,
         default=None,
         help="Extra agent attempts after a transient startup/infrastructure failure "
-        "(backend-approved and no token, request, cost, or backend-native activity "
-        "evidence of model work), "
-        "so 3 = up to 4 attempts total "
+        "that the backend approves as safe to replay, so 3 = up to 4 attempts total "
         "(default: 3; 0 = no retries, the failure still ends as ERROR)",
     )
     parser.add_argument(

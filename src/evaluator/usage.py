@@ -360,12 +360,12 @@ class UsageSummary:
                 partial_fields.append(f"cost:{cost_source}")
         core_fields_missing_everywhere: list[str] = []
         empty_exactness_errors: list[str] = []
-        if complete and request_tuple:
+        if complete and derived["model_requests"]:
             for field in ("input_tokens", "output_tokens"):
                 values = [getattr(request, field) for request in request_tuple]
-                if field not in provider_total_fields and all(value is None for value in values):
+                if field not in provider_total_fields and (not values or all(value is None for value in values)):
                     core_fields_missing_everywhere.append(field)
-        elif complete and not request_tuple:
+        elif complete:
             for field in ("input_tokens", "output_tokens"):
                 if field not in provider_total_fields or derived[field] != 0:
                     empty_exactness_errors.append(field)

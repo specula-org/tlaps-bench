@@ -51,6 +51,7 @@ class _ParsedPiRequest:
     request: RequestUsage | None
     incomplete: bool
     warnings: tuple[str, ...]
+    has_unverifiable_token_estimates: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,11 @@ def _parse_assistant_request(message: dict[str, Any]) -> _ParsedPiRequest:
         if value is None:
             warnings.append(f"Pi assistant message has missing or invalid {field}")
             incomplete = True
+    has_unverifiable_token_estimates = provider == "kiro" or endpoint == "kiro-api"
+    if has_unverifiable_token_estimates:
+        warnings.append(
+            "Pi's Kiro adapter may estimate token counts or retry provider requests without exposing per-attempt usage"
+        )
 
     resolved_model = requested_model
     if "responseModel" in message:
@@ -194,7 +200,12 @@ def _parse_assistant_request(message: dict[str, Any]) -> _ParsedPiRequest:
         provider_request_id=provider_request_id,
         costs=costs,
     )
-    return _ParsedPiRequest(request, incomplete, tuple(warnings))
+    return _ParsedPiRequest(
+        request,
+        incomplete,
+        tuple(warnings),
+        has_unverifiable_token_estimates=has_unverifiable_token_estimates,
+    )
 
 
 def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
@@ -208,23 +219,44 @@ def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
         lines.append(delta)
 
 
-def _usage_has_positive_evidence(message: dict[str, Any]) -> bool:
+def _has_all_zero_usage_placeholder(message: dict[str, Any]) -> bool:
     usage = message.get("usage")
     if not isinstance(usage, dict):
         return False
     for name in ("input", "output", "cacheRead", "cacheWrite", "totalTokens"):
-        value = _strict_token(usage.get(name))
-        if value is not None and value > 0:
-            return True
+        if _strict_token(usage.get(name)) != 0:
+            return False
     raw_cost = usage.get("cost")
     cost_total = _strict_cost(raw_cost.get("total")) if isinstance(raw_cost, dict) else None
-    return cost_total is not None and cost_total > 0
+    return cost_total == 0
+
+
+def _is_pre_stream_exception_fallback(message: dict[str, Any]) -> bool:
+    """Match agent-core's exact fallback when no provider stream was returned."""
+
+    content = message.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return False
+    block = content[0]
+    stop_reason = message.get("stopReason")
+    return (
+        isinstance(block, dict)
+        and block.get("type") == "text"
+        and block.get("text") == ""
+        and _has_all_zero_usage_placeholder(message)
+        and isinstance(stop_reason, str)
+        and stop_reason in {"error", "aborted"}
+        and _text(message.get("errorMessage")) is not None
+    )
 
 
 def _event_proves_model_activity(event: dict[str, Any]) -> bool:
     """Recognize native activity that makes a replacement launch unsafe."""
 
     event_type = event.get("type")
+    if not isinstance(event_type, str):
+        # A schema-invalid discriminator may hide an activity event.
+        return True
     if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
         # Agent-core tool execution can only follow an assistant tool call. It
         # therefore preserves paid-work evidence even if that assistant event
@@ -247,24 +279,14 @@ def _event_proves_model_activity(event: dict[str, Any]) -> bool:
         # Known non-assistant lifecycle messages do not imply a provider call.
         # An absent or future role is unsafe because the corrupted candidate may
         # have been an assistant event whose paid-work evidence was lost.
-        return role not in _PI_NON_ASSISTANT_MESSAGE_ROLES
-    if _usage_has_positive_evidence(message):
-        return True
-    if _text(message.get("responseId")) is not None:
-        return True
-    content = message.get("content")
-    if isinstance(content, list) and bool(content):
-        return True
-    stop_reason = message.get("stopReason")
-    if event_type == "message_end" and stop_reason in {"stop", "length", "toolUse"}:
-        return True
-    if event_type == "message_start":
-        # The low-level agent emits this after the provider stream's `start`
-        # event. Its separate pre-stream exception fallback includes an error
-        # message, which remains eligible for a host infrastructure retry.
-        error_message = message.get("errorMessage")
-        return not (stop_reason in {"error", "aborted"} and isinstance(error_message, str) and error_message)
-    return False
+        return not isinstance(role, str) or role not in _PI_NON_ASSISTANT_MESSAGE_ROLES
+    # agent-core constructs the recognized fallback only when getApiKey,
+    # context conversion, or stream creation throws before returning a provider
+    # stream. Provider adapters use an empty content array for their own errors,
+    # including ambiguous post-dispatch transport failures.
+    # Every other assistant lifecycle event came from a provider stream or is
+    # too damaged to prove otherwise. Missing usage is not evidence of no work.
+    return not _is_pre_stream_exception_fallback(message)
 
 
 def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
@@ -272,7 +294,13 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
     requests: list[RequestUsage] = []
     warnings: list[str] = []
     malformed_lines = 0
+    invalid_event_types = 0
     invalid_candidates = 0
+    estimated_candidates = 0
+    assistant_provider_starts = 0
+    overlapping_assistant_starts = 0
+    assistant_stream_open = False
+    ambiguous_turn_open = False
     settled = False
     compacted = False
     activity_after_settled = False
@@ -294,27 +322,53 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                     malformed_lines += 1
                     continue
 
+                event_type = event.get("type")
+                if not isinstance(event_type, str):
+                    invalid_event_types += 1
+                    model_activity = True
+                    continue
                 _append_transcript_event(transcript_parts, event)
                 model_activity = model_activity or _event_proves_model_activity(event)
-                event_type = event.get("type")
                 if settled and event_type in _PI_RUN_ACTIVITY_EVENTS:
                     activity_after_settled = True
                 if event_type == "agent_settled":
                     settled = True
+                elif event_type == "turn_start":
+                    # Pi emits this before streamAssistantResponse dispatches the
+                    # provider request. Until an assistant event or the exact
+                    # pre-dispatch exception fallback arrives, a truncated run
+                    # cannot prove whether that request crossed the wire.
+                    ambiguous_turn_open = True
                 elif event_type == "compaction_start":
                     compacted = True
+                elif event_type == "message_start":
+                    message = event.get("message")
+                    if isinstance(message, dict) and _is_pre_stream_exception_fallback(message):
+                        ambiguous_turn_open = False
+                    if (
+                        isinstance(message, dict)
+                        and message.get("role") == "assistant"
+                        and not _is_pre_stream_exception_fallback(message)
+                    ):
+                        assistant_provider_starts += 1
+                        if assistant_stream_open:
+                            overlapping_assistant_starts += 1
+                        assistant_stream_open = True
                 elif event_type == "message_end":
                     message = event.get("message")
                     if not isinstance(message, dict):
                         invalid_candidates += 1
                         warnings.append("Pi message_end event has no message object")
                         continue
+                    if _is_pre_stream_exception_fallback(message):
+                        ambiguous_turn_open = False
                     role = message.get("role")
                     if role != "assistant":
-                        if role not in _PI_NON_ASSISTANT_MESSAGE_ROLES:
+                        if not isinstance(role, str) or role not in _PI_NON_ASSISTANT_MESSAGE_ROLES:
                             invalid_candidates += 1
                             warnings.append("Pi message_end event has missing or invalid message role")
                         continue
+                    assistant_stream_open = False
                     parsed_request = _parse_assistant_request(message)
                     warnings.extend(parsed_request.warnings)
                     if parsed_request.request is None:
@@ -323,6 +377,8 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                         requests.append(parsed_request.request)
                         if parsed_request.incomplete:
                             invalid_candidates += 1
+                        if parsed_request.has_unverifiable_token_estimates:
+                            estimated_candidates += 1
     except (OSError, UnicodeError) as exc:
         read_error = exc
 
@@ -330,11 +386,19 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         warnings.append(f"Pi JSONL output unavailable or truncated: {type(read_error).__name__}")
     if malformed_lines:
         warnings.append(f"Pi JSONL contains {malformed_lines} malformed nonempty line(s)")
-    if malformed_lines or (read_error is not None and not isinstance(read_error, FileNotFoundError)):
+    if invalid_event_types:
+        warnings.append(f"Pi JSONL contains {invalid_event_types} event(s) with missing or invalid type")
+    if (
+        malformed_lines
+        or invalid_event_types
+        or (read_error is not None and not isinstance(read_error, FileNotFoundError))
+    ):
         # A nonempty native line that cannot be decoded may itself have been an
         # assistant activity event. Likewise, an existing stream that cannot be
         # read gives us no safe evidence that the provider was never called.
         # A genuinely absent startup artifact remains eligible for replacement.
+        model_activity = True
+    if ambiguous_turn_open:
         model_activity = True
     if compacted:
         warnings.append(
@@ -343,6 +407,13 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         )
     if activity_after_settled:
         warnings.append("Pi JSONL contains run activity after agent_settled")
+    if overlapping_assistant_starts:
+        warnings.append(
+            f"Pi JSONL contains {overlapping_assistant_starts} overlapping assistant message_start event(s); "
+            "usage from an unfinalized assistant attempt may be missing"
+        )
+    if assistant_stream_open:
+        warnings.append("Pi JSONL ended with an unfinished assistant provider stream")
 
     if not requests:
         if settled:
@@ -360,16 +431,27 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         )
 
     lower_bound = bool(
-        read_error or malformed_lines or invalid_candidates or compacted or activity_after_settled or not settled
+        read_error
+        or malformed_lines
+        or invalid_event_types
+        or invalid_candidates
+        or compacted
+        or activity_after_settled
+        or overlapping_assistant_starts
+        or assistant_stream_open
+        or not settled
     )
     if not settled:
         warnings.append("Pi agent_settled was not observed; recorded usage may be partial")
+    model_request_floor = max(len(requests), assistant_provider_starts)
+    totals = {"model_requests": model_request_floor} if model_request_floor > len(requests) else None
     usage = UsageSummary.from_requests(
         requests,
         source=_PI_USAGE_SOURCE,
-        complete=not lower_bound,
+        complete=not lower_bound and not estimated_candidates,
         is_lower_bound=lower_bound,
         warnings=tuple(dict.fromkeys(warnings)),
+        totals=totals,
     )
     return _ParsedPiRun(
         transcript="".join(transcript_parts),

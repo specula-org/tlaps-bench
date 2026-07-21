@@ -104,6 +104,19 @@ def test_exact_empty_request_set_requires_authoritative_zero_totals():
     assert (exact.input_tokens, exact.output_tokens, exact.model_requests) == (0, 0, 0)
 
 
+def test_aggregate_only_request_set_can_be_complete():
+    usage = UsageSummary.from_requests(
+        [],
+        source="test",
+        complete=True,
+        totals={"input_tokens": 30, "output_tokens": 90, "model_requests": 4},
+    )
+
+    assert usage.status == "complete"
+    assert (usage.input_tokens, usage.output_tokens, usage.model_requests) == (30, 90, 4)
+    assert usage.warnings == ()
+
+
 def test_authoritative_token_totals_are_not_coerced():
     usage = UsageSummary.from_requests(
         [RequestUsage(input_tokens=10, output_tokens=5)],
