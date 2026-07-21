@@ -256,8 +256,8 @@ class WorkItem:
     use_container: bool = False
     # Immutable build-specific image tag selected before worker processes start.
     container_image: str = f"{IMAGE_TAG}:latest"
-    # Extra agent attempts after a transient startup/infra failure (INFRA_ERROR
-    # with 0 output tokens); 0 disables retrying (the failure still ends ERROR).
+    # Extra agent attempts after a backend-approved transient infrastructure
+    # failure with no output; 0 disables retrying (the failure still ends ERROR).
     infra_retries: int | None = None
     # Continuation rounds after a genuine non-PASS: re-run the agent in the SAME
     # workspace so it builds on its own partial proof (see _run_continuations).
@@ -389,6 +389,11 @@ def _run_backend_with_retries(
             def _run_once(workspace=workspace, canonical_dir=canonical_dir):
                 nonlocal active_secs
                 result["error"] = ""
+                # Establish a valid empty-stream marker before process/container
+                # startup. A launch exception is then distinguishable from a
+                # child that flushed a malformed or truncated event.
+                with open(agent_jsonl, "w"):
+                    pass
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(agent_stderr)
                 t0 = time.time()
@@ -477,9 +482,15 @@ def _run_backend_with_retries(
             # A genuine attempt is never re-run. Structured telemetry can survive
             # even when the CLI JSONL is cut off before its token event is flushed,
             # so either current-attempt source is sufficient evidence of output.
-            observed_output_tokens = max(output_tokens, attempt_usage.legacy_output_tokens)
+            observed_output_tokens = max(
+                output_tokens,
+                attempt_usage.legacy_output_tokens,
+                attempt_usage.reasoning_output_tokens or 0,
+            )
             infra_retriable = (
-                result["termination_reason"] == TerminationReason.INFRA_ERROR and observed_output_tokens == 0
+                result["termination_reason"] == TerminationReason.INFRA_ERROR
+                and observed_output_tokens == 0
+                and backend.is_infra_retryable(ctx)
             )
             if not infra_retriable:
                 break

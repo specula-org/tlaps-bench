@@ -458,29 +458,45 @@ def test_copilot_deadline_before_request_with_output_limit_is_not_retried(tmp_pa
 
 def test_zero_request_provider_error_preserves_root_cause(tmp_path, monkeypatch):
     item, result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
 
     def fake_backend(
         item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
     ):
+        nonlocal attempts
+        attempts += 1
         events = [
             {
                 "type": "request_audit",
                 "provider": "litellm",
                 "model_requests": 0,
+                "request_attempts": 0,
+                "blocked_requests": 0,
+                "system_prompt_present": False,
+                "tools_present": False,
+                "retries_enabled": False,
                 "audit_scope": "adapter",
                 "contract_ok": True,
+                "wire_audited": False,
+                "litellm_completion_invocations": 0,
+                "litellm_retries_disabled": True,
+                "system_supplied": False,
+                "tools_supplied": False,
             },
             {"type": "error", "message": "HTTP 401 Unauthorized"},
-            {"type": "result", "status": "error", "model_requests": 0},
+            {"type": "result", "status": "error", "model_requests": 0, "retryable": False},
         ]
         Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
         result["agent_exit"] = 1
 
     monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
     monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("provider error must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("permanent error must not retry"))
 
     result = runner.run_single_benchmark(item)
 
+    assert attempts == 1
     assert result["check_verdict"] == "ERROR"
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["error"] == "HTTP 401 Unauthorized"
@@ -489,34 +505,266 @@ def test_zero_request_provider_error_preserves_root_cause(tmp_path, monkeypatch)
 
 def test_post_request_contract_error_preserves_root_cause(tmp_path, monkeypatch):
     item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
 
     def fake_backend(
         item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
     ):
+        nonlocal attempts
+        attempts += 1
         events = [
-            {"type": "usage", "input_tokens": 11, "output_tokens": 4, "model_requests": 1},
+            {"type": "usage", "input_tokens": 11, "output_tokens": 0, "model_requests": 1},
             {
                 "type": "request_audit",
                 "provider": "litellm",
                 "model_requests": 1,
+                "blocked_requests": 1,
                 "audit_scope": "adapter",
                 "contract_ok": False,
             },
             {"type": "error", "message": "strict one-shot: blocked second request"},
-            {"type": "result", "status": "error", "model_requests": 1},
+            {"type": "result", "status": "error", "model_requests": 1, "retryable": False},
         ]
         Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
         result["agent_exit"] = 1
 
     monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
     monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("contract error must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("contract error must not retry"))
 
     result = runner.run_single_benchmark(item)
 
+    assert attempts == 1
     assert result["check_verdict"] == "ERROR"
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["error"] == "strict one-shot: blocked second request"
-    assert (result["input_tokens"], result["output_tokens"]) == (11, 4)
+    assert (result["input_tokens"], result["output_tokens"]) == (11, 0)
+
+
+def test_invalid_model_zero_output_is_not_retried(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        events = [
+            {"type": "usage", "input_tokens": 12, "output_tokens": 0, "model_requests": 1},
+            {
+                "type": "request_audit",
+                "provider": "litellm",
+                "model_requests": 1,
+                "request_attempts": 1,
+                "blocked_requests": 0,
+                "system_prompt_present": False,
+                "tools_present": False,
+                "retries_enabled": False,
+                "audit_scope": "adapter",
+                "contract_ok": True,
+                "wire_audited": False,
+                "litellm_completion_invocations": 1,
+                "litellm_retries_disabled": True,
+                "system_supplied": False,
+                "tools_supplied": False,
+            },
+            {"type": "error", "message": "invalid model"},
+            {"type": "result", "status": "error", "model_requests": 1, "retryable": False},
+        ]
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("provider error must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("invalid model must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["error"] == "invalid model"
+    assert result["usage"]["model_requests"] == 1
+    assert (result["input_tokens"], result["output_tokens"]) == (12, 0)
+    assert "infra_retries" not in result
+
+
+def test_nonempty_response_without_terminal_events_is_not_retried(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    workspaces = []
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        workspaces.append(workspace)
+        Path(agent_jsonl).write_text(json.dumps({"type": "response", "text": MODULE}) + "\n")
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("truncated response must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("completed response must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert len(workspaces) == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["model_requests"] == 1
+    assert result["usage"]["model_requests"] == 1
+    assert result["usage"]["status"] == "lower_bound"
+    assert result["usage"]["input_tokens"] is None
+    assert result["usage"]["output_tokens"] is None
+    assert "infra_retries" not in result
+
+
+def test_whitespace_response_is_model_output_and_is_not_retried(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        Path(agent_jsonl).write_text(json.dumps({"type": "response", "text": "\n"}) + "\n")
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("invalid response must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("model output must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["model_requests"] == 1
+    assert result["usage"]["model_requests"] == 1
+    assert "infra_retries" not in result
+
+
+def test_partial_model_output_marker_without_terminal_events_is_not_retried(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        Path(agent_jsonl).write_text(
+            json.dumps(
+                {
+                    "type": "model_output_observed",
+                    "kind": "assistant.message_delta",
+                    "model_requests": 1,
+                }
+            )
+            + "\n"
+        )
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("partial output must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("partial output must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["model_requests"] == 1
+    assert result["usage"]["model_requests"] == 1
+    assert result["usage"]["status"] == "lower_bound"
+    assert "infra_retries" not in result
+
+
+def test_response_evidence_overrides_zero_request_terminal(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        events = [
+            {"type": "response", "text": MODULE},
+            {
+                "type": "request_audit",
+                "provider": "litellm",
+                "model_requests": 0,
+                "request_attempts": 0,
+                "blocked_requests": 0,
+                "system_prompt_present": False,
+                "tools_present": False,
+                "retries_enabled": False,
+                "audit_scope": "adapter",
+                "contract_ok": True,
+                "wire_audited": False,
+                "litellm_completion_invocations": 0,
+                "litellm_retries_disabled": True,
+                "system_supplied": False,
+                "tools_supplied": False,
+            },
+            {"type": "error", "message": "usage serialization failed"},
+            {"type": "result", "status": "error", "model_requests": 0, "retryable": False},
+        ]
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("truncated response must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("completed response must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["model_requests"] == 1
+    assert result["usage"]["model_requests"] == 1
+    assert result["usage"]["status"] == "lower_bound"
+    assert "infra_retries" not in result
+
+
+def test_truncated_response_event_is_not_treated_as_empty_startup(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        Path(agent_jsonl).write_text(
+            json.dumps({"type": "model_output_observed", "kind": "response", "model_requests": 1})
+            + "\n"
+            + '{"type":"response","text":"partial'
+        )
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("truncated response must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("truncated response must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["model_requests"] == 1
+    assert result["usage"]["model_requests"] == 1
+    assert result["usage"]["status"] == "lower_bound"
+    assert "infra_retries" not in result
 
 
 def test_copilot_oneshot_retries_zero_output_infra_then_succeeds(tmp_path, monkeypatch):
@@ -556,7 +804,7 @@ def test_copilot_oneshot_retries_zero_output_infra_then_succeeds(tmp_path, monke
                     "wire_max_output_tokens": 64_000,
                 },
                 {"type": "error", "message": "HTTP 503 Service Unavailable"},
-                {"type": "result", "status": "error", "model_requests": 1},
+                {"type": "result", "status": "error", "model_requests": 1, "retryable": True},
             ]
             result["agent_exit"] = 1
         else:
@@ -652,7 +900,7 @@ def test_copilot_retry_result_does_not_keep_prior_attempt_wire_metadata(tmp_path
                     "finish_reason": "error",
                 },
                 {"type": "error", "message": "HTTP 503 Service Unavailable"},
-                {"type": "result", "status": "error", "model_requests": 1},
+                {"type": "result", "status": "error", "model_requests": 1, "retryable": True},
             ]
             Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
             result["agent_exit"] = 1
@@ -692,6 +940,7 @@ def test_copilot_retry_result_does_not_keep_prior_attempt_wire_metadata(tmp_path
         "wire_max_output_tokens",
         "request_sha256",
         "finish_reason",
+        "retryable",
     ):
         assert stale_key not in result
 
@@ -749,10 +998,14 @@ def test_copilot_oneshot_does_not_retry_positive_output_length_failure(tmp_path,
 
 def test_clean_empty_oneshot_stream_is_infra_not_capability_fail(tmp_path, monkeypatch):
     item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 3
+    attempts = 0
 
     def fake_backend(
         item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
     ):
+        nonlocal attempts
+        attempts += 1
         Path(agent_jsonl).write_text("")
         result["agent_exit"] = 0
 
@@ -763,9 +1016,44 @@ def test_clean_empty_oneshot_stream_is_infra_not_capability_fail(tmp_path, monke
         lambda *args: pytest.fail("invalid stream must not materialize"),
     )
     monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("invalid stream must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("clean empty stream must not retry"))
 
     result = runner.run_single_benchmark(item)
 
+    assert attempts == 1
     assert result["check_verdict"] == "ERROR"
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["model_requests"] == 0
+
+
+def test_nonzero_empty_oneshot_startup_is_retried(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.infra_retries = 1
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        assert Path(agent_jsonl).read_text() == ""
+        if attempts == 1:
+            result["agent_exit"] = -2
+            result["error"] = "container startup failed"
+            return
+        _write_clean_response(agent_jsonl)
+        result["agent_exit"] = 0
+
+    def fake_grader(*args):
+        args[5]["check_verdict"] = "PASS"
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", fake_grader)
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: None)
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 2
+    assert result["termination_reason"] == "OK"
+    assert result["check_verdict"] == "PASS"
+    assert result["infra_retries"] == 1

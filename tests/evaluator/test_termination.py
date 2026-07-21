@@ -270,6 +270,27 @@ def test_one_shot_provider_deadline_is_timeout(tmp_path):
     assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
 
 
+def test_one_shot_response_before_provider_deadline_is_still_timeout(tmp_path):
+    stream = [
+        {"type": "response", "text": "COMPLETE RESPONSE BEFORE IDLE"},
+        {
+            "type": "request_audit",
+            **_strict_audit("copilot"),
+            "wire_audited": True,
+            "inference_requests": 1,
+            "inference_attempts": 1,
+            "blocked_requests": 0,
+            "system_removed": True,
+            "tools_removed": True,
+        },
+        {"type": "error", "message": "Copilot request timed out waiting for session idle"},
+        {"type": "result", "status": "timeout", "model_requests": 1},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-response-before-timeout.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
+
+
 @pytest.mark.parametrize(
     ("provider", "requests", "contract_ok"),
     [("wrong", 1, True), ("copilot", 2, False), ("copilot", 1, False)],

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from evaluator.termination import TerminationContext
 from evaluator.usage import UsageSummary
 
 BEDROCK_HOSTS = [
@@ -258,6 +259,17 @@ class Backend(ABC):
             output_tokens,
             source=f"{self.name or self.__class__.__name__}_legacy_output",
         )
+
+    def is_infra_retryable(self, ctx: TerminationContext) -> bool:
+        """Whether a zero-output ``INFRA_ERROR`` is safe to replay.
+
+        Agentic backends retain the historical behavior: after the common
+        runner has proved that no output tokens were produced, an
+        infrastructure failure may be retried. Stricter approaches can inspect
+        their event contract and require explicit transient-error evidence.
+        """
+
+        return True
 
     def execution_environment(self, result_dir: str) -> dict[str, str]:
         """Backend-owned environment additions for one isolated execution."""

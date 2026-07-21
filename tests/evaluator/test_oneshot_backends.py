@@ -230,10 +230,36 @@ def test_missing_one_shot_usage_is_not_reported_as_zero_cost(tmp_path):
 
     usage = backend.parse_usage(str(events), input_tokens=0, output_tokens=0)
 
-    assert usage.status == "incomplete"
+    assert usage.status == "lower_bound"
+    assert usage.is_lower_bound is True
     assert usage.model_requests == 1
     assert usage.input_tokens is None
     assert usage.output_tokens is None
+
+
+def test_model_output_evidence_overrides_zero_request_usage(tmp_path):
+    events = tmp_path / "output.jsonl"
+    _write_events(
+        events,
+        {"type": "model_output_observed", "kind": "assistant.reasoning_delta", "model_requests": 1},
+        {
+            "type": "usage",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "model_requests": 0,
+            "complete": True,
+            "is_lower_bound": False,
+        },
+        {"type": "result", "status": "error", "model_requests": 0},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=0, output_tokens=0)
+    metadata = backend.parse_run_metadata(str(events))
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 1
+    assert metadata["model_requests"] == 1
 
 
 def test_materializes_raw_response_verbatim_atomically(tmp_path):

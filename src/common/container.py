@@ -555,6 +555,19 @@ class ContainerRunner:
             return False
         return build_sha256 is None or result.stdout.strip() == build_sha256
 
+    @staticmethod
+    def tag_image(source_tag: str, target_tag: str) -> None:
+        """Update a local Docker image alias."""
+        result = subprocess.run(
+            ["docker", "image", "tag", source_tag, target_tag],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(f"Docker image tag failed (exit {result.returncode}){suffix}")
+
 
 def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, str]:
     """Build env dict for container: auto-forward all API keys + backend-specific vars + model."""
@@ -595,6 +608,11 @@ def _image_source_fingerprint(repo_root: str = _REPO_ROOT) -> str:
             sources.append(path)
 
     digest = hashlib.sha256()
+
+    def update_field(value: bytes) -> None:
+        digest.update(len(value).to_bytes(8, byteorder="big"))
+        digest.update(value)
+
     for path in sorted(sources, key=lambda candidate: candidate.relative_to(root).as_posix()):
         relative = path.relative_to(root).as_posix()
         parts = path.relative_to(root).parts
@@ -608,24 +626,26 @@ def _image_source_fingerprint(repo_root: str = _REPO_ROOT) -> str:
         ):
             continue
 
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
+        update_field(b"source-entry")
+        update_field(relative.encode("utf-8"))
         try:
             metadata = path.lstat()
         except FileNotFoundError:
-            digest.update(b"missing\0")
+            update_field(b"")
+            update_field(b"missing")
+            update_field(b"")
             continue
-        digest.update(f"{stat.S_IMODE(metadata.st_mode):o}".encode("ascii"))
-        digest.update(b"\0")
+        update_field(f"{stat.S_IMODE(metadata.st_mode):o}".encode("ascii"))
         if path.is_symlink():
-            digest.update(b"symlink\0")
-            digest.update(os.readlink(path).encode("utf-8", errors="surrogateescape"))
+            update_field(b"symlink")
+            update_field(os.readlink(path).encode("utf-8", errors="surrogateescape"))
         else:
-            digest.update(b"file\0")
+            content_digest = hashlib.sha256()
             with path.open("rb") as stream:
                 for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-        digest.update(b"\0")
+                    content_digest.update(chunk)
+            update_field(b"file")
+            update_field(content_digest.digest())
     return digest.hexdigest()
 
 
@@ -667,4 +687,6 @@ def ensure_image(force: bool = False) -> str:
             },
             [f"{IMAGE_TAG}:latest"],
         )
+    elif not ContainerRunner.image_exists(f"{IMAGE_TAG}:latest", build_sha256):
+        ContainerRunner.tag_image(build_tag, f"{IMAGE_TAG}:latest")
     return build_tag

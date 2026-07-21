@@ -319,6 +319,43 @@ class TestEnsureImage:
         }
         assert mock_build.call_args.args[4] == [f"{IMAGE_TAG}:latest"]
 
+    def test_cache_hit_restores_latest_alias_after_switching_sources(self):
+        from common.container import IMAGE_TAG, ContainerRunner, ensure_image
+
+        images = {}
+
+        def image_exists(tag, build_sha256=None):
+            return tag in images and (build_sha256 is None or images[tag] == build_sha256)
+
+        def build_image(dockerfile, tag, context, build_args, additional_tags):
+            del dockerfile, context
+            build_sha256 = build_args["TLAPS_BENCH_BUILD_SHA256"]
+            images[tag] = build_sha256
+            for additional_tag in additional_tags:
+                images[additional_tag] = build_sha256
+
+        def tag_image(source_tag, target_tag):
+            images[target_tag] = images[source_tag]
+
+        with (
+            patch("common.container._image_source_fingerprint", side_effect=["source-a", "source-b", "source-a"]),
+            patch("common.container._checker_version", return_value="version"),
+            patch("common.container._image_build_fingerprint", side_effect=["build-a", "build-b", "build-a"]),
+            patch.object(ContainerRunner, "require_docker"),
+            patch.object(ContainerRunner, "image_exists", side_effect=image_exists),
+            patch.object(ContainerRunner, "build_image", side_effect=build_image) as mock_build,
+            patch.object(ContainerRunner, "tag_image", side_effect=tag_image) as mock_tag,
+        ):
+            image_a = ensure_image()
+            image_b = ensure_image()
+            image_a_again = ensure_image()
+
+        assert image_a == image_a_again == f"{IMAGE_TAG}:build-a"
+        assert image_b == f"{IMAGE_TAG}:build-b"
+        assert mock_build.call_count == 2
+        mock_tag.assert_called_once_with(image_a, f"{IMAGE_TAG}:latest")
+        assert images[f"{IMAGE_TAG}:latest"] == "build-a"
+
 
 def test_image_source_fingerprint_tracks_runner_content_not_generated_files(tmp_path):
     from common.container import _image_source_fingerprint
@@ -346,6 +383,34 @@ def test_image_source_fingerprint_tracks_runner_content_not_generated_files(tmp_
 
     runner.write_text("second\n")
     assert _image_source_fingerprint(str(tmp_path)) != initial
+
+
+def test_image_source_fingerprint_has_unambiguous_file_boundaries(tmp_path):
+    from common.container import _image_source_fingerprint
+
+    normal = tmp_path / "normal"
+    corrupt = tmp_path / "corrupt"
+    runner_relative = "src/evaluator/backends/oneshot_runner.py"
+    next_relative = "src/evaluator/backends/pi.py"
+
+    for root in (normal, corrupt):
+        runner = root / runner_relative
+        next_file = root / next_relative
+        runner.parent.mkdir(parents=True)
+        runner.write_bytes(b"runner content\n")
+        next_file.write_bytes(b"next file content\n")
+
+    corrupt_runner = corrupt / runner_relative
+    corrupt_next = corrupt / next_relative
+    next_mode = f"{corrupt_next.stat().st_mode & 0o777:o}".encode("ascii")
+    embedded_next_record = (
+        b"\0" + next_relative.encode("utf-8") + b"\0" + next_mode + b"\0file\0" + corrupt_next.read_bytes()
+    )
+    corrupt_runner.write_bytes(corrupt_runner.read_bytes() + embedded_next_record)
+    corrupt_next.unlink()
+
+    assert b"\0" in corrupt_runner.read_bytes()
+    assert _image_source_fingerprint(str(normal)) != _image_source_fingerprint(str(corrupt))
 
 
 def test_image_build_fingerprint_tracks_checker_version():
