@@ -129,6 +129,18 @@ _SAFE_INFERENCE_CONTROL_KEYS = {
         }
     ),
 }
+_OUTPUT_TOKEN_FIELDS = {
+    "/responses": frozenset({"max_output_tokens"}),
+    "/chat/completions": frozenset({"max_completion_tokens", "max_tokens"}),
+    "/v1/messages": frozenset({"max_tokens"}),
+    "/messages": frozenset({"max_tokens"}),
+}
+_PREFERRED_OUTPUT_TOKEN_FIELD = {
+    "/responses": "max_output_tokens",
+    "/chat/completions": "max_completion_tokens",
+    "/v1/messages": "max_tokens",
+    "/messages": "max_tokens",
+}
 _FORBIDDEN_FORWARD_HEADERS = {
     "connection",
     "content-encoding",
@@ -267,6 +279,40 @@ def _rewrite_inference_payload(endpoint: str, payload: object, prompt: str) -> d
     return rewritten
 
 
+def _apply_output_token_limit(
+    endpoint: str,
+    payload: dict[str, Any],
+    requested: int | None,
+) -> tuple[int | None, int | None]:
+    """Apply an explicit wire limit and return the runtime and forwarded values."""
+
+    fields = _OUTPUT_TOKEN_FIELDS[endpoint]
+    matches = [key for key in payload if str(key).lower() in fields]
+    if len(matches) > 1:
+        if requested is not None:
+            raise RuntimeError("strict one-shot: ambiguous runtime output token limit")
+        return None, None
+
+    runtime_limit: int | None = None
+    if matches:
+        value = payload[matches[0]]
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            runtime_limit = value
+        elif requested is not None:
+            raise RuntimeError("strict one-shot: invalid runtime output token limit")
+
+    if requested is None:
+        return runtime_limit, runtime_limit
+
+    target = str(matches[0]).lower() if matches else _PREFERRED_OUTPUT_TOKEN_FIELD[endpoint]
+    for key in matches:
+        payload.pop(key)
+    payload[target] = requested
+    if payload.get(target) != requested:
+        raise RuntimeError("strict one-shot: failed to install requested output token limit")
+    return runtime_limit, requested
+
+
 class StrictCopilotRequestHandler(_CopilotRequestHandler):
     """Rewrite the sole Copilot inference request and block every later attempt."""
 
@@ -275,10 +321,16 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         prompt: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
+        if max_output_tokens is not None and (
+            not isinstance(max_output_tokens, int) or isinstance(max_output_tokens, bool) or max_output_tokens <= 0
+        ):
+            raise ValueError("max_output_tokens must be a positive integer")
         self._prompt = prompt
         self.model = model
         self.reasoning_effort = reasoning_effort
+        self.requested_max_output_tokens = max_output_tokens
         self._expected_session_id: str | None = None
         self._deadline: float | None = None
         self._frozen = False
@@ -289,6 +341,8 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         self.unknown_requests = 0
         self.endpoint: str | None = None
         self.request_sha256: str | None = None
+        self.runtime_max_output_tokens: int | None = None
+        self.wire_max_output_tokens: int | None = None
         self.system_removed = False
         self.tools_removed = False
 
@@ -356,6 +410,11 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         try:
             payload = json.loads(request.content)
             rewritten_payload = _rewrite_inference_payload(endpoint, payload, self._prompt)
+            runtime_limit, wire_limit = _apply_output_token_limit(
+                endpoint,
+                rewritten_payload,
+                self.requested_max_output_tokens,
+            )
             body = json.dumps(
                 rewritten_payload,
                 ensure_ascii=False,
@@ -384,6 +443,8 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             raise RuntimeError("strict one-shot: blocked inference request after benchmark deadline")
         self.forwarded_inference_requests = 1
         self.request_sha256 = hashlib.sha256(body).hexdigest()
+        self.runtime_max_output_tokens = runtime_limit
+        self.wire_max_output_tokens = wire_limit
         self.system_removed = True
         self.tools_removed = True
         forward_task = asyncio.create_task(self._forward(rewritten, ctx))
@@ -408,6 +469,11 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             and self.inference_attempts == self.forwarded_inference_requests
             and self.forwarded_inference_requests <= 1
             and (self.forwarded_inference_requests == 0 or (self.system_removed is True and self.tools_removed is True))
+            and (
+                self.requested_max_output_tokens is None
+                or self.forwarded_inference_requests == 0
+                or self.wire_max_output_tokens == self.requested_max_output_tokens
+            )
         )
         audit: dict[str, object] = {
             "provider": "copilot",
@@ -431,6 +497,12 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             audit["model"] = self.model
         if self.reasoning_effort is not None:
             audit["reasoning_effort"] = self.reasoning_effort
+        if self.requested_max_output_tokens is not None:
+            audit["requested_max_output_tokens"] = self.requested_max_output_tokens
+        if self.runtime_max_output_tokens is not None:
+            audit["runtime_max_output_tokens"] = self.runtime_max_output_tokens
+        if self.wire_max_output_tokens is not None:
+            audit["wire_max_output_tokens"] = self.wire_max_output_tokens
         if self.endpoint is not None:
             audit["endpoint"] = self.endpoint
         if self.request_sha256 is not None:
@@ -760,8 +832,16 @@ async def run_copilot(
     handler: StrictCopilotRequestHandler | None = None,
     on_timeout: Callable[[ProviderTimeoutError], None] | None = None,
     reasoning_effort: str | None = None,
+    max_output_tokens: int | None = None,
 ) -> ProviderResult:
-    guard = handler or StrictCopilotRequestHandler(prompt)
+    guard = handler or StrictCopilotRequestHandler(
+        prompt,
+        model,
+        reasoning_effort,
+        max_output_tokens,
+    )
+    if handler is not None and max_output_tokens != handler.requested_max_output_tokens:
+        raise ValueError("handler output token limit does not match run_copilot")
     guard.model = model
     guard.reasoning_effort = reasoning_effort
     guard.set_deadline(deadline)
@@ -959,20 +1039,26 @@ class _CopilotProvider:
         workspace: str,
         deadline: float | None,
         reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.prompt = prompt
         self.model = model
         self.workspace = workspace
         self.deadline = deadline
         self.reasoning_effort = reasoning_effort
-        self.guard = StrictCopilotRequestHandler(prompt, model, reasoning_effort)
+        self.max_output_tokens = max_output_tokens
+        self.guard = StrictCopilotRequestHandler(prompt, model, reasoning_effort, max_output_tokens)
 
     @property
     def audit(self) -> dict[str, object]:
         return self.guard.audit()
 
     def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
-        reasoning_options = {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
+        run_options: dict[str, Any] = {}
+        if self.reasoning_effort is not None:
+            run_options["reasoning_effort"] = self.reasoning_effort
+        if self.max_output_tokens is not None:
+            run_options["max_output_tokens"] = self.max_output_tokens
         return asyncio.run(
             run_copilot(
                 self.prompt,
@@ -981,7 +1067,7 @@ class _CopilotProvider:
                 self.deadline,
                 handler=self.guard,
                 on_timeout=on_timeout,
-                **reasoning_options,
+                **run_options,
             )
         )
 
@@ -1007,8 +1093,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--result-dir", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--reasoning-effort", default=None)
+    parser.add_argument("--max-output-tokens", type=int, default=None)
     parser.add_argument("--deadline", type=float, default=0.0)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.max_output_tokens is not None:
+        if args.max_output_tokens <= 0:
+            parser.error("--max-output-tokens must be > 0")
+        if args.provider != "copilot":
+            parser.error("--max-output-tokens is only supported for provider copilot")
+    return args
 
 
 def _emit_usage_events(
@@ -1088,10 +1181,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     deadline = args.deadline if args.deadline > 0 else None
     factory = _PROVIDER_REGISTRY[args.provider]
-    if args.reasoning_effort is None:
-        provider = factory(prompt, args.model, args.workspace, deadline)
-    else:
-        provider = factory(prompt, args.model, args.workspace, deadline, args.reasoning_effort)
+    provider_options: dict[str, object] = {}
+    if args.reasoning_effort is not None:
+        provider_options["reasoning_effort"] = args.reasoning_effort
+    if args.max_output_tokens is not None:
+        provider_options["max_output_tokens"] = args.max_output_tokens
+    provider = factory(prompt, args.model, args.workspace, deadline, **provider_options)
     terminal_emitted = False
 
     def emit_failure(exc: Exception) -> None:

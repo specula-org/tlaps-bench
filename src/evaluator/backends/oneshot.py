@@ -89,8 +89,8 @@ class OneShotBackend(Backend):
     approach = "one_shot"
     capabilities = BackendCapabilities(
         model_preflight=False,
-        default_infra_retries=0,
-        max_infra_retries=0,
+        default_infra_retries=3,
+        max_infra_retries=None,
         max_continuations=0,
     )
 
@@ -121,6 +121,8 @@ class OneShotBackend(Backend):
         ]
         if self.reasoning_effort is not None:
             command.extend(["--reasoning-effort", self.reasoning_effort])
+        if self.max_output_tokens is not None:
+            command.extend(["--max-output-tokens", str(self.max_output_tokens)])
         return command
 
     def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:

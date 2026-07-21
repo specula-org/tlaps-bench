@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -17,6 +19,28 @@ from pathlib import Path
 
 IMAGE_TAG = "tlaps-bench-base"
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_IMAGE_BUILD_FINGERPRINT_LABEL = "org.specula.tlaps-bench.build-sha256"
+_IMAGE_BUILD_FINGERPRINT_ARG = "TLAPS_BENCH_BUILD_SHA256"
+_IMAGE_SOURCE_PATHS = (
+    ".dockerignore",
+    "docker/base.Dockerfile",
+    "docker/base-entrypoint.sh",
+    "docker/firewall.sh",
+    "docker/install-scripts",
+    "pyproject.toml",
+    "src",
+)
+_IGNORED_IMAGE_SOURCE_PARTS = {
+    "__pycache__",
+    ".tlacache",
+    ".venv",
+    "dist",
+    "node_modules",
+    "results",
+    "slides",
+    "tlaps-bench-private",
+    "venv",
+}
 
 
 class DockerUnavailableError(RuntimeError):
@@ -497,10 +521,18 @@ class ContainerRunner:
         _docker_ok = True
 
     @staticmethod
-    def build_image(dockerfile: str, tag: str, context: str, build_args: dict | None = None) -> None:
+    def build_image(
+        dockerfile: str,
+        tag: str,
+        context: str,
+        build_args: dict | None = None,
+        additional_tags: list[str] | None = None,
+    ) -> None:
         """Build a Docker image, streaming output to stdout."""
         print(f"[build] docker build -t {tag}...")
         cmd = ["docker", "build", "--platform", "linux/amd64", "-f", dockerfile, "-t", tag]
+        for additional_tag in additional_tags or []:
+            cmd.extend(["-t", additional_tag])
         for k, v in (build_args or {}).items():
             cmd += ["--build-arg", f"{k}={v}"]
         result = subprocess.run(cmd + [context])
@@ -508,13 +540,20 @@ class ContainerRunner:
             raise RuntimeError(f"Docker build failed (exit {result.returncode})")
 
     @staticmethod
-    def image_exists(tag: str) -> bool:
-        """Check if a Docker image exists locally."""
+    def image_exists(tag: str, build_sha256: str | None = None) -> bool:
+        """Check that a Docker image exists and optionally matches its build inputs."""
+        cmd = ["docker", "image", "inspect"]
+        if build_sha256 is not None:
+            cmd.extend(["--format", f'{{{{ index .Config.Labels "{_IMAGE_BUILD_FINGERPRINT_LABEL}" }}}}'])
+        cmd.append(tag)
         result = subprocess.run(
-            ["docker", "image", "inspect", tag],
+            cmd,
             capture_output=True,
+            text=True,
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
+        return build_sha256 is None or result.stdout.strip() == build_sha256
 
 
 def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, str]:
@@ -541,17 +580,91 @@ def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, 
     return env
 
 
-def ensure_image(force: bool = False) -> None:
-    """Build the Docker image if missing or forced."""
+def _image_source_fingerprint(repo_root: str = _REPO_ROOT) -> str:
+    """Hash semantic Docker build inputs, including dirty working-tree edits."""
+
+    root = Path(repo_root)
+    sources: list[Path] = []
+    for relative in _IMAGE_SOURCE_PATHS:
+        path = root / relative
+        if path.is_dir():
+            sources.extend(
+                candidate for candidate in path.rglob("*") if candidate.is_symlink() or not candidate.is_dir()
+            )
+        else:
+            sources.append(path)
+
+    digest = hashlib.sha256()
+    for path in sorted(sources, key=lambda candidate: candidate.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        parts = path.relative_to(root).parts
+        if (
+            _IGNORED_IMAGE_SOURCE_PARTS.intersection(parts)
+            or path.suffix == ".pyc"
+            or path.name.endswith(".tar.gz")
+            or path.suffix == ".result"
+            or relative == "src/common/_build_version.py"
+            or relative.startswith("src/dataset/sany-dump/build/")
+        ):
+            continue
+
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            digest.update(b"missing\0")
+            continue
+        digest.update(f"{stat.S_IMODE(metadata.st_mode):o}".encode("ascii"))
+        digest.update(b"\0")
+        if path.is_symlink():
+            digest.update(b"symlink\0")
+            digest.update(os.readlink(path).encode("utf-8", errors="surrogateescape"))
+        else:
+            digest.update(b"file\0")
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _checker_version() -> str:
+    """Return the version embedded in check_proof_bin by the Docker build."""
+
+    describe = subprocess.run(
+        ["git", "describe", "--always", "--dirty"], capture_output=True, text=True, cwd=_REPO_ROOT
+    )
+    return describe.stdout.strip() if describe.returncode == 0 and describe.stdout.strip() else "dev"
+
+
+def _image_build_fingerprint(source_sha256: str, checker_version: str) -> str:
+    """Hash every value that can change the locally built image."""
+
+    return hashlib.sha256(f"{source_sha256}\0{checker_version}".encode()).hexdigest()
+
+
+def ensure_image(force: bool = False) -> str:
+    """Build the Docker image if missing, stale, or forced."""
     ContainerRunner.require_docker()
-    if force or not ContainerRunner.image_exists(IMAGE_TAG):
+    source_sha256 = _image_source_fingerprint()
+    version = _checker_version()
+    build_sha256 = _image_build_fingerprint(source_sha256, version)
+    build_tag = f"{IMAGE_TAG}:{build_sha256}"
+    if force or not ContainerRunner.image_exists(build_tag, build_sha256):
         dockerfile = os.path.join(_REPO_ROOT, "docker", "base.Dockerfile")
         if force:
             print("Building Docker image (--force-build)...")
         else:
-            print("Docker image not found, building...")
-        describe = subprocess.run(
-            ["git", "describe", "--always", "--dirty"], capture_output=True, text=True, cwd=_REPO_ROOT
+            print("Docker image missing or out of date, building...")
+        ContainerRunner.build_image(
+            dockerfile,
+            build_tag,
+            _REPO_ROOT,
+            {
+                "CHECKER_VERSION": version,
+                _IMAGE_BUILD_FINGERPRINT_ARG: build_sha256,
+            },
+            [f"{IMAGE_TAG}:latest"],
         )
-        version = describe.stdout.strip() if describe.returncode == 0 else "dev"
-        ContainerRunner.build_image(dockerfile, IMAGE_TAG, _REPO_ROOT, {"CHECKER_VERSION": version or "dev"})
+    return build_tag

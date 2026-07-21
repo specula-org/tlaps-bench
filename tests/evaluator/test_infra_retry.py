@@ -384,6 +384,35 @@ def test_midrun_infra_with_tokens_not_retried(tmp_path, monkeypatch):
     assert "infra_retries" not in result
 
 
+def test_structured_output_usage_prevents_retry_when_jsonl_tokens_are_missing(tmp_path, monkeypatch):
+    # Provider telemetry may be durable even when a dying CLI never flushes its
+    # normal JSONL usage event. That still proves the model did real work, so a
+    # retry would duplicate a charged attempt.
+    backend = _ScriptedBackend()
+
+    def structured_usage(_jsonl_path, *, input_tokens, output_tokens):
+        assert (input_tokens, output_tokens) == (0, 0)
+        return UsageSummary.from_requests(
+            [RequestUsage(input_tokens=21, output_tokens=8)],
+            source="provider_telemetry",
+            complete=False,
+            is_lower_bound=True,
+        )
+
+    monkeypatch.setattr(backend, "parse_usage", structured_usage)
+    agent = _install_agent(monkeypatch, backend, [STARTUP, GENUINE_FAIL])
+    grader = _install_grader(monkeypatch)
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend))
+
+    assert agent["n"] == 1 and grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.INFRA_ERROR
+    assert (result["input_tokens"], result["output_tokens"]) == (21, 8)
+    assert "infra_retries" not in result
+    assert sleeps == []
+
+
 def test_wall_clock_timeout_not_retried(tmp_path, monkeypatch):
     backend = _ScriptedBackend()
     timeout = {"exit": -1, "error": "copilot timeout after 10s"}

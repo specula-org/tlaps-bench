@@ -19,6 +19,13 @@ def test_docker_publish_workflow_references_an_existing_dockerfile():
     assert (REPO_ROOT / dockerfile).is_file(), f"publish workflow references missing file: {dockerfile}"
 
 
+def test_base_image_keeps_the_local_build_fingerprint_label():
+    dockerfile = (REPO_ROOT / "docker/base.Dockerfile").read_text()
+
+    assert "ARG TLAPS_BENCH_BUILD_SHA256=unknown" in dockerfile
+    assert 'LABEL org.specula.tlaps-bench.build-sha256="${TLAPS_BENCH_BUILD_SHA256}"' in dockerfile
+
+
 def test_native_setup_follows_the_rolling_tlapm_release():
     """The tag is rolling, so the installer must not hard-code a specific build."""
     installer = (REPO_ROOT / "scripts/install_deps.sh").read_text()

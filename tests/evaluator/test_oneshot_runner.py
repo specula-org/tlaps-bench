@@ -19,8 +19,8 @@ from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
 
 
 class _RecordingHandler(oneshot_runner.StrictCopilotRequestHandler):
-    def __init__(self, prompt: str) -> None:
-        super().__init__(prompt)
+    def __init__(self, prompt: str, **kwargs) -> None:
+        super().__init__(prompt, **kwargs)
         self.forwarded: list[httpx.Request] = []
 
     async def _forward(self, request: httpx.Request, _ctx: object) -> httpx.Response:
@@ -280,6 +280,58 @@ def test_copilot_handler_forwards_only_rewritten_first_inference():
     assert len(handler.forwarded) == 1
     assert handler.inference_attempts == 2
     assert handler.blocked_requests == 1
+
+
+def test_copilot_handler_overrides_runtime_output_limit_on_wire():
+    handler = _RecordingHandler("EXACT PROMPT", max_output_tokens=64_000)
+    handler.bind_session("session-1")
+    original = _request(
+        "https://api.githubcopilot.com/v1/messages",
+        {
+            "model": "claude-opus-4.8",
+            "max_tokens": 32_000,
+            "messages": [{"role": "user", "content": "decorated prompt"}],
+            "stream": True,
+            "thinking": {"type": "adaptive", "display": "summarized"},
+        },
+    )
+
+    asyncio.run(handler.send_request(original, SimpleNamespace(session_id="session-1")))
+
+    assert len(handler.forwarded) == 1
+    forwarded_body = json.loads(handler.forwarded[0].content)
+    assert forwarded_body["max_tokens"] == 64_000
+    assert forwarded_body["messages"] == [{"role": "user", "content": "EXACT PROMPT"}]
+    assert handler.request_sha256 == oneshot_runner.hashlib.sha256(handler.forwarded[0].content).hexdigest()
+    audit = handler.audit()
+    assert audit["requested_max_output_tokens"] == 64_000
+    assert audit["runtime_max_output_tokens"] == 32_000
+    assert audit["wire_max_output_tokens"] == 64_000
+    assert audit["contract_ok"] is True
+    assert audit["inference_requests"] == 1
+    assert audit["inference_attempts"] == 1
+    assert audit["blocked_requests"] == 0
+
+
+def test_copilot_handler_preserves_runtime_output_limit_when_unset():
+    handler = _RecordingHandler("EXACT PROMPT")
+    handler.bind_session("session-1")
+    original = _request(
+        "https://api.githubcopilot.com/v1/messages",
+        {
+            "model": "claude-opus-4.8",
+            "max_tokens": 32_000,
+            "messages": [{"role": "user", "content": "decorated prompt"}],
+        },
+    )
+
+    asyncio.run(handler.send_request(original, SimpleNamespace(session_id="session-1")))
+
+    assert json.loads(handler.forwarded[0].content)["max_tokens"] == 32_000
+    audit = handler.audit()
+    assert "requested_max_output_tokens" not in audit
+    assert audit["runtime_max_output_tokens"] == 32_000
+    assert audit["wire_max_output_tokens"] == 32_000
 
 
 def test_copilot_handler_audits_and_blocks_wrong_session_before_forwarding():

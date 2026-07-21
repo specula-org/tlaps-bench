@@ -17,6 +17,7 @@ from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
 from evaluator.backends.copilot_oneshot import CopilotOneShotBackend
 from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
+from evaluator.backends.oneshot_runner import StrictCopilotRequestHandler
 
 MODULE = "---- MODULE Example ----\nTHEOREM Target == TRUE\nPROOF OBVIOUS\n====\n"
 
@@ -421,6 +422,40 @@ raise SystemExit(1)
     assert result["time_secs"] == pytest.approx(0.2, abs=0.02)
 
 
+def test_copilot_deadline_before_request_with_output_limit_is_not_retried(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.backend = CopilotOneShotBackend()
+    item.backend.set_max_output_tokens(64_000)
+    item.infra_retries = 3
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        audit = StrictCopilotRequestHandler(prompt, max_output_tokens=64_000).audit()
+        events = [
+            {"type": "request_audit", **audit},
+            {"type": "error", "message": "benchmark deadline reached during startup"},
+            {"type": "result", "status": "timeout", "model_requests": 0},
+        ]
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("timeout must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _delay: pytest.fail("timeout must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 1
+    assert result["termination_reason"] == "TIMEOUT"
+    assert result["check_verdict"] == "TIMEOUT"
+    assert result["model_requests"] == 0
+    assert result["requested_max_output_tokens"] == 64_000
+
+
 def test_zero_request_provider_error_preserves_root_cause(tmp_path, monkeypatch):
     item, result_dir = _make_item(tmp_path)
 
@@ -482,6 +517,234 @@ def test_post_request_contract_error_preserves_root_cause(tmp_path, monkeypatch)
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["error"] == "strict one-shot: blocked second request"
     assert (result["input_tokens"], result["output_tokens"]) == (11, 4)
+
+
+def test_copilot_oneshot_retries_zero_output_infra_then_succeeds(tmp_path, monkeypatch):
+    item, result_dir = _make_item(tmp_path)
+    item.backend = CopilotOneShotBackend()
+    item.backend.set_max_output_tokens(64_000)
+    item.infra_retries = 1
+    workspaces = []
+    grader_calls = []
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        workspaces.append(workspace)
+        if len(workspaces) == 1:
+            events = [
+                {"type": "usage", "input_tokens": 0, "output_tokens": 0, "model_requests": 1},
+                {
+                    "type": "request_audit",
+                    "provider": "copilot",
+                    "model_requests": 1,
+                    "request_attempts": 6,
+                    "blocked_requests": 5,
+                    "system_prompt_present": False,
+                    "tools_present": False,
+                    "retries_enabled": False,
+                    "audit_scope": "wire",
+                    "contract_ok": False,
+                    "wire_audited": True,
+                    "inference_requests": 1,
+                    "inference_attempts": 6,
+                    "unknown_requests": 0,
+                    "system_removed": True,
+                    "tools_removed": True,
+                    "requested_max_output_tokens": 64_000,
+                    "runtime_max_output_tokens": 32_000,
+                    "wire_max_output_tokens": 64_000,
+                },
+                {"type": "error", "message": "HTTP 503 Service Unavailable"},
+                {"type": "result", "status": "error", "model_requests": 1},
+            ]
+            result["agent_exit"] = 1
+        else:
+            events = [
+                {"type": "response", "text": MODULE},
+                {"type": "usage", "input_tokens": 10, "output_tokens": 5, "model_requests": 1},
+                {
+                    "type": "request_audit",
+                    "provider": "copilot",
+                    "model_requests": 1,
+                    "request_attempts": 1,
+                    "blocked_requests": 0,
+                    "system_prompt_present": False,
+                    "tools_present": False,
+                    "retries_enabled": False,
+                    "audit_scope": "wire",
+                    "contract_ok": True,
+                    "wire_audited": True,
+                    "inference_requests": 1,
+                    "inference_attempts": 1,
+                    "unknown_requests": 0,
+                    "system_removed": True,
+                    "tools_removed": True,
+                    "requested_max_output_tokens": 64_000,
+                    "runtime_max_output_tokens": 32_000,
+                    "wire_max_output_tokens": 64_000,
+                },
+                {"type": "result", "status": "success", "model_requests": 1},
+            ]
+            result["agent_exit"] = 0
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+
+    def fake_grader(*_args, **_kwargs):
+        grader_calls.append(True)
+        _args[5]["check_verdict"] = "PASS"
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", fake_grader)
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+    result = runner.run_single_benchmark(item)
+
+    assert len(workspaces) == 2
+    assert workspaces[0] != workspaces[1]
+    assert grader_calls == [True]
+    assert result["check_verdict"] == "PASS"
+    assert result["termination_reason"] == "OK"
+    assert result["infra_retries"] == 1
+    assert result["infra_retry_reasons"] == ["no stderr"]
+    assert result["requested_max_output_tokens"] == 64_000
+    assert result["runtime_max_output_tokens"] == 32_000
+    assert result["wire_max_output_tokens"] == 64_000
+    attempt_events = result_dir / "agent" / "attempts" / "attempt-0" / "output.jsonl"
+    assert "HTTP 503 Service Unavailable" in attempt_events.read_text()
+
+
+def test_copilot_retry_result_does_not_keep_prior_attempt_wire_metadata(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.backend = CopilotOneShotBackend()
+    item.backend.set_max_output_tokens(64_000)
+    item.infra_retries = 1
+    attempts = 0
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            events = [
+                {"type": "usage", "input_tokens": 10, "output_tokens": 0, "model_requests": 1},
+                {
+                    "type": "request_audit",
+                    "provider": "copilot",
+                    "model_requests": 1,
+                    "request_attempts": 2,
+                    "blocked_requests": 1,
+                    "system_prompt_present": False,
+                    "tools_present": False,
+                    "retries_enabled": False,
+                    "audit_scope": "wire",
+                    "contract_ok": False,
+                    "wire_audited": True,
+                    "inference_requests": 1,
+                    "inference_attempts": 2,
+                    "unknown_requests": 0,
+                    "system_removed": True,
+                    "tools_removed": True,
+                    "requested_max_output_tokens": 64_000,
+                    "runtime_max_output_tokens": 32_000,
+                    "wire_max_output_tokens": 64_000,
+                    "request_sha256": "prior-attempt",
+                    "finish_reason": "error",
+                },
+                {"type": "error", "message": "HTTP 503 Service Unavailable"},
+                {"type": "result", "status": "error", "model_requests": 1},
+            ]
+            Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+            result["agent_exit"] = 1
+            return
+
+        Path(agent_jsonl).write_text("")
+        result["agent_exit"] = 1
+        result["error"] = "Copilot client failed during startup"
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("infra failure must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+    result = runner.run_single_benchmark(item)
+
+    assert attempts == 2
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["error"] == "Copilot client failed during startup"
+    assert result["model_requests"] == 0
+    assert result["provider"] == "copilot"
+    assert result["one_shot"] is True
+    assert result["requested_max_output_tokens"] == 64_000
+    for stale_key in (
+        "status",
+        "audit_scope",
+        "contract_ok",
+        "request_attempts",
+        "blocked_requests",
+        "wire_audited",
+        "inference_requests",
+        "inference_attempts",
+        "unknown_requests",
+        "system_removed",
+        "tools_removed",
+        "runtime_max_output_tokens",
+        "wire_max_output_tokens",
+        "request_sha256",
+        "finish_reason",
+    ):
+        assert stale_key not in result
+
+
+def test_copilot_oneshot_does_not_retry_positive_output_length_failure(tmp_path, monkeypatch):
+    item, _result_dir = _make_item(tmp_path)
+    item.backend = CopilotOneShotBackend()
+    item.infra_retries = 3
+    calls = []
+
+    def fake_backend(
+        item_, backend, mode, workspace, agent_dir, agent_jsonl, prompt, result, checker_bin, canonical_dir=None
+    ):
+        calls.append(workspace)
+        events = [
+            {"type": "usage", "input_tokens": 4_080, "output_tokens": 32_000, "model_requests": 1},
+            {
+                "type": "request_audit",
+                "provider": "copilot",
+                "model_requests": 1,
+                "request_attempts": 7,
+                "blocked_requests": 6,
+                "system_prompt_present": False,
+                "tools_present": False,
+                "retries_enabled": False,
+                "audit_scope": "wire",
+                "contract_ok": False,
+                "wire_audited": True,
+                "inference_requests": 1,
+                "inference_attempts": 7,
+                "unknown_requests": 0,
+                "system_removed": True,
+                "tools_removed": True,
+                "finish_reason": "length",
+            },
+            {"type": "error", "message": "strict one-shot: blocked inference request after the first"},
+            {"type": "result", "status": "error", "model_requests": 1},
+        ]
+        Path(agent_jsonl).write_text("".join(json.dumps(event) + "\n" for event in events))
+        result["agent_exit"] = 1
+
+    monkeypatch.setattr(runner, "_run_backend_local", fake_backend)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args: pytest.fail("length failure must not grade"))
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: pytest.fail("length failure must not retry"))
+
+    result = runner.run_single_benchmark(item)
+
+    assert len(calls) == 1
+    assert result["termination_reason"] == "INFRA_ERROR"
+    assert result["check_verdict"] == "ERROR"
+    assert result["output_tokens"] == 32_000
+    assert result["finish_reason"] == "length"
+    assert "infra_retries" not in result
 
 
 def test_clean_empty_oneshot_stream_is_infra_not_capability_fail(tmp_path, monkeypatch):

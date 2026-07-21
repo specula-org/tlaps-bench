@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from common.validate import discover_benchmarks, validation_dependencies, validation_exit_code
+from common.validate import _validation_work_item, discover_benchmarks, validation_dependencies, validation_exit_code
 
 
 def _write_module(path, body):
@@ -33,3 +33,17 @@ def test_validation_exit_code_succeeds_only_when_every_task_passes():
 @pytest.mark.parametrize("status", ["FAIL", "ERROR", "OMITTED", "NO_PROOF"])
 def test_validation_exit_code_fails_for_any_non_pass_status(status):
     assert validation_exit_code([SimpleNamespace(status="PASS"), SimpleNamespace(status=status)]) == 1
+
+
+def test_validation_work_item_keeps_image_for_initial_and_rerun_pools():
+    item = _validation_work_item(
+        "/bench/Example.tla",
+        [("Example", "/source/Example.tla")],
+        "/opt/tlapm/bin/tlapm",
+        "/opt/tlapm/lib",
+        120,
+        True,
+        "tlaps-bench-base:immutable",
+    )
+
+    assert item[-2:] == (True, "tlaps-bench-base:immutable")

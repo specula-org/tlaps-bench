@@ -543,6 +543,7 @@ class TestRunAgentContainerSessionWiring:
             check_timeout=600,
             keep_container=keep_container,
             session_dir=session_dir,
+            container_image="tlaps-bench-base:immutable",
         )
         captured = {}
 
@@ -586,6 +587,7 @@ class TestRunAgentContainerSessionWiring:
 
     def test_no_session_dir_leaves_config_empty(self, tmp_path):
         config = self._capture_config(tmp_path, session_dir="")
+        assert config.image == "tlaps-bench-base:immutable"
         assert config.session_dir == ""
         assert config.session_container_path == ""
 

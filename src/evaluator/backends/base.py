@@ -192,6 +192,8 @@ class Backend(ABC):
     capabilities = BackendCapabilities()
     reasoning_effort: str | None = None
     reasoning_effort_values: tuple[str, ...] = ()
+    max_output_tokens: int | None = None
+    supports_max_output_tokens: bool = False
 
     def set_reasoning_effort(self, reasoning_effort: str | None) -> None:
         """Validate and store an optional backend-native reasoning effort."""
@@ -211,6 +213,20 @@ class Backend(ABC):
                 f"backend {self.name!r}: invalid --reasoning-effort {reasoning_effort!r}; choose from: {choices}"
             )
         self.reasoning_effort = reasoning_effort
+
+    def set_max_output_tokens(self, max_output_tokens: int | None) -> None:
+        """Validate and store an optional per-request output token limit."""
+
+        if max_output_tokens is None:
+            self.max_output_tokens = None
+            return
+        if not isinstance(max_output_tokens, int) or isinstance(max_output_tokens, bool):
+            raise ValueError("--max-output-tokens must be an integer")
+        if max_output_tokens <= 0:
+            raise ValueError("--max-output-tokens must be > 0")
+        if not self.supports_max_output_tokens:
+            raise ValueError(f"backend {self.name!r} does not support --max-output-tokens")
+        self.max_output_tokens = max_output_tokens
 
     def get_credential_mounts(self) -> list[str]:
         """Credential directories this backend needs mounted for the current run."""
@@ -294,6 +310,8 @@ class Backend(ABC):
             metadata["provider"] = self.provider
         if self.reasoning_effort is not None:
             metadata["reasoning_effort"] = self.reasoning_effort
+        if self.max_output_tokens is not None:
+            metadata["requested_max_output_tokens"] = self.max_output_tokens
         return metadata
 
     def prepare_submission(
@@ -324,8 +342,6 @@ class Backend(ABC):
             raise ValueError("--infra-retries must be >= 0")
         maximum = self.capabilities.max_infra_retries
         if maximum is not None and retries > maximum:
-            if maximum == 0 and self.approach == "one_shot":
-                raise ValueError("strict one-shot backends require --infra-retries 0")
             raise ValueError(f"backend {self.name!r} supports at most {maximum} infrastructure retries")
         return retries
 
