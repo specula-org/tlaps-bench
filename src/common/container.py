@@ -364,7 +364,9 @@ class ContainerRunner:
                 self.kill_by_id(cid)
             raise
 
-    def run_preflight(self, config: ContainerConfig, cmd: list[str], stdin_data: str, timeout: int = 180) -> None:
+    def run_preflight(
+        self, config: ContainerConfig, cmd: list[str], stdin_data: str | None, timeout: int = 180
+    ) -> None:
         """Validate a backend end-to-end before a full run. Raises on failure.
 
         Runs the real agent command (`cmd`) on a trivial prompt through the SAME

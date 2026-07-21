@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from evaluator.usage import UsageSummary
+
 BEDROCK_HOSTS = [
     "bedrock-runtime.us-east-1.amazonaws.com",
     "bedrock-runtime.us-east-2.amazonaws.com",
@@ -216,7 +218,7 @@ class Backend(ABC):
 
     @abstractmethod
     def build_command(self, workspace: str, result_dir: str) -> list[str]:
-        """Build the backend command. Prompt is fed via stdin.
+        """Build the backend command before the prompt is attached.
 
         Args:
             workspace: agent's working directory (will be the CLI's cwd).
@@ -227,6 +229,30 @@ class Backend(ABC):
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         """Parse the backend's stdout dump into (transcript, input_tokens, output_tokens)."""
 
+    def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
+        """Return structured usage while preserving the legacy parser contract.
+
+        Backends can override this as richer provider telemetry becomes
+        available. The default adapter keeps third-party and test backends that
+        only implement ``parse_output`` working unchanged.
+        """
+
+        return UsageSummary.from_legacy(
+            input_tokens,
+            output_tokens,
+            source=f"{self.name or self.__class__.__name__}_legacy_output",
+        )
+
+    def execution_environment(self, result_dir: str) -> dict[str, str]:
+        """Backend-owned environment additions for one isolated execution."""
+
+        return {}
+
+    def attempt_output_files(self) -> tuple[str, ...]:
+        """Extra result-dir artifacts that must be isolated across retries."""
+
+        return ()
+
     def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:
         """Build one execution command.
 
@@ -236,6 +262,16 @@ class Backend(ABC):
         """
 
         return self.build_command(workspace, result_dir)
+
+    def prepare_invocation(self, command: list[str], prompt: str) -> tuple[list[str], str | None]:
+        """Attach one prompt to a command and return its stdin payload.
+
+        Most backends read the prompt from stdin. Backends whose supported
+        non-interactive mode requires a command-line prompt can override this
+        hook without changing the common container, local, or preflight paths.
+        """
+
+        return command, prompt
 
     def build_prompt(
         self,
