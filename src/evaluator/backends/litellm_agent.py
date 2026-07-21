@@ -10,11 +10,21 @@ import os
 import subprocess
 import sys
 
+# Use LiteLLM's bundled model-cost map instead of fetching it at runtime: the
+# container firewall blocks the remote fetch, and a failed fetch both emits a
+# warning the runner misreads as a transient infra failure and changes provider
+# param handling. Must be set before importing litellm.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 try:
     import litellm
 except ImportError:
     print(json.dumps({"type": "error", "message": "litellm not installed"}))
     sys.exit(1)
+
+# Drop provider-unsupported params (e.g. temperature for gpt-5 reasoning models)
+# rather than raising, so one agent loop works across model families.
+litellm.drop_params = True
 
 TOOLS = [
     {
