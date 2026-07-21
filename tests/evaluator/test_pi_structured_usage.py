@@ -483,6 +483,38 @@ def test_schema_invalid_message_candidate_is_lower_bound_and_retry_unsafe(candid
     assert backend.retry_may_duplicate_model_work(str(output)) is True
 
 
+@pytest.mark.parametrize(
+    ("candidate", "warning"),
+    [
+        ({"type": []}, "missing or invalid type"),
+        ({"type": "message_end", "message": {"role": []}}, "missing or invalid message role"),
+        (
+            _message_end(
+                usage=_zero_usage(),
+                response_id=_MISSING,
+                stop_reason=[],
+                content=[{"type": "text", "text": ""}],
+                error_message="schema-invalid fallback",
+            ),
+            "all-zero usage placeholder",
+        ),
+    ],
+)
+def test_non_string_discriminators_are_rejected_without_aborting(candidate, warning, tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(output, candidate, _message_end(), {"type": "agent_settled"})
+    backend = PiBackend()
+
+    transcript, input_tokens, output_tokens = backend.parse_output(str(output))
+    usage = backend.parse_usage(str(output), input_tokens=input_tokens, output_tokens=output_tokens)
+
+    assert transcript == ""
+    assert (input_tokens, output_tokens) == (170, 40)
+    assert usage.status == "lower_bound"
+    assert any(warning in item for item in usage.warnings)
+    assert backend.retry_may_duplicate_model_work(str(output)) is True
+
+
 def test_malformed_json_and_message_candidate_downgrade_known_usage(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
@@ -580,6 +612,19 @@ def test_empty_existing_stream_remains_retry_safe(tmp_path):
                     usage=_zero_usage(),
                     response_id=_MISSING,
                     stop_reason="error",
+                    error_message="failed before provider stream",
+                ),
+            },
+            True,
+        ),
+        (
+            {
+                "type": "message_start",
+                "message": _assistant_message(
+                    usage=_zero_usage(),
+                    response_id=_MISSING,
+                    stop_reason="error",
+                    content=[{"type": "text", "text": ""}],
                     error_message="failed before provider stream",
                 ),
             },

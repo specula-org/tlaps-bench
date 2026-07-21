@@ -208,23 +208,44 @@ def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
         lines.append(delta)
 
 
-def _usage_has_positive_evidence(message: dict[str, Any]) -> bool:
+def _has_all_zero_usage_placeholder(message: dict[str, Any]) -> bool:
     usage = message.get("usage")
     if not isinstance(usage, dict):
         return False
     for name in ("input", "output", "cacheRead", "cacheWrite", "totalTokens"):
-        value = _strict_token(usage.get(name))
-        if value is not None and value > 0:
-            return True
+        if _strict_token(usage.get(name)) != 0:
+            return False
     raw_cost = usage.get("cost")
     cost_total = _strict_cost(raw_cost.get("total")) if isinstance(raw_cost, dict) else None
-    return cost_total is not None and cost_total > 0
+    return cost_total == 0
+
+
+def _is_pre_stream_exception_fallback(message: dict[str, Any]) -> bool:
+    """Match agent-core's exact fallback when no provider stream was returned."""
+
+    content = message.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return False
+    block = content[0]
+    stop_reason = message.get("stopReason")
+    return (
+        isinstance(block, dict)
+        and block.get("type") == "text"
+        and block.get("text") == ""
+        and _has_all_zero_usage_placeholder(message)
+        and isinstance(stop_reason, str)
+        and stop_reason in {"error", "aborted"}
+        and _text(message.get("errorMessage")) is not None
+    )
 
 
 def _event_proves_model_activity(event: dict[str, Any]) -> bool:
     """Recognize native activity that makes a replacement launch unsafe."""
 
     event_type = event.get("type")
+    if not isinstance(event_type, str):
+        # A schema-invalid discriminator may hide an activity event.
+        return True
     if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
         # Agent-core tool execution can only follow an assistant tool call. It
         # therefore preserves paid-work evidence even if that assistant event
@@ -247,24 +268,14 @@ def _event_proves_model_activity(event: dict[str, Any]) -> bool:
         # Known non-assistant lifecycle messages do not imply a provider call.
         # An absent or future role is unsafe because the corrupted candidate may
         # have been an assistant event whose paid-work evidence was lost.
-        return role not in _PI_NON_ASSISTANT_MESSAGE_ROLES
-    if _usage_has_positive_evidence(message):
-        return True
-    if _text(message.get("responseId")) is not None:
-        return True
-    content = message.get("content")
-    if isinstance(content, list) and bool(content):
-        return True
-    stop_reason = message.get("stopReason")
-    if event_type == "message_end" and stop_reason in {"stop", "length", "toolUse"}:
-        return True
-    if event_type == "message_start":
-        # The low-level agent emits this after the provider stream's `start`
-        # event. Its separate pre-stream exception fallback includes an error
-        # message, which remains eligible for a host infrastructure retry.
-        error_message = message.get("errorMessage")
-        return not (stop_reason in {"error", "aborted"} and isinstance(error_message, str) and error_message)
-    return False
+        return not isinstance(role, str) or role not in _PI_NON_ASSISTANT_MESSAGE_ROLES
+    # agent-core constructs the recognized fallback only when getApiKey,
+    # context conversion, or stream creation throws before returning a provider
+    # stream. Provider adapters use an empty content array for their own errors,
+    # including ambiguous post-dispatch transport failures.
+    # Every other assistant lifecycle event came from a provider stream or is
+    # too damaged to prove otherwise. Missing usage is not evidence of no work.
+    return not _is_pre_stream_exception_fallback(message)
 
 
 def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
@@ -272,6 +283,7 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
     requests: list[RequestUsage] = []
     warnings: list[str] = []
     malformed_lines = 0
+    invalid_event_types = 0
     invalid_candidates = 0
     settled = False
     compacted = False
@@ -294,9 +306,13 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                     malformed_lines += 1
                     continue
 
+                event_type = event.get("type")
+                if not isinstance(event_type, str):
+                    invalid_event_types += 1
+                    model_activity = True
+                    continue
                 _append_transcript_event(transcript_parts, event)
                 model_activity = model_activity or _event_proves_model_activity(event)
-                event_type = event.get("type")
                 if settled and event_type in _PI_RUN_ACTIVITY_EVENTS:
                     activity_after_settled = True
                 if event_type == "agent_settled":
@@ -311,7 +327,7 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                         continue
                     role = message.get("role")
                     if role != "assistant":
-                        if role not in _PI_NON_ASSISTANT_MESSAGE_ROLES:
+                        if not isinstance(role, str) or role not in _PI_NON_ASSISTANT_MESSAGE_ROLES:
                             invalid_candidates += 1
                             warnings.append("Pi message_end event has missing or invalid message role")
                         continue
@@ -330,7 +346,13 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         warnings.append(f"Pi JSONL output unavailable or truncated: {type(read_error).__name__}")
     if malformed_lines:
         warnings.append(f"Pi JSONL contains {malformed_lines} malformed nonempty line(s)")
-    if malformed_lines or (read_error is not None and not isinstance(read_error, FileNotFoundError)):
+    if invalid_event_types:
+        warnings.append(f"Pi JSONL contains {invalid_event_types} event(s) with missing or invalid type")
+    if (
+        malformed_lines
+        or invalid_event_types
+        or (read_error is not None and not isinstance(read_error, FileNotFoundError))
+    ):
         # A nonempty native line that cannot be decoded may itself have been an
         # assistant activity event. Likewise, an existing stream that cannot be
         # read gives us no safe evidence that the provider was never called.
@@ -360,7 +382,13 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         )
 
     lower_bound = bool(
-        read_error or malformed_lines or invalid_candidates or compacted or activity_after_settled or not settled
+        read_error
+        or malformed_lines
+        or invalid_event_types
+        or invalid_candidates
+        or compacted
+        or activity_after_settled
+        or not settled
     )
     if not settled:
         warnings.append("Pi agent_settled was not observed; recorded usage may be partial")

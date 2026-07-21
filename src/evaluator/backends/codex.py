@@ -170,18 +170,39 @@ def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
 def _retry_may_duplicate_model_work(jsonl_path: str) -> bool:
     """Detect native activity or a stream too incomplete to retry safely."""
 
+    saw_turn_started = False
+    saw_turn_failed = False
+    failure_messages: list[str] = []
     try:
         with open(jsonl_path) as f:
             for raw in f:
+                if not raw.strip():
+                    continue
                 try:
                     event = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
-                    continue
+                    return True
                 if not isinstance(event, dict):
-                    continue
+                    return True
                 event_type = event.get("type")
+                if not isinstance(event_type, str):
+                    return True
+                if event_type == "turn.started":
+                    saw_turn_started = True
+                elif event_type == "turn.completed":
+                    return True
+                elif event_type == "turn.failed":
+                    saw_turn_failed = True
+                    error = event.get("error")
+                    message = error.get("message") if isinstance(error, dict) else None
+                    if isinstance(message, str):
+                        failure_messages.append(message)
+                elif event_type == "error":
+                    message = event.get("message")
+                    if isinstance(message, str):
+                        failure_messages.append(message)
                 item = event.get("item")
-                if not isinstance(event_type, str) or not event_type.startswith("item.") or not isinstance(item, dict):
+                if not event_type.startswith("item.") or not isinstance(item, dict):
                     continue
                 item_type = item.get("type")
                 if isinstance(item_type, str) and item_type in _MODEL_ACTIVITY_ITEM_TYPES:
@@ -193,9 +214,23 @@ def _retry_may_duplicate_model_work(jsonl_path: str) -> bool:
                         # would prove work may be among those dropped. Retrying
                         # such a launch could silently duplicate paid work.
                         return True
-    except (OSError, UnicodeError):
+    except FileNotFoundError:
         return False
-    return False
+    except (OSError, UnicodeError):
+        return True
+
+    if saw_turn_failed and not saw_turn_started:
+        # A terminal failure without its required start event is a damaged
+        # lifecycle, so it cannot prove that dispatch never happened.
+        return True
+    if not saw_turn_started:
+        return False
+    # The explicit provider cap is a rejection, not an interrupted generation.
+    # It owns a separate wait-and-retry path in the runner. Every other started
+    # failure may have reached the provider before its first item event arrived.
+    return not (
+        saw_turn_failed and failure_messages and all(_USAGE_LIMIT_RE.search(message) for message in failure_messages)
+    )
 
 
 def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:

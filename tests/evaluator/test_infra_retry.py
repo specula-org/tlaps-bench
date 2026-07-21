@@ -406,12 +406,39 @@ def test_codex_item_activity_prevents_retry_when_failed_turn_has_no_usage(tmp_pa
     assert sleeps == []
 
 
-def test_pi_session_header_startup_failure_is_retried(tmp_path, monkeypatch):
+def test_pi_true_pre_stream_failure_is_retried(tmp_path, monkeypatch):
     backend = PiBackend(model="openai/gpt-test")
+    zero_usage = {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
+    }
+    failure_message = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": ""}],
+        "api": "openai-responses",
+        "provider": "openai",
+        "model": "gpt-test",
+        "usage": zero_usage,
+        "stopReason": "error",
+        "errorMessage": "OAuth refresh failed before provider stream",
+        "timestamp": 1,
+    }
     failed_before_model_work = {
         "exit": 1,
         "stderr": "No API key found for openai.\n",
-        "events": [{"type": "session", "version": 3, "id": "session-1"}],
+        "events": [
+            {"type": "session", "version": 3, "id": "session-1"},
+            {"type": "agent_start"},
+            {"type": "message_start", "message": failure_message},
+            {"type": "message_end", "message": failure_message},
+            {"type": "turn_end", "message": failure_message, "toolResults": []},
+            {"type": "agent_end", "messages": [failure_message]},
+            {"type": "agent_settled"},
+        ],
     }
     recovered = {
         "exit": 0,
@@ -464,7 +491,7 @@ def test_pi_session_header_startup_failure_is_retried(tmp_path, monkeypatch):
     assert len(sleeps) == 1
 
 
-def test_pi_terminal_error_after_model_activity_is_not_retried(tmp_path, monkeypatch):
+def test_pi_provider_adapter_error_without_stream_start_is_not_retried(tmp_path, monkeypatch):
     backend = PiBackend(model="openai/gpt-test")
     zero_usage = {
         "input": 0,
@@ -480,15 +507,24 @@ def test_pi_terminal_error_after_model_activity_is_not_retried(tmp_path, monkeyp
             {"type": "session", "version": 3, "id": "session-1"},
             {"type": "agent_start"},
             {
-                "type": "message_update",
-                "message": {"role": "assistant"},
-                "assistantMessageEvent": {"type": "text_delta", "delta": "partial paid work"},
+                "type": "message_start",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "api": "openai-responses",
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "usage": zero_usage,
+                    "stopReason": "error",
+                    "errorMessage": "stream disconnected before response headers",
+                    "timestamp": 1,
+                },
             },
             {
                 "type": "message_end",
                 "message": {
                     "role": "assistant",
-                    "content": [{"type": "text", "text": "partial paid work"}],
+                    "content": [],
                     "api": "openai-responses",
                     "provider": "openai",
                     "model": "gpt-test",
@@ -600,19 +636,17 @@ def test_codex_no_work_quota_retry_preserves_and_merges_attempt_evidence(tmp_pat
     assert (agent_dir / "codex_last_message.txt").read_text() == "finished\n"
 
 
-def test_codex_warning_item_does_not_suppress_startup_retry(tmp_path, monkeypatch):
+def test_codex_warning_item_before_turn_does_not_suppress_startup_retry(tmp_path, monkeypatch):
     backend = CodexBackend(model="gpt-test")
     failed_before_model_work = {
         "exit": 1,
         "events": [
             {"type": "thread.started", "thread_id": "thread-1"},
-            {"type": "turn.started"},
             {
                 "type": "item.completed",
                 "item": {"id": "item-warning", "type": "error", "message": "configuration warning"},
             },
-            {"type": "error", "message": "request rejected"},
-            {"type": "turn.failed", "error": {"message": "request rejected"}},
+            {"type": "error", "message": "local configuration rejected"},
         ],
     }
     recovered = {
@@ -644,50 +678,29 @@ def test_codex_warning_item_does_not_suppress_startup_retry(tmp_path, monkeypatc
     assert len(sleeps) == 1
 
 
-def test_codex_failure_before_item_activity_remains_retriable(tmp_path, monkeypatch):
+def test_codex_ambiguous_failure_before_item_activity_is_not_retried(tmp_path, monkeypatch):
     backend = CodexBackend(model="gpt-test")
     failed_before_model_work = {
         "exit": 1,
         "events": [
             {"type": "thread.started", "thread_id": "thread-1"},
             {"type": "turn.started"},
-            {"type": "error", "message": "request rejected"},
-            {"type": "turn.failed", "error": {"message": "request rejected"}},
+            {"type": "error", "message": "connection lost"},
+            {"type": "turn.failed", "error": {"message": "connection lost"}},
         ],
     }
-    recovered = {
-        "exit": 0,
-        "events": [
-            {"type": "thread.started", "thread_id": "thread-2"},
-            {"type": "turn.started"},
-            {
-                "type": "item.completed",
-                "item": {"id": "item-1", "type": "agent_message", "text": "finished"},
-            },
-            {
-                "type": "turn.completed",
-                "usage": {
-                    "input_tokens": 100,
-                    "cached_input_tokens": 80,
-                    "output_tokens": 10,
-                    "reasoning_output_tokens": 2,
-                },
-            },
-        ],
-    }
-    agent = _install_agent(monkeypatch, backend, [failed_before_model_work, recovered])
+    agent = _install_agent(monkeypatch, backend, [failed_before_model_work])
     grader = _install_grader(monkeypatch, verdict="FAIL")
     sleeps = _no_sleep(monkeypatch)
 
     result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
 
-    assert agent["n"] == 2
+    assert agent["n"] == 1
     assert grader["n"] == 1
-    assert result["termination_reason"] == TerminationReason.OK
-    assert result["infra_retries"] == 1
-    assert (result["input_tokens"], result["output_tokens"]) == (100, 10)
-    assert result["usage"]["status"] == "lower_bound"
-    assert len(sleeps) == 1
+    assert result["termination_reason"] == TerminationReason.INFRA_ERROR
+    assert "infra_retries" not in result
+    assert result["usage"]["status"] == "unavailable"
+    assert sleeps == []
 
 
 def test_submission_metadata_cannot_overwrite_runner_accounting(tmp_path, monkeypatch):

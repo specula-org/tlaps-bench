@@ -92,21 +92,25 @@ def test_native_item_lifecycle_proves_model_work_without_terminal_usage(tmp_path
     assert CodexBackend().retry_may_duplicate_model_work(str(output)) is True
 
 
-def test_lifecycle_or_malformed_item_shape_does_not_fabricate_model_work(tmp_path):
+def test_ambiguous_failed_turn_without_item_activity_is_retry_unsafe(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
         output,
-        "not-json",
         {"type": "thread.started", "thread_id": "thread-1"},
         {"type": "turn.started"},
-        {"type": "item.started"},
-        {"type": "item.completed", "item": {"id": "item-1", "type": ""}},
-        {
-            "type": "item.completed",
-            "item": {"id": "item-warning", "type": "error", "message": "configuration warning"},
-        },
-        {"type": "error", "message": "request rejected"},
-        {"type": "turn.failed", "error": {"message": "request rejected"}},
+        {"type": "error", "message": "connection lost"},
+        {"type": "turn.failed", "error": {"message": "connection lost"}},
+    )
+
+    assert CodexBackend().retry_may_duplicate_model_work(str(output)) is True
+
+
+def test_stream_that_never_started_a_turn_remains_retry_safe(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "thread-1"},
+        {"type": "error", "message": "failed to load local configuration"},
     )
 
     assert CodexBackend().retry_may_duplicate_model_work(str(output)) is False
