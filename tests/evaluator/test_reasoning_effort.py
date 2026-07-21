@@ -136,7 +136,7 @@ def test_litellm_agent_completion_error_exits_nonzero(monkeypatch, capsys, tmp_p
     assert "temperature" not in completion_options
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [event["type"] for event in events] == ["error", "usage"]
-    assert events[-1] == {"type": "usage", "input_tokens": 0, "output_tokens": 0}
+    assert events[-1] == {"type": "usage", "input_tokens": 0, "output_tokens": 0, "model_requests": 0}
 
 
 def test_litellm_agent_success_exits_zero(monkeypatch, capsys, tmp_path):
@@ -167,8 +167,8 @@ def test_litellm_agent_success_exits_zero(monkeypatch, capsys, tmp_path):
 
     assert litellm_agent.main() == 0
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [event["type"] for event in events] == ["response", "usage"]
-    assert events[-1] == {"type": "usage", "input_tokens": 4, "output_tokens": 1}
+    assert [event["type"] for event in events] == ["request_usage", "response", "usage"]
+    assert events[-1] == {"type": "usage", "input_tokens": 4, "output_tokens": 1, "model_requests": 1}
 
 
 def test_omitted_reasoning_effort_preserves_existing_defaults():

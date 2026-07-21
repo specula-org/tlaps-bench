@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from typing import Any
+
+from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
 from .agentic import AgenticBackend
 from .base import (
@@ -17,6 +20,162 @@ from .base import (
 )
 
 DEFAULT_MODEL = "claude-opus-4-8"
+PROVIDER = "anthropic"
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _message_usage(usage: object) -> tuple[int | None, int | None, int | None, int | None]:
+    """Return ``(input, cache_read, cache_write, output)`` for one message.
+
+    Anthropic reports cache reads/creations as buckets *beside* ``input_tokens``,
+    but the shared usage contract treats them as classifications *within* input
+    usage. Fold them in exactly once so ``input_tokens`` is the full billable
+    input and the cache fields only classify part of it.
+    """
+
+    if not isinstance(usage, dict):
+        return None, None, None, None
+    base_input = nonnegative_int(usage.get("input_tokens"))
+    cache_write = nonnegative_int(usage.get("cache_creation_input_tokens"))
+    cache_read = nonnegative_int(usage.get("cache_read_input_tokens"))
+    known_input = [value for value in (base_input, cache_write, cache_read) if value is not None]
+    total_input = sum(known_input) if known_input else None
+    return total_input, cache_read, cache_write, nonnegative_int(usage.get("output_tokens"))
+
+
+def _streamed_request(message: dict[str, Any], requested_model: str | None, *, trust_output: bool) -> RequestUsage:
+    """One per-request record from a deduplicated ``assistant`` event.
+
+    A streamed message's input and cache counts are final, but its
+    ``output_tokens`` is only the partial known at message start, so it is kept
+    only when no authoritative ``result`` total is available.
+    """
+
+    total_input, cache_read, cache_write, output = _message_usage(message.get("usage"))
+    stop_reason = _optional_str(message.get("stop_reason"))
+    return RequestUsage(
+        input_tokens=total_input,
+        output_tokens=output if trust_output else None,
+        cache_read_input_tokens=cache_read,
+        cache_write_input_tokens=cache_write,
+        requested_model=requested_model,
+        resolved_model=_optional_str(message.get("model")),
+        provider=PROVIDER,
+        finish_reasons=((stop_reason,) if stop_reason is not None else ()),
+        request_id=_optional_str(message.get("id")),
+    )
+
+
+def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = None) -> UsageSummary | None:
+    """Parse Claude Code stream-json usage into an authoritative usage record.
+
+    Streamed ``assistant`` input/cache are final, but streamed ``output_tokens``
+    is a message-start partial, so the settled output and USD cost are taken from
+    the terminal ``result`` event. Without a result event the streamed sums are a
+    lower bound.
+    """
+
+    streamed: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    result_seen = False
+    result_error = False
+    result_totals: dict[str, int | None] = {}
+    result_costs: list[UsageCost] = []
+    model_time_secs: float | None = None
+    num_turns: int | None = None
+    # One `assistant` event is streamed per content block, each repeating the
+    # turn's whole usage, so collapse to the first event per message id.
+    seen_message_ids: set[str] = set()
+
+    try:
+        with open(jsonl_path) as stream:
+            for raw in stream:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                etype = event.get("type", "")
+
+                if etype == "assistant":
+                    message = event.get("message")
+                    if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
+                        continue
+                    message_id = _optional_str(message.get("id"))
+                    if message_id is not None:
+                        if message_id in seen_message_ids:
+                            continue
+                        seen_message_ids.add(message_id)
+                    streamed.append(message)
+
+                elif etype == "result":
+                    result_seen = True
+                    result_error = event.get("is_error") is True
+                    total_input, cache_read, cache_write, output = _message_usage(event.get("usage"))
+                    result_totals = {
+                        "input_tokens": total_input,
+                        "output_tokens": output,
+                        "cache_read_input_tokens": cache_read,
+                        "cache_write_input_tokens": cache_write,
+                    }
+                    num_turns = nonnegative_int(event.get("num_turns"))
+                    total_cost = nonnegative_float(event.get("total_cost_usd"))
+                    if total_cost is not None:
+                        result_costs.append(UsageCost(total_cost, "usd", "claude_code.total_cost_usd"))
+                    api_ms = nonnegative_float(event.get("duration_api_ms"))
+                    if api_ms is not None:
+                        model_time_secs = api_ms / 1000
+    except FileNotFoundError:
+        return None
+
+    if not streamed and not result_seen:
+        return None
+
+    requests = [_streamed_request(message, requested_model, trust_output=not result_seen) for message in streamed]
+
+    totals: dict[str, object] = {}
+    input_discrepancy = False
+    if result_seen:
+        for field, value in result_totals.items():
+            if value is not None:
+                totals[field] = value
+        if result_costs:
+            totals["costs"] = tuple(result_costs)
+        else:
+            warnings.append("Claude Code result event did not report total_cost_usd")
+        if model_time_secs is not None:
+            totals["model_time_secs"] = model_time_secs
+        if not streamed and num_turns is not None:
+            totals["model_requests"] = num_turns
+
+        # Input and cache are reliable per message, so a mismatch against the
+        # authoritative result totals means streamed turns were lost.
+        for field in ("input_tokens", "cache_read_input_tokens", "cache_write_input_tokens"):
+            summary_total = result_totals.get(field)
+            observed = sum(getattr(request, field) for request in requests if getattr(request, field) is not None)
+            if streamed and summary_total is not None and observed != summary_total:
+                input_discrepancy = True
+                warnings.append(
+                    f"Claude Code {field} result total {summary_total} differs from streamed total {observed}"
+                )
+    else:
+        warnings.append("Claude Code result event missing; usage is a lower bound")
+
+    return UsageSummary.from_requests(
+        requests,
+        source="claude_code_stream_json",
+        complete=result_seen and not result_error and not input_discrepancy and bool(result_costs),
+        is_lower_bound=not result_seen or result_error or input_discrepancy,
+        warnings=tuple(dict.fromkeys(warnings)),
+        totals=totals,
+    )
 
 
 class ClaudeCodeBackend(AgenticBackend):
@@ -150,6 +309,8 @@ class ClaudeCodeBackend(AgenticBackend):
         out_tok = 0
         final_in = None
         final_out = None
+        # A turn's usage is echoed on every content-block event; count each once.
+        counted_message_ids: set[str] = set()
 
         try:
             with open(jsonl_path) as f:
@@ -190,7 +351,11 @@ class ClaudeCodeBackend(AgenticBackend):
                                     lines.append("")
                         # Accumulate per-turn token usage as a fallback.
                         usage = message.get("usage", {})
-                        if isinstance(usage, dict):
+                        message_id = message.get("id")
+                        already_counted = isinstance(message_id, str) and message_id in counted_message_ids
+                        if isinstance(usage, dict) and not already_counted:
+                            if isinstance(message_id, str):
+                                counted_message_ids.add(message_id)
                             in_tok += usage.get("input_tokens", 0)
                             in_tok += usage.get("cache_creation_input_tokens", 0)
                             in_tok += usage.get("cache_read_input_tokens", 0)
@@ -247,3 +412,24 @@ class ClaudeCodeBackend(AgenticBackend):
             in_tok, out_tok = final_in, final_out
 
         return "\n".join(lines), in_tok, out_tok
+
+    def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
+        usage = parse_claude_code_usage(jsonl_path, requested_model=self.model)
+        if usage is not None:
+            return usage
+        if input_tokens or output_tokens:
+            return UsageSummary(
+                input_tokens=nonnegative_int(input_tokens) if input_tokens else None,
+                output_tokens=nonnegative_int(output_tokens) if output_tokens else None,
+                sources=("claude_code_stream_json",),
+                available=True,
+                complete=False,
+                is_lower_bound=True,
+                warnings=("Claude Code usage events unavailable; token usage is incomplete",),
+            )
+        return UsageSummary(
+            sources=("claude_code_stream_json",),
+            available=False,
+            complete=False,
+            warnings=("Claude Code usage events unavailable",),
+        )

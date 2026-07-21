@@ -16,6 +16,7 @@ import pytest
 from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
 from evaluator.termination import TerminationReason
+from evaluator.usage import RequestUsage, UsageCost, UsageSummary
 
 BENCH_TEXT = "---- MODULE Bar ----\n====\n"
 
@@ -34,10 +35,25 @@ class _ScriptedBackend(AgenticBackend):
     name = "copilot"
 
     def __init__(self):
+        self.in_tokens = 0
         self.out_tokens = 0  # set by the fake agent for the current attempt
+        self.cost = 0.0
 
     def parse_output(self, jsonl_path):
-        return ("", 0, self.out_tokens)
+        return ("", self.in_tokens, self.out_tokens)
+
+    def parse_usage(self, jsonl_path, *, input_tokens, output_tokens):
+        if not (input_tokens or output_tokens or self.cost):
+            return UsageSummary.from_requests([], source="scripted", complete=True)
+        costs = (UsageCost(self.cost, "provider_monetary", "test.cost"),) if self.cost else ()
+        return UsageSummary.from_requests(
+            [RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, costs=costs)],
+            source="scripted",
+            complete=True,
+        )
+
+    def attempt_output_files(self):
+        return ("copilot-otel.jsonl",)
 
     def build_command(self, workspace, result_dir):
         return ["fake-agent"]
@@ -106,6 +122,11 @@ def _install_agent(monkeypatch, backend, attempts):
         if spec.get("error"):
             result["error"] = spec["error"]
         backend.out_tokens = spec.get("out_tokens", 0)
+        backend.in_tokens = spec.get("in_tokens", 0)
+        backend.cost = spec.get("cost", 0.0)
+        if spec.get("otel"):
+            with open(os.path.join(agent_dir, "copilot-otel.jsonl"), "w") as f:
+                f.write(spec["otel"])
         if "mutate" in spec:
             spec["mutate"](workspace)
         if "mutate_canonical" in spec:
@@ -296,6 +317,30 @@ def test_startup_failure_retried_and_final_attempt_graded(tmp_path, monkeypatch)
     assert "Failed to load models" in (out / "agent" / "attempts" / "attempt-0" / "stderr.txt").read_text()
     saved = json.loads((out / "result.json").read_text())
     assert saved["infra_retries"] == 1
+
+
+def test_retry_aggregates_usage_and_stashes_provider_telemetry(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    charged_failure = {
+        **STARTUP,
+        "in_tokens": 20,
+        "out_tokens": 0,
+        "cost": 0.002,
+        "otel": "first-attempt-telemetry\n",
+    }
+    recovered = {**GENUINE_FAIL, "in_tokens": 100, "out_tokens": 50, "cost": 0.02}
+    _install_agent(monkeypatch, backend, [charged_failure, recovered])
+    _install_grader(monkeypatch, verdict="FAIL")
+    _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
+
+    assert (result["input_tokens"], result["output_tokens"]) == (120, 50)
+    assert result["usage"]["model_requests"] == 2
+    assert result["usage"]["costs"] == [{"amount": 0.022, "unit": "provider_monetary", "source": "test.cost"}]
+    assert [request["attempt"] for request in result["usage"]["requests"]] == [0, 1]
+    stashed = tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0"
+    assert (stashed / "copilot-otel.jsonl").read_text() == "first-attempt-telemetry\n"
 
 
 def test_retry_exhaustion_is_error_not_fail(tmp_path, monkeypatch):

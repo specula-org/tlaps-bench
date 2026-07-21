@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 # Use LiteLLM's bundled model-cost map instead of fetching it at runtime: the
 # container firewall blocks the remote fetch, and a failed fetch both emits a
@@ -69,6 +70,86 @@ TOOLS = [
 ]
 
 
+def _token_detail(details: object, *keys: str) -> int | None:
+    """Read an optional token sub-count from a LiteLLM usage details object."""
+
+    if details is None:
+        return None
+    for key in keys:
+        value = getattr(details, key, None)
+        if value is None and isinstance(details, dict):
+            value = details.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
+def _response_cost(response: object) -> float | None:
+    """Return LiteLLM's own USD cost for one response, without a local price table."""
+
+    hidden = getattr(response, "_hidden_params", None)
+    if isinstance(hidden, dict):
+        cost = hidden.get("response_cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            return float(cost)
+    try:
+        cost = litellm.completion_cost(completion_response=response)
+    except Exception:
+        return None
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+        return float(cost)
+    return None
+
+
+def _emit_request_usage(response: object, iteration: int, elapsed: float) -> None:
+    """Emit one structured usage record per model request.
+
+    Unavailable counts are omitted rather than reported as zero so the
+    evaluator can tell "not reported" apart from "genuinely zero".
+    """
+
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    event: dict = {"type": "request_usage", "iteration": iteration}
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    if isinstance(prompt_tokens, int) and not isinstance(prompt_tokens, bool):
+        event["input_tokens"] = prompt_tokens
+    if isinstance(completion_tokens, int) and not isinstance(completion_tokens, bool):
+        event["output_tokens"] = completion_tokens
+
+    cache_read = _token_detail(getattr(usage, "prompt_tokens_details", None), "cached_tokens")
+    if cache_read is not None:
+        event["cache_read_input_tokens"] = cache_read
+    cache_write = _token_detail(getattr(usage, "prompt_tokens_details", None), "cache_creation_tokens")
+    if cache_write is not None:
+        event["cache_write_input_tokens"] = cache_write
+    reasoning = _token_detail(getattr(usage, "completion_tokens_details", None), "reasoning_tokens")
+    if reasoning is not None:
+        event["reasoning_output_tokens"] = reasoning
+
+    model = getattr(response, "model", None)
+    if isinstance(model, str) and model:
+        event["model"] = model
+    request_id = getattr(response, "id", None)
+    if isinstance(request_id, str) and request_id:
+        event["request_id"] = request_id
+    try:
+        finish_reason = response.choices[0].finish_reason
+    except (AttributeError, IndexError, TypeError):
+        finish_reason = None
+    if isinstance(finish_reason, str) and finish_reason:
+        event["finish_reason"] = finish_reason
+    if elapsed >= 0:
+        event["duration_secs"] = elapsed
+
+    cost = _response_cost(response)
+    if cost is not None:
+        event["costs"] = [{"amount": cost, "unit": "usd", "source": "litellm.response_cost"}]
+    print(json.dumps(event))
+
+
 def exec_tool(name: str, args: dict, workspace: str) -> str:
     try:
         if name == "read_file":
@@ -123,10 +204,12 @@ def main() -> int:
     total_in = 0
     total_out = 0
     i = 0
+    requests_made = 0
     failed = False
 
     while args.max_iterations == 0 or i < args.max_iterations:
         i += 1
+        started = time.monotonic()
         try:
             completion_options = dict(
                 model=args.model,
@@ -141,6 +224,9 @@ def main() -> int:
             print(json.dumps({"type": "error", "message": str(e), "iteration": i}))
             failed = True
             break
+
+        requests_made += 1
+        _emit_request_usage(response, i, time.monotonic() - started)
 
         usage = response.usage
         if usage:
@@ -180,7 +266,16 @@ def main() -> int:
                 }
             )
 
-    print(json.dumps({"type": "usage", "input_tokens": total_in, "output_tokens": total_out}))
+    print(
+        json.dumps(
+            {
+                "type": "usage",
+                "input_tokens": total_in,
+                "output_tokens": total_out,
+                "model_requests": requests_made,
+            }
+        )
+    )
     return 1 if failed else 0
 
 
