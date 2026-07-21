@@ -22,6 +22,10 @@ except ImportError:
     print(json.dumps({"type": "error", "message": "litellm not installed"}))
     sys.exit(1)
 
+# Drop provider-unsupported params (e.g. temperature for gpt-5 reasoning models)
+# rather than raising, so one agent loop works across model families.
+litellm.drop_params = True
+
 TOOLS = [
     {
         "type": "function",
