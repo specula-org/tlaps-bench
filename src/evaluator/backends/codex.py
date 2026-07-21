@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
 import tomllib
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from evaluator import quota
+from evaluator.usage import UsageSummary
 
 from .agentic import AgenticBackend
 from .base import (
@@ -32,6 +36,312 @@ _RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 # detect_quota_block runs host-side (after the agent container exits) where the
 # repo and ~/.codex are available, so it can reuse the usage probe's precise reset.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_CODEX_USAGE_SOURCE = "codex_cli_turn_completed"
+_MODEL_ACTIVITY_ITEM_TYPES = frozenset(
+    {
+        "agent_message",
+        "reasoning",
+        "command_execution",
+        "file_change",
+        "mcp_tool_call",
+        "collab_tool_call",
+        "web_search",
+        "todo_list",
+    }
+)
+_STREAM_LAG_RE = re.compile(r"event stream lagged; dropped\s+\d+\s+events?", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class _CodexTerminalUsage:
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int | None
+    reasoning_output_tokens: int | None
+    incomplete: bool
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ParsedCodexRun:
+    transcript: str
+    usage: UsageSummary
+
+
+def _strict_token(value: object) -> int | None:
+    """Validate a native Codex token field without coercion."""
+
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _parse_terminal_usage(event: dict[str, Any]) -> tuple[_CodexTerminalUsage | None, tuple[str, ...]]:
+    raw_usage = event.get("usage")
+    if not isinstance(raw_usage, dict):
+        return None, ("Codex turn.completed event has no usage object",)
+
+    input_tokens = _strict_token(raw_usage.get("input_tokens"))
+    output_tokens = _strict_token(raw_usage.get("output_tokens"))
+    core_errors = []
+    if input_tokens is None:
+        core_errors.append("input_tokens")
+    if output_tokens is None:
+        core_errors.append("output_tokens")
+    if core_errors:
+        return None, (f"Codex turn.completed has invalid core fields: {', '.join(core_errors)}",)
+
+    if input_tokens == 0 and output_tokens == 0:
+        # Codex's JSONL event processor uses Usage::default() when it never
+        # received a native token update, so this shape is not proof of a free run.
+        return None, ("Codex reported synthesized-looking all-zero terminal usage",)
+
+    warnings: list[str] = []
+    incomplete = False
+
+    def optional_subset(name: str) -> int | None:
+        nonlocal incomplete
+        if name not in raw_usage:
+            warnings.append(f"Codex turn.completed is missing {name}")
+            incomplete = True
+            return None
+        value = _strict_token(raw_usage[name])
+        if value is None:
+            warnings.append(f"Codex turn.completed has invalid {name}")
+            incomplete = True
+        return value
+
+    cached_input_tokens = optional_subset("cached_input_tokens")
+    reasoning_output_tokens = optional_subset("reasoning_output_tokens")
+    if cached_input_tokens is not None and cached_input_tokens > input_tokens:
+        warnings.append("Codex cached input tokens exceed total input tokens")
+        cached_input_tokens = None
+        incomplete = True
+    if reasoning_output_tokens is not None and reasoning_output_tokens > output_tokens:
+        warnings.append("Codex reasoning output tokens exceed total output tokens")
+        reasoning_output_tokens = None
+        incomplete = True
+
+    return (
+        _CodexTerminalUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cached_input_tokens,
+            reasoning_output_tokens=reasoning_output_tokens,
+            incomplete=incomplete,
+            warnings=tuple(warnings),
+        ),
+        (),
+    )
+
+
+def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
+    etype = event.get("type")
+    if etype == "item.completed":
+        item = event.get("item")
+        if not isinstance(item, dict):
+            return
+        itype = item.get("type")
+        if itype == "agent_message":
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                lines.extend((f"[AGENT] {text}", ""))
+        elif itype == "command_execution":
+            command = item.get("command", "")
+            output = item.get("aggregated_output", "")
+            lines.append(f"[CMD] {command}")
+            if output:
+                output = str(output)
+                if len(output) > 3000:
+                    output = output[:1500] + "\n... (truncated) ...\n" + output[-1500:]
+                lines.append(output.rstrip())
+            if item.get("exit_code") is not None:
+                lines.append(f"[EXIT {item['exit_code']}]")
+            lines.append("")
+        elif itype == "file_change":
+            changes = item.get("changes")
+            if isinstance(changes, list):
+                paths = [change.get("path") for change in changes if isinstance(change, dict)]
+                lines.extend((f"[EDIT] {', '.join(path for path in paths if isinstance(path, str))}", ""))
+        elif itype == "error":
+            lines.extend((f"[WARNING] {item.get('message', '')}", ""))
+    elif etype == "error":
+        lines.extend((f"[ERROR] {event.get('message', '')}", ""))
+
+
+def _retry_may_duplicate_model_work(jsonl_path: str) -> bool:
+    """Detect native activity or a stream too incomplete to retry safely."""
+
+    saw_turn_started = False
+    saw_turn_failed = False
+    failure_messages: list[str] = []
+    try:
+        with open(jsonl_path) as f:
+            for raw in f:
+                if not raw.strip():
+                    continue
+                try:
+                    event = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    return True
+                if not isinstance(event, dict):
+                    return True
+                event_type = event.get("type")
+                if not isinstance(event_type, str):
+                    return True
+                if event_type == "turn.started":
+                    saw_turn_started = True
+                elif event_type == "turn.completed":
+                    return True
+                elif event_type == "turn.failed":
+                    saw_turn_failed = True
+                    error = event.get("error")
+                    message = error.get("message") if isinstance(error, dict) else None
+                    if isinstance(message, str):
+                        failure_messages.append(message)
+                elif event_type == "error":
+                    message = event.get("message")
+                    if isinstance(message, str):
+                        failure_messages.append(message)
+                item = event.get("item")
+                if not event_type.startswith("item.") or not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if isinstance(item_type, str) and item_type in _MODEL_ACTIVITY_ITEM_TYPES:
+                    return True
+                if item_type == "error":
+                    message = item.get("message")
+                    if isinstance(message, str) and _STREAM_LAG_RE.search(message):
+                        # This warning is not itself model work, but events that
+                        # would prove work may be among those dropped. Retrying
+                        # such a launch could silently duplicate paid work.
+                        return True
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeError):
+        return True
+
+    if saw_turn_failed and not saw_turn_started:
+        # A terminal failure without its required start event is a damaged
+        # lifecycle, so it cannot prove that dispatch never happened.
+        return True
+    if not saw_turn_started:
+        return False
+    # The explicit provider cap is a rejection, not an interrupted generation.
+    # It owns a separate wait-and-retry path in the runner. Every other started
+    # failure may have reached the provider before its first item event arrived.
+    return not (
+        saw_turn_failed and failure_messages and all(_USAGE_LIMIT_RE.search(message) for message in failure_messages)
+    )
+
+
+def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
+    lines: list[str] = []
+    terminal_events: list[dict[str, Any]] = []
+    terminal_usages: list[_CodexTerminalUsage] = []
+    warnings: list[str] = []
+    malformed_lines = 0
+    failed_turns = 0
+    saw_multi_agent_activity = False
+    saw_stream_lag = False
+
+    try:
+        with open(jsonl_path) as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    malformed_lines += 1
+                    continue
+                if not isinstance(event, dict):
+                    malformed_lines += 1
+                    continue
+                _append_transcript_event(lines, event)
+                event_type = event.get("type")
+                item = event.get("item")
+                if isinstance(event_type, str) and event_type.startswith("item.") and isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type == "collab_tool_call":
+                        saw_multi_agent_activity = True
+                    elif item_type == "error":
+                        message = item.get("message")
+                        if isinstance(message, str) and _STREAM_LAG_RE.search(message):
+                            saw_stream_lag = True
+                if event_type == "turn.completed":
+                    terminal_events.append(event)
+                    terminal_usage, terminal_warnings = _parse_terminal_usage(event)
+                    warnings.extend(terminal_warnings)
+                    if terminal_usage is not None:
+                        terminal_usages.append(terminal_usage)
+                elif event_type == "turn.failed":
+                    failed_turns += 1
+    except (OSError, UnicodeError) as exc:
+        return _ParsedCodexRun(
+            transcript="\n".join(lines),
+            usage=UsageSummary(
+                sources=("codex_cli_jsonl",),
+                available=False,
+                warnings=(f"Codex JSONL output unavailable: {type(exc).__name__}",),
+            ),
+        )
+
+    if malformed_lines:
+        warnings.append(f"Codex JSONL contains {malformed_lines} malformed nonempty line(s)")
+    if saw_stream_lag:
+        warnings.append("Codex reported dropped JSONL events; model activity and usage may be incomplete")
+    if not terminal_usages:
+        if not terminal_events:
+            warnings.append("Codex turn.completed usage is unavailable")
+        if failed_turns:
+            warnings.append("Codex turn failed before terminal usage was emitted")
+        return _ParsedCodexRun(
+            transcript="\n".join(lines),
+            usage=UsageSummary(
+                sources=("codex_cli_jsonl",),
+                available=False,
+                warnings=tuple(dict.fromkeys(warnings)),
+            ),
+        )
+
+    selected = terminal_usages[-1]
+    warnings.extend(selected.warnings)
+    lower_bound = False
+    if len(terminal_events) > 1:
+        warnings.append("Codex JSONL contains multiple turn.completed events; using the last usable aggregate")
+        lower_bound = True
+    if malformed_lines:
+        lower_bound = True
+    if failed_turns:
+        warnings.append("Codex JSONL contains both failed and completed turn events")
+        lower_bound = True
+    if saw_multi_agent_activity:
+        warnings.append(
+            "Codex JSONL contains multi-agent activity; the terminal aggregate covers only the parent thread"
+        )
+        lower_bound = True
+    if saw_stream_lag:
+        lower_bound = True
+
+    return _ParsedCodexRun(
+        transcript="\n".join(lines),
+        usage=UsageSummary(
+            input_tokens=selected.input_tokens,
+            output_tokens=selected.output_tokens,
+            cache_read_input_tokens=selected.cache_read_input_tokens,
+            cache_write_input_tokens=None,
+            reasoning_output_tokens=selected.reasoning_output_tokens,
+            model_requests=None,
+            model_time_secs=None,
+            costs=(),
+            requests=(),
+            sources=(_CODEX_USAGE_SOURCE,),
+            available=True,
+            complete=not lower_bound and not selected.incomplete,
+            is_lower_bound=lower_bound,
+            warnings=tuple(dict.fromkeys(warnings)),
+        ),
+    )
 
 
 class CodexBackend(AgenticBackend):
@@ -68,6 +378,15 @@ class CodexBackend(AgenticBackend):
             self.model,
             "-c",
             "web_search=disabled",
+            # codex exec reports usage for its primary thread only. Disable every
+            # native child-agent entry point so a clean terminal aggregate is an
+            # exact total for the whole benchmark invocation.
+            "-c",
+            "features.multi_agent=false",
+            "-c",
+            "features.multi_agent_v2=false",
+            "-c",
+            "features.enable_fanout=false",
             "--json",
             "-o",
             last_msg_path,
@@ -170,6 +489,7 @@ class CodexBackend(AgenticBackend):
         error and sleep until the stated reset instead. Returns None if no cap.
         """
         msg = None
+        saw_completed_turn = False
         try:
             with open(jsonl_path) as f:
                 for raw in f:
@@ -180,18 +500,26 @@ class CodexBackend(AgenticBackend):
                         ev = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
+                    if not isinstance(ev, dict):
+                        continue
                     t = ev.get("type", "")
+                    if t == "turn.completed":
+                        saw_completed_turn = True
+                        continue
                     if t == "error":
-                        m = ev.get("message", "")
+                        candidate = ev.get("message")
+                        m = candidate if isinstance(candidate, str) else ""
                     elif t == "turn.failed":
-                        m = (ev.get("error") or {}).get("message", "")
+                        error = ev.get("error")
+                        candidate = error.get("message") if isinstance(error, dict) else None
+                        m = candidate if isinstance(candidate, str) else ""
                     else:
                         continue
                     if m and _USAGE_LIMIT_RE.search(m):
                         msg = m  # keep the last occurrence
-        except FileNotFoundError:
+        except (OSError, UnicodeError):
             return None
-        if msg is None:
+        if msg is None or saw_completed_turn:
             return None
         # Prefer the precise reset epoch codex records in its session rollout (what
         # the usage probe reads) over parsing the human "try again at 7:24 PM"
@@ -219,14 +547,28 @@ class CodexBackend(AgenticBackend):
         usage = quota.fetch_usage(os.path.join(_REPO_ROOT, rel))
         if not usage:
             return None
-        windows = [usage.get("five_hour") or {}, usage.get("seven_day") or {}]
-        capped = [w for w in windows if (w.get("utilization") or 0) >= 100 and w.get("resets_at")]
+        raw_windows = (usage.get("five_hour"), usage.get("seven_day"))
+        windows = [window for window in raw_windows if isinstance(window, dict)]
+
+        def utilization(window: dict[str, object]) -> int | float:
+            value = window.get("utilization")
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value if value >= 0 else 0
+            if isinstance(value, float) and value >= 0 and math.isfinite(value):
+                return value
+            return 0
+
+        def has_reset(window: dict[str, object]) -> bool:
+            value = window.get("resets_at")
+            return isinstance(value, str) and bool(value)
+
+        capped = [window for window in windows if utilization(window) >= 100 and has_reset(window)]
         if capped:
-            return max(w["resets_at"] for w in capped)  # wait past the last-clearing cap
-        with_reset = [w for w in windows if w.get("resets_at")]
+            return max(str(window["resets_at"]) for window in capped)  # wait past the last-clearing cap
+        with_reset = [window for window in windows if has_reset(window)]
         if not with_reset:
             return None
-        return max(with_reset, key=lambda w: w.get("utilization") or 0)["resets_at"]
+        return str(max(with_reset, key=utilization)["resets_at"])
 
     @staticmethod
     def _parse_retry_time(msg: str) -> datetime | None:
@@ -253,55 +595,24 @@ class CodexBackend(AgenticBackend):
             return None
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
-        lines: list[str] = []
-        in_tok = 0
-        out_tok = 0
+        parsed = _parse_codex_run(jsonl_path)
+        return parsed.transcript, parsed.usage.legacy_input_tokens, parsed.usage.legacy_output_tokens
 
-        try:
-            with open(jsonl_path) as f:
-                for raw in f:
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        event = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
+    def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
+        # The legacy counts are produced by this same parser. Read the native
+        # terminal aggregate again so structured and compatibility fields share
+        # one protocol interpretation and can never double-count intermediates.
+        del input_tokens, output_tokens
+        return _parse_codex_run(jsonl_path).usage
 
-                    etype = event.get("type", "")
+    def retry_may_duplicate_model_work(self, jsonl_path: str) -> bool:
+        # A failed turn has no native token aggregate. Known model-driven item
+        # types prove activity; a stream-lag warning means such proof may have
+        # been dropped. Both make an automatic replacement unsafe without
+        # fabricating request or token counts.
+        return _retry_may_duplicate_model_work(jsonl_path)
 
-                    if etype == "item.completed":
-                        item = event.get("item", {})
-                        itype = item.get("type", "")
-                        if itype == "agent_message":
-                            text = item.get("text", "")
-                            if text:
-                                lines.append(f"[AGENT] {text}")
-                                lines.append("")
-                        elif itype == "command_execution":
-                            cmd = item.get("command", "")
-                            output = item.get("aggregated_output", "")
-                            exit_code = item.get("exit_code", "")
-                            lines.append(f"[CMD] {cmd}")
-                            if output:
-                                if len(output) > 3000:
-                                    output = output[:1500] + "\n... (truncated) ...\n" + output[-1500:]
-                                lines.append(output.rstrip())
-                            if exit_code is not None:
-                                lines.append(f"[EXIT {exit_code}]")
-                            lines.append("")
-                        elif itype == "file_edit":
-                            lines.append(f"[EDIT] {item.get('filepath', '')}")
-                            lines.append("")
-                    elif etype == "error":
-                        lines.append(f"[ERROR] {event.get('message', '')}")
-                        lines.append("")
-
-                    if "usage" in event:
-                        u = event["usage"]
-                        in_tok += u.get("input_tokens", 0)
-                        out_tok += u.get("output_tokens", 0)
-        except FileNotFoundError:
-            pass
-
-        return "\n".join(lines), in_tok, out_tok
+    def attempt_output_files(self) -> tuple[str, ...]:
+        # `-o` is only written after a final response. Without isolating it, a
+        # later failed retry can leave an earlier launch's message looking final.
+        return ("codex_last_message.txt",)

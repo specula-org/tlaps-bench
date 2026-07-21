@@ -12,6 +12,8 @@ Run: PYTHONPATH=src python3 -m pytest tests/evaluator/test_codex_quota_block.py
 import json
 import os
 
+import pytest
+
 from evaluator.backends.codex import CodexBackend
 
 # The exact event stream codex emits when the account is capped.
@@ -100,9 +102,68 @@ def test_probe_targets_capped_window_not_just_5h(tmp_path, monkeypatch):
     assert 3 * 3600 - 300 <= secs <= 3 * 3600 + 300  # weekly reset, not the ~10min 5h one
 
 
+@pytest.mark.parametrize(
+    "probe",
+    [
+        {"five_hour": "bad", "seven_day": []},
+        {"five_hour": {"utilization": "100", "resets_at": {}}, "seven_day": None},
+        {"five_hour": {"utilization": True, "resets_at": 123}, "seven_day": {}},
+    ],
+)
+def test_malformed_probe_windows_fall_back_without_crashing(tmp_path, monkeypatch, probe):
+    p = os.path.join(tmp_path, "out.jsonl")
+    _write_jsonl(p, USAGE_LIMIT_STREAM)
+    monkeypatch.setattr("evaluator.backends.codex.quota.fetch_usage", lambda _path: probe)
+
+    secs = CodexBackend().detect_quota_block(p)
+
+    assert isinstance(secs, int)
+    assert 60 <= secs <= 6 * 3600
+
+
 def test_normal_run_does_not_block(tmp_path):
     p = os.path.join(tmp_path, "out.jsonl")
     _write_jsonl(p, NORMAL_STREAM)
+    assert CodexBackend().detect_quota_block(p) is None
+
+
+def test_recovered_completed_turn_does_not_trigger_reactive_retry(tmp_path):
+    p = os.path.join(tmp_path, "out.jsonl")
+    _write_jsonl(
+        p,
+        [
+            {"type": "error", "message": "You've hit your usage limit. Try again at 7:24 PM."},
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 100,
+                    "cached_input_tokens": 80,
+                    "output_tokens": 10,
+                    "reasoning_output_tokens": 2,
+                },
+            },
+        ],
+    )
+
+    assert CodexBackend().detect_quota_block(p) is None
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        [],
+        42,
+        "noise",
+        None,
+        True,
+        {"type": "turn.failed", "error": "usage limit"},
+        {"type": "error", "message": {"text": "usage limit"}},
+    ],
+)
+def test_valid_but_unexpected_json_shapes_do_not_crash_quota_detection(tmp_path, record):
+    p = os.path.join(tmp_path, "out.jsonl")
+    _write_jsonl(p, [record])
+
     assert CodexBackend().detect_quota_block(p) is None
 
 

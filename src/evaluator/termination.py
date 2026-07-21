@@ -15,8 +15,9 @@ never INFRA_ERROR), then runs a registry of INFRA RULES (criteria). Each rule
 inspects a ``TerminationContext`` and returns a reason if it fires, else
 ``None``; the first that fires wins. There is one rule per backend
 (:func:`codex_turn_failed`, :func:`claude_code_result_error`,
-:func:`copilot_session_error`, :func:`litellm_completion_error`), each branching
-on ``ctx.backend`` to read its own event vocabulary, plus one backend-independent startup rule
+:func:`copilot_session_error`, :func:`litellm_completion_error`,
+:func:`pi_run_failed`), each branching on ``ctx.backend`` to read its own event
+vocabulary, plus one backend-independent startup rule
 (:func:`agent_startup_failure`) for the CLI dying before emitting a single
 event. The one-shot rule may also return TIMEOUT for a strictly audited
 provider deadline. Add more by appending to :data:`INFRA_RULES`.
@@ -263,6 +264,72 @@ def litellm_completion_error(ctx: TerminationContext) -> str | None:
     return None
 
 
+_PI_RUN_ACTIVITY_EVENTS = frozenset(
+    {
+        "agent_start",
+        "agent_end",
+        "turn_start",
+        "turn_end",
+        "message_start",
+        "message_update",
+        "message_end",
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_end",
+        "compaction_start",
+        "compaction_end",
+    }
+)
+
+
+def pi_run_failed(ctx: TerminationContext) -> str | None:
+    """Pi rule: require a settled run whose final assistant response succeeded.
+
+    Pi writes a ``session`` header before it starts the prompt, so startup
+    failures commonly leave a non-empty stream and bypass the generic empty-
+    stream rule. JSON mode also exits zero when the provider's final assistant
+    message has ``stopReason == "error"`` or ``"aborted"``. ``agent_settled``
+    is the definitive end of Pi's automatic retries, compaction, and queued
+    continuations; ``agent_end`` alone is not terminal.
+
+    Earlier assistant errors are allowed when a later response recovered. A
+    runner wall-clock timeout is checked before this rule by :func:`classify`.
+    """
+
+    if ctx.backend != "pi":
+        return None
+
+    events = ctx.events()
+    last_settled_index: int | None = None
+    last_activity_index: int | None = None
+    last_assistant_stop_reason: object = None
+    saw_assistant_terminal = False
+
+    for index, event in enumerate(events):
+        event_type = event.get("type")
+        if event_type in _PI_RUN_ACTIVITY_EVENTS:
+            last_activity_index = index
+        if event_type == "agent_settled":
+            last_settled_index = index
+        elif event_type == "message_end":
+            message = event.get("message")
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                saw_assistant_terminal = True
+                last_assistant_stop_reason = message.get("stopReason")
+
+    if ctx.agent_exit not in {None, 0}:
+        return TerminationReason.INFRA_ERROR
+    if last_settled_index is None:
+        return TerminationReason.INFRA_ERROR
+    if last_activity_index is not None and last_activity_index > last_settled_index:
+        return TerminationReason.INFRA_ERROR
+    if not saw_assistant_terminal:
+        return TerminationReason.INFRA_ERROR
+    if last_assistant_stop_reason in {"error", "aborted"}:
+        return TerminationReason.INFRA_ERROR
+    return None
+
+
 def one_shot_result_error(ctx: TerminationContext) -> str | None:
     """One-shot rule: require an audited terminal result and one clean response.
 
@@ -346,6 +413,7 @@ INFRA_RULES: list[Rule] = [
     claude_code_result_error,
     copilot_session_error,
     litellm_completion_error,
+    pi_run_failed,
     one_shot_result_error,
     agent_startup_failure,
 ]

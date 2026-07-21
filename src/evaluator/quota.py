@@ -16,9 +16,11 @@ Both share ``secs_until_reset``, the single "how long until this resets" helper.
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 
@@ -59,9 +61,10 @@ def fetch_usage(usage_script: str | None) -> dict | None:
     if r.returncode != 0 or not r.stdout.strip():
         return None
     try:
-        return json.loads(r.stdout)
+        parsed = json.loads(r.stdout)
     except json.JSONDecodeError:
         return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _usage_over(usage: dict, quota_5h: float, quota_7d: float):
@@ -72,12 +75,19 @@ def _usage_over(usage: dict, quota_5h: float, quota_7d: float):
     for key, limit in (("five_hour", quota_5h), ("seven_day", quota_7d)):
         if limit <= 0:
             continue
-        obj = usage.get(key) or {}
-        util = obj.get("utilization") or 0
+        candidate = usage.get(key)
+        obj = candidate if isinstance(candidate, dict) else {}
+        raw_util = obj.get("utilization")
+        if (isinstance(raw_util, int) and not isinstance(raw_util, bool)) or (
+            isinstance(raw_util, float) and math.isfinite(raw_util)
+        ):
+            util = raw_util
+        else:
+            util = 0
         if util > limit:
             over.append(f"{key}={util}% (limit {limit}%)")
             ra = obj.get("resets_at")
-            if ra:
+            if isinstance(ra, str) and ra:
                 resets.append(ra)
     earliest = sorted(resets)[0] if resets else None
     return over, earliest
@@ -124,7 +134,14 @@ def wait_for_quota(usage_script, quota_5h, quota_7d, max_waits, log_prefix: str 
 MAX_QUOTA_RETRIES = 12
 
 
-def run_with_quota_retry(run_once, detect_block, *, max_retries: int = MAX_QUOTA_RETRIES, log_prefix: str = "") -> bool:
+def run_with_quota_retry(
+    run_once,
+    detect_block,
+    *,
+    max_retries: int = MAX_QUOTA_RETRIES,
+    log_prefix: str = "",
+    prepare_retry: Callable[[int], bool] | None = None,
+) -> bool:
     """Run the agent, sleeping through any hard provider usage-limit cap.
 
     The proactive gate (``wait_for_quota``) cannot see this cap: once hard-capped,
@@ -135,8 +152,11 @@ def run_with_quota_retry(run_once, detect_block, *, max_retries: int = MAX_QUOTA
 
     ``run_once``: () -> None — launches the agent, writing its output.
     ``detect_block``: () -> int | None — seconds to wait, or None when no cap.
+    ``prepare_retry``: (attempt_index) -> bool — optional hook called before a
+    blocked attempt would be replaced. It can preserve telemetry and must return
+    False when native evidence shows that retrying could duplicate paid work.
     Returns True if a run completed without hitting the cap, False if the cap
-    persisted past ``max_retries``.
+    persisted past ``max_retries`` or a retry was suppressed as unsafe.
     """
     for attempt in range(max_retries):
         run_once()
@@ -147,6 +167,13 @@ def run_with_quota_retry(run_once, detect_block, *, max_retries: int = MAX_QUOTA
             # Last attempt: the verdict is already "give up", so don't sleep
             # through a reset (up to 6h) we'll never use.
             break
+        if prepare_retry is not None and not prepare_retry(attempt):
+            print(
+                f"{log_prefix}provider usage limit hit with possible prior model activity "
+                "— not retrying potentially paid work",
+                flush=True,
+            )
+            return False
         print(
             f"{log_prefix}provider usage limit hit — sleeping {block_secs}s then "
             f"retrying (attempt {attempt + 1}/{max_retries})",

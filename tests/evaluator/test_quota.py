@@ -9,6 +9,7 @@ Run: PYTHONPATH=src python3 -m pytest tests/evaluator/test_quota.py
 """
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from evaluator import quota
 
@@ -57,6 +58,15 @@ def test_usage_over_limit_zero_disables_window():
     assert earliest is None
 
 
+def test_usage_over_ignores_malformed_window_fields():
+    usage = {
+        "five_hour": "not-an-object",
+        "seven_day": {"utilization": "99", "resets_at": {"bad": "shape"}},
+    }
+
+    assert quota._usage_over(usage, quota_5h=80, quota_7d=80) == ([], None)
+
+
 def test_wait_for_quota_disabled_returns_true():
     assert quota.wait_for_quota(None, 80, 95, 6) is True  # no probe -> gate off
     assert quota.wait_for_quota("scripts/usage/claude.sh", 0, 0, 6) is True  # both 0 -> off
@@ -65,6 +75,18 @@ def test_wait_for_quota_disabled_returns_true():
 def test_fetch_usage_missing_script_is_none():
     assert quota.fetch_usage(None) is None
     assert quota.fetch_usage("/no/such/script.sh") is None
+
+
+def test_fetch_usage_rejects_valid_json_that_is_not_an_object(tmp_path, monkeypatch):
+    script = tmp_path / "usage.sh"
+    script.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(
+        quota.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="[1, 2, 3]"),
+    )
+
+    assert quota.fetch_usage(str(script)) is None
 
 
 def test_run_with_quota_retry_no_cap_runs_once():
@@ -81,6 +103,24 @@ def test_run_with_quota_retry_retries_then_succeeds(monkeypatch):
     ok = quota.run_with_quota_retry(lambda: calls.append(1), lambda: blocks.pop(0))
     assert ok is True
     assert len(calls) == 2
+
+
+def test_run_with_quota_retry_stops_when_preparing_retry_finds_model_work(monkeypatch):
+    slept = []
+    monkeypatch.setattr(quota.time, "sleep", lambda seconds: slept.append(seconds))
+    calls = []
+    prepared = []
+
+    ok = quota.run_with_quota_retry(
+        lambda: calls.append(1),
+        lambda: 10,
+        prepare_retry=lambda attempt: prepared.append(attempt) or False,
+    )
+
+    assert ok is False
+    assert len(calls) == 1
+    assert prepared == [0]
+    assert slept == []
 
 
 def test_run_with_quota_retry_exhausts(monkeypatch):
