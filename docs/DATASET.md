@@ -7,7 +7,7 @@ per-source summary.
 Each row is a benchmark **example** — one directory under `benchmark/<mode>/`,
 i.e. one coherent protocol or example. A protocol whose proof is split across
 several TLA+ modules stays a single row. The example name links to its upstream
-location; the upstream location of `GermanProtocol` could not be found.
+location.
 
 `–` marks a mode with no task for that example: a source with no human proofs
 yields no proof-completion task, and an example whose only proven theorems are
@@ -85,7 +85,7 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpanningTree](https://github.com/tlaplus/Examples/tree/master/specifications/SpanningTree) | tlaplus/Examples | 1 | 1 | 2 |
 | [SpecifyingSystems_TLC](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/TLC) | tlaplus/Examples | 1 | 1 | 2 |
 | [byihive](https://github.com/tlaplus/Examples/tree/master/specifications/byihive) | tlaplus/Examples | 1 | 1 | 2 |
-| GermanProtocol | tlaplus/Examples | – | 1 | 1 |
+| [GermanProtocol](https://github.com/tlaplus/Examples/blob/aba0cef20ce694f97612ad36a873734a1314534a/specifications/GermanProtocol/GermanCoherence.tla) | tlaplus/Examples | – | 1 | 1 |
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
