@@ -1,15 +1,11 @@
 --------------------------- MODULE EWD687a_proof_Thm_CountersConsistent ---------------------------
 
-EXTENDS EWD687a, NaturalsInduction, FiniteSetTheorems, TLAPS
+EXTENDS EWD687a, NaturalsInduction, FiniteSetTheorems, GraphTheorems, TLAPS
 
 -----------------------------------------------------------------------------
 
 THEOREM Thm_CountersConsistent == Spec => CountersConsistent
 PROOF OBVIOUS
-
------------------------------------------------------------------------------
-
-ASSUME ProcsFinite == IsFiniteSet(Procs)
 
 -----------------------------------------------------------------------------
 

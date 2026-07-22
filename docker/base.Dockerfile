@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && cp /tmp/downloads/tla2tools-${TLATOOLS_TAG}.jar /opt/sany/lib/tla2tools.jar
 
 # Layer 5: Community modules (downloaded inside Docker — no host dependency)
-ARG COMMUNITY_TAG=202604221529
+ARG COMMUNITY_TAG=202607181436
 ARG COMMUNITY_URL=https://github.com/tlaplus/CommunityModules/archive/refs/tags/${COMMUNITY_TAG}.tar.gz
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz ]; then \
@@ -75,6 +75,8 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && mkdir -p /opt/community \
     && tar -xzf /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz -C /tmp/ \
     && cp /tmp/CommunityModules-${COMMUNITY_TAG}/modules/*.tla /opt/community/ \
+    && test -f /opt/community/Graphs.tla \
+    && test -f /opt/community/GraphTheorems.tla \
     && rm -rf /tmp/CommunityModules-${COMMUNITY_TAG}
 
 # Layer 6: SANY DumpSemantics compilation (needs tla2tools.jar + JDK)

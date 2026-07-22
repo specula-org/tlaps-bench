@@ -61,6 +61,7 @@ COMMUNITY_MODULES = {
     "BagsExt",
     "Relation",
     "Graphs",
+    "GraphTheorems",
     "GraphsExt",
     "Combinatorics",
     "DyadicRationals",

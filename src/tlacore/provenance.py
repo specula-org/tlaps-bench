@@ -39,9 +39,10 @@ STDLIB = {
     "WellFoundedInduction",
     "BagsTheorems",
     "CommunityModules",
-    # Vendored CommunityModules (lib/community/) the tlaplus/Examples imports
-    # EXTEND by individual module name. Kept in sync with COMMUNITY_MODULES in
-    # src/dataset/proof_completion/generate.py.
+    # Vendored CommunityModules that older workspaces may contain physically.
+    # This is not the resolver allowlist: entries here exempt same-named local
+    # files from agent-created-module scanning, so additions need a provenance
+    # security review.
     "SequencesExt",
     "SequencesExtTheorems",
     "FiniteSetsExt",

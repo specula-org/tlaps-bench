@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+from dataset.proof_completion.generate import COMMUNITY_MODULES
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -24,6 +26,19 @@ def test_base_image_keeps_the_local_build_fingerprint_label():
 
     assert "ARG TLAPS_BENCH_BUILD_SHA256=unknown" in dockerfile
     assert 'LABEL org.specula.tlaps-bench.build-sha256="${TLAPS_BENCH_BUILD_SHA256}"' in dockerfile
+
+
+def test_community_modules_release_matches_native_and_docker_setups():
+    installer = (REPO_ROOT / "scripts/install_deps.sh").read_text()
+    dockerfile = (REPO_ROOT / "docker/base.Dockerfile").read_text()
+
+    native_tag = _match(r'^COMMUNITY_TAG="([^"]+)"', installer, "native CommunityModules tag")
+    docker_tag = _match(r"^ARG COMMUNITY_TAG=(\S+)", dockerfile, "Docker CommunityModules tag")
+    assert native_tag == docker_tag == "202607181436"
+    for module in ("Graphs.tla", "GraphTheorems.tla"):
+        assert module in installer
+        assert module in dockerfile
+    assert "GraphTheorems" in COMMUNITY_MODULES
 
 
 def test_native_setup_follows_the_rolling_tlapm_release():

@@ -1,4 +1,4 @@
---------------------------- MODULE EWD687a_proof_TypeCorrect ---------------------------
+--------------------------- MODULE EWD687a_proof_Safety ---------------------------
 (***************************************************************************)
 (* Proofs of the theorems stated in EWD687a.tla.                           *)
 (***************************************************************************)
@@ -23,7 +23,10 @@ THEOREM Invariant1 == Spec => []Inv1
 PROOF OMITTED
 
 THEOREM TypeCorrect == Spec => []TypeOK
-PROOF OBVIOUS
+PROOF OMITTED
+
+THEOREM Thm_CountersConsistent == Spec => CountersConsistent
+PROOF OMITTED
 
 (***************************************************************************)
 (* In preparation of the main correctness theorem expressed by DT1Inv, we  *)
@@ -37,10 +40,18 @@ TreeInv ==
                /\ upEdge[p] \in InEdges(p)
                /\ rcvdUnacked[upEdge[p]] # 0
 
+LEMMA NotAnEdgeNoEdge == NotAnEdge \notin Edges
+PROOF OMITTED
+
+THEOREM TreeInvariant == Spec => []TreeInv 
+PROOF OMITTED
+
 (***************************************************************************)
 (* We can now prove the main safety property of the algorithm, expressed   *)
 (* as DT1Inv, as a consequence of the preceding invariants.                *)
 (***************************************************************************)
+THEOREM Safety == Spec => []DT1Inv 
+PROOF OBVIOUS
 
 (***************************************************************************)
 (* The proof of the liveness property DT2 is left for future work.         *)

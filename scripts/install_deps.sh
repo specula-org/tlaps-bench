@@ -40,7 +40,7 @@ APALACHE_URL="https://github.com/apalache-mc/apalache/releases/download/${APALAC
 TLATOOLS_TAG="v1.8.0"
 TLATOOLS_URL="https://github.com/tlaplus/tlaplus/releases/download/${TLATOOLS_TAG}/tla2tools.jar"
 
-COMMUNITY_TAG="202604221529"
+COMMUNITY_TAG="202607181436"
 COMMUNITY_URL="https://github.com/tlaplus/CommunityModules/archive/refs/tags/${COMMUNITY_TAG}.tar.gz"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -228,6 +228,8 @@ fi
 # --- CommunityModules (.tla) ---
 COMMUNITY_MARKER="${LIB_DIR}/community/.tlaps-bench-version"
 if [[ -f "${LIB_DIR}/community/SequencesExt.tla" \
+      && -f "${LIB_DIR}/community/Graphs.tla" \
+      && -f "${LIB_DIR}/community/GraphTheorems.tla" \
       && -f "${COMMUNITY_MARKER}" \
       && "$(<"${COMMUNITY_MARKER}")" == "${COMMUNITY_TAG}" ]]; then
   echo "[install_deps] CommunityModules ${COMMUNITY_TAG} already at lib/community/ — skipping"
@@ -241,6 +243,10 @@ else
   cp "${CM_TMP}/CommunityModules-${COMMUNITY_TAG}/modules/"*.tla "${STAGED_COMMUNITY}/"
   [[ -f "${STAGED_COMMUNITY}/SequencesExt.tla" ]] \
     || die "downloaded CommunityModules archive is missing SequencesExt.tla"
+  [[ -f "${STAGED_COMMUNITY}/Graphs.tla" ]] \
+    || die "downloaded CommunityModules archive is missing Graphs.tla"
+  [[ -f "${STAGED_COMMUNITY}/GraphTheorems.tla" ]] \
+    || die "downloaded CommunityModules archive is missing GraphTheorems.tla"
   printf '%s\n' "${COMMUNITY_TAG}" > "${STAGED_COMMUNITY}/.tlaps-bench-version"
   rm -rf "${LIB_DIR}/community"
   mv "${STAGED_COMMUNITY}" "${LIB_DIR}/community"

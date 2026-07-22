@@ -99,6 +99,9 @@ _GROUP_URL = {
         "aba0cef20ce694f97612ad36a873734a1314534a/"
         "specifications/GermanProtocol/GermanCoherence.tla"
     ),
+    "tlaplus_examples_ewd687a": (
+        "https://github.com/tlaplus/Examples/tree/91c22ea537853196ed1e03e9ad91693ec37642de/specifications/ewd687a"
+    ),
     "two_thread_mutex": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
 }
 

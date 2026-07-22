@@ -21,6 +21,7 @@ from common import check_proof
 # point of the coupling is that these strings stay identical on both sides.
 BENCHMARK_DIR_ENV = "TLAPS_BENCHMARK_DIR"
 CHECK_TIMEOUT_ENV = "TLAPS_CHECK_TIMEOUT"
+COMMUNITY_LIB_ENV = "COMMUNITY_LIB"
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +30,7 @@ def _clear_env(monkeypatch):
     # value leaking in from the developer's shell can't mask a regression.
     monkeypatch.delenv(BENCHMARK_DIR_ENV, raising=False)
     monkeypatch.delenv(CHECK_TIMEOUT_ENV, raising=False)
+    monkeypatch.delenv(COMMUNITY_LIB_ENV, raising=False)
 
 
 def _canon(tmp_path, name="Foo"):
@@ -109,6 +111,18 @@ def test_timeout_default_when_unset():
     assert check_proof.resolve_timeout(None) == 600
 
 
+def test_community_lib_from_env_outside_repo(tmp_path, monkeypatch):
+    community = tmp_path / "community"
+    community.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "Goal.tla"
+    target.write_text("---- MODULE Goal ----\n====\n")
+    monkeypatch.setenv(COMMUNITY_LIB_ENV, str(community))
+
+    assert check_proof.find_community_lib(str(target)) == str(community)
+
+
 def test_timeout_malformed_env_falls_back(monkeypatch):
     monkeypatch.setenv(CHECK_TIMEOUT_ENV, "not-a-number")
     assert check_proof.resolve_timeout(None) == 600
@@ -173,6 +187,16 @@ def test_env_var_names_coupled_between_runner_and_checker(env_name):
     checker = _src("common/check_proof.py")
     assert env_name in runner, f"runner.py no longer sets {env_name}"
     assert env_name in checker, f"check_proof.py no longer reads {env_name}"
+
+
+def test_community_lib_env_coupled_between_runner_checker_and_prompts():
+    runner = _src("evaluator/runner.py")
+    checker = _src("common/check_proof.py")
+    prompts = _src("evaluator/prompts/proof-completion.txt") + _src("evaluator/prompts/proof-from-scratch.txt")
+
+    assert COMMUNITY_LIB_ENV in runner
+    assert COMMUNITY_LIB_ENV in checker
+    assert prompts.count(f"${COMMUNITY_LIB_ENV}") >= 4
 
 
 if __name__ == "__main__":

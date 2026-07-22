@@ -79,6 +79,17 @@ def test_proof_completion_one_shot_prompt_is_not_agentic(tmp_path):
     assert "run tlapm" not in prompt.lower()
     assert "check_proof_bin" not in prompt
     assert "Keep editing" in agentic_prompt
+    assert '-I /opt/tlapm/lib -I "$COMMUNITY_LIB"' in agentic_prompt
+
+
+def test_agentic_prompts_include_community_modules(tmp_path):
+    target = tmp_path / "Target_Goal.tla"
+    target.write_text(TARGET)
+
+    for cls in (ProofCompletion, ProofFromScratch):
+        prompt = _mode(cls, tmp_path).build_prompt(target.name, "/custom/tlapm", "/custom/tlapm/lib")
+        assert "Community Modules library is at `$COMMUNITY_LIB`" in prompt
+        assert '-I /custom/tlapm/lib -I "$COMMUNITY_LIB"' in prompt
 
 
 def test_proof_from_scratch_one_shot_prompt_allows_fully_proved_helpers(tmp_path):

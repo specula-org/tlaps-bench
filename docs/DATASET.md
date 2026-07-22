@@ -48,7 +48,6 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [TencentPaxos](https://github.com/tlaplus/Examples/tree/master/specifications/TencentPaxos) | tlaplus/Examples | 19 | 2 | 21 |
 | [LoopInvariance](https://github.com/tlaplus/Examples/tree/master/specifications/LoopInvariance) | tlaplus/Examples | 17 | 3 | 20 |
 | [allocator](https://github.com/tlaplus/Examples/tree/master/specifications/allocator) | tlaplus/Examples | 14 | 5 | 19 |
-| [ewd687a](https://github.com/tlaplus/Examples/tree/master/specifications/ewd687a) | tlaplus/Examples | 16 | 3 | 19 |
 | [ewd840](https://github.com/tlaplus/Examples/tree/master/specifications/ewd840) | tlaplus/Examples | 14 | 5 | 19 |
 | [tcp](https://github.com/tlaplus/Examples/tree/master/specifications/tcp) | tlaplus/Examples | 16 | 3 | 19 |
 | [bcastByz](https://github.com/tlaplus/Examples/tree/master/specifications/bcastByz) | tlaplus/Examples | 13 | 5 | 18 |
@@ -64,6 +63,7 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [CigaretteSmokers](https://github.com/tlaplus/Examples/tree/master/specifications/CigaretteSmokers) | tlaplus/Examples | 8 | 2 | 10 |
 | [MisraReachability](https://github.com/tlaplus/Examples/tree/master/specifications/MisraReachability) | tlaplus/Examples | 8 | 2 | 10 |
 | [Majority](https://github.com/tlaplus/Examples/tree/master/specifications/Majority) | tlaplus/Examples | 9 | – | 9 |
+| [ewd687a](https://github.com/tlaplus/Examples/tree/91c22ea537853196ed1e03e9ad91693ec37642de/specifications/ewd687a) | tlaplus/Examples | 6 | 3 | 9 |
 | [glowingRaccoon](https://github.com/tlaplus/Examples/tree/master/specifications/glowingRaccoon) | tlaplus/Examples | 6 | 3 | 9 |
 | [Paxos](https://github.com/tlaplus/Examples/tree/master/specifications/Paxos) | tlaplus/Examples | 3 | 4 | 7 |
 | [Bakery-Boulangerie](https://github.com/tlaplus/Examples/tree/master/specifications/Bakery-Boulangerie) | tlaplus/Examples | 2 | 4 | 6 |
@@ -89,4 +89,4 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
-**Total: 70 examples — 483 proof-completion + 227 proof-from-scratch = 710 tasks.**
+**Total: 70 examples — 473 proof-completion + 227 proof-from-scratch = 700 tasks.**

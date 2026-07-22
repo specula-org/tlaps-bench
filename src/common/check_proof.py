@@ -186,13 +186,16 @@ def find_tlapm_lib(tlapm_path):
 
 
 def find_community_lib(filepath):
-    """Find vendored CommunityModules (lib/community/), searching the file's
-    git repo root then ancestor dirs. Returns the path or None.
+    """Find vendored CommunityModules, honoring COMMUNITY_LIB before searching
+    the file's git repo root and ancestor dirs. Returns the path or None.
 
     NOTE: this script is compiled to a standalone binary (see Makefile) and runs
     inside the agent's workspace, so unlike validate.py it can't rely on a
     repo-relative PROJECT_ROOT — it must discover lib/community/ at runtime."""
     candidates = []
+    configured = os.environ.get("COMMUNITY_LIB")
+    if configured:
+        candidates.append(configured)
     repo_root = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,

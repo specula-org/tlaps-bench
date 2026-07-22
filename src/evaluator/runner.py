@@ -1221,6 +1221,7 @@ def _run_backend_local(
 
     agent_env = dict(os.environ)
     agent_env.update(backend.execution_environment(agent_dir))
+    agent_env.setdefault("COMMUNITY_LIB", os.path.join(REPO_ROOT, "lib", "community"))
     checker_dir = os.path.dirname(os.path.abspath(checker_bin))
     agent_env["PATH"] = checker_dir + os.pathsep + agent_env.get("PATH", "")
     sany_run_sh = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
@@ -1388,6 +1389,7 @@ def _run_grader_local(
     )
     try:
         check_env = dict(os.environ)
+        check_env.setdefault("COMMUNITY_LIB", os.path.join(REPO_ROOT, "lib", "community"))
         if os.path.isfile(sany_run_sh):
             check_env["SANY_RUN_SH"] = sany_run_sh
         check_proc = subprocess.run(
