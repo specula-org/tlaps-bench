@@ -17,6 +17,7 @@ class CopilotOneShotBackend(OneShotBackend):
     session_state_dir = None
     env_keys = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
     reasoning_effort_values = ("low", "medium", "high", "xhigh")
+    supports_max_output_tokens = True
     capabilities = replace(
         OneShotBackend.capabilities,
         cooperative_deadline=True,
@@ -37,6 +38,20 @@ class CopilotOneShotBackend(OneShotBackend):
     def validate_request_audit(self, audit: dict[str, object], request_count: int) -> bool:
         """Cross-check Copilot's wire evidence against the common audit."""
 
+        output_limit_ok = self.max_output_tokens is None or (
+            self._is_exact_count(audit.get("requested_max_output_tokens"), self.max_output_tokens)
+            and (
+                (
+                    request_count == 0
+                    and "runtime_max_output_tokens" not in audit
+                    and "wire_max_output_tokens" not in audit
+                )
+                or (
+                    request_count == 1
+                    and self._is_exact_count(audit.get("wire_max_output_tokens"), self.max_output_tokens)
+                )
+            )
+        )
         return (
             super().validate_request_audit(audit, request_count)
             and audit.get("audit_scope") == "wire"
@@ -46,4 +61,5 @@ class CopilotOneShotBackend(OneShotBackend):
             and self._is_exact_count(audit.get("unknown_requests"), 0)
             and self._is_exact_bool(audit.get("system_removed"), request_count == 1)
             and self._is_exact_bool(audit.get("tools_removed"), request_count == 1)
+            and output_limit_ok
         )

@@ -15,6 +15,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import time
@@ -129,6 +130,18 @@ _SAFE_INFERENCE_CONTROL_KEYS = {
         }
     ),
 }
+_OUTPUT_TOKEN_FIELDS = {
+    "/responses": frozenset({"max_output_tokens"}),
+    "/chat/completions": frozenset({"max_completion_tokens", "max_tokens"}),
+    "/v1/messages": frozenset({"max_tokens"}),
+    "/messages": frozenset({"max_tokens"}),
+}
+_PREFERRED_OUTPUT_TOKEN_FIELD = {
+    "/responses": "max_output_tokens",
+    "/chat/completions": "max_completion_tokens",
+    "/v1/messages": "max_tokens",
+    "/messages": "max_tokens",
+}
 _FORBIDDEN_FORWARD_HEADERS = {
     "connection",
     "content-encoding",
@@ -196,6 +209,20 @@ def _get(value: object, name: str, default: object = None) -> object:
     if isinstance(value, dict):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+def _copilot_event_model_output_kind(event: object) -> str | None:
+    """Identify streaming SDK events that prove the model produced output."""
+
+    event_type = _enum_value(_get(event, "type"))
+    data = _get(event, "data")
+    if event_type in {"assistant.message_delta", "assistant.reasoning_delta"}:
+        delta = _get(data, "delta_content")
+        return event_type if isinstance(delta, str) and delta else None
+    if event_type == "assistant.reasoning":
+        content = _get(data, "content")
+        return event_type if isinstance(content, str) and content else None
+    return event_type if event_type == "assistant.tool_call_delta" else None
 
 
 def _inference_endpoint(url: str) -> str | None:
@@ -267,6 +294,40 @@ def _rewrite_inference_payload(endpoint: str, payload: object, prompt: str) -> d
     return rewritten
 
 
+def _apply_output_token_limit(
+    endpoint: str,
+    payload: dict[str, Any],
+    requested: int | None,
+) -> tuple[int | None, int | None]:
+    """Apply an explicit wire limit and return the runtime and forwarded values."""
+
+    fields = _OUTPUT_TOKEN_FIELDS[endpoint]
+    matches = [key for key in payload if str(key).lower() in fields]
+    if len(matches) > 1:
+        if requested is not None:
+            raise RuntimeError("strict one-shot: ambiguous runtime output token limit")
+        return None, None
+
+    runtime_limit: int | None = None
+    if matches:
+        value = payload[matches[0]]
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            runtime_limit = value
+        elif requested is not None:
+            raise RuntimeError("strict one-shot: invalid runtime output token limit")
+
+    if requested is None:
+        return runtime_limit, runtime_limit
+
+    target = str(matches[0]).lower() if matches else _PREFERRED_OUTPUT_TOKEN_FIELD[endpoint]
+    for key in matches:
+        payload.pop(key)
+    payload[target] = requested
+    if payload.get(target) != requested:
+        raise RuntimeError("strict one-shot: failed to install requested output token limit")
+    return runtime_limit, requested
+
+
 class StrictCopilotRequestHandler(_CopilotRequestHandler):
     """Rewrite the sole Copilot inference request and block every later attempt."""
 
@@ -275,20 +336,33 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         prompt: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
+        if max_output_tokens is not None and (
+            not isinstance(max_output_tokens, int) or isinstance(max_output_tokens, bool) or max_output_tokens <= 0
+        ):
+            raise ValueError("max_output_tokens must be a positive integer")
         self._prompt = prompt
         self.model = model
         self.reasoning_effort = reasoning_effort
+        self.requested_max_output_tokens = max_output_tokens
         self._expected_session_id: str | None = None
         self._deadline: float | None = None
         self._frozen = False
-        self._forward_tasks: set[asyncio.Task[httpx.Response]] = set()
+        self._forward_tasks: set[asyncio.Task[Any]] = set()
         self.inference_attempts = 0
         self.forwarded_inference_requests = 0
         self.blocked_requests = 0
         self.unknown_requests = 0
         self.endpoint: str | None = None
         self.request_sha256: str | None = None
+        self.runtime_max_output_tokens: int | None = None
+        self.wire_max_output_tokens: int | None = None
+        self._inference_status_code: int | None = None
+        self._inference_failure_retryable: bool | None = None
+        self._aux_status_code: int | None = None
+        self._aux_failure_retryable: bool | None = None
+        self._last_forward_kind: str | None = None
         self.system_removed = False
         self.tools_removed = False
 
@@ -312,8 +386,13 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         """Atomically close inference and cancel any forwarding work in flight."""
 
         self._frozen = True
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
         for task in tuple(self._forward_tasks):
-            task.cancel()
+            if task is not current:
+                task.cancel()
 
     def _inference_closed(self) -> bool:
         if self._frozen:
@@ -323,14 +402,67 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             return True
         return False
 
+    async def _forward_http(self, request: httpx.Request, exchange: object, ctx: object) -> None:
+        """Track the SDK's complete response-stream forwarding lifecycle."""
+
+        task = asyncio.current_task()
+        if task is not None:
+            self._forward_tasks.add(task)
+        try:
+            await super()._forward_http(request, exchange, ctx)  # type: ignore[attr-defined]
+        except Exception as exc:
+            retryability = _provider_error_retryability(exc)
+            inference = _inference_endpoint(str(request.url)) is not None
+            auxiliary = _auxiliary_endpoint(str(request.url)) is not None
+            if retryability is not None and (inference or auxiliary):
+                status_attr = "_inference_status_code" if inference else "_aux_status_code"
+                retryable_attr = "_inference_failure_retryable" if inference else "_aux_failure_retryable"
+                status = _exception_status_code(exc)
+                if status is not None:
+                    setattr(self, status_attr, status)
+                setattr(self, retryable_attr, retryability)
+                self._last_forward_kind = "inference" if inference else "aux"
+            raise
+        finally:
+            if task is not None:
+                self._forward_tasks.discard(task)
+
     async def _forward(self, request: httpx.Request, ctx: object) -> httpx.Response:
         return await super().send_request(request, ctx)
+
+    async def _forward_with_evidence(
+        self,
+        request: httpx.Request,
+        ctx: object,
+        *,
+        inference: bool,
+    ) -> httpx.Response:
+        status_attr = "_inference_status_code" if inference else "_aux_status_code"
+        retryable_attr = "_inference_failure_retryable" if inference else "_aux_failure_retryable"
+        kind = "inference" if inference else "aux"
+        setattr(self, status_attr, None)
+        setattr(self, retryable_attr, None)
+        try:
+            response = await self._forward(request, ctx)
+        except Exception as exc:
+            setattr(self, status_attr, _exception_status_code(exc))
+            setattr(self, retryable_attr, _provider_error_retryability(exc))
+            self._last_forward_kind = kind
+            raise
+        setattr(self, status_attr, response.status_code)
+        setattr(
+            self,
+            retryable_attr,
+            _is_retryable_http_status(response.status_code) if response.status_code >= 400 else None,
+        )
+        self._last_forward_kind = kind
+        return response
 
     async def send_request(self, request: httpx.Request, ctx: object) -> httpx.Response:
         endpoint = _inference_endpoint(str(request.url))
         if endpoint is None:
             if _auxiliary_endpoint(str(request.url)) is not None:
-                return await self._forward(request, ctx)
+                return await self._forward_with_evidence(request, ctx, inference=False)
             self.blocked_requests += 1
             self.unknown_requests += 1
             raise RuntimeError("strict one-shot: blocked unknown model-layer endpoint")
@@ -356,6 +488,11 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
         try:
             payload = json.loads(request.content)
             rewritten_payload = _rewrite_inference_payload(endpoint, payload, self._prompt)
+            runtime_limit, wire_limit = _apply_output_token_limit(
+                endpoint,
+                rewritten_payload,
+                self.requested_max_output_tokens,
+            )
             body = json.dumps(
                 rewritten_payload,
                 ensure_ascii=False,
@@ -384,9 +521,11 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             raise RuntimeError("strict one-shot: blocked inference request after benchmark deadline")
         self.forwarded_inference_requests = 1
         self.request_sha256 = hashlib.sha256(body).hexdigest()
+        self.runtime_max_output_tokens = runtime_limit
+        self.wire_max_output_tokens = wire_limit
         self.system_removed = True
         self.tools_removed = True
-        forward_task = asyncio.create_task(self._forward(rewritten, ctx))
+        forward_task = asyncio.create_task(self._forward_with_evidence(rewritten, ctx, inference=True))
         self._forward_tasks.add(forward_task)
         try:
             return await forward_task
@@ -408,6 +547,11 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             and self.inference_attempts == self.forwarded_inference_requests
             and self.forwarded_inference_requests <= 1
             and (self.forwarded_inference_requests == 0 or (self.system_removed is True and self.tools_removed is True))
+            and (
+                self.requested_max_output_tokens is None
+                or self.forwarded_inference_requests == 0
+                or self.wire_max_output_tokens == self.requested_max_output_tokens
+            )
         )
         audit: dict[str, object] = {
             "provider": "copilot",
@@ -431,6 +575,12 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             audit["model"] = self.model
         if self.reasoning_effort is not None:
             audit["reasoning_effort"] = self.reasoning_effort
+        if self.requested_max_output_tokens is not None:
+            audit["requested_max_output_tokens"] = self.requested_max_output_tokens
+        if self.runtime_max_output_tokens is not None:
+            audit["runtime_max_output_tokens"] = self.runtime_max_output_tokens
+        if self.wire_max_output_tokens is not None:
+            audit["wire_max_output_tokens"] = self.wire_max_output_tokens
         if self.endpoint is not None:
             audit["endpoint"] = self.endpoint
         if self.request_sha256 is not None:
@@ -459,16 +609,176 @@ class ProviderRunError(RuntimeError):
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         usage_details: tuple[dict[str, object], ...] = (),
+        retryable: bool = False,
     ) -> None:
         super().__init__(message)
         self.audit = audit
         self.input_tokens = _optional_nonnegative_int(input_tokens)
         self.output_tokens = _optional_nonnegative_int(output_tokens)
         self.usage_details = usage_details
+        self.retryable = retryable is True
 
 
 class ProviderTimeoutError(ProviderRunError):
     """The provider-side wait reached the benchmark's propagated deadline."""
+
+
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504, 529})
+_TRANSIENT_ERROR_CLASS_NAMES = frozenset(
+    {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+        "ServiceUnavailableError",
+        "Timeout",
+    }
+)
+_PERMANENT_ERROR_CLASS_NAMES = frozenset(
+    {
+        "AuthenticationError",
+        "BadRequestError",
+        "ContextWindowExceededError",
+        "NotFoundError",
+        "PermissionDeniedError",
+        "UnprocessableEntityError",
+    }
+)
+
+
+def _exception_chain(exc: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return tuple(chain)
+
+
+def _status_code(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+        return value
+    return None
+
+
+def _structured_status_code(value: object, *, depth: int = 0) -> int | None:
+    if depth > 3 or not isinstance(value, dict):
+        return None
+    for key in ("status_code", "statusCode", "http_status", "httpStatus", "status"):
+        status = _status_code(value.get(key))
+        if status is not None:
+            return status
+    for key in ("data", "error", "response", "cause", "details"):
+        status = _structured_status_code(value.get(key), depth=depth + 1)
+        if status is not None:
+            return status
+    return None
+
+
+def _exception_status_code(exc: BaseException) -> int | None:
+    for current in _exception_chain(exc):
+        status = _status_code(getattr(current, "status_code", None))
+        if status is not None:
+            return status
+        response = getattr(current, "response", None)
+        status = _status_code(getattr(response, "status_code", None))
+        if status is not None:
+            return status
+        status = _structured_status_code(getattr(current, "data", None))
+        if status is not None:
+            return status
+    return None
+
+
+def _is_retryable_http_status(status: int | None) -> bool:
+    return status in _TRANSIENT_HTTP_STATUS_CODES
+
+
+def _provider_error_retryability(exc: BaseException, *, status_code: int | None = None) -> bool | None:
+    """Classify an error as transient, permanent, or unknown."""
+
+    current_status = _exception_status_code(exc)
+    if current_status is not None and current_status >= 400:
+        return _is_retryable_http_status(current_status)
+    chain = _exception_chain(exc)
+    class_names = {base.__name__ for current in chain for base in type(current).__mro__}
+    if class_names.intersection(_PERMANENT_ERROR_CLASS_NAMES):
+        return False
+
+    for current in chain:
+        current_class_names = {base.__name__ for base in type(current).__mro__}
+        if "JsonRpcError" not in current_class_names or getattr(current, "code", None) != -32603:
+            continue
+        message = getattr(current, "message", None)
+        if (
+            isinstance(message, str)
+            and message.startswith("Request session.create failed with message:")
+            and (
+                "network fetch failed:" in message
+                or (
+                    "Failed to validate SDK token" in message
+                    and any(f"({status})" in message for status in _TRANSIENT_HTTP_STATUS_CODES)
+                )
+            )
+        ):
+            return True
+
+    fallback_status = _status_code(status_code)
+    if fallback_status is not None and fallback_status >= 400:
+        return _is_retryable_http_status(fallback_status)
+    if any(isinstance(current, (ConnectionError, TimeoutError, httpx.TransportError)) for current in chain):
+        return True
+    if class_names.intersection(_TRANSIENT_ERROR_CLASS_NAMES):
+        return True
+    if "ProcessExitedError" in class_names:
+        return True
+    if any(type(current) is RuntimeError and str(current).startswith("CLI process exited") for current in chain):
+        return True
+    return None
+
+
+def _is_retryable_provider_error(exc: BaseException, *, status_code: int | None = None) -> bool:
+    """Fail closed unless structured evidence identifies a transient failure."""
+
+    return _provider_error_retryability(exc, status_code=status_code) is True
+
+
+def _recorded_provider_retryability(status_code: int | None, retryable: bool | None) -> bool | None:
+    status = _status_code(status_code)
+    if status is not None and status >= 400:
+        return _is_retryable_http_status(status)
+    return retryable
+
+
+def _copilot_event_error_retryability(events: list[object]) -> bool | None:
+    """Classify structured SDK failure events, with permanent evidence winning."""
+
+    saw_transient = False
+    for event in events:
+        event_type = _enum_value(_get(event, "type"))
+        if event_type not in {"session.error", "model.call_failure"}:
+            continue
+        data = _get(event, "data")
+        status = _status_code(_get(data, "status_code"))
+        if status is None or status < 400:
+            message_field = "message" if event_type == "session.error" else "error_message"
+            message = _get(data, message_field)
+            if isinstance(message, str):
+                status_match = re.search(r"(?:^|Last error:\s+)(\d{3})(?:\s|$)", message)
+                message_status = _status_code(int(status_match.group(1))) if status_match else None
+                if message_status is not None:
+                    if not _is_retryable_http_status(message_status):
+                        return False
+                    saw_transient = True
+                elif message.endswith("All connection attempts failed"):
+                    saw_transient = True
+        else:
+            if not _is_retryable_http_status(status):
+                return False
+            saw_transient = True
+    return True if saw_transient else None
 
 
 class _CopilotDeadlineExceeded(RuntimeError):
@@ -598,7 +908,14 @@ def run_litellm(prompt: str, model: str, reasoning_effort: str | None = None) ->
             audit["finish_reason"] = finish_reason
             detail["finish_reason"] = finish_reason
     except Exception as exc:
-        raise ProviderRunError(str(exc), audit, input_tokens, output_tokens, usage_details) from exc
+        raise ProviderRunError(
+            str(exc),
+            audit,
+            input_tokens,
+            output_tokens,
+            usage_details,
+            retryable=_is_retryable_provider_error(exc),
+        ) from exc
     return ProviderResult(
         text=text,
         input_tokens=input_tokens,
@@ -760,8 +1077,18 @@ async def run_copilot(
     handler: StrictCopilotRequestHandler | None = None,
     on_timeout: Callable[[ProviderTimeoutError], None] | None = None,
     reasoning_effort: str | None = None,
+    max_output_tokens: int | None = None,
+    on_response: Callable[[str], None] | None = None,
+    on_model_output: Callable[[str], None] | None = None,
 ) -> ProviderResult:
-    guard = handler or StrictCopilotRequestHandler(prompt)
+    guard = handler or StrictCopilotRequestHandler(
+        prompt,
+        model,
+        reasoning_effort,
+        max_output_tokens,
+    )
+    if handler is not None and max_output_tokens != handler.requested_max_output_tokens:
+        raise ValueError("handler output token limit does not match run_copilot")
     guard.model = model
     guard.reasoning_effort = reasoning_effort
     guard.set_deadline(deadline)
@@ -769,8 +1096,18 @@ async def run_copilot(
     usage_data_type: type | None = None
     session: object | None = None
     deadline_reported = False
+    model_output_observed = False
+    text: str | None = None
     owner_task = asyncio.current_task()
     abort_tasks: set[asyncio.Task[None]] = set()
+
+    def observe_model_output(kind: str, *, persist: bool = True) -> None:
+        nonlocal model_output_observed
+        if model_output_observed:
+            return
+        model_output_observed = True
+        if persist and on_model_output is not None:
+            on_model_output(kind)
 
     def timeout_error() -> ProviderTimeoutError:
         usage = _copilot_usage(events, usage_data_type)
@@ -835,6 +1172,34 @@ async def run_copilot(
         token = _copilot_token()
         reasoning_options = {"reasoning_effort": reasoning_effort} if reasoning_effort is not None else {}
 
+        def record_event(event: object) -> None:
+            nonlocal text
+            events.append(event)
+            data = getattr(event, "data", None)
+            output_kind = _copilot_event_model_output_kind(event)
+            if output_kind is not None:
+                observe_model_output(output_kind)
+            if isinstance(data, AssistantUsageData) and (
+                _nonnegative_int(getattr(data, "output_tokens", None)) > 0
+                or _nonnegative_int(getattr(data, "reasoning_tokens", None)) > 0
+            ):
+                observe_model_output("assistant.usage")
+            if not isinstance(data, AssistantMessageData):
+                return
+            candidate = getattr(data, "content", None)
+            valid_response = (
+                isinstance(candidate, str) and bool(candidate.strip()) and not getattr(data, "tool_requests", None)
+            )
+            observe_model_output("assistant.message", persist=not valid_response)
+            if not valid_response:
+                return
+            if text is not None and text != candidate:
+                raise RuntimeError("Copilot returned conflicting final assistant messages")
+            if text is None:
+                text = candidate
+                if on_response is not None:
+                    on_response(candidate)
+
         with tempfile.TemporaryDirectory(prefix="tlaps-bench-copilot-") as base_directory:
             async with CopilotClient(
                 github_token=token,
@@ -869,7 +1234,7 @@ async def run_copilot(
                     instruction_directories=[],
                     infinite_sessions={"enabled": False},
                     memory={"enabled": False},
-                    on_event=events.append,
+                    on_event=record_event,
                     **reasoning_options,
                 )
                 if deadline_reported:
@@ -878,15 +1243,27 @@ async def run_copilot(
                 guard.bind_session(session.session_id)
                 async with session:
                     final_event = await _send_copilot_and_wait(session, prompt, deadline, report_deadline)
+                    if final_event is None or not isinstance(final_event.data, AssistantMessageData):
+                        raise RuntimeError("Copilot returned no final assistant message")
+                    final_text = final_event.data.content
+                    valid_response = (
+                        isinstance(final_text, str)
+                        and bool(final_text.strip())
+                        and not getattr(final_event.data, "tool_requests", None)
+                    )
+                    observe_model_output("assistant.message", persist=not valid_response)
+                    if not isinstance(final_text, str) or not final_text.strip():
+                        raise RuntimeError("Copilot returned an empty assistant message")
+                    if getattr(final_event.data, "tool_requests", None):
+                        raise RuntimeError("Copilot returned tool requests in strict one-shot mode")
+                    if text is not None and text != final_text:
+                        raise RuntimeError("Copilot returned conflicting final assistant messages")
+                    if text is None:
+                        text = final_text
+                        if on_response is not None:
+                            on_response(final_text)
 
         guard.assert_complete()
-        if final_event is None or not isinstance(final_event.data, AssistantMessageData):
-            raise RuntimeError("Copilot returned no final assistant message")
-        text = final_event.data.content
-        if not isinstance(text, str) or not text.strip():
-            raise RuntimeError("Copilot returned an empty assistant message")
-        if getattr(final_event.data, "tool_requests", None):
-            raise RuntimeError("Copilot returned tool requests in strict one-shot mode")
     except asyncio.CancelledError as exc:
         if deadline_reported:
             raise timeout_error() from exc
@@ -896,14 +1273,57 @@ async def run_copilot(
         audit = guard.audit()
         if usage.finish_reason is not None:
             audit["finish_reason"] = usage.finish_reason
-        if deadline_reported or (deadline is not None and isinstance(exc, _CopilotDeadlineExceeded)):
+        deadline_closed = audit.get("deadline_closed") is True
+        if (
+            deadline_reported
+            or (deadline is not None and isinstance(exc, _CopilotDeadlineExceeded))
+            or (deadline is not None and deadline_closed and time.time() >= deadline)
+        ):
             raise timeout_error() from exc
+        blocked_requests = _nonnegative_int(audit.get("blocked_requests"))
+        inference_attempts = _nonnegative_int(audit.get("inference_attempts"))
+        inference_requests = _nonnegative_int(audit.get("inference_requests"))
+        clean_contract = audit.get("contract_ok") is True and blocked_requests == 0 and not deadline_closed
+        current_retryability = _provider_error_retryability(exc)
+        inference_retryability = _recorded_provider_retryability(
+            guard._inference_status_code,
+            guard._inference_failure_retryable,
+        )
+        aux_retryability = _recorded_provider_retryability(
+            guard._aux_status_code,
+            guard._aux_failure_retryable,
+        )
+        event_retryability = _copilot_event_error_retryability(events)
+        permanent_evidence = (
+            current_retryability is False
+            or event_retryability is False
+            or (inference_requests > 0 and inference_retryability is False)
+            or (guard._last_forward_kind == "aux" and aux_retryability is False)
+        )
+        provider_transient = not permanent_evidence and (
+            current_retryability is True
+            or event_retryability is True
+            or inference_retryability is True
+            or (guard._last_forward_kind == "aux" and aux_retryability is True)
+        )
+        guarded_runtime_retries = (
+            (inference_retryability is True or event_retryability is True)
+            and inference_requests == 1
+            and inference_attempts > 1
+            and blocked_requests == inference_attempts - 1
+            and _nonnegative_int(audit.get("unknown_requests")) == 0
+            and audit.get("system_removed") is True
+            and audit.get("tools_removed") is True
+            and not deadline_closed
+        )
+        retryable = not model_output_observed and provider_transient and (clean_contract or guarded_runtime_retries)
         raise ProviderRunError(
             str(exc),
             audit,
             usage.input_tokens,
             usage.output_tokens,
             usage.details,
+            retryable=retryable,
         ) from exc
     finally:
         if watchdog_task is not None:
@@ -913,6 +1333,7 @@ async def run_copilot(
     audit = guard.audit()
     if usage.finish_reason is not None:
         audit["finish_reason"] = usage.finish_reason
+    assert text is not None
     return ProviderResult(text, usage.input_tokens, usage.output_tokens, audit, usage.details)
 
 
@@ -959,20 +1380,36 @@ class _CopilotProvider:
         workspace: str,
         deadline: float | None,
         reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.prompt = prompt
         self.model = model
         self.workspace = workspace
         self.deadline = deadline
         self.reasoning_effort = reasoning_effort
-        self.guard = StrictCopilotRequestHandler(prompt, model, reasoning_effort)
+        self.max_output_tokens = max_output_tokens
+        self.guard = StrictCopilotRequestHandler(prompt, model, reasoning_effort, max_output_tokens)
+        self.on_response: Callable[[str], None] | None = None
+        self.on_model_output: Callable[[str], None] | None = None
 
     @property
     def audit(self) -> dict[str, object]:
         return self.guard.audit()
 
+    def set_output_callbacks(
+        self,
+        on_response: Callable[[str], None],
+        on_model_output: Callable[[str], None],
+    ) -> None:
+        self.on_response = on_response
+        self.on_model_output = on_model_output
+
     def invoke(self, on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
-        reasoning_options = {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}
+        run_options: dict[str, Any] = {}
+        if self.reasoning_effort is not None:
+            run_options["reasoning_effort"] = self.reasoning_effort
+        if self.max_output_tokens is not None:
+            run_options["max_output_tokens"] = self.max_output_tokens
         return asyncio.run(
             run_copilot(
                 self.prompt,
@@ -981,7 +1418,9 @@ class _CopilotProvider:
                 self.deadline,
                 handler=self.guard,
                 on_timeout=on_timeout,
-                **reasoning_options,
+                on_response=self.on_response,
+                on_model_output=self.on_model_output,
+                **run_options,
             )
         )
 
@@ -1007,8 +1446,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--result-dir", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--reasoning-effort", default=None)
+    parser.add_argument("--max-output-tokens", type=int, default=None)
     parser.add_argument("--deadline", type=float, default=0.0)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.max_output_tokens is not None:
+        if args.max_output_tokens <= 0:
+            parser.error("--max-output-tokens must be > 0")
+        if args.provider != "copilot":
+            parser.error("--max-output-tokens is only supported for provider copilot")
+    return args
 
 
 def _emit_usage_events(
@@ -1088,11 +1534,34 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     deadline = args.deadline if args.deadline > 0 else None
     factory = _PROVIDER_REGISTRY[args.provider]
-    if args.reasoning_effort is None:
-        provider = factory(prompt, args.model, args.workspace, deadline)
-    else:
-        provider = factory(prompt, args.model, args.workspace, deadline, args.reasoning_effort)
+    provider_options: dict[str, object] = {}
+    if args.reasoning_effort is not None:
+        provider_options["reasoning_effort"] = args.reasoning_effort
+    if args.max_output_tokens is not None:
+        provider_options["max_output_tokens"] = args.max_output_tokens
+    provider = factory(prompt, args.model, args.workspace, deadline, **provider_options)
     terminal_emitted = False
+    response_emitted = False
+    model_output_emitted = False
+
+    def emit_model_output(kind: str) -> None:
+        nonlocal model_output_emitted
+        if terminal_emitted or model_output_emitted:
+            return
+        _emit("model_output_observed", kind=kind, model_requests=1)
+        model_output_emitted = True
+
+    def emit_response(text: str) -> None:
+        nonlocal response_emitted
+        if terminal_emitted or response_emitted:
+            return
+        emit_model_output("response")
+        _emit("response", text=text)
+        response_emitted = True
+
+    callback_setter = getattr(provider, "set_output_callbacks", None)
+    if callable(callback_setter):
+        callback_setter(emit_response, emit_model_output)
 
     def emit_failure(exc: Exception) -> None:
         nonlocal terminal_emitted
@@ -1127,13 +1596,16 @@ def main(argv: list[str] | None = None) -> int:
         _emit("request_audit", **audit)
         _emit("error", message=str(exc))
         status = "timeout" if isinstance(exc, ProviderTimeoutError) else "error"
-        _emit("result", status=status, model_requests=model_requests)
+        result: dict[str, object] = {"status": status, "model_requests": model_requests}
+        if status == "error":
+            result["retryable"] = isinstance(exc, ProviderRunError) and exc.retryable
+        _emit("result", **result)
 
     try:
         result = provider.invoke(emit_failure)
         if terminal_emitted:
             return 1
-        _emit("response", text=result.text)
+        emit_response(result.text)
         usage_complete = _usage_complete(
             result.input_tokens,
             result.output_tokens,

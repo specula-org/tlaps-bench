@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from evaluator.termination import TerminationReason
+from evaluator.termination import TerminationContext, TerminationReason
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
 from .base import (
@@ -89,8 +89,8 @@ class OneShotBackend(Backend):
     approach = "one_shot"
     capabilities = BackendCapabilities(
         model_preflight=False,
-        default_infra_retries=0,
-        max_infra_retries=0,
+        default_infra_retries=3,
+        max_infra_retries=None,
         max_continuations=0,
     )
 
@@ -121,6 +121,8 @@ class OneShotBackend(Backend):
         ]
         if self.reasoning_effort is not None:
             command.extend(["--reasoning-effort", self.reasoning_effort])
+        if self.max_output_tokens is not None:
+            command.extend(["--max-output-tokens", str(self.max_output_tokens)])
         return command
 
     def build_run_command(self, workspace: str, result_dir: str, deadline: float | None) -> list[str]:
@@ -214,10 +216,16 @@ class OneShotBackend(Backend):
         payloads: list[dict[str, Any]] = []
         terminal_status: str | None = None
         terminal_model_requests: int | None = None
+        saw_model_output = False
         for event in _iter_events(jsonl_path):
             event_type = event.get("type")
             payload = _event_payload(event)
-            if event_type == "usage":
+            if event_type == "model_output_observed":
+                saw_model_output = True
+            elif event_type == "response":
+                text = payload.get("text")
+                saw_model_output = saw_model_output or (isinstance(text, str) and bool(text))
+            elif event_type == "usage":
                 payloads.append(payload)
             elif event_type == "result":
                 status = payload.get("status")
@@ -226,16 +234,30 @@ class OneShotBackend(Backend):
                 terminal_model_requests = nonnegative_int(payload.get("model_requests"))
 
         if not payloads:
+            inferred_model_requests = (
+                max(terminal_model_requests or 0, int(saw_model_output))
+                if terminal_model_requests is not None or saw_model_output
+                else None
+            )
             if input_tokens or output_tokens:
                 return UsageSummary(
                     input_tokens=nonnegative_int(input_tokens),
                     output_tokens=nonnegative_int(output_tokens),
-                    model_requests=terminal_model_requests,
+                    model_requests=inferred_model_requests,
                     sources=(f"{self.provider}_oneshot_legacy_event",),
                     available=True,
                     complete=False,
                     is_lower_bound=True,
                     warnings=("structured one-shot usage event unavailable",),
+                )
+            if saw_model_output:
+                return UsageSummary(
+                    model_requests=inferred_model_requests,
+                    sources=(f"{self.provider}_oneshot_model_output",),
+                    available=True,
+                    complete=False,
+                    is_lower_bound=True,
+                    warnings=("model request inferred from output evidence; structured usage unavailable",),
                 )
             if terminal_model_requests == 0:
                 return UsageSummary(
@@ -337,7 +359,40 @@ class OneShotBackend(Backend):
         )
         if len(set(sources)) > 1:
             usage = replace(usage, sources=tuple(dict.fromkeys(sources)))
+        if saw_model_output and (usage.model_requests or 0) < 1:
+            usage = replace(
+                usage,
+                model_requests=1,
+                complete=False,
+                is_lower_bound=True,
+                warnings=(*usage.warnings, "model request inferred from output evidence"),
+            )
         return usage
+
+    def is_infra_retryable(self, ctx: TerminationContext) -> bool:
+        """Replay only empty startups or explicitly transient terminal errors."""
+
+        events = ctx.events()
+        if not ctx.event_stream_valid():
+            return False
+        if not events:
+            return ctx.agent_exit not in {None, 0}
+
+        for event in events:
+            event_type = event.get("type")
+            if event_type == "model_output_observed":
+                return False
+            if event_type == "response":
+                text = _event_payload(event).get("text")
+                if isinstance(text, str) and text:
+                    return False
+
+        audits = [_event_payload(event) for event in events if event.get("type") == "request_audit"]
+        results = [_event_payload(event) for event in events if event.get("type") == "result"]
+        if len(audits) != 1 or len(results) != 1:
+            return False
+        terminal = results[0]
+        return terminal.get("status") == "error" and terminal.get("retryable") is True
 
     def materialize_solution(self, jsonl_path: str, destination: str) -> bool:
         """Atomically write the sole non-empty response for grader validation."""
@@ -381,7 +436,12 @@ class OneShotBackend(Backend):
         for event in _iter_events(jsonl_path):
             event_type = event.get("type")
             payload = _event_payload(event)
-            if event_type in {"response", "usage"}:
+            if event_type == "model_output_observed":
+                saw_model_output = True
+            elif event_type == "response":
+                text = payload.get("text")
+                saw_model_output = saw_model_output or (isinstance(text, str) and bool(text))
+            elif event_type == "usage":
                 saw_model_output = True
 
             if event_type == "error":
@@ -402,7 +462,7 @@ class OneShotBackend(Backend):
         for key in (*_REQUEST_COUNT_KEYS, "requests"):
             metadata.pop(key, None)
         metadata["one_shot"] = True
-        metadata["model_requests"] = max(request_counts) if request_counts else int(saw_model_output)
+        metadata["model_requests"] = max([int(saw_model_output), *request_counts])
         return metadata
 
     def validate_request_audit(self, audit: dict[str, object], request_count: int) -> bool:

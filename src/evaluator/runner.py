@@ -33,7 +33,14 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 
-from common.container import ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image, forward_env
+from common.container import (
+    IMAGE_TAG,
+    ContainerConfig,
+    ContainerRunner,
+    DockerUnavailableError,
+    ensure_image,
+    forward_env,
+)
 from evaluator import quota
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import Backend, SubmissionDisposition
@@ -247,8 +254,10 @@ class WorkItem:
     min_free_gb: float = 0
     # Container mode: run agent inside Docker container
     use_container: bool = False
-    # Extra agent attempts after a transient startup/infra failure (INFRA_ERROR
-    # with 0 output tokens); 0 disables retrying (the failure still ends ERROR).
+    # Immutable build-specific image tag selected before worker processes start.
+    container_image: str = f"{IMAGE_TAG}:latest"
+    # Extra agent attempts after a backend-approved transient infrastructure
+    # failure with no output; 0 disables retrying (the failure still ends ERROR).
     infra_retries: int | None = None
     # Continuation rounds after a genuine non-PASS: re-run the agent in the SAME
     # workspace so it builds on its own partial proof (see _run_continuations).
@@ -341,7 +350,7 @@ def _run_backend_with_retries(
     continuation round passes its existing workspace instead — the partial
     proof in it IS the input, and a 0-token startup death can't have touched it.
 
-    Fills result's time_secs / input_tokens / output_tokens / agent_exit /
+    Fills result's time_secs / usage / input_tokens / output_tokens / agent_exit /
     error / termination_reason (plus infra_retries / infra_retry_reasons after
     any retries); the caller owns quota/infra exhaustion verdicts and messages.
     time_secs counts only active agent time — quota-retry sleeps (which can be
@@ -359,8 +368,17 @@ def _run_backend_with_retries(
     infra_reasons: list[str] = []
     transcript = ""
     aggregate_usage: UsageSummary | None = None
+    result_baseline = result.copy()
+    parsed_metadata_keys: set[str] = set()
     try:
         for attempt in range(max(item.infra_retries, 0) + 1):
+            for key in parsed_metadata_keys:
+                if key in result_baseline:
+                    result[key] = result_baseline[key]
+                else:
+                    result.pop(key, None)
+            parsed_metadata_keys.clear()
+
             canonical_dir = _make_canonical_dir(name_no_ext, item.benchmark_path, basename, deps)
             if fixed_workspace is None:
                 workspace = _make_workspace(backend.name, name_no_ext, item.benchmark_path, basename, deps)
@@ -371,6 +389,11 @@ def _run_backend_with_retries(
             def _run_once(workspace=workspace, canonical_dir=canonical_dir):
                 nonlocal active_secs
                 result["error"] = ""
+                # Establish a valid empty-stream marker before process/container
+                # startup. A launch exception is then distinguishable from a
+                # child that flushed a malformed or truncated event.
+                with open(agent_jsonl, "w"):
+                    pass
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(agent_stderr)
                 t0 = time.time()
@@ -412,8 +435,10 @@ def _run_backend_with_retries(
             transcript, input_tokens, output_tokens = backend.parse_output(agent_jsonl)
             parse_metadata = getattr(backend, "parse_run_metadata", None)
             if parse_metadata:
-                runner_error = result.get("error")
-                result.update(parse_metadata(agent_jsonl))
+                runner_error = result.get("error", "")
+                parsed_metadata = parse_metadata(agent_jsonl)
+                parsed_metadata_keys.update(parsed_metadata)
+                result.update(parsed_metadata)
                 if runner_error:
                     result["error"] = runner_error
             try:
@@ -454,8 +479,19 @@ def _run_backend_with_retries(
             )
             result["termination_reason"] = classify(ctx)
 
-            # A genuine attempt (any output tokens) is never re-run.
-            infra_retriable = result["termination_reason"] == TerminationReason.INFRA_ERROR and output_tokens == 0
+            # A genuine attempt is never re-run. Structured telemetry can survive
+            # even when the CLI JSONL is cut off before its token event is flushed,
+            # so either current-attempt source is sufficient evidence of output.
+            observed_output_tokens = max(
+                output_tokens,
+                attempt_usage.legacy_output_tokens,
+                attempt_usage.reasoning_output_tokens or 0,
+            )
+            infra_retriable = (
+                result["termination_reason"] == TerminationReason.INFRA_ERROR
+                and observed_output_tokens == 0
+                and backend.is_infra_retryable(ctx)
+            )
             if not infra_retriable:
                 break
             infra_reasons.append(startup_error_snippet(ctx))
@@ -1025,6 +1061,7 @@ def _run_backend_container(
     backend_env.update(backend.execution_environment("/results"))
 
     config = ContainerConfig(
+        image=item.container_image,
         workspace=workspace,
         result_dir=agent_dir,  # mount only agent/ subdir as /results
         # Same canonical snapshot the grader reads, bind-mounted read-only so the
@@ -1301,6 +1338,7 @@ def _run_grader_container(
     )
     mode._checker_binary = old_binary
     config = ContainerConfig(
+        image=item.container_image,
         workspace=workspace,
         result_dir=grading_dir,
         # The same canonical snapshot the agent self-checked against (exactly
@@ -1412,7 +1450,7 @@ def _parse_grader_result(exit_code: int, stdout: str, result: dict) -> None:
 PREFLIGHT_PROMPT = "Reply with the single word: ok. Do not use any tools."
 
 
-def _run_preflight(backend) -> None:
+def _run_preflight(backend, container_image: str) -> None:
     """Validate a backend end-to-end (install + auth + model + firewall) before
     the run, aborting the process on failure.
 
@@ -1431,6 +1469,7 @@ def _run_preflight(backend) -> None:
     subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
     try:
         config = ContainerConfig(
+            image=container_image,
             workspace=workspace,
             result_dir=result_dir,
             env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
@@ -1466,6 +1505,12 @@ def main():
         default=None,
         help="Override backend/model reasoning effort; accepted values depend on --backend "
         "(default: preserve existing backend behavior)",
+    )
+    parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=None,
+        help="Override the per-request model output token limit for supported backends",
     )
     parser.add_argument("--jobs", type=int, default=1, help="Parallel backend runs")
     parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
@@ -1524,8 +1569,7 @@ def main():
         default=None,
         help="Extra agent attempts after a transient startup/infrastructure failure "
         "(agent died with 0 output tokens), so 3 = up to 4 attempts total "
-        "(default: 3 for agentic backends, 0 for one-shot; 0 = no retries, "
-        "the failure still ends as ERROR)",
+        "(default: 3; 0 = no retries, the failure still ends as ERROR)",
     )
     parser.add_argument(
         "--max-continuations",
@@ -1580,6 +1624,7 @@ def main():
     # Discover tasks before authentication, image setup, or the model preflight.
     # A misspelled filter must fail without doing expensive or externally-visible
     # work (building an image, installing an agent CLI, or making a model request).
+    container_image = f"{IMAGE_TAG}:latest"
     if use_container:
         benchmark_root = os.path.join(REPO_ROOT, "benchmark")
         checker_binary = os.path.join(REPO_ROOT, "check_proof_bin")
@@ -1602,6 +1647,7 @@ def main():
     # backend validation, auth probe, image build, or model request happens.
     try:
         backend.set_reasoning_effort(args.reasoning_effort)
+        backend.set_max_output_tokens(args.max_output_tokens)
         args.infra_retries = backend.validate_options(args.infra_retries, args.max_continuations)
     except ValueError as exc:
         parser.error(str(exc))
@@ -1627,11 +1673,11 @@ def main():
         tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
 
         try:
-            ensure_image(force=args.force_build)
+            container_image = ensure_image(force=args.force_build)
         except DockerUnavailableError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             sys.exit(1)
-        print("Container mode: ON (image: tlaps-bench-base)")
+        print(f"Container mode: ON (image: {container_image})")
 
         # Preflight: validate install + auth + model + firewall on a trivial
         # prompt before committing to the full run. A broken backend (bad model
@@ -1639,7 +1685,7 @@ def main():
         # firewall blocks) otherwise produces a whole sweep of silent 0-token
         # FAILs that look like honest "couldn't prove it" results.
         if not args.skip_preflight and backend.capabilities.model_preflight:
-            _run_preflight(backend)
+            _run_preflight(backend, container_image)
         elif not args.skip_preflight:
             print(f"Preflight: skipped — backend {backend.name!r} does not support a model preflight request")
     else:
@@ -1666,6 +1712,8 @@ def main():
     print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
     if backend.reasoning_effort is not None:
         print(f"Effort:  {backend.reasoning_effort}")
+    if backend.max_output_tokens is not None:
+        print(f"Max output tokens: {backend.max_output_tokens}")
     print(f"Mode:   {mode.name} — {mode.description}")
     print(f"Output:  {output_dir}")
 
@@ -1753,6 +1801,7 @@ def main():
                 quota_max_waits=args.quota_max_waits,
                 min_free_gb=args.min_free_gb,
                 use_container=use_container,
+                container_image=container_image,
                 infra_retries=args.infra_retries,
                 max_continuations=args.max_continuations,
                 keep_container=use_container and args.keep_container,

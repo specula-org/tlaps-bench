@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 # Internal imports
 from common.cheating_detection import CheatingIssue, detect_proof_omitted
-from common.container import ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image
+from common.container import IMAGE_TAG, ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image
 from dataset.proof_completion.generate import (
     BENCHMARK_DIR,
     PROJECT_ROOT,
@@ -219,7 +219,11 @@ def run_tlapm(tla_file: str, tlapm_path: str, tlapm_lib: str, timeout: int = 120
         return -2, f"ERROR: {str(e)}", elapsed
 
 
-def run_tlapm_docker(tla_file: str, timeout: int = 120) -> tuple[int, str, float]:
+def run_tlapm_docker(
+    tla_file: str,
+    timeout: int = 120,
+    container_image: str = f"{IMAGE_TAG}:latest",
+) -> tuple[int, str, float]:
     """Run tlapm inside Docker container. Returns (exit_code, output, elapsed_secs)."""
     runner = ContainerRunner()
     workspace = os.path.dirname(tla_file)
@@ -230,7 +234,7 @@ def run_tlapm_docker(tla_file: str, timeout: int = 120) -> tuple[int, str, float
     cmd += ["-I", "/opt/community"]
     cmd += [f"/workspace/{basename}"]
 
-    config = ContainerConfig(workspace=workspace, result_dir="")
+    config = ContainerConfig(image=container_image, workspace=workspace, result_dir="")
     start = time.time()
     try:
         exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=timeout + 30)
@@ -245,9 +249,23 @@ def run_tlapm_docker(tla_file: str, timeout: int = 120) -> tuple[int, str, float
         return -2, f"ERROR: {str(e)}", elapsed
 
 
+def _validation_work_item(
+    benchmark_path,
+    source_files,
+    tlapm_path,
+    tlapm_lib,
+    timeout,
+    use_container,
+    container_image,
+):
+    """Build the picklable worker tuple shared by initial and rerun pools."""
+
+    return (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout, use_container, container_image)
+
+
 def validate_single_benchmark(args_tuple):
     """Validate a single benchmark. Designed for ProcessPoolExecutor."""
-    (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout, use_container) = args_tuple
+    (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout, use_container, container_image) = args_tuple
 
     basename = os.path.basename(benchmark_path)
     module_dir = os.path.basename(os.path.dirname(benchmark_path))
@@ -356,7 +374,7 @@ def validate_single_benchmark(args_tuple):
             shutil.copy2(dep_file, os.path.join(tmp_dir, os.path.basename(dep_file)))
 
         exit_code, output, elapsed = (
-            run_tlapm_docker(tmp_file, timeout)
+            run_tlapm_docker(tmp_file, timeout, container_image)
             if use_container
             else run_tlapm(tmp_file, tlapm_path, tlapm_lib, timeout)
         )
@@ -515,9 +533,10 @@ def main():
 
     use_container = not args.no_container
 
+    container_image = f"{IMAGE_TAG}:latest"
     if use_container:
         try:
-            ensure_image(force=args.force_build)
+            container_image = ensure_image(force=args.force_build)
         except DockerUnavailableError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             sys.exit(1)
@@ -564,7 +583,18 @@ def main():
     print(f"Found {len(benchmark_files)} benchmark files to validate")
 
     # Prepare work items
-    work_items = [(bf, source_files, tlapm_path, tlapm_lib, args.timeout, use_container) for bf in benchmark_files]
+    work_items = [
+        _validation_work_item(
+            bf,
+            source_files,
+            tlapm_path,
+            tlapm_lib,
+            args.timeout,
+            use_container,
+            container_image,
+        )
+        for bf in benchmark_files
+    ]
 
     # Run validation
     results = []
@@ -612,7 +642,15 @@ def main():
         for r in failed_results:
             bench_path = os.path.join(PROJECT_ROOT, r.benchmark_file)
             rerun_items.append(
-                (bench_path, source_files, rerun_tlapm, rerun_tlapm_lib, args.rerun_timeout, use_container)
+                _validation_work_item(
+                    bench_path,
+                    source_files,
+                    rerun_tlapm,
+                    rerun_tlapm_lib,
+                    args.rerun_timeout,
+                    use_container,
+                    container_image,
+                )
             )
 
         rerun_fixed = 0

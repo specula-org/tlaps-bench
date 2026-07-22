@@ -73,7 +73,8 @@ def test_shared_command_and_capabilities(tmp_path):
     assert backend.approach == "one_shot"
     assert backend.capabilities.model_preflight is False
     assert backend.capabilities.max_continuations == 0
-    assert backend.capabilities.default_infra_retries == 0
+    assert backend.capabilities.default_infra_retries == 3
+    assert backend.capabilities.max_infra_retries is None
 
 
 def test_shared_command_uses_module_runner_for_native_execution(tmp_path):
@@ -83,6 +84,62 @@ def test_shared_command_uses_module_runner_for_native_execution(tmp_path):
 
     assert command[:3] == [sys.executable, "-m", "evaluator.backends.oneshot_runner"]
     assert command[3:6] == ["--provider", "copilot", "--workspace"]
+
+
+def test_copilot_command_and_metadata_include_explicit_output_limit(tmp_path):
+    backend = CopilotOneShotBackend(model="claude-opus-4.8")
+    backend.set_max_output_tokens(64_000)
+
+    command = backend.build_command("/workspace", "/results")
+
+    assert command[-2:] == ["--max-output-tokens", "64000"]
+    assert backend.initial_result_metadata()["requested_max_output_tokens"] == 64_000
+
+
+def test_copilot_output_limit_audit_fails_closed_on_missing_or_mismatched_wire_evidence():
+    backend = CopilotOneShotBackend(model="claude-opus-4.8")
+    backend.set_max_output_tokens(64_000)
+    audit = {
+        "provider": "copilot",
+        "model_requests": 1,
+        "request_attempts": 1,
+        "blocked_requests": 0,
+        "system_prompt_present": False,
+        "tools_present": False,
+        "retries_enabled": False,
+        "audit_scope": "wire",
+        "contract_ok": True,
+        "wire_audited": True,
+        "inference_requests": 1,
+        "inference_attempts": 1,
+        "unknown_requests": 0,
+        "system_removed": True,
+        "tools_removed": True,
+        "requested_max_output_tokens": 64_000,
+        "wire_max_output_tokens": 64_000,
+    }
+
+    assert backend.validate_request_audit(audit, 1) is True
+    for field in ("requested_max_output_tokens", "wire_max_output_tokens"):
+        missing = dict(audit)
+        missing.pop(field)
+        assert backend.validate_request_audit(missing, 1) is False
+
+        mismatched = {**audit, field: 32_000}
+        assert backend.validate_request_audit(mismatched, 1) is False
+
+    before_request = {
+        **audit,
+        "model_requests": 0,
+        "request_attempts": 0,
+        "inference_requests": 0,
+        "inference_attempts": 0,
+        "system_removed": False,
+        "tools_removed": False,
+    }
+    before_request.pop("wire_max_output_tokens")
+    assert backend.validate_request_audit(before_request, 0) is True
+    assert backend.validate_request_audit({**before_request, "wire_max_output_tokens": 64_000}, 0) is False
 
 
 def test_parse_output_and_request_metadata(tmp_path):
@@ -173,10 +230,36 @@ def test_missing_one_shot_usage_is_not_reported_as_zero_cost(tmp_path):
 
     usage = backend.parse_usage(str(events), input_tokens=0, output_tokens=0)
 
-    assert usage.status == "incomplete"
+    assert usage.status == "lower_bound"
+    assert usage.is_lower_bound is True
     assert usage.model_requests == 1
     assert usage.input_tokens is None
     assert usage.output_tokens is None
+
+
+def test_model_output_evidence_overrides_zero_request_usage(tmp_path):
+    events = tmp_path / "output.jsonl"
+    _write_events(
+        events,
+        {"type": "model_output_observed", "kind": "assistant.reasoning_delta", "model_requests": 1},
+        {
+            "type": "usage",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "model_requests": 0,
+            "complete": True,
+            "is_lower_bound": False,
+        },
+        {"type": "result", "status": "error", "model_requests": 0},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=0, output_tokens=0)
+    metadata = backend.parse_run_metadata(str(events))
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 1
+    assert metadata["model_requests"] == 1
 
 
 def test_materializes_raw_response_verbatim_atomically(tmp_path):
@@ -436,8 +519,8 @@ def _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items):
     benchmark_root = tmp_path / "benchmark"
     mode = _OneShotMode(benchmark_root)
     monkeypatch.setattr(runner, "get_mode", lambda *args: mode)
-    monkeypatch.setattr(runner, "ensure_image", lambda force=False: None)
-    monkeypatch.setattr(runner, "_run_preflight", lambda backend: preflight_calls.append(backend.name))
+    monkeypatch.setattr(runner, "ensure_image", lambda force=False: "tlaps-bench-base:test")
+    monkeypatch.setattr(runner, "_run_preflight", lambda backend, image: preflight_calls.append(backend.name))
     monkeypatch.setattr(runner, "update_summary", lambda *args: None)
 
     def fake_run(item):
@@ -453,7 +536,7 @@ def _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items):
     monkeypatch.setattr(runner, "run_single_benchmark", fake_run)
 
 
-def test_cli_uses_zero_infra_retries_and_skips_model_preflight_for_oneshot(tmp_path, monkeypatch):
+def test_cli_uses_default_infra_retries_and_skips_model_preflight_for_oneshot(tmp_path, monkeypatch):
     preflight_calls = []
     captured_items = []
     _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items)
@@ -473,14 +556,112 @@ def test_cli_uses_zero_infra_retries_and_skips_model_preflight_for_oneshot(tmp_p
     runner.main()
 
     assert len(captured_items) == 1
-    assert captured_items[0].infra_retries == 0
+    assert captured_items[0].infra_retries == 3
+    assert captured_items[0].container_image == "tlaps-bench-base:test"
     assert preflight_calls == []
+
+
+@pytest.mark.parametrize("retries", [0, 1, 5])
+def test_cli_accepts_explicit_oneshot_infra_retries(tmp_path, monkeypatch, retries):
+    preflight_calls = []
+    captured_items = []
+    _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tlaps-bench",
+            "--backend",
+            "litellm_oneshot",
+            "--output-dir",
+            str(tmp_path / "results"),
+            "--infra-retries",
+            str(retries),
+        ],
+    )
+
+    runner.main()
+
+    assert captured_items[0].infra_retries == retries
+    assert preflight_calls == []
+
+
+def test_cli_passes_copilot_oneshot_output_limit(tmp_path, monkeypatch):
+    preflight_calls = []
+    captured_items = []
+    _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tlaps-bench",
+            "--backend",
+            "copilot_oneshot",
+            "--output-dir",
+            str(tmp_path / "results"),
+            "--max-output-tokens",
+            "64000",
+        ],
+    )
+
+    runner.main()
+
+    assert captured_items[0].backend.max_output_tokens == 64_000
+    assert preflight_calls == []
+
+
+def test_cli_rejects_output_limit_for_unsupported_backend_before_side_effects(tmp_path, monkeypatch, capsys):
+    preflight_calls = []
+    captured_items = []
+    _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tlaps-bench",
+            "--backend",
+            "litellm_oneshot",
+            "--output-dir",
+            str(tmp_path / "results"),
+            "--max-output-tokens",
+            "64000",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner.main()
+
+    assert exc_info.value.code == 2
+    assert "does not support --max-output-tokens" in capsys.readouterr().err
+    assert preflight_calls == []
+    assert captured_items == []
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (0, "must be > 0"),
+        (-1, "must be > 0"),
+        (False, "must be an integer"),
+        (1.5, "must be an integer"),
+        ("64000", "must be an integer"),
+    ],
+)
+def test_backend_rejects_invalid_output_limit(value, message):
+    with pytest.raises(ValueError, match=message):
+        CopilotOneShotBackend().set_max_output_tokens(value)  # ty:ignore[invalid-argument-type]
+
+
+def test_backend_rejects_output_limit_when_unsupported():
+    with pytest.raises(ValueError, match="does not support --max-output-tokens"):
+        LiteLLMOneShotBackend().set_max_output_tokens(64_000)
 
 
 @pytest.mark.parametrize(
     "extra_args, expected_error",
     [
-        (["--infra-retries", "1"], "strict one-shot backends require --infra-retries 0"),
         (["--max-continuations", "1"], "does not support --max-continuations"),
     ],
 )
@@ -516,7 +697,6 @@ def test_cli_rejects_non_oneshot_controls(tmp_path, monkeypatch, capsys, extra_a
         (0.0, 0, "--infra-retries must be an integer"),
         (False, 0, "--infra-retries must be an integer"),
         (-1, 0, "--infra-retries must be >= 0"),
-        (1, 0, "strict one-shot backends require --infra-retries 0"),
         (0, 0.0, "--max-continuations must be an integer"),
         (0, False, "--max-continuations must be an integer"),
         (0, 1, "does not support --max-continuations"),
@@ -612,5 +792,5 @@ def test_direct_work_item_uses_oneshot_retry_default_and_runs_once(tmp_path, mon
 
     runner.run_single_benchmark(item)
 
-    assert item.infra_retries == 0
+    assert item.infra_retries == 3
     assert len(calls) == 1

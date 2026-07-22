@@ -111,5 +111,10 @@ RUN chmod +x /entrypoint.sh
 
 WORKDIR /workspace
 
+# Invalidate locally cached images when sources or the checker version change.
+# Keep this label last so the expensive dependency layers remain cacheable.
+ARG TLAPS_BENCH_BUILD_SHA256=unknown
+LABEL org.specula.tlaps-bench.build-sha256="${TLAPS_BENCH_BUILD_SHA256}"
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

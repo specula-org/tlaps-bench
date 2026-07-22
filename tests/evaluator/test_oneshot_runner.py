@@ -19,8 +19,8 @@ from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
 
 
 class _RecordingHandler(oneshot_runner.StrictCopilotRequestHandler):
-    def __init__(self, prompt: str) -> None:
-        super().__init__(prompt)
+    def __init__(self, prompt: str, **kwargs) -> None:
+        super().__init__(prompt, **kwargs)
         self.forwarded: list[httpx.Request] = []
 
     async def _forward(self, request: httpx.Request, _ctx: object) -> httpx.Response:
@@ -138,6 +138,130 @@ def test_deadline_freezes_guard_before_late_runtime_request():
     assert handler.audit()["model_requests"] == 0
     assert handler.audit()["blocked_requests"] == 1
     assert handler.forwarded == []
+
+
+def test_freeze_cancels_full_response_stream_forwarding(monkeypatch):
+    started = asyncio.Event()
+
+    class BlockingStream(httpx.AsyncByteStream):
+        def __init__(self):
+            self.closed = False
+
+        async def __aiter__(self):
+            started.set()
+            await asyncio.Future()
+            yield b""
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = BlockingStream()
+
+    async def fake_base_forward_http(self, request, _exchange, ctx):
+        response = await self.send_request(request, ctx)
+        try:
+            async for _chunk in response.aiter_raw():
+                pass
+        finally:
+            await response.aclose()
+
+    class StreamingHandler(oneshot_runner.StrictCopilotRequestHandler):
+        async def _forward(self, request, _ctx):
+            return httpx.Response(200, request=request, stream=stream)
+
+    monkeypatch.setattr(oneshot_runner._CopilotRequestHandler, "_forward_http", fake_base_forward_http, raising=False)
+    handler = StreamingHandler("EXACT PROMPT")
+    handler.bind_session("session-1")
+    request = _request(
+        "https://api.githubcopilot.com/responses",
+        {"model": "test-model", "input": [], "stream": True},
+    )
+
+    async def scenario():
+        task = asyncio.create_task(handler._forward_http(request, object(), SimpleNamespace(session_id="session-1")))
+        await started.wait()
+        assert handler._forward_tasks == {task}
+
+        handler.freeze()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert stream.closed is True
+        assert handler._forward_tasks == set()
+
+    asyncio.run(scenario())
+
+
+def test_response_body_transport_failure_is_retryable_evidence(monkeypatch):
+    request = _request(
+        "https://api.githubcopilot.com/responses",
+        {"model": "test-model", "input": [], "stream": True},
+    )
+
+    class FailingStream(httpx.AsyncByteStream):
+        def __init__(self):
+            self.closed = False
+
+        async def __aiter__(self):
+            raise httpx.ReadError("stream reset", request=request)
+            yield b""
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = FailingStream()
+
+    async def fake_base_forward_http(self, forwarded_request, _exchange, ctx):
+        response = await self.send_request(forwarded_request, ctx)
+        try:
+            async for _chunk in response.aiter_raw():
+                pass
+        finally:
+            await response.aclose()
+
+    class StreamingHandler(oneshot_runner.StrictCopilotRequestHandler):
+        async def _forward(self, forwarded_request, _ctx):
+            return httpx.Response(200, request=forwarded_request, stream=stream)
+
+    monkeypatch.setattr(oneshot_runner._CopilotRequestHandler, "_forward_http", fake_base_forward_http, raising=False)
+    handler = StreamingHandler("EXACT PROMPT")
+    handler.bind_session("session-1")
+
+    async def scenario():
+        with pytest.raises(httpx.ReadError, match="stream reset"):
+            await handler._forward_http(request, object(), SimpleNamespace(session_id="session-1"))
+
+    asyncio.run(scenario())
+
+    assert stream.closed is True
+    assert handler._inference_status_code == 200
+    assert handler._inference_failure_retryable is True
+
+
+def test_unknown_body_failure_does_not_erase_transient_evidence(monkeypatch):
+    async def fake_base_forward_http(_self, _request, _exchange, _ctx):
+        raise RuntimeError("unknown stream failure")
+
+    monkeypatch.setattr(oneshot_runner._CopilotRequestHandler, "_forward_http", fake_base_forward_http, raising=False)
+    handler = oneshot_runner.StrictCopilotRequestHandler("EXACT PROMPT")
+    handler._inference_status_code = 503
+    handler._inference_failure_retryable = True
+
+    async def scenario():
+        with pytest.raises(RuntimeError, match="unknown stream failure"):
+            await handler._forward_http(
+                _request(
+                    "https://api.githubcopilot.com/responses",
+                    {"model": "test-model", "input": [], "stream": True},
+                ),
+                object(),
+                object(),
+            )
+
+    asyncio.run(scenario())
+
+    assert handler._inference_status_code == 503
+    assert handler._inference_failure_retryable is True
 
 
 @pytest.mark.parametrize(
@@ -280,6 +404,58 @@ def test_copilot_handler_forwards_only_rewritten_first_inference():
     assert len(handler.forwarded) == 1
     assert handler.inference_attempts == 2
     assert handler.blocked_requests == 1
+
+
+def test_copilot_handler_overrides_runtime_output_limit_on_wire():
+    handler = _RecordingHandler("EXACT PROMPT", max_output_tokens=64_000)
+    handler.bind_session("session-1")
+    original = _request(
+        "https://api.githubcopilot.com/v1/messages",
+        {
+            "model": "claude-opus-4.8",
+            "max_tokens": 32_000,
+            "messages": [{"role": "user", "content": "decorated prompt"}],
+            "stream": True,
+            "thinking": {"type": "adaptive", "display": "summarized"},
+        },
+    )
+
+    asyncio.run(handler.send_request(original, SimpleNamespace(session_id="session-1")))
+
+    assert len(handler.forwarded) == 1
+    forwarded_body = json.loads(handler.forwarded[0].content)
+    assert forwarded_body["max_tokens"] == 64_000
+    assert forwarded_body["messages"] == [{"role": "user", "content": "EXACT PROMPT"}]
+    assert handler.request_sha256 == oneshot_runner.hashlib.sha256(handler.forwarded[0].content).hexdigest()
+    audit = handler.audit()
+    assert audit["requested_max_output_tokens"] == 64_000
+    assert audit["runtime_max_output_tokens"] == 32_000
+    assert audit["wire_max_output_tokens"] == 64_000
+    assert audit["contract_ok"] is True
+    assert audit["inference_requests"] == 1
+    assert audit["inference_attempts"] == 1
+    assert audit["blocked_requests"] == 0
+
+
+def test_copilot_handler_preserves_runtime_output_limit_when_unset():
+    handler = _RecordingHandler("EXACT PROMPT")
+    handler.bind_session("session-1")
+    original = _request(
+        "https://api.githubcopilot.com/v1/messages",
+        {
+            "model": "claude-opus-4.8",
+            "max_tokens": 32_000,
+            "messages": [{"role": "user", "content": "decorated prompt"}],
+        },
+    )
+
+    asyncio.run(handler.send_request(original, SimpleNamespace(session_id="session-1")))
+
+    assert json.loads(handler.forwarded[0].content)["max_tokens"] == 32_000
+    audit = handler.audit()
+    assert "requested_max_output_tokens" not in audit
+    assert audit["runtime_max_output_tokens"] == 32_000
+    assert audit["wire_max_output_tokens"] == 32_000
 
 
 def test_copilot_handler_audits_and_blocks_wrong_session_before_forwarding():
@@ -461,7 +637,8 @@ def test_main_preserves_missing_litellm_usage_as_null(monkeypatch, capsys, tmp_p
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 0
-    assert events[1] == {
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event == {
         "type": "usage",
         "model_requests": 1,
         "source": "litellm_response_usage",
@@ -505,7 +682,8 @@ def test_main_preserves_explicit_litellm_zero_usage(monkeypatch, capsys, tmp_pat
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 0
-    assert events[1] == {
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event == {
         "type": "usage",
         "input_tokens": 0,
         "output_tokens": 0,
@@ -559,7 +737,13 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 0
-    assert [event["type"] for event in events] == ["response", "usage", "request_audit", "result"]
+    assert [event["type"] for event in events] == [
+        "model_output_observed",
+        "response",
+        "usage",
+        "request_audit",
+        "result",
+    ]
     assert events[-1] == {"type": "result", "status": "success", "model_requests": 1}
 
 
@@ -611,7 +795,8 @@ def test_main_emits_rich_copilot_usage_details(monkeypatch, capsys, tmp_path):
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 0
-    assert events[1] == {
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event == {
         "type": "usage",
         "model_requests": 1,
         "source": "github_copilot_sdk",
@@ -648,7 +833,8 @@ def test_main_does_not_treat_missing_copilot_usage_event_as_exact_zero(monkeypat
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
 
     assert exit_code == 0
-    assert events[1] == {
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event == {
         "type": "usage",
         "model_requests": 1,
         "source": "copilot_oneshot_runner",
@@ -701,8 +887,15 @@ def test_provider_registry_adds_backend_without_runner_branch(monkeypatch, capsy
         "workspace": str(tmp_path),
         "deadline": None,
     }
-    assert [event["type"] for event in events] == ["response", "usage", "request_audit", "result"]
-    assert events[1] == {
+    assert [event["type"] for event in events] == [
+        "model_output_observed",
+        "response",
+        "usage",
+        "request_audit",
+        "result",
+    ]
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event == {
         "type": "usage",
         "input_tokens": 4,
         "output_tokens": 2,
@@ -711,6 +904,154 @@ def test_provider_registry_adds_backend_without_runner_branch(monkeypatch, capsy
         "complete": True,
         "is_lower_bound": False,
     }
+
+
+def test_main_persists_response_before_provider_teardown_failure(monkeypatch, capsys, tmp_path):
+    audit = {"provider": "early-response", "model_requests": 1}
+
+    class FakeProvider:
+        on_response = None
+
+        @property
+        def audit(self):
+            return audit
+
+        def set_output_callbacks(self, on_response, _on_model_output):
+            self.on_response = on_response
+
+        def invoke(self, _on_timeout):
+            assert self.on_response is not None
+            self.on_response("COMPLETE RESPONSE")
+            raise oneshot_runner.ProviderRunError("cleanup reset", audit, retryable=False)
+
+    oneshot_runner.register_provider("early-response", lambda *_args: FakeProvider())
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+    try:
+        exit_code = oneshot_runner.main(
+            [
+                "--provider",
+                "early-response",
+                "--workspace",
+                str(tmp_path),
+                "--result-dir",
+                str(tmp_path),
+                "--model",
+                "fake-model",
+            ]
+        )
+    finally:
+        oneshot_runner._PROVIDER_REGISTRY.pop("early-response")
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 1
+    assert [event["type"] for event in events] == [
+        "model_output_observed",
+        "response",
+        "usage",
+        "request_audit",
+        "error",
+        "result",
+    ]
+    assert events[0] == {"type": "model_output_observed", "kind": "response", "model_requests": 1}
+    assert events[1] == {"type": "response", "text": "COMPLETE RESPONSE"}
+    assert next(event for event in events if event["type"] == "usage")["model_requests"] == 1
+    assert events[-1] == {
+        "type": "result",
+        "status": "error",
+        "model_requests": 1,
+        "retryable": False,
+    }
+
+
+def test_main_persists_partial_output_marker_before_provider_failure(monkeypatch, capsys, tmp_path):
+    audit = {"provider": "partial-output", "model_requests": 1}
+
+    class FakeProvider:
+        on_model_output = None
+
+        @property
+        def audit(self):
+            return audit
+
+        def set_output_callbacks(self, _on_response, on_model_output):
+            self.on_model_output = on_model_output
+
+        def invoke(self, _on_timeout):
+            assert self.on_model_output is not None
+            self.on_model_output("assistant.message_delta")
+            raise oneshot_runner.ProviderRunError("stream reset", audit, retryable=False)
+
+    oneshot_runner.register_provider("partial-output", lambda *_args: FakeProvider())
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+    try:
+        exit_code = oneshot_runner.main(
+            [
+                "--provider",
+                "partial-output",
+                "--workspace",
+                str(tmp_path),
+                "--result-dir",
+                str(tmp_path),
+                "--model",
+                "fake-model",
+            ]
+        )
+    finally:
+        oneshot_runner._PROVIDER_REGISTRY.pop("partial-output")
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 1
+    assert events[0] == {
+        "type": "model_output_observed",
+        "kind": "assistant.message_delta",
+        "model_requests": 1,
+    }
+    assert "response" not in [event["type"] for event in events]
+    assert events[-1]["retryable"] is False
+
+
+def test_main_ignores_response_after_terminal_timeout(monkeypatch, capsys, tmp_path):
+    audit = {"provider": "late-response", "model_requests": 1}
+
+    class FakeProvider:
+        on_response = None
+
+        @property
+        def audit(self):
+            return audit
+
+        def set_output_callbacks(self, on_response, _on_model_output):
+            self.on_response = on_response
+
+        def invoke(self, on_timeout):
+            error = oneshot_runner.ProviderTimeoutError("deadline", audit)
+            on_timeout(error)
+            assert self.on_response is not None
+            self.on_response("LATE RESPONSE")
+            return oneshot_runner.ProviderResult("LATE RESPONSE", None, None, audit)
+
+    oneshot_runner.register_provider("late-response", lambda *_args: FakeProvider())
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+    try:
+        exit_code = oneshot_runner.main(
+            [
+                "--provider",
+                "late-response",
+                "--workspace",
+                str(tmp_path),
+                "--result-dir",
+                str(tmp_path),
+                "--model",
+                "fake-model",
+            ]
+        )
+    finally:
+        oneshot_runner._PROVIDER_REGISTRY.pop("late-response")
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 1
+    assert "response" not in [event["type"] for event in events]
+    assert events[-1] == {"type": "result", "status": "timeout", "model_requests": 1}
 
 
 def test_custom_provider_can_report_unavailable_usage(monkeypatch, capsys, tmp_path):
@@ -740,7 +1081,8 @@ def test_custom_provider_can_report_unavailable_usage(monkeypatch, capsys, tmp_p
 
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert exit_code == 0
-    assert events[1] == {
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event == {
         "type": "usage",
         "model_requests": 1,
         "source": "missing-usage_oneshot_runner",
@@ -785,7 +1127,12 @@ def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatc
     }
     assert events[1]["litellm_completion_invocations"] == 1
     assert events[1]["wire_audited"] is False
-    assert events[-1] == {"type": "result", "status": "error", "model_requests": 1}
+    assert events[-1] == {
+        "type": "result",
+        "status": "error",
+        "model_requests": 1,
+        "retryable": False,
+    }
 
 
 def test_main_emits_received_copilot_usage_on_failure(monkeypatch, capsys, tmp_path):
@@ -795,6 +1142,7 @@ def test_main_emits_received_copilot_usage_on_failure(monkeypatch, capsys, tmp_p
             {"provider": "copilot", "inference_requests": 1},
             input_tokens=55,
             output_tokens=13,
+            retryable=True,
         )
 
     monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
@@ -825,7 +1173,12 @@ def test_main_emits_received_copilot_usage_on_failure(monkeypatch, capsys, tmp_p
         "is_lower_bound": True,
     }
     assert events[1] == {"type": "request_audit", "provider": "copilot", "inference_requests": 1}
-    assert events[-1] == {"type": "result", "status": "error", "model_requests": 1}
+    assert events[-1] == {
+        "type": "result",
+        "status": "error",
+        "model_requests": 1,
+        "retryable": True,
+    }
 
 
 def test_main_marks_provider_deadline_as_timeout(monkeypatch, capsys, tmp_path):
@@ -870,6 +1223,99 @@ def test_litellm_import_failure_records_zero_completion_invocations(monkeypatch)
     assert exc_info.value.audit["litellm_completion_invocations"] == 0
     assert exc_info.value.audit["wire_audited"] is False
     assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("error_name", "status_code", "expected"),
+    [
+        ("ServiceUnavailableError", None, True),
+        ("AuthenticationError", None, False),
+        ("ProviderError", 503, True),
+        ("ProviderError", 401, False),
+        ("ProviderError", 501, False),
+        ("ProviderError", 505, False),
+        ("ProviderError", None, False),
+    ],
+)
+def test_litellm_provider_errors_have_explicit_retryability(
+    monkeypatch,
+    error_name,
+    status_code,
+    expected,
+):
+    error_type = type(error_name, (RuntimeError,), {})
+    error = error_type("provider failed")
+    if status_code is not None:
+        error.status_code = status_code
+
+    def completion(**_kwargs):
+        raise error
+
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = completion
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+
+    with pytest.raises(oneshot_runner.ProviderRunError) as exc_info:
+        oneshot_runner.run_litellm("EXACT PROMPT", "provider/model")
+
+    assert exc_info.value.retryable is expected
+
+
+@pytest.mark.parametrize(("status_code", "expected"), [(503, True), (401, False)])
+def test_current_exception_status_overrides_prior_success(status_code, expected):
+    error = RuntimeError("current provider failure")
+    error.status_code = status_code
+
+    assert oneshot_runner._is_retryable_provider_error(error, status_code=200) is expected
+
+
+@pytest.mark.parametrize("error_name", ["AuthenticationError", "BadRequestError"])
+def test_permanent_exception_class_overrides_prior_transient_status(error_name):
+    error_type = type(error_name, (RuntimeError,), {})
+
+    assert oneshot_runner._is_retryable_provider_error(error_type("permanent failure"), status_code=503) is False
+
+
+@pytest.mark.parametrize(
+    ("message", "data", "expected"),
+    [
+        (
+            "Request session.create failed with message: Authentication failed: "
+            "Failed to validate SDK token: network fetch failed: request failed",
+            None,
+            True,
+        ),
+        (
+            "Request session.create failed with message: Failed to validate SDK token (503): No server",
+            None,
+            True,
+        ),
+        (
+            "Request session.create failed with message: Failed to validate SDK token (401): Unauthorized",
+            None,
+            False,
+        ),
+        ("Request session.create failed with message: provider failed", {"error": {"statusCode": 503}}, True),
+        ("Request session.create failed with message: provider failed", {"statusCode": 401}, False),
+    ],
+)
+def test_copilot_session_create_json_rpc_retryability(message, data, expected):
+    class JsonRpcError(RuntimeError):
+        def __init__(self):
+            self.code = -32603
+            self.message = message
+            self.data = data
+            super().__init__(message)
+
+    assert oneshot_runner._is_retryable_provider_error(JsonRpcError()) is expected
+
+
+@pytest.mark.parametrize("error_name", ["ProcessExitedError", "RuntimeError"])
+def test_copilot_runtime_process_exit_is_startup_retryable(error_name):
+    error_type = RuntimeError if error_name == "RuntimeError" else type(error_name, (RuntimeError,), {})
+    error = error_type("CLI process exited before announcing port")
+
+    assert oneshot_runner._is_retryable_provider_error(error) is True
 
 
 def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, tmp_path):
@@ -1021,6 +1467,537 @@ def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, 
     assert json.loads(handler.forwarded[0].content)["input"][0]["content"][0]["text"] == "EXACT PROMPT"
 
 
+@pytest.mark.parametrize("failure_mode", ["http_503", "connect_error"])
+def test_copilot_runtime_retry_after_transient_forward_is_outer_retryable(monkeypatch, tmp_path, failure_mode):
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class TransientHandler(_RecordingHandler):
+        async def _forward(self, request, _ctx):
+            self.forwarded.append(request)
+            if failure_mode == "connect_error":
+                raise httpx.ConnectError("connection reset", request=request)
+            return httpx.Response(503, request=request)
+
+    class RetrySession:
+        session_id = "session-1"
+
+        def __init__(self, guard):
+            self.guard = guard
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            request = _request(
+                "https://api.githubcopilot.com/responses",
+                {"model": "test-model", "input": [], "stream": True},
+            )
+            if failure_mode == "connect_error":
+                with pytest.raises(httpx.ConnectError):
+                    await self.guard.send_request(request, SimpleNamespace(session_id=self.session_id))
+            else:
+                await self.guard.send_request(request, SimpleNamespace(session_id=self.session_id))
+            return await self.guard.send_request(request, SimpleNamespace(session_id=self.session_id))
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **_kwargs):
+            return RetrySession(self.guard)
+
+    handler = TransientHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError, match="blocked inference request after the first") as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+            )
+        )
+
+    assert exc_info.value.retryable is True
+    assert exc_info.value.audit["inference_requests"] == 1
+    assert exc_info.value.audit["inference_attempts"] == 2
+    assert exc_info.value.audit["blocked_requests"] == 1
+    assert exc_info.value.audit["contract_ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("event_type", "event_data"),
+    [
+        ("assistant.message_delta", SimpleNamespace(delta_content="PARTIAL RESPONSE")),
+        ("assistant.message_delta", SimpleNamespace(delta_content="\n")),
+        ("assistant.reasoning_delta", SimpleNamespace(delta_content="PARTIAL REASONING")),
+        ("assistant.reasoning_delta", SimpleNamespace(delta_content=" ")),
+        ("assistant.reasoning", SimpleNamespace(content="COMPLETE REASONING")),
+        ("assistant.tool_call_delta", SimpleNamespace(input_delta="{}")),
+    ],
+)
+def test_copilot_streamed_model_output_blocks_outer_retry(monkeypatch, tmp_path, event_type, event_data):
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class PartialOutputSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event):
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            await self.guard.send_request(
+                _request(
+                    "https://api.githubcopilot.com/responses",
+                    {"model": "test-model", "input": [], "stream": True},
+                ),
+                SimpleNamespace(session_id=self.session_id),
+            )
+            self.on_event(SimpleNamespace(type=event_type, data=event_data))
+            raise ConnectionError("stream reset after partial output")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return PartialOutputSession(self.guard, kwargs["on_event"])
+
+    handler = _RecordingHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError, match="partial output") as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+            )
+        )
+
+    assert exc_info.value.retryable is False
+    assert exc_info.value.audit["model_requests"] == 1
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (None, None)
+
+
+@pytest.mark.parametrize("output_tokens", [None, 0])
+def test_copilot_reasoning_usage_blocks_outer_retry(monkeypatch, tmp_path, output_tokens):
+    class MessageData:
+        pass
+
+    class UsageData:
+        def __init__(self):
+            self.input_tokens = 100
+            self.output_tokens = output_tokens
+            self.reasoning_tokens = 9
+
+    class ReasoningUsageSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event):
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            await self.guard.send_request(
+                _request(
+                    "https://api.githubcopilot.com/responses",
+                    {"model": "test-model", "input": [], "stream": True},
+                ),
+                SimpleNamespace(session_id=self.session_id),
+            )
+            self.on_event(SimpleNamespace(type="assistant.usage", data=UsageData()))
+            raise ConnectionError("stream reset after reasoning usage")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return ReasoningUsageSession(self.guard, kwargs["on_event"])
+
+    handler = _RecordingHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    observed_output = []
+    with pytest.raises(oneshot_runner.ProviderRunError, match="reasoning usage") as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+                on_model_output=observed_output.append,
+            )
+        )
+
+    assert observed_output == ["assistant.usage"]
+    assert exc_info.value.retryable is False
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (100, output_tokens)
+    assert exc_info.value.usage_details[0]["reasoning_output_tokens"] == 9
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status_code", "message", "blocked_retry", "expected"),
+    [
+        ("session.error", 503, "provider unavailable", False, True),
+        ("model.call_failure", 503, "provider unavailable", True, True),
+        ("session.error", 401, "unauthorized", False, False),
+        ("session.error", None, "Execution failed: Error: All connection attempts failed", True, True),
+        ("session.error", None, "Execution failed; Last error: 503 provider unavailable", True, True),
+        ("model.call_failure", None, "Last error: 401 unauthorized", False, False),
+    ],
+)
+def test_copilot_structured_failure_event_controls_outer_retry(
+    monkeypatch,
+    tmp_path,
+    event_type,
+    status_code,
+    message,
+    blocked_retry,
+    expected,
+):
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class FailureEventSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event):
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            request = _request(
+                "https://api.githubcopilot.com/responses",
+                {"model": "test-model", "input": [], "stream": True},
+            )
+            ctx = SimpleNamespace(session_id=self.session_id)
+            await self.guard.send_request(request, ctx)
+            self.on_event(
+                SimpleNamespace(
+                    type=event_type,
+                    data=SimpleNamespace(
+                        status_code=status_code,
+                        message=message,
+                        error_message=message,
+                    ),
+                )
+            )
+            if blocked_retry:
+                return await self.guard.send_request(request, ctx)
+            raise RuntimeError("SDK discarded structured provider error")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return FailureEventSession(self.guard, kwargs["on_event"])
+
+    handler = _RecordingHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError) as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+            )
+        )
+
+    assert exc_info.value.retryable is expected
+    assert exc_info.value.audit["inference_requests"] == 1
+    assert exc_info.value.audit["blocked_requests"] == int(blocked_retry)
+
+
+@pytest.mark.parametrize("permanent_channel", ["inference", "aux"])
+def test_copilot_permanent_status_overrides_cross_channel_transient(monkeypatch, tmp_path, permanent_channel):
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class MixedStatusHandler(_RecordingHandler):
+        async def _forward(self, request, _ctx):
+            self.forwarded.append(request)
+            is_aux = str(request.url).endswith("/models")
+            status = (
+                401
+                if (is_aux and permanent_channel == "aux") or (not is_aux and permanent_channel == "inference")
+                else 503
+            )
+            return httpx.Response(status, request=request)
+
+    class MixedStatusSession:
+        session_id = "session-1"
+
+        def __init__(self, guard):
+            self.guard = guard
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            ctx = SimpleNamespace(session_id=self.session_id)
+            inference = _request(
+                "https://api.githubcopilot.com/responses",
+                {"model": "test-model", "input": [], "stream": True},
+            )
+            await self.guard.send_request(inference, ctx)
+            auxiliary = await self.guard.send_request(_request("https://api.githubcopilot.com/models"), ctx)
+            if permanent_channel == "aux":
+                auxiliary.raise_for_status()
+            return await self.guard.send_request(inference, ctx)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **_kwargs):
+            return MixedStatusSession(self.guard)
+
+    handler = MixedStatusHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError) as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+            )
+        )
+
+    assert exc_info.value.retryable is False
+    assert exc_info.value.audit["inference_requests"] == 1
+    assert exc_info.value.audit["blocked_requests"] == (1 if permanent_channel == "inference" else 0)
+
+
+def test_copilot_guard_deadline_race_is_timeout_not_retryable(monkeypatch, tmp_path):
+    clock = [0.0]
+
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class TransientHandler(_RecordingHandler):
+        async def _forward(self, request, _ctx):
+            self.forwarded.append(request)
+            return httpx.Response(503, request=request)
+
+    class DeadlineSession:
+        session_id = "session-1"
+
+        def __init__(self, guard):
+            self.guard = guard
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            request = _request(
+                "https://api.githubcopilot.com/responses",
+                {"model": "test-model", "input": [], "stream": True},
+            )
+            await self.guard.send_request(request, SimpleNamespace(session_id=self.session_id))
+            clock[0] = 11.0
+            return await self.guard.send_request(request, SimpleNamespace(session_id=self.session_id))
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **_kwargs):
+            return DeadlineSession(self.guard)
+
+    handler = TransientHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setattr(oneshot_runner.time, "time", lambda: clock[0])
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderTimeoutError) as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                10.0,
+                handler=handler,
+            )
+        )
+
+    assert exc_info.value.retryable is False
+    assert exc_info.value.audit["deadline_closed"] is True
+
+
+@pytest.mark.parametrize("failure_phase", ["send", "teardown"])
+def test_copilot_emits_complete_response_before_late_failure(monkeypatch, tmp_path, failure_phase):
+    class MessageData:
+        def __init__(self, content):
+            self.content = content
+
+    class UsageData:
+        pass
+
+    class FailingSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event):
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            if failure_phase == "teardown":
+                raise ConnectionError("teardown reset")
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            await self.guard.send_request(
+                _request(
+                    "https://api.githubcopilot.com/responses",
+                    {"model": "test-model", "input": [], "stream": True},
+                ),
+                SimpleNamespace(session_id=self.session_id),
+            )
+            event = SimpleNamespace(data=MessageData("COMPLETE RESPONSE"))
+            if failure_phase == "send":
+                self.on_event(event)
+                raise ConnectionError("send reset")
+            return event
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return FailingSession(self.guard, kwargs["on_event"])
+
+    emitted_responses = []
+    handler = _RecordingHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError, match="reset") as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+                on_response=emitted_responses.append,
+            )
+        )
+
+    assert emitted_responses == ["COMPLETE RESPONSE"]
+    assert exc_info.value.retryable is False
+    assert exc_info.value.audit["model_requests"] == 1
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (None, None)
+
+
 @pytest.mark.parametrize(
     ("failure_mode", "error_message"),
     [
@@ -1133,6 +2110,7 @@ def test_copilot_failure_preserves_received_usage(monkeypatch, tmp_path, failure
         assert isinstance(exc_info.value, oneshot_runner.ProviderTimeoutError)
     if failure_mode == "transport_timeout":
         assert not isinstance(exc_info.value, oneshot_runner.ProviderTimeoutError)
+    assert exc_info.value.retryable is False
 
 
 def test_copilot_timeout_is_reported_before_slow_sdk_teardown(monkeypatch, tmp_path):
@@ -1262,7 +2240,16 @@ def test_copilot_deadline_watchdog_covers_sdk_startup(monkeypatch, tmp_path):
 def test_main_maps_nonpositive_copilot_deadline_to_none(monkeypatch, capsys, tmp_path, deadline_arg):
     captured_deadlines: list[float | None] = []
 
-    async def fake_run_copilot(_prompt, _model, _workspace, deadline, handler=None, on_timeout=None):
+    async def fake_run_copilot(
+        _prompt,
+        _model,
+        _workspace,
+        deadline,
+        handler=None,
+        on_timeout=None,
+        on_response=None,
+        on_model_output=None,
+    ):
         captured_deadlines.append(deadline)
         return oneshot_runner.ProviderResult(
             "MODEL RESPONSE",

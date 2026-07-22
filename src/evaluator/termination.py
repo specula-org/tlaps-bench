@@ -304,7 +304,7 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
 
     responses = [event for event in events if event.get("type") == "response"]
     if terminal.get("status") == "timeout":
-        return TerminationReason.TIMEOUT if not responses else TerminationReason.INFRA_ERROR
+        return TerminationReason.TIMEOUT
 
     if not is_count(request_count, 1) or len(responses) != 1:
         return TerminationReason.INFRA_ERROR
