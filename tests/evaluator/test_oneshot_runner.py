@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from evaluator.backends import oneshot_runner
+from evaluator.backends.copilot_oneshot import CopilotOneShotBackend
 from evaluator.backends.litellm_oneshot import LiteLLMOneShotBackend
 
 
@@ -140,6 +141,59 @@ def test_deadline_freezes_guard_before_late_runtime_request():
     assert handler.audit()["blocked_requests"] == 0
     assert handler.audit()["deadline_blocked_requests"] == 1
     assert handler.forwarded == []
+
+
+def test_deadline_during_first_request_preparation_keeps_zero_request_audit():
+    class DeadlineRaceHandler(_RecordingHandler):
+        def __init__(self, prompt, **kwargs):
+            super().__init__(prompt, **kwargs)
+            self.deadline_checks = 0
+
+        def _inference_closed(self):
+            self.deadline_checks += 1
+            if self.deadline_checks == 2:
+                self._frozen = True
+                return True
+            return False
+
+    handler = DeadlineRaceHandler("EXACT PROMPT", max_output_tokens=64_000)
+    handler.bind_session("session-1")
+    handler.begin_agent_turn()
+    request = _request(
+        "https://api.githubcopilot.com/v1/messages",
+        {
+            "model": "claude-opus-4.8",
+            "max_tokens": 32_000,
+            "messages": [],
+            "stream": True,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="after benchmark deadline"):
+        asyncio.run(handler.send_request(request, SimpleNamespace(session_id="session-1")))
+
+    audit = handler.audit()
+    assert handler.forwarded == []
+    assert handler._expected_request_context is None
+    assert audit["model_requests"] == 0
+    assert audit["request_attempts"] == 0
+    assert audit["blocked_requests"] == 0
+    assert audit["deadline_blocked_requests"] == 1
+    assert audit["deadline_closed"] is True
+    assert audit["contract_ok"] is True
+    assert audit["requested_max_output_tokens"] == 64_000
+    for field in (
+        "endpoint",
+        "request_url_sha256",
+        "request_sha256",
+        "runtime_max_output_tokens",
+        "wire_max_output_tokens",
+    ):
+        assert field not in audit
+
+    backend = CopilotOneShotBackend(model="claude-opus-4.8")
+    backend.set_max_output_tokens(64_000)
+    assert backend.validate_request_audit(audit, 0) is True
 
 
 def test_freeze_cancels_full_response_stream_forwarding(monkeypatch):
@@ -677,7 +731,7 @@ def test_copilot_handler_audits_and_blocks_wrong_session_before_forwarding():
     assert handler.audit()["inference_attempts"] == 1
     assert handler.audit()["inference_requests"] == 0
     assert handler.audit()["blocked_requests"] == 1
-    assert handler.audit()["endpoint"] == "/chat/completions"
+    assert "endpoint" not in handler.audit()
 
 
 def test_copilot_handler_audits_sanitizer_rejection_before_forwarding():
@@ -949,6 +1003,9 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
         "result",
     ]
     assert events[-1] == {"type": "result", "status": "success", "model_requests": 1}
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event["complete"] is True
+    assert usage_event["is_lower_bound"] is False
 
 
 def test_main_emits_rich_copilot_usage_details(monkeypatch, capsys, tmp_path):
@@ -1008,6 +1065,82 @@ def test_main_emits_rich_copilot_usage_details(monkeypatch, capsys, tmp_path):
         "is_lower_bound": False,
         **details[0],
     }
+
+
+def test_main_marks_missing_copilot_cost_as_lower_bound(monkeypatch, capsys, tmp_path):
+    details = (
+        {
+            "source": "github_copilot_sdk",
+            "input_tokens": 100,
+            "output_tokens": 40,
+        },
+    )
+
+    async def fake_run_copilot(*_args, **_kwargs):
+        return oneshot_runner.ProviderResult(
+            "MODEL RESPONSE",
+            100,
+            40,
+            {"provider": "copilot", "inference_requests": 1},
+            details,
+        )
+
+    monkeypatch.setattr(oneshot_runner, "run_copilot", fake_run_copilot)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "copilot",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "test-model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event["input_tokens"] == 100
+    assert usage_event["output_tokens"] == 40
+    assert usage_event["complete"] is False
+    assert usage_event["is_lower_bound"] is True
+    assert "costs" not in usage_event
+
+    output = tmp_path / "output.jsonl"
+    output.write_text("".join(json.dumps(event) + "\n" for event in events))
+    backend = CopilotOneShotBackend(model="test-model")
+    usage = backend.parse_usage(str(output), input_tokens=100, output_tokens=40)
+    assert usage.status == "lower_bound"
+    assert usage.costs == ()
+    assert "Copilot usage cost unavailable; total cost is a lower bound" in usage.warnings
+
+
+def test_explicit_zero_copilot_cost_is_complete():
+    detail = {
+        "source": "github_copilot_sdk",
+        "input_tokens": 100,
+        "output_tokens": 40,
+        "costs": [
+            {
+                "amount": 0.0,
+                "unit": "model_multiplier",
+                "source": "assistant.usage.cost",
+            }
+        ],
+    }
+
+    assert (
+        oneshot_runner._usage_details_complete(
+            (detail,),
+            1,
+            require_cost=True,
+        )
+        is True
+    )
 
 
 def test_main_counts_retried_request_with_missing_usage_as_lower_bound(monkeypatch, capsys, tmp_path):
@@ -1662,6 +1795,73 @@ def test_copilot_structured_error_retryability(data, expected):
     assert oneshot_runner._copilot_event_error_retryability([event]) is expected
 
 
+def test_copilot_bodyless_400_companion_session_error_remains_retryable():
+    events = [
+        SimpleNamespace(
+            type="model.call_failure",
+            data=SimpleNamespace(
+                status_code=400,
+                bad_request_kind="bodyless",
+                error_type="bad_request",
+            ),
+        ),
+        SimpleNamespace(
+            type="session.error",
+            data=SimpleNamespace(
+                status_code=400,
+                error_type="query",
+                message="model request failed",
+            ),
+        ),
+    ]
+
+    assert oneshot_runner._copilot_event_error_retryability(events) is True
+
+
+def test_historical_bodyless_400_does_not_mask_later_bad_request():
+    bodyless = SimpleNamespace(
+        type="model.call_failure",
+        data=SimpleNamespace(status_code=400, bad_request_kind="bodyless"),
+    )
+    companion = SimpleNamespace(
+        type="session.error",
+        data=SimpleNamespace(status_code=400, error_type="query"),
+    )
+    later_bad_request = SimpleNamespace(
+        type="session.error",
+        data=SimpleNamespace(status_code=400, error_type="query"),
+    )
+
+    assert (
+        oneshot_runner._copilot_event_error_retryability(
+            [bodyless, companion, later_bad_request],
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "permanent_event",
+    [
+        SimpleNamespace(
+            type="model.call_failure",
+            data=SimpleNamespace(status_code=400, bad_request_kind="structured_error"),
+        ),
+        SimpleNamespace(
+            type="session.error",
+            data=SimpleNamespace(status_code=401, error_type="authentication"),
+        ),
+    ],
+)
+def test_copilot_permanent_evidence_overrides_bodyless_400(permanent_event):
+    bodyless = SimpleNamespace(
+        type="model.call_failure",
+        data=SimpleNamespace(status_code=400, bad_request_kind="bodyless"),
+    )
+
+    assert oneshot_runner._copilot_event_error_retryability([bodyless, permanent_event]) is False
+
+
 @pytest.mark.parametrize(
     ("bad_request_kind", "retry_allowed"),
     [("bodyless", True), ("structured_error", False)],
@@ -1700,6 +1900,97 @@ def test_copilot_http_400_retry_uses_structured_bad_request_kind(bad_request_kin
         with pytest.raises(RuntimeError, match="permanent provider error"):
             asyncio.run(handler.send_request(request, ctx))
         assert len(handler.forwarded) == 1
+
+
+def test_copilot_bodyless_400_sequence_is_outer_retryable(monkeypatch, tmp_path):
+    class MessageData:
+        pass
+
+    class UsageData:
+        pass
+
+    class BodylessFailureSession:
+        session_id = "session-1"
+
+        def __init__(self, guard, on_event):
+            self.guard = guard
+            self.on_event = on_event
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send_and_wait(self, _prompt, **_kwargs):
+            await self.guard.send_request(
+                _request(
+                    "https://api.githubcopilot.com/v1/messages",
+                    {
+                        "model": "test-model",
+                        "max_tokens": 64_000,
+                        "messages": [],
+                        "stream": True,
+                    },
+                ),
+                SimpleNamespace(session_id=self.session_id),
+            )
+            self.on_event(
+                SimpleNamespace(
+                    type="model.call_failure",
+                    data=SimpleNamespace(
+                        status_code=400,
+                        bad_request_kind="bodyless",
+                        error_type="bad_request",
+                        error_message="bodyless gateway failure",
+                    ),
+                )
+            )
+            self.on_event(
+                SimpleNamespace(
+                    type="session.error",
+                    data=SimpleNamespace(
+                        status_code=400,
+                        error_type="query",
+                        message="model request failed",
+                    ),
+                )
+            )
+            raise Exception("SDK request failed")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.guard = kwargs["request_handler"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def create_session(self, **kwargs):
+            return BodylessFailureSession(self.guard, kwargs["on_event"])
+
+    handler = _RecordingHandler("EXACT PROMPT")
+    monkeypatch.setattr(oneshot_runner, "_load_copilot_sdk", lambda: (FakeClient, MessageData, UsageData))
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+
+    with pytest.raises(oneshot_runner.ProviderRunError, match="SDK request failed") as exc_info:
+        asyncio.run(
+            oneshot_runner.run_copilot(
+                "EXACT PROMPT",
+                "test-model",
+                str(tmp_path),
+                None,
+                handler=handler,
+            )
+        )
+
+    assert exc_info.value.retryable is True
+    assert exc_info.value.audit["contract_ok"] is True
+    detail = exc_info.value.audit["inference_request_details"][0]
+    assert detail["status_code"] == 400
+    assert detail["retryable"] is True
 
 
 def test_copilot_runner_uses_empty_mode_and_strict_session_options(monkeypatch, tmp_path):

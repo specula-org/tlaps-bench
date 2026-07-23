@@ -655,8 +655,6 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             raise RuntimeError("strict one-shot: blocked inference request after benchmark deadline")
 
         self.inference_attempts += 1
-        if self.endpoint is None:
-            self.endpoint = endpoint
         if self._logical_agent_turns != 1:
             self.blocked_requests += 1
             raise RuntimeError("strict one-shot: inference request outside the logical agent turn")
@@ -694,14 +692,9 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             raise RuntimeError("strict one-shot: invalid inference request body") from exc
         request_sha256 = hashlib.sha256(body).hexdigest()
         request_url_sha256 = _request_url_sha256(request.url)
+        first_forwarded_request = self.forwarded_inference_requests == 0
 
-        if self.forwarded_inference_requests == 0:
-            self._expected_request_context = self._request_context(ctx)
-            self.request_url_sha256 = request_url_sha256
-            self.request_sha256 = request_sha256
-            self.runtime_max_output_tokens = runtime_limit
-            self.wire_max_output_tokens = wire_limit
-        else:
+        if not first_forwarded_request:
             retry_block_reason = self._retry_block_reason(
                 endpoint=endpoint,
                 request_url_sha256=request_url_sha256,
@@ -725,6 +718,13 @@ class StrictCopilotRequestHandler(_CopilotRequestHandler):
             self.inference_attempts -= 1
             self.deadline_blocked_requests += 1
             raise RuntimeError("strict one-shot: blocked inference request after benchmark deadline")
+        if first_forwarded_request:
+            self.endpoint = endpoint
+            self._expected_request_context = self._request_context(ctx)
+            self.request_url_sha256 = request_url_sha256
+            self.request_sha256 = request_sha256
+            self.runtime_max_output_tokens = runtime_limit
+            self.wire_max_output_tokens = wire_limit
         self.forwarded_inference_requests += 1
         detail: dict[str, object] = {
             "attempt": self.forwarded_inference_requests,
@@ -1009,6 +1009,7 @@ def _copilot_event_error_retryability(events: list[object]) -> bool | None:
     """Classify structured SDK failure events, with permanent evidence winning."""
 
     saw_transient = False
+    pending_bodyless_companion = False
     for event in events:
         event_type = _enum_value(_get(event, "type"))
         if event_type not in {"session.error", "model.call_failure"}:
@@ -1026,6 +1027,7 @@ def _copilot_event_error_retryability(events: list[object]) -> bool | None:
         if bad_request_kind == "structured_error":
             return False
         if bad_request_kind == "bodyless":
+            pending_bodyless_companion = True
             saw_transient = True
             continue
         error_type = _get(data, "error_type")
@@ -1044,6 +1046,7 @@ def _copilot_event_error_retryability(events: list[object]) -> bool | None:
         if status is None:
             status = _status_code(_get(data, "statusCode"))
         if status is None or status < 400:
+            pending_bodyless_companion = False
             message_field = "message" if event_type == "session.error" else "error_message"
             message = _get(data, message_field)
             if isinstance(message, str):
@@ -1056,6 +1059,17 @@ def _copilot_event_error_retryability(events: list[object]) -> bool | None:
                 elif message.endswith("All connection attempts failed"):
                     saw_transient = True
         else:
+            if status == 400 and event_type == "session.error":
+                # The pinned runtime emits this top-level companion after a
+                # model.call_failure(bodyless 400). Pair only the next failure
+                # event so historical transient evidence cannot mask a later
+                # standalone bad request.
+                if pending_bodyless_companion:
+                    pending_bodyless_companion = False
+                    saw_transient = True
+                    continue
+                return False
+            pending_bodyless_companion = False
             if not _is_retryable_http_status(status):
                 return False
             saw_transient = True
@@ -1471,7 +1485,7 @@ async def run_copilot(
         def record_event(event: object) -> None:
             nonlocal text
             events.append(event)
-            event_retryability = _copilot_event_error_retryability([event])
+            event_retryability = _copilot_event_error_retryability(events)
             if _enum_value(_get(event, "type")) in {"session.error", "model.call_failure"}:
                 guard.record_event_failure(event, event_retryability)
             data = getattr(event, "data", None)
@@ -1595,10 +1609,11 @@ async def run_copilot(
             guard._aux_failure_retryable,
         )
         event_retryability = _copilot_event_error_retryability(events)
+        exception_status = _exception_status_code(exc)
         if (
-            _exception_status_code(exc) == 400
-            and event_retryability is True
+            event_retryability is True
             and _copilot_bodyless_bad_request_observed(events)
+            and (exception_status == 400 or (exception_status is None and current_retryability is None))
         ):
             current_retryability = True
         permanent_evidence = (
@@ -1828,8 +1843,28 @@ def _emit_usage_events(
     _emit("usage", **payload)
 
 
-def _usage_details_complete(usage_details: tuple[dict[str, object], ...], model_requests: int) -> bool:
-    """Return whether every model request has explicit core token counts."""
+def _usage_detail_has_provider_cost(detail: dict[str, object]) -> bool:
+    costs = detail.get("costs")
+    if not isinstance(costs, (list, tuple)):
+        return False
+    return any(
+        isinstance(cost, dict)
+        and _optional_nonnegative_float(cost.get("amount")) is not None
+        and isinstance(cost.get("unit"), str)
+        and bool(cost["unit"])
+        and isinstance(cost.get("source"), str)
+        and bool(cost["source"])
+        for cost in costs
+    )
+
+
+def _usage_details_complete(
+    usage_details: tuple[dict[str, object], ...],
+    model_requests: int,
+    *,
+    require_cost: bool = False,
+) -> bool:
+    """Return whether every request has the provider's required usage fields."""
 
     return (
         model_requests > 0
@@ -1837,6 +1872,7 @@ def _usage_details_complete(usage_details: tuple[dict[str, object], ...], model_
         and all(
             _optional_nonnegative_int(detail.get("input_tokens")) is not None
             and _optional_nonnegative_int(detail.get("output_tokens")) is not None
+            and (not require_cost or _usage_detail_has_provider_cost(detail))
             for detail in usage_details
         )
     )
@@ -1847,13 +1883,20 @@ def _usage_complete(
     output_tokens: int | None,
     usage_details: tuple[dict[str, object], ...],
     model_requests: int,
+    *,
+    require_cost: bool = False,
 ) -> bool:
     """Accept explicit aggregate counts or complete per-request evidence."""
 
     if usage_details:
-        return _usage_details_complete(usage_details, model_requests)
+        return _usage_details_complete(
+            usage_details,
+            model_requests,
+            require_cost=require_cost,
+        )
     return (
-        model_requests > 0
+        not require_cost
+        and model_requests > 0
         and _optional_nonnegative_int(input_tokens) is not None
         and _optional_nonnegative_int(output_tokens) is not None
     )
@@ -1917,7 +1960,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         model_requests = _nonnegative_int(request_count)
         if model_requests > 0:
-            usage_complete = _usage_details_complete(usage_details, model_requests)
+            usage_complete = _usage_details_complete(
+                usage_details,
+                model_requests,
+                require_cost=args.provider == "copilot",
+            )
             _emit_usage_events(
                 provider=args.provider,
                 input_tokens=input_tokens,
@@ -1953,6 +2000,7 @@ def main(argv: list[str] | None = None) -> int:
             result.output_tokens,
             result.usage_details,
             model_requests,
+            require_cost=args.provider == "copilot",
         )
         _emit_usage_events(
             provider=args.provider,

@@ -282,6 +282,7 @@ class OneShotBackend(Backend):
         complete_flags: list[bool] = []
         lower_bound_flags: list[bool] = []
         reported_model_requests: list[int] = []
+        usage_warnings: list[str] = []
         for payload in payloads:
             costs: list[UsageCost] = []
             raw_costs = payload.get("costs")
@@ -331,17 +332,22 @@ class OneShotBackend(Backend):
             runtime_version = payload.get("runtime_version")
             if isinstance(runtime_version, str) and runtime_version:
                 runtime_versions.append(runtime_version)
+            model_requests = nonnegative_int(payload.get("model_requests"))
+            copilot_cost_missing = self.provider == "copilot" and model_requests != 0 and not costs
             explicit_complete = payload.get("complete")
-            complete_flags.append(
+            declared_complete = (
                 explicit_complete if isinstance(explicit_complete, bool) else terminal_status == "success"
             )
+            complete_flags.append(declared_complete and not copilot_cost_missing)
             explicit_lower_bound = payload.get("is_lower_bound")
-            lower_bound_flags.append(
+            declared_lower_bound = (
                 explicit_lower_bound
                 if isinstance(explicit_lower_bound, bool)
                 else terminal_status in {"error", "timeout"}
             )
-            model_requests = nonnegative_int(payload.get("model_requests"))
+            lower_bound_flags.append(declared_lower_bound or copilot_cost_missing)
+            if copilot_cost_missing:
+                usage_warnings.append("Copilot usage cost unavailable; total cost is a lower bound")
             if model_requests is not None:
                 reported_model_requests.append(model_requests)
 
@@ -355,6 +361,7 @@ class OneShotBackend(Backend):
             complete=all(complete_flags),
             is_lower_bound=any(lower_bound_flags),
             runtime_versions=tuple(dict.fromkeys(runtime_versions)),
+            warnings=tuple(dict.fromkeys(usage_warnings)),
             totals=totals,
         )
         if len(set(sources)) > 1:

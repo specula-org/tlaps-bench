@@ -348,6 +348,27 @@ def test_one_shot_deadline_before_request_is_still_timeout(tmp_path):
     assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
 
 
+def test_one_shot_deadline_during_first_request_preparation_is_timeout(tmp_path):
+    stream = [
+        {
+            "type": "request_audit",
+            **_strict_audit(
+                "copilot",
+                requests=0,
+                logical_agent_turns=1,
+                deadline_closed=True,
+                deadline_blocked_requests=1,
+                requested_max_output_tokens=64_000,
+            ),
+        },
+        {"type": "error", "message": "Copilot request reached benchmark deadline"},
+        {"type": "result", "status": "timeout", "model_requests": 0},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-request-preparation-timeout.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
+
+
 def test_one_shot_clean_response_is_genuine(tmp_path):
     stream = [
         {"type": "response", "text": "not a complete module"},

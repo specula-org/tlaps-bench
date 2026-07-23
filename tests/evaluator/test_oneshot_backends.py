@@ -284,6 +284,13 @@ def test_retried_copilot_usage_counts_each_wire_request(tmp_path):
             "source": "github_copilot_sdk",
             "complete": True,
             "is_lower_bound": False,
+            "costs": [
+                {
+                    "amount": 1.0,
+                    "unit": "model_multiplier",
+                    "source": "assistant.usage.cost",
+                }
+            ],
         },
         {
             "type": "usage",
@@ -293,6 +300,13 @@ def test_retried_copilot_usage_counts_each_wire_request(tmp_path):
             "source": "github_copilot_sdk",
             "complete": True,
             "is_lower_bound": False,
+            "costs": [
+                {
+                    "amount": 1.0,
+                    "unit": "model_multiplier",
+                    "source": "assistant.usage.cost",
+                }
+            ],
         },
         {"type": "request_audit", **_copilot_audit(requests=2)},
         {"type": "result", "status": "success", "model_requests": 2},
@@ -308,6 +322,31 @@ def test_retried_copilot_usage_counts_each_wire_request(tmp_path):
     assert usage.output_tokens == 50
     assert len(usage.requests) == 2
     assert metadata["model_requests"] == 2
+
+
+def test_copilot_parser_downgrades_costless_complete_usage(tmp_path):
+    events = tmp_path / "output.jsonl"
+    _write_events(
+        events,
+        {
+            "type": "usage",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "model_requests": 1,
+            "source": "github_copilot_sdk",
+            "complete": True,
+            "is_lower_bound": False,
+        },
+        {"type": "request_audit", **_copilot_audit(requests=1)},
+        {"type": "result", "status": "success", "model_requests": 1},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=100, output_tokens=20)
+
+    assert usage.status == "lower_bound"
+    assert usage.costs == ()
+    assert "Copilot usage cost unavailable; total cost is a lower bound" in usage.warnings
 
 
 def test_usage_records_beyond_audited_requests_are_discarded(tmp_path):

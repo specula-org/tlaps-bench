@@ -133,7 +133,7 @@ uv run tlaps-bench run --backend copilot_oneshot --model claude-opus-4.8 --max-o
 
 LiteLLM makes one completion call per outer attempt and disables adapter retries. Copilot makes one logical `send_and_wait` call; before a complete response, its native runtime may retry an identical transient request up to six total wire attempts. A complete response, permanent error, changed request, or deadline stops further requests. Native retries currently apply only to `copilot_oneshot`.
 
-Copilot audits every forwarded request. Unavailable token or cost data remains `null` and is marked as a lower bound instead of zero. Extra usage records are discarded.
+Copilot audits every forwarded request. Missing token or cost telemetry is marked as a lower bound, never treated as zero. Extra usage records are discarded.
 
 Both backends default to three outer infrastructure retries, but only for explicitly transient failures with no model output. Copilot reasoning may continue through a native retry inside the same turn, but it prevents a fresh outer Agent attempt. Each outer retry uses a fresh workspace and preserves earlier evidence under `agent/attempts/`. `--max-continuations` must remain `0`.
 
