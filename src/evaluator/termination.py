@@ -295,7 +295,7 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
 
     terminal = results[0]
     request_count = terminal.get("model_requests")
-    if not isinstance(request_count, int) or isinstance(request_count, bool) or request_count not in {0, 1}:
+    if not isinstance(request_count, int) or isinstance(request_count, bool) or request_count < 0:
         return TerminationReason.INFRA_ERROR
 
     audit = audits[0]
@@ -303,10 +303,13 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
         return TerminationReason.INFRA_ERROR
 
     responses = [event for event in events if event.get("type") == "response"]
+    completed_responses = audit.get("completed_responses")
+    if completed_responses is not None and not is_count(completed_responses, len(responses)):
+        return TerminationReason.INFRA_ERROR
     if terminal.get("status") == "timeout":
         return TerminationReason.TIMEOUT
 
-    if not is_count(request_count, 1) or len(responses) != 1:
+    if request_count < 1 or len(responses) != 1:
         return TerminationReason.INFRA_ERROR
     if terminal.get("status") != "success":
         return TerminationReason.INFRA_ERROR

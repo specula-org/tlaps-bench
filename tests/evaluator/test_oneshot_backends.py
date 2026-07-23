@@ -23,6 +23,54 @@ def _write_events(path, *events):
     path.write_text("".join(json.dumps(event) + "\n" for event in events))
 
 
+def _copilot_audit(requests=1, completed_responses=1, max_output_tokens=None):
+    request_url_sha256 = "canonical-url"
+    request_sha256 = "canonical-request"
+    audit = {
+        "provider": "copilot",
+        "model_requests": requests,
+        "request_attempts": requests,
+        "blocked_requests": 0,
+        "system_prompt_present": False,
+        "tools_present": False,
+        "retries_enabled": True,
+        "retry_scope": "incomplete_response",
+        "max_inference_attempts": 6,
+        "logical_agent_turns": int(requests > 0),
+        "completed_responses": completed_responses,
+        "audit_scope": "wire",
+        "contract_ok": True,
+        "wire_audited": True,
+        "inference_requests": requests,
+        "inference_attempts": requests,
+        "deadline_blocked_requests": 0,
+        "unknown_requests": 0,
+        "system_removed": requests > 0,
+        "tools_removed": requests > 0,
+        "inference_request_details": [
+            {
+                "attempt": attempt,
+                "endpoint": "/responses",
+                "request_url_sha256": request_url_sha256,
+                "request_sha256": request_sha256,
+                "stream_completed": attempt == requests,
+            }
+            for attempt in range(1, requests + 1)
+        ],
+    }
+    if requests > 0:
+        audit.update(
+            endpoint="/responses",
+            request_url_sha256=request_url_sha256,
+            request_sha256=request_sha256,
+        )
+    if max_output_tokens is not None:
+        audit["requested_max_output_tokens"] = max_output_tokens
+        if requests > 0:
+            audit["wire_max_output_tokens"] = max_output_tokens
+    return audit
+
+
 class _OneShotMode:
     name = "proof-completion"
     description = "test mode"
@@ -99,25 +147,7 @@ def test_copilot_command_and_metadata_include_explicit_output_limit(tmp_path):
 def test_copilot_output_limit_audit_fails_closed_on_missing_or_mismatched_wire_evidence():
     backend = CopilotOneShotBackend(model="claude-opus-4.8")
     backend.set_max_output_tokens(64_000)
-    audit = {
-        "provider": "copilot",
-        "model_requests": 1,
-        "request_attempts": 1,
-        "blocked_requests": 0,
-        "system_prompt_present": False,
-        "tools_present": False,
-        "retries_enabled": False,
-        "audit_scope": "wire",
-        "contract_ok": True,
-        "wire_audited": True,
-        "inference_requests": 1,
-        "inference_attempts": 1,
-        "unknown_requests": 0,
-        "system_removed": True,
-        "tools_removed": True,
-        "requested_max_output_tokens": 64_000,
-        "wire_max_output_tokens": 64_000,
-    }
+    audit = _copilot_audit(max_output_tokens=64_000)
 
     assert backend.validate_request_audit(audit, 1) is True
     for field in ("requested_max_output_tokens", "wire_max_output_tokens"):
@@ -128,18 +158,40 @@ def test_copilot_output_limit_audit_fails_closed_on_missing_or_mismatched_wire_e
         mismatched = {**audit, field: 32_000}
         assert backend.validate_request_audit(mismatched, 1) is False
 
-    before_request = {
-        **audit,
-        "model_requests": 0,
-        "request_attempts": 0,
-        "inference_requests": 0,
-        "inference_attempts": 0,
-        "system_removed": False,
-        "tools_removed": False,
-    }
-    before_request.pop("wire_max_output_tokens")
+    before_request = _copilot_audit(
+        requests=0,
+        completed_responses=0,
+        max_output_tokens=64_000,
+    )
     assert backend.validate_request_audit(before_request, 0) is True
     assert backend.validate_request_audit({**before_request, "wire_max_output_tokens": 64_000}, 0) is False
+
+    retried = _copilot_audit(
+        requests=2,
+        completed_responses=1,
+        max_output_tokens=64_000,
+    )
+    assert backend.validate_request_audit(retried, 2) is True
+    assert (
+        backend.validate_request_audit(
+            {
+                **retried,
+                "request_attempts": 3,
+                "inference_attempts": 3,
+                "blocked_requests": 1,
+                "contract_ok": False,
+            },
+            2,
+        )
+        is False
+    )
+
+    over_limit = _copilot_audit(
+        requests=7,
+        completed_responses=1,
+        max_output_tokens=64_000,
+    )
+    assert backend.validate_request_audit(over_limit, 7) is False
 
 
 def test_parse_output_and_request_metadata(tmp_path):
@@ -217,6 +269,115 @@ def test_parse_output_and_request_metadata(tmp_path):
         "tools_removed": True,
         "model_requests": 1,
     }
+
+
+def test_retried_copilot_usage_counts_each_wire_request(tmp_path):
+    events = tmp_path / "output.jsonl"
+    _write_events(
+        events,
+        {"type": "response", "text": MODULE},
+        {
+            "type": "usage",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "model_requests": 1,
+            "source": "github_copilot_sdk",
+            "complete": True,
+            "is_lower_bound": False,
+        },
+        {
+            "type": "usage",
+            "input_tokens": 110,
+            "output_tokens": 30,
+            "model_requests": 1,
+            "source": "github_copilot_sdk",
+            "complete": True,
+            "is_lower_bound": False,
+        },
+        {"type": "request_audit", **_copilot_audit(requests=2)},
+        {"type": "result", "status": "success", "model_requests": 2},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=210, output_tokens=50)
+    metadata = backend.parse_run_metadata(str(events))
+
+    assert usage.status == "complete"
+    assert usage.model_requests == 2
+    assert usage.input_tokens == 210
+    assert usage.output_tokens == 50
+    assert len(usage.requests) == 2
+    assert metadata["model_requests"] == 2
+
+
+def test_usage_records_beyond_audited_requests_are_discarded(tmp_path):
+    events = tmp_path / "output.jsonl"
+    usage_events = [
+        {
+            "type": "usage",
+            "input_tokens": 100 + attempt,
+            "output_tokens": 20 + attempt,
+            "model_requests": 1,
+            "source": "github_copilot_sdk",
+            "complete": True,
+            "is_lower_bound": False,
+            "costs": [
+                {
+                    "amount": 1.0,
+                    "unit": "model_multiplier",
+                    "source": "assistant.usage.cost",
+                }
+            ],
+        }
+        for attempt in range(3)
+    ]
+    _write_events(
+        events,
+        {"type": "response", "text": MODULE},
+        *usage_events,
+        {"type": "request_audit", **_copilot_audit(requests=2)},
+        {"type": "result", "status": "success", "model_requests": 2},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=303, output_tokens=63)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.costs == ()
+    assert usage.requests == ()
+    assert usage.warnings == ("usage records exceed audited model requests; token and cost totals discarded",)
+
+
+def test_retried_copilot_missing_attempt_usage_remains_lower_bound(tmp_path):
+    events = tmp_path / "output.jsonl"
+    _write_events(
+        events,
+        {"type": "response", "text": MODULE},
+        {
+            "type": "usage",
+            "input_tokens": 110,
+            "output_tokens": 30,
+            "model_requests": 1,
+            "source": "github_copilot_sdk",
+            "complete": False,
+            "is_lower_bound": True,
+        },
+        {"type": "request_audit", **_copilot_audit(requests=2)},
+        {"type": "result", "status": "success", "model_requests": 2},
+    )
+    backend = CopilotOneShotBackend(model="gpt-5")
+
+    usage = backend.parse_usage(str(events), input_tokens=110, output_tokens=30)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert usage.input_tokens == 110
+    assert usage.output_tokens == 30
+    assert len(usage.requests) == 1
+    assert "usage unavailable for 1 forwarded model request(s)" in usage.warnings
 
 
 def test_missing_one_shot_usage_is_not_reported_as_zero_cost(tmp_path):
