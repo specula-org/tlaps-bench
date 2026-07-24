@@ -1,4 +1,4 @@
-"""Shared host-side contract for single-request model backends."""
+"""Shared host-side contract for single-response model backends."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def _unwrap_tla_fence(response: str) -> str:
 
 
 class OneShotBackend(Backend):
-    """Sibling backend approach for one audited, tool-free model request."""
+    """Sibling backend approach for one audited, tool-free model response."""
 
     provider: str = ""
     model: str
@@ -282,6 +282,7 @@ class OneShotBackend(Backend):
         complete_flags: list[bool] = []
         lower_bound_flags: list[bool] = []
         reported_model_requests: list[int] = []
+        usage_warnings: list[str] = []
         for payload in payloads:
             costs: list[UsageCost] = []
             raw_costs = payload.get("costs")
@@ -331,17 +332,22 @@ class OneShotBackend(Backend):
             runtime_version = payload.get("runtime_version")
             if isinstance(runtime_version, str) and runtime_version:
                 runtime_versions.append(runtime_version)
+            model_requests = nonnegative_int(payload.get("model_requests"))
+            copilot_cost_missing = self.provider == "copilot" and model_requests != 0 and not costs
             explicit_complete = payload.get("complete")
-            complete_flags.append(
+            declared_complete = (
                 explicit_complete if isinstance(explicit_complete, bool) else terminal_status == "success"
             )
+            complete_flags.append(declared_complete and not copilot_cost_missing)
             explicit_lower_bound = payload.get("is_lower_bound")
-            lower_bound_flags.append(
+            declared_lower_bound = (
                 explicit_lower_bound
                 if isinstance(explicit_lower_bound, bool)
                 else terminal_status in {"error", "timeout"}
             )
-            model_requests = nonnegative_int(payload.get("model_requests"))
+            lower_bound_flags.append(declared_lower_bound or copilot_cost_missing)
+            if copilot_cost_missing:
+                usage_warnings.append("Copilot usage cost unavailable; total cost is a lower bound")
             if model_requests is not None:
                 reported_model_requests.append(model_requests)
 
@@ -355,10 +361,33 @@ class OneShotBackend(Backend):
             complete=all(complete_flags),
             is_lower_bound=any(lower_bound_flags),
             runtime_versions=tuple(dict.fromkeys(runtime_versions)),
+            warnings=tuple(dict.fromkeys(usage_warnings)),
             totals=totals,
         )
         if len(set(sources)) > 1:
             usage = replace(usage, sources=tuple(dict.fromkeys(sources)))
+        if terminal_model_requests is not None and (usage.model_requests or 0) > terminal_model_requests:
+            return UsageSummary(
+                model_requests=terminal_model_requests,
+                sources=tuple(dict.fromkeys(sources)) or (f"{self.provider}_oneshot_event",),
+                runtime_versions=tuple(dict.fromkeys(runtime_versions)),
+                available=True,
+                complete=False,
+                is_lower_bound=True,
+                warnings=("usage records exceed audited model requests; token and cost totals discarded",),
+            )
+        if terminal_model_requests is not None and terminal_model_requests > (usage.model_requests or 0):
+            missing = terminal_model_requests - (usage.model_requests or 0)
+            usage = replace(
+                usage,
+                model_requests=terminal_model_requests,
+                complete=False,
+                is_lower_bound=True,
+                warnings=(
+                    *usage.warnings,
+                    f"usage unavailable for {missing} forwarded model request(s)",
+                ),
+            )
         if saw_model_output and (usage.model_requests or 0) < 1:
             usage = replace(
                 usage,
@@ -466,7 +495,7 @@ class OneShotBackend(Backend):
         return metadata
 
     def validate_request_audit(self, audit: dict[str, object], request_count: int) -> bool:
-        """Validate the provider-neutral strict request contract."""
+        """Validate the provider-neutral one-shot contract."""
 
         return (
             audit.get("provider") == self.provider
@@ -477,5 +506,4 @@ class OneShotBackend(Backend):
             and self._is_exact_count(audit.get("blocked_requests"), 0)
             and audit.get("system_prompt_present") is False
             and audit.get("tools_present") is False
-            and audit.get("retries_enabled") is False
         )

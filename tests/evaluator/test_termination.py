@@ -90,7 +90,8 @@ def _ctx(path, backend="codex", agent_exit=None, error="", approach=None, provid
     )
 
 
-def _strict_audit(provider, requests=1, contract_ok=True, **evidence):
+def _strict_audit(provider, requests=1, contract_ok=True, completed_responses=0, **evidence):
+    request_url_sha256 = "canonical-url"
     audit = {
         "provider": provider,
         "model_requests": requests,
@@ -104,13 +105,35 @@ def _strict_audit(provider, requests=1, contract_ok=True, **evidence):
     }
     if provider == "copilot":
         audit.update(
+            retries_enabled=True,
+            retry_scope="incomplete_response",
+            max_inference_attempts=6,
+            logical_agent_turns=int(requests > 0),
+            completed_responses=completed_responses,
             wire_audited=True,
             inference_requests=requests,
             inference_attempts=requests,
+            deadline_blocked_requests=0,
             unknown_requests=0,
-            system_removed=requests == 1,
-            tools_removed=requests == 1,
+            system_removed=requests > 0,
+            tools_removed=requests > 0,
+            inference_request_details=[
+                {
+                    "attempt": attempt,
+                    "endpoint": "/responses",
+                    "request_url_sha256": request_url_sha256,
+                    "request_sha256": "canonical-request",
+                    "stream_completed": False,
+                }
+                for attempt in range(1, requests + 1)
+            ],
         )
+        if requests > 0:
+            audit.update(
+                endpoint="/responses",
+                request_url_sha256=request_url_sha256,
+                request_sha256="canonical-request",
+            )
     else:
         audit.update(
             wire_audited=False,
@@ -275,7 +298,7 @@ def test_one_shot_response_before_provider_deadline_is_still_timeout(tmp_path):
         {"type": "response", "text": "COMPLETE RESPONSE BEFORE IDLE"},
         {
             "type": "request_audit",
-            **_strict_audit("copilot"),
+            **_strict_audit("copilot", completed_responses=1),
             "wire_audited": True,
             "inference_requests": 1,
             "inference_attempts": 1,
@@ -325,6 +348,27 @@ def test_one_shot_deadline_before_request_is_still_timeout(tmp_path):
     assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
 
 
+def test_one_shot_deadline_during_first_request_preparation_is_timeout(tmp_path):
+    stream = [
+        {
+            "type": "request_audit",
+            **_strict_audit(
+                "copilot",
+                requests=0,
+                logical_agent_turns=1,
+                deadline_closed=True,
+                deadline_blocked_requests=1,
+                requested_max_output_tokens=64_000,
+            ),
+        },
+        {"type": "error", "message": "Copilot request reached benchmark deadline"},
+        {"type": "result", "status": "timeout", "model_requests": 0},
+    ]
+    path = _write_jsonl(tmp_path / "oneshot-request-preparation-timeout.jsonl", stream)
+
+    assert classify(_ctx(path, backend="copilot_oneshot", agent_exit=1)) == TerminationReason.TIMEOUT
+
+
 def test_one_shot_clean_response_is_genuine(tmp_path):
     stream = [
         {"type": "response", "text": "not a complete module"},
@@ -349,7 +393,7 @@ def test_one_shot_clean_copilot_response_is_genuine(tmp_path):
         {"type": "response", "text": "not a complete module"},
         {
             "type": "request_audit",
-            **_strict_audit("copilot"),
+            **_strict_audit("copilot", completed_responses=1),
             "wire_audited": True,
             "inference_requests": 1,
             "inference_attempts": 1,
@@ -381,7 +425,7 @@ def test_one_shot_clean_copilot_response_is_genuine(tmp_path):
         (
             "copilot_oneshot",
             {
-                **_strict_audit("copilot", contract_ok=True),
+                **_strict_audit("copilot", contract_ok=True, completed_responses=1),
                 "wire_audited": True,
                 "inference_requests": 1,
                 "inference_attempts": 1,
@@ -420,7 +464,7 @@ def test_one_shot_context_audit_regression_is_infra(tmp_path, backend, audit):
 )
 def test_one_shot_audit_counts_require_exact_integers(tmp_path, backend, field, value):
     provider = backend.removesuffix("_oneshot")
-    audit = _strict_audit(provider)
+    audit = _strict_audit(provider, completed_responses=int(provider == "copilot"))
     audit[field] = value
     stream = [
         {"type": "response", "text": "candidate"},
@@ -516,7 +560,7 @@ def test_one_shot_duplicate_contract_event_is_infra(tmp_path, event_type):
 
 
 @pytest.mark.parametrize(
-    "backend,audit",
+    "backend,audit,expected",
     [
         (
             "litellm_oneshot",
@@ -528,20 +572,22 @@ def test_one_shot_duplicate_contract_event_is_infra(tmp_path, event_type):
                 "system_supplied": False,
                 "tools_supplied": False,
             },
+            TerminationReason.INFRA_ERROR,
         ),
         (
             "copilot_oneshot",
             {
-                **_strict_audit("copilot", requests=2, contract_ok=False),
+                **_strict_audit("copilot", requests=2, completed_responses=1),
                 "wire_audited": True,
                 "inference_requests": 2,
                 "inference_attempts": 2,
                 "blocked_requests": 0,
             },
+            TerminationReason.OK,
         ),
     ],
 )
-def test_one_shot_success_with_two_requests_is_infra(tmp_path, backend, audit):
+def test_one_shot_success_with_two_wire_requests_is_provider_specific(tmp_path, backend, audit, expected):
     stream = [
         {"type": "response", "text": "not a complete module"},
         {"type": "request_audit", **audit},
@@ -549,7 +595,55 @@ def test_one_shot_success_with_two_requests_is_infra(tmp_path, backend, audit):
     ]
 
     path = _write_jsonl(tmp_path / f"{backend}-two-requests.jsonl", stream)
-    assert classify(_ctx(path, backend=backend)) == TerminationReason.INFRA_ERROR
+    assert classify(_ctx(path, backend=backend)) == expected
+
+
+def test_copilot_retried_turn_rejects_second_complete_response(tmp_path):
+    stream = [
+        {"type": "response", "text": "first response"},
+        {"type": "response", "text": "second response"},
+        {
+            "type": "request_audit",
+            **_strict_audit("copilot", requests=2, completed_responses=1),
+        },
+        {"type": "result", "status": "success", "model_requests": 2},
+    ]
+
+    path = _write_jsonl(tmp_path / "copilot-two-responses.jsonl", stream)
+    assert classify(_ctx(path, backend="copilot_oneshot")) == TerminationReason.INFRA_ERROR
+
+
+def test_copilot_retried_provider_deadline_is_timeout(tmp_path):
+    stream = [
+        {
+            "type": "request_audit",
+            **_strict_audit("copilot", requests=2),
+        },
+        {"type": "error", "message": "Copilot request reached benchmark deadline"},
+        {"type": "result", "status": "timeout", "model_requests": 2},
+    ]
+
+    path = _write_jsonl(tmp_path / "copilot-retried-timeout.jsonl", stream)
+    assert classify(_ctx(path, backend="copilot_oneshot")) == TerminationReason.TIMEOUT
+
+
+def test_copilot_native_retry_arriving_at_deadline_is_timeout(tmp_path):
+    stream = [
+        {
+            "type": "request_audit",
+            **_strict_audit(
+                "copilot",
+                requests=1,
+                deadline_closed=True,
+                deadline_blocked_requests=1,
+            ),
+        },
+        {"type": "error", "message": "Copilot request reached benchmark deadline"},
+        {"type": "result", "status": "timeout", "model_requests": 1},
+    ]
+
+    path = _write_jsonl(tmp_path / "copilot-native-retry-deadline.jsonl", stream)
+    assert classify(_ctx(path, backend="copilot_oneshot")) == TerminationReason.TIMEOUT
 
 
 # --- quota exhaustion: runner-owned, never produced by classify() -----------
