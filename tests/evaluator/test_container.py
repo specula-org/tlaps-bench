@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from common.container import ContainerConfig, ContainerRunner, forward_env
+from common.container import ContainerConfig, ContainerRunner, _cursor_credential_dir, forward_env
 from evaluator.backends.claude_code import ClaudeCodeBackend
 from evaluator.backends.codex import CodexBackend
 from evaluator.backends.copilot import CopilotBackend
@@ -137,6 +137,7 @@ class TestBuildDockerArgs:
         assert "--cap-add=NET_ADMIN" in args
         env_args = [args[i + 1] for i, a in enumerate(args) if a == "-e"]
         assert "FIREWALL_HOSTS=api.openai.com,api.anthropic.com" in env_args
+        assert not any("ALLOW_ALL_HTTPS" in value for value in env_args)
 
     def test_no_firewall_when_empty(self):
         runner = ContainerRunner()
@@ -233,6 +234,59 @@ class TestBuildDockerArgs:
             assert not os.path.exists(os.path.join(copied_home, "sessions"))
         finally:
             runner.cleanup_credential_tmps()
+
+    def test_cursor_mount_uses_macos_credential_dir(self, tmp_path):
+        cursor_home = tmp_path / ".cursor"
+        cursor_home.mkdir()
+        (cursor_home / "auth.json").write_text('{"accessToken": "secret"}\n')
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["cursor"])
+        try:
+            with (
+                patch("common.container.sys.platform", "darwin"),
+                patch("common.container.Path.home", return_value=tmp_path),
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, arg in enumerate(args) if arg == "-v"]
+            cursor_mount = next(m for m in mount_args if m.endswith(":/root/.config/cursor:rw"))
+            copied_home = cursor_mount.split(":", 1)[0]
+            assert os.path.exists(os.path.join(copied_home, "auth.json"))
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_cursor_mount_uses_linux_xdg_config_home(self, tmp_path):
+        xdg_config_home = tmp_path / "xdg"
+        cursor_home = xdg_config_home / "cursor"
+        cursor_home.mkdir(parents=True)
+        (cursor_home / "auth.json").write_text('{"accessToken": "secret"}\n')
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["cursor"])
+        try:
+            with (
+                patch("common.container.sys.platform", "linux"),
+                patch("common.container.Path.home", return_value=tmp_path / "unused-home"),
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": str(xdg_config_home)}, clear=True),
+            ):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, arg in enumerate(args) if arg == "-v"]
+            cursor_mount = next(m for m in mount_args if m.endswith(":/root/.config/cursor:rw"))
+            copied_home = cursor_mount.split(":", 1)[0]
+            assert os.path.exists(os.path.join(copied_home, "auth.json"))
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_cursor_credential_dir_uses_linux_default_config_home(self, tmp_path):
+        with (
+            patch("common.container.sys.platform", "linux"),
+            patch("common.container.Path.home", return_value=tmp_path),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            assert _cursor_credential_dir() == tmp_path / ".config" / "cursor"
 
     def test_codex_mount_copies_only_minimal_bedrock_config(self, tmp_path):
         codex_home = tmp_path / ".codex"

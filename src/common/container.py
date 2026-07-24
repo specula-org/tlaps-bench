@@ -9,6 +9,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -153,6 +154,9 @@ class CredentialMount:
 
     mount_path: str
     copy: Callable[[Path, Path], bool]
+    # Host source directory. Defaults to ``~/.<name>``; set explicitly for
+    # backends whose credentials live elsewhere or vary by host platform.
+    source_dir: Callable[[], Path] | None = None
 
 
 def _copy_all_credentials(src: Path, dst: Path) -> bool:
@@ -193,6 +197,21 @@ def _copy_pi_credentials(src: Path, dst: Path) -> bool:
     auth_dst.mkdir(parents=True, exist_ok=True)
     shutil.copy2(auth_src, auth_dst / "auth.json")
     return True
+
+
+def _copy_cursor_credentials(src: Path, dst: Path) -> bool:
+    """Copy only the Cursor CLI's OAuth credential file (accessToken/refreshToken)."""
+    return _copy_named_credential_file(src, dst, "auth.json")
+
+
+def _cursor_credential_dir() -> Path:
+    """Return the host-specific Cursor CLI credential directory."""
+    if sys.platform == "darwin":
+        return Path.home() / ".cursor"
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    config_home = Path(xdg_config_home).expanduser() if xdg_config_home else Path.home() / ".config"
+    return config_home / "cursor"
 
 
 def _copy_codex_credentials(src: Path, dst: Path) -> bool:
@@ -244,6 +263,11 @@ class ContainerRunner:
         "aws": CredentialMount("/root/.aws", _copy_all_credentials),
         "claude": CredentialMount("/root/.claude", _copy_claude_credentials),
         "codex": CredentialMount("/root/.codex", _copy_codex_credentials),
+        "cursor": CredentialMount(
+            "/root/.config/cursor",
+            _copy_cursor_credentials,
+            source_dir=_cursor_credential_dir,
+        ),
         "pi": CredentialMount("/root/.pi", _copy_pi_credentials),
     }
 
@@ -297,7 +321,7 @@ class ContainerRunner:
             mount = self._CREDENTIAL_MOUNTS.get(name)
             if mount is None:
                 raise ValueError(f"unknown credential mount: {name}")
-            src = Path.home() / f".{name}"
+            src = mount.source_dir() if mount.source_dir else (Path.home() / f".{name}")
             if not src.is_dir():
                 continue
             # Session dir targets this path: copy credentials into it (not a
@@ -322,7 +346,7 @@ class ContainerRunner:
         for key, value in config.env.items():
             args.extend(["-e", f"{key}={value}"])
 
-        # Firewall hosts as env var (read by firewall.sh inside container)
+        # Firewall config as env vars (read by firewall.sh inside container)
         if config.firewall_hosts:
             args.extend(["-e", f"FIREWALL_HOSTS={','.join(config.firewall_hosts)}"])
         else:

@@ -26,6 +26,7 @@ from evaluator.termination import (
     claude_code_result_error,
     codex_turn_failed,
     copilot_session_error,
+    cursor_result_error,
     is_wall_clock_timeout,
     litellm_completion_error,
     one_shot_result_error,
@@ -214,6 +215,7 @@ TRUNCATED_BY_BACKEND = {
     "codex": [{"type": "thread.started"}, {"type": "turn.started"}],
     "claude_code": [{"type": "system", "subtype": "init"}, {"type": "assistant", "message": {}}],
     "copilot": [{"type": "assistant.message", "data": {"content": "working"}}],
+    "cursor": [{"type": "system", "subtype": "init"}, {"type": "assistant", "message": {}}],
 }
 
 
@@ -246,6 +248,7 @@ def test_same_truncation_without_timeout_is_still_infra(tmp_path):
         "codex": TerminationReason.OK,
         "claude_code": TerminationReason.INFRA_ERROR,
         "copilot": TerminationReason.INFRA_ERROR,
+        "cursor": TerminationReason.INFRA_ERROR,
     }
     for backend, stream in TRUNCATED_BY_BACKEND.items():
         p = _write_jsonl(tmp_path / f"{backend}.jsonl", stream)
@@ -257,6 +260,7 @@ def test_registry_is_the_extension_point():
     assert codex_turn_failed in INFRA_RULES
     assert claude_code_result_error in INFRA_RULES
     assert copilot_session_error in INFRA_RULES
+    assert cursor_result_error in INFRA_RULES
     assert litellm_completion_error in INFRA_RULES
     assert one_shot_result_error in INFRA_RULES
     assert agent_startup_failure in INFRA_RULES
@@ -796,6 +800,98 @@ def test_cc_rule_only_applies_to_claude_code(tmp_path):
     # codex stream through the claude rule must abstain.
     p = _write_jsonl(tmp_path / "infra.jsonl", INFRA_STREAM)
     assert claude_code_result_error(_ctx(p, backend="codex")) is None
+
+
+# --- cursor rule (stream-json contract ends in one clean result) -------------
+
+CURSOR_SUCCESS = [
+    {"type": "system", "subtype": "init", "session_id": "s1"},
+    {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+        "session_id": "s1",
+    },
+    {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "done",
+        "session_id": "s1",
+    },
+]
+CURSOR_TRUNCATED = [
+    {"type": "system", "subtype": "init", "session_id": "s1"},
+    {"type": "assistant", "message": {"role": "assistant", "content": []}, "session_id": "s1"},
+]
+CURSOR_ERROR = [
+    {"type": "system", "subtype": "init", "session_id": "s1"},
+    {"type": "error", "message": "stream disconnected", "session_id": "s1"},
+]
+
+
+def test_cursor_clean_terminal_success_is_ok(tmp_path):
+    path = _write_jsonl(tmp_path / "cursor-success.jsonl", CURSOR_SUCCESS)
+    assert classify(_ctx(path, backend="cursor", agent_exit=0)) == TerminationReason.OK
+
+
+@pytest.mark.parametrize("stream", [CURSOR_TRUNCATED, CURSOR_ERROR])
+def test_cursor_nonempty_stream_without_terminal_result_is_infra(tmp_path, stream):
+    path = _write_jsonl(tmp_path / "cursor-incomplete.jsonl", stream)
+    assert classify(_ctx(path, backend="cursor", agent_exit=1)) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        {"type": "result", "subtype": "error_during_execution", "is_error": True},
+        {"type": "result", "subtype": "success", "is_error": True},
+        {"type": "result", "subtype": "success"},
+    ],
+)
+def test_cursor_error_or_malformed_terminal_result_is_infra(tmp_path, terminal):
+    path = _write_jsonl(
+        tmp_path / "cursor-bad-result.jsonl",
+        [{"type": "system", "subtype": "init"}, terminal],
+    )
+    assert classify(_ctx(path, backend="cursor", agent_exit=1)) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize(
+    "stream",
+    [
+        [*CURSOR_SUCCESS, {"type": "assistant", "message": {"content": []}}],
+        [*CURSOR_SUCCESS, CURSOR_SUCCESS[-1]],
+    ],
+)
+def test_cursor_result_must_be_unique_and_terminal(tmp_path, stream):
+    path = _write_jsonl(tmp_path / "cursor-malformed-terminal.jsonl", stream)
+    assert classify(_ctx(path, backend="cursor")) == TerminationReason.INFRA_ERROR
+
+
+def test_cursor_malformed_event_stream_is_infra(tmp_path):
+    path = tmp_path / "cursor-malformed-stream.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                "not json",
+                json.dumps(CURSOR_SUCCESS[-1]),
+            ]
+        )
+    )
+    assert classify(_ctx(str(path), backend="cursor")) == TerminationReason.INFRA_ERROR
+
+
+@pytest.mark.parametrize("contents", ["", "not json\n"])
+def test_cursor_empty_or_wholly_malformed_stream_is_infra_even_after_zero_exit(tmp_path, contents):
+    path = tmp_path / "cursor-empty-or-malformed.jsonl"
+    path.write_text(contents)
+    assert classify(_ctx(str(path), backend="cursor", agent_exit=0)) == TerminationReason.INFRA_ERROR
+
+
+def test_cursor_rule_only_applies_to_cursor(tmp_path):
+    path = _write_jsonl(tmp_path / "cursor-truncated.jsonl", CURSOR_TRUNCATED)
+    assert cursor_result_error(_ctx(path, backend="codex")) is None
 
 
 # --- copilot rule (event vocabulary per Copilot SDK streaming-events docs) ---
