@@ -16,6 +16,7 @@ def _assistant(
     cache_write: int | None = None,
     model: str = "claude-opus-4-8",
     message_id: str = "msg_1",
+    provider_request_id: str | None = None,
     stop_reason: str | None = "end_turn",
 ) -> dict[str, object]:
     usage: dict[str, object] = {}
@@ -27,7 +28,7 @@ def _assistant(
         usage["cache_read_input_tokens"] = cache_read
     if cache_write is not None:
         usage["cache_creation_input_tokens"] = cache_write
-    return {
+    event: dict[str, object] = {
         "type": "assistant",
         "message": {
             "id": message_id,
@@ -37,6 +38,9 @@ def _assistant(
             "usage": usage,
         },
     }
+    if provider_request_id is not None:
+        event["request_id"] = provider_request_id
+    return event
 
 
 def _result(
@@ -50,6 +54,7 @@ def _result(
     is_error: bool = False,
     subtype: str = "success",
     num_turns: int | None = None,
+    model_usage: dict[str, object] | None = None,
 ) -> dict[str, object]:
     usage: dict[str, object] = {}
     if input_tokens is not None:
@@ -73,6 +78,8 @@ def _result(
         event["duration_api_ms"] = duration_api_ms
     if num_turns is not None:
         event["num_turns"] = num_turns
+    if model_usage is not None:
+        event["modelUsage"] = model_usage
     return event
 
 
@@ -147,6 +154,262 @@ def test_per_request_evidence_is_preserved(tmp_path):
     assert usage.status == "complete"
 
 
+def test_provider_request_id_is_preserved_separately_from_message_id(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(
+            input_tokens=10,
+            output_tokens=5,
+            message_id="msg_a",
+            provider_request_id="req_abc",
+        ),
+        _result(input_tokens=10, output_tokens=5, total_cost_usd=0.01),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.requests[0].request_id == "msg_a"
+    assert usage.requests[0].provider_request_id == "req_abc"
+
+
+def test_model_usage_supplies_cross_model_authoritative_totals(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2, model="claude-opus-4-8", message_id="msg_a"),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            total_cost_usd=0.11,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 10,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                    "costUSD": 0.1,
+                },
+                "claude-haiku-4-5": {
+                    "inputTokens": 5,
+                    "cacheReadInputTokens": 3,
+                    "cacheCreationInputTokens": 2,
+                    "outputTokens": 4,
+                    "costUSD": 0.01,
+                },
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.input_tokens == 20
+    assert usage.output_tokens == 24
+    assert usage.cache_read_input_tokens == 3
+    assert usage.cache_write_input_tokens == 2
+    assert [cost.to_dict() for cost in usage.costs] == [
+        {"amount": 0.11, "unit": "usd", "source": "claude_code.total_cost_usd"}
+    ]
+    # modelUsage is the exact cross-model aggregate. Per-request evidence can
+    # cover only the primary-model stream, so the token/cost totals are exact
+    # while the model-request count remains a lower bound.
+    assert usage.model_requests == 2
+    assert usage.status == "lower_bound"
+    assert any("without streamed request events" in warning for warning in usage.warnings)
+
+
+def test_model_usage_cost_is_used_when_total_cost_is_absent(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 10,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                    "costUSD": 0.1,
+                }
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.status == "complete"
+    assert [cost.to_dict() for cost in usage.costs] == [
+        {"amount": 0.1, "unit": "usd", "source": "claude_code.modelUsage.costUSD"}
+    ]
+
+
+def test_terminal_turn_count_and_hidden_helper_set_request_floor(tmp_path):
+    streamed = [
+        _assistant(
+            input_tokens=10,
+            output_tokens=2,
+            model="claude-opus-4-8",
+            message_id=f"msg_{index}",
+        )
+        for index in range(6)
+    ]
+    path = _write(
+        tmp_path / "output.jsonl",
+        *streamed,
+        _result(
+            input_tokens=60,
+            output_tokens=20,
+            total_cost_usd=0.11,
+            num_turns=7,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 60,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                    "costUSD": 0.1,
+                },
+                "claude-haiku-4-5": {
+                    "inputTokens": 5,
+                    "cacheReadInputTokens": 3,
+                    "cacheCreationInputTokens": 2,
+                    "outputTokens": 4,
+                    "costUSD": 0.01,
+                },
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.model_requests == 7
+    assert usage.status == "lower_bound"
+    assert any("num_turns 7 differs from 6" in warning for warning in usage.warnings)
+    assert any("claude-haiku-4-5" in warning for warning in usage.warnings)
+
+
+def test_same_model_hidden_usage_still_makes_request_count_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2, model="claude-opus-4-8"),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            total_cost_usd=0.1,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 15,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 24,
+                    "costUSD": 0.1,
+                }
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.model_requests == 2
+    assert usage.status == "lower_bound"
+    assert any("usage without streamed request events" in warning for warning in usage.warnings)
+
+
+def test_terminal_turn_disagreement_without_helper_is_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2, message_id="msg_1"),
+        _assistant(input_tokens=10, output_tokens=2, message_id="msg_2"),
+        _result(input_tokens=20, output_tokens=10, total_cost_usd=0.1, num_turns=3),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.model_requests == 3
+    assert usage.status == "lower_bound"
+    assert any("num_turns 3 differs from 2" in warning for warning in usage.warnings)
+
+
+def test_model_usage_cost_mismatch_is_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            total_cost_usd=0.2,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 10,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                    "costUSD": 0.1,
+                }
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.status == "lower_bound"
+    assert any("total_cost_usd 0.2 differs" in warning for warning in usage.warnings)
+
+
+def test_malformed_model_usage_is_not_silently_ignored(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            total_cost_usd=0.1,
+            model_usage={"claude-opus-4-8": "invalid"},
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.status == "lower_bound"
+    assert "Claude Code modelUsage is malformed" in usage.warnings
+
+
+def test_partially_malformed_model_usage_cannot_silently_omit_a_model(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            total_cost_usd=0.1,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 10,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                    "costUSD": 0.1,
+                },
+                "unknown-helper": "invalid",
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.status == "lower_bound"
+    assert "Claude Code modelUsage contains malformed model entries" in usage.warnings
+
+
 def test_summary_mismatch_against_messages_is_a_lower_bound(tmp_path):
     path = _write(
         tmp_path / "output.jsonl",
@@ -199,8 +462,8 @@ def test_missing_cost_is_flagged_rather_than_assumed_zero(tmp_path):
 
     assert usage is not None
     assert usage.costs == ()
-    assert usage.status != "complete"
-    assert any("total_cost_usd" in warning for warning in usage.warnings)
+    assert usage.status == "lower_bound"
+    assert any("total_cost_usd or modelUsage costUSD" in warning for warning in usage.warnings)
 
 
 def test_unreported_tokens_stay_null_not_zero(tmp_path):
@@ -216,6 +479,8 @@ def test_unreported_tokens_stay_null_not_zero(tmp_path):
     assert usage.input_tokens is None
     assert usage.to_dict()["input_tokens"] is None
     assert usage.output_tokens == 10
+    assert usage.status == "lower_bound"
+    assert "Claude Code result input_tokens is unavailable" in usage.warnings
 
 
 def test_explicit_zero_stays_an_exact_zero(tmp_path):
