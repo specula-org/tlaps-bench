@@ -864,7 +864,7 @@ def test_litellm_records_native_cost_and_token_detail(monkeypatch):
             usage=SimpleNamespace(
                 prompt_tokens=1200,
                 completion_tokens=340,
-                prompt_tokens_details=SimpleNamespace(cached_tokens=800),
+                prompt_tokens_details=SimpleNamespace(cached_tokens=800, cache_creation_tokens=125),
                 completion_tokens_details=SimpleNamespace(reasoning_tokens=120),
             ),
         )
@@ -879,6 +879,7 @@ def test_litellm_records_native_cost_and_token_detail(monkeypatch):
 
     (detail,) = result.usage_details
     assert detail["cache_read_input_tokens"] == 800
+    assert detail["cache_write_input_tokens"] == 125
     assert detail["reasoning_output_tokens"] == 120
     assert detail["request_id"] == "chatcmpl-oneshot-1"
     assert detail["costs"] == [{"amount": 0.0054, "unit": "usd", "source": "litellm.response_cost"}]
@@ -899,7 +900,7 @@ def test_litellm_falls_back_to_completion_cost_and_omits_unpriceable(monkeypatch
     monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
 
     (detail,) = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model").usage_details
-    assert detail["costs"] == [{"amount": 0.5, "unit": "usd", "source": "litellm.response_cost"}]
+    assert detail["costs"] == [{"amount": 0.5, "unit": "usd", "source": "litellm.completion_cost"}]
 
     def raising_cost(**_kwargs):
         raise RuntimeError("no pricing for model")
@@ -981,6 +982,7 @@ def test_main_preserves_explicit_litellm_zero_usage(monkeypatch, capsys, tmp_pat
         choices=[SimpleNamespace(message=SimpleNamespace(content="MODEL RESPONSE"))],
         usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0),
     )
+    fake_litellm.completion_cost = lambda **_kwargs: 0.0
     monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
     monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
 
@@ -1008,6 +1010,13 @@ def test_main_preserves_explicit_litellm_zero_usage(monkeypatch, capsys, tmp_pat
         "source": "litellm_response_usage",
         "complete": True,
         "is_lower_bound": False,
+        "costs": [
+            {
+                "amount": 0.0,
+                "unit": "usd",
+                "source": "litellm.completion_cost",
+            }
+        ],
     }
 
 
@@ -1033,6 +1042,13 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
                     "source": "litellm_response_usage",
                     "input_tokens": 12,
                     "output_tokens": 7,
+                    "costs": [
+                        {
+                            "amount": 0.001,
+                            "unit": "usd",
+                            "source": "litellm.response_cost",
+                        }
+                    ],
                 },
             ),
         ),
@@ -1065,6 +1081,57 @@ def test_main_emits_success_terminal_result(monkeypatch, capsys, tmp_path):
     usage_event = next(event for event in events if event["type"] == "usage")
     assert usage_event["complete"] is True
     assert usage_event["is_lower_bound"] is False
+
+
+def test_main_marks_unpriceable_litellm_cost_as_lower_bound(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(
+        oneshot_runner,
+        "run_litellm",
+        lambda _prompt, _model: oneshot_runner.ProviderResult(
+            "MODEL RESPONSE",
+            12,
+            7,
+            {"provider": "litellm", "litellm_completion_invocations": 1},
+            (
+                {
+                    "source": "litellm_response_usage",
+                    "input_tokens": 12,
+                    "output_tokens": 7,
+                },
+            ),
+        ),
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("EXACT PROMPT"))
+
+    exit_code = oneshot_runner.main(
+        [
+            "--provider",
+            "litellm",
+            "--workspace",
+            str(tmp_path),
+            "--result-dir",
+            str(tmp_path),
+            "--model",
+            "provider/model",
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert exit_code == 0
+    usage_event = next(event for event in events if event["type"] == "usage")
+    assert usage_event["input_tokens"] == 12
+    assert usage_event["output_tokens"] == 7
+    assert usage_event["complete"] is False
+    assert usage_event["is_lower_bound"] is True
+    assert "costs" not in usage_event
+
+    output = tmp_path / "output.jsonl"
+    output.write_text("".join(json.dumps(event) + "\n" for event in events))
+    backend = LiteLLMOneShotBackend(model="provider/model")
+    usage = backend.parse_usage(str(output), input_tokens=12, output_tokens=7)
+    assert usage.status == "lower_bound"
+    assert usage.costs == ()
+    assert "LiteLLM usage cost unavailable; total cost is a lower bound" in usage.warnings
 
 
 def test_main_emits_rich_copilot_usage_details(monkeypatch, capsys, tmp_path):
@@ -1634,8 +1701,8 @@ def test_main_preserves_one_request_audit_when_response_parsing_fails(monkeypatc
         "output_tokens": 45,
         "model_requests": 1,
         "source": "litellm_response_usage",
-        "complete": True,
-        "is_lower_bound": False,
+        "complete": False,
+        "is_lower_bound": True,
     }
     assert events[1]["litellm_completion_invocations"] == 1
     assert events[1]["wire_audited"] is False

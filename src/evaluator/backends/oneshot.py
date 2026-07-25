@@ -333,21 +333,23 @@ class OneShotBackend(Backend):
             if isinstance(runtime_version, str) and runtime_version:
                 runtime_versions.append(runtime_version)
             model_requests = nonnegative_int(payload.get("model_requests"))
-            copilot_cost_missing = self.provider == "copilot" and model_requests != 0 and not costs
+            provider_cost_required = self.provider in {"copilot", "litellm"}
+            provider_cost_missing = provider_cost_required and model_requests != 0 and not costs
             explicit_complete = payload.get("complete")
             declared_complete = (
                 explicit_complete if isinstance(explicit_complete, bool) else terminal_status == "success"
             )
-            complete_flags.append(declared_complete and not copilot_cost_missing)
+            complete_flags.append(declared_complete and not provider_cost_missing)
             explicit_lower_bound = payload.get("is_lower_bound")
             declared_lower_bound = (
                 explicit_lower_bound
                 if isinstance(explicit_lower_bound, bool)
                 else terminal_status in {"error", "timeout"}
             )
-            lower_bound_flags.append(declared_lower_bound or copilot_cost_missing)
-            if copilot_cost_missing:
-                usage_warnings.append("Copilot usage cost unavailable; total cost is a lower bound")
+            lower_bound_flags.append(declared_lower_bound or provider_cost_missing)
+            if provider_cost_missing:
+                provider_name = "Copilot" if self.provider == "copilot" else "LiteLLM"
+                usage_warnings.append(f"{provider_name} usage cost unavailable; total cost is a lower bound")
             if model_requests is not None:
                 reported_model_requests.append(model_requests)
 
