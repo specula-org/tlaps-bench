@@ -135,18 +135,65 @@ def test_partial_cost_coverage_is_a_lower_bound(tmp_path):
     assert any("lower bound" in warning for warning in usage.warnings)
 
 
+def test_all_unpriceable_requests_are_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _request_usage(iteration=1, input_tokens=100, output_tokens=10, cost=None),
+        _request_usage(iteration=2, input_tokens=60, output_tokens=20, cost=None),
+        _aggregate(input_tokens=160, output_tokens=30, model_requests=2),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=160, output_tokens=30)
+
+    assert usage.status == "lower_bound"
+    assert usage.costs == ()
+    assert "LiteLLM cost is unavailable for 2 model request(s); total is a lower bound" in usage.warnings
+
+
 def test_completion_error_marks_usage_as_partial(tmp_path):
     path = _write(
         tmp_path / "output.jsonl",
         _request_usage(input_tokens=100, output_tokens=10),
         {"type": "error", "message": "provider rejected the request", "iteration": 2},
-        _aggregate(input_tokens=100, output_tokens=10, model_requests=1),
+        _aggregate(input_tokens=100, output_tokens=10, model_requests=2),
     )
 
     usage = _backend().parse_usage(path, input_tokens=100, output_tokens=10)
 
     assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
     assert any("completion error" in warning for warning in usage.warnings)
+    assert any("differs from per-request events" in warning for warning in usage.warnings)
+
+
+def test_first_completion_error_is_not_reported_as_exact_zero(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {"type": "error", "message": "provider timed out", "iteration": 1},
+        _aggregate(input_tokens=0, output_tokens=0, model_requests=1),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.complete is False
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.model_requests == 1
+    assert any("request usage is unavailable" in warning for warning in usage.warnings)
+
+
+def test_error_with_legacy_zero_request_count_is_still_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {"type": "error", "message": "provider rejected the request", "iteration": 1},
+        _aggregate(input_tokens=0, output_tokens=0, model_requests=0),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.complete is False
 
 
 def test_aggregate_disagreeing_with_events_is_flagged(tmp_path):
@@ -159,7 +206,68 @@ def test_aggregate_disagreeing_with_events_is_flagged(tmp_path):
     usage = _backend().parse_usage(path, input_tokens=100, output_tokens=10)
 
     assert usage.status == "lower_bound"
+    assert usage.model_requests == 5
     assert any("differs from per-request events" in warning for warning in usage.warnings)
+
+
+def test_impossibly_small_aggregate_does_not_erase_completed_requests(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _request_usage(iteration=1, input_tokens=100, output_tokens=10),
+        _request_usage(iteration=2, input_tokens=60, output_tokens=20),
+        _aggregate(input_tokens=160, output_tokens=30, model_requests=1),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=160, output_tokens=30)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert any("differs from per-request events" in warning for warning in usage.warnings)
+
+
+def test_aggregate_token_mismatch_keeps_per_request_values_and_is_flagged(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _request_usage(input_tokens=10, output_tokens=5),
+        _aggregate(input_tokens=999, output_tokens=888, model_requests=1),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=999, output_tokens=888)
+
+    assert usage.input_tokens == 10
+    assert usage.output_tokens == 5
+    assert usage.status == "lower_bound"
+    assert "LiteLLM aggregate input_tokens 999 differs from per-request total 10" in usage.warnings
+    assert "LiteLLM aggregate output_tokens 888 differs from per-request total 5" in usage.warnings
+
+
+def test_smaller_aggregate_token_totals_are_also_flagged(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _request_usage(input_tokens=10, output_tokens=5),
+        _aggregate(input_tokens=1, output_tokens=2, model_requests=1),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=1, output_tokens=2)
+
+    assert usage.input_tokens == 10
+    assert usage.output_tokens == 5
+    assert usage.status == "lower_bound"
+    assert "LiteLLM aggregate input_tokens 1 differs from per-request total 10" in usage.warnings
+    assert "LiteLLM aggregate output_tokens 2 differs from per-request total 5" in usage.warnings
+
+
+def test_aggregate_without_request_count_is_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _request_usage(input_tokens=100, output_tokens=10),
+        _aggregate(input_tokens=100, output_tokens=10),
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=100, output_tokens=10)
+
+    assert usage.status == "lower_bound"
+    assert "LiteLLM aggregate model_requests is unavailable" in usage.warnings
 
 
 def test_legacy_aggregate_only_output_is_a_lower_bound(tmp_path):
@@ -192,6 +300,22 @@ def test_no_model_request_is_an_exact_zero(tmp_path):
     assert usage.status == "complete"
 
 
+def test_zero_request_aggregate_requires_explicit_zero_token_fields(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {"type": "usage", "model_requests": 0},
+    )
+
+    usage = _backend().parse_usage(path, input_tokens=0, output_tokens=0)
+
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.model_requests == 0
+    assert usage.status == "lower_bound"
+    assert "LiteLLM aggregate input_tokens is unavailable" in usage.warnings
+    assert "LiteLLM aggregate output_tokens is unavailable" in usage.warnings
+
+
 def test_missing_output_is_unavailable_not_zero(tmp_path):
     usage = _backend().parse_usage(str(tmp_path / "missing.jsonl"), input_tokens=0, output_tokens=0)
 
@@ -211,6 +335,8 @@ def test_unreported_token_field_stays_null(tmp_path):
 
     assert usage.input_tokens is None
     assert usage.output_tokens == 10
+    assert usage.status == "lower_bound"
+    assert any("input tokens are unavailable" in warning for warning in usage.warnings)
 
 
 def test_truncated_run_without_aggregate_is_a_lower_bound(tmp_path):

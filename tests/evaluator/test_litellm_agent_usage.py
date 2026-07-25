@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -52,7 +54,19 @@ def test_completion_cost_is_the_fallback(capsys, monkeypatch):
 
     event = _emit(capsys, response)
 
-    assert event["costs"] == [{"amount": 0.5, "unit": "usd", "source": "litellm.response_cost"}]
+    assert event["costs"] == [{"amount": 0.5, "unit": "usd", "source": "litellm.completion_cost"}]
+
+
+def test_nonfinite_hidden_cost_falls_back_to_completion_cost(capsys, monkeypatch):
+    monkeypatch.setattr(litellm_agent.litellm, "completion_cost", lambda **_: 0.25, raising=False)
+    response = _FakeResponse(
+        usage=_usage(prompt_tokens=10, completion_tokens=5),
+        hidden={"response_cost": float("inf")},
+    )
+
+    event = _emit(capsys, response)
+
+    assert event["costs"] == [{"amount": 0.25, "unit": "usd", "source": "litellm.completion_cost"}]
 
 
 def test_cost_failure_omits_cost_rather_than_reporting_zero(capsys, monkeypatch):
@@ -72,7 +86,7 @@ def test_cache_and_reasoning_details_are_emitted(capsys):
         usage=_usage(
             prompt_tokens=100,
             completion_tokens=40,
-            prompt_tokens_details=SimpleNamespace(cached_tokens=30),
+            prompt_tokens_details=SimpleNamespace(cached_tokens=30, cache_creation_tokens=12),
             completion_tokens_details=SimpleNamespace(reasoning_tokens=15),
         ),
         hidden={"response_cost": 0.001},
@@ -81,6 +95,7 @@ def test_cache_and_reasoning_details_are_emitted(capsys):
     event = _emit(capsys, response)
 
     assert event["cache_read_input_tokens"] == 30
+    assert event["cache_write_input_tokens"] == 12
     assert event["reasoning_output_tokens"] == 15
 
 
@@ -95,8 +110,79 @@ def test_absent_token_fields_are_omitted_not_zeroed(capsys):
     assert event["costs"] == [{"amount": 0.0, "unit": "usd", "source": "litellm.response_cost"}]
 
 
-def test_response_without_usage_emits_nothing(capsys):
-    assert _emit(capsys, _FakeResponse(usage=None)) is None
+def test_response_without_usage_still_emits_request_evidence(capsys, monkeypatch):
+    def _unpriceable(**_):
+        raise RuntimeError("usage unavailable")
+
+    monkeypatch.setattr(litellm_agent.litellm, "completion_cost", _unpriceable, raising=False)
+
+    event = _emit(capsys, _FakeResponse(usage=None))
+
+    assert event["type"] == "request_usage"
+    assert event["iteration"] == 1
+    assert event["request_id"] == "chatcmpl-1"
+    assert "input_tokens" not in event
+    assert "output_tokens" not in event
+    assert "costs" not in event
+
+
+def test_agent_can_finish_a_response_without_usage(monkeypatch, capsys):
+    message = SimpleNamespace(
+        content="done",
+        tool_calls=None,
+        model_dump=lambda: {"role": "assistant", "content": "done"},
+    )
+    response = SimpleNamespace(
+        usage=None,
+        model="unknown/model",
+        id="chatcmpl-no-usage",
+        choices=[SimpleNamespace(finish_reason="stop", message=message)],
+    )
+    monkeypatch.setattr(litellm_agent.litellm, "completion", lambda **_: response)
+    monkeypatch.setattr(
+        litellm_agent.litellm,
+        "completion_cost",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("usage unavailable")),
+        raising=False,
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("prove this"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["litellm_agent.py", "--workspace", ".", "--model", "unknown/model", "--max-iterations", "1"],
+    )
+
+    assert litellm_agent.main() == 0
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    request_usage = next(event for event in events if event["type"] == "request_usage")
+    aggregate = next(event for event in events if event["type"] == "usage")
+    assert "input_tokens" not in request_usage
+    assert "output_tokens" not in request_usage
+    assert aggregate == {
+        "type": "usage",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "model_requests": 1,
+    }
+
+
+def test_request_usage_is_flushed_immediately(monkeypatch):
+    calls = []
+
+    def capture_print(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr("builtins.print", capture_print)
+    response = _FakeResponse(
+        usage=_usage(prompt_tokens=1, completion_tokens=1),
+        hidden={"response_cost": 0.01},
+    )
+
+    litellm_agent._emit_request_usage(response, 1, 0.5)
+
+    assert len(calls) == 1
+    assert calls[0][1]["flush"] is True
 
 
 def test_metadata_is_carried_through(capsys):

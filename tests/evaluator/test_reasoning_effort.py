@@ -133,10 +133,11 @@ def test_litellm_agent_completion_error_exits_nonzero(monkeypatch, capsys, tmp_p
 
     assert litellm_agent.main() == 1
     assert completion_options["reasoning_effort"] == "minimal"
+    assert completion_options["num_retries"] == 0
     assert "temperature" not in completion_options
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [event["type"] for event in events] == ["error", "usage"]
-    assert events[-1] == {"type": "usage", "input_tokens": 0, "output_tokens": 0, "model_requests": 0}
+    assert events[-1] == {"type": "usage", "input_tokens": 0, "output_tokens": 0, "model_requests": 1}
 
 
 def test_litellm_agent_success_exits_zero(monkeypatch, capsys, tmp_path):
