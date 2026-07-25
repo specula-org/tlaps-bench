@@ -186,13 +186,16 @@ def find_tlapm_lib(tlapm_path):
 
 
 def find_community_lib(filepath):
-    """Find vendored CommunityModules (lib/community/), searching the file's
-    git repo root then ancestor dirs. Returns the path or None.
+    """Find vendored CommunityModules, honoring COMMUNITY_LIB before searching
+    the file's git repo root and ancestor dirs. Returns the path or None.
 
     NOTE: this script is compiled to a standalone binary (see Makefile) and runs
     inside the agent's workspace, so unlike validate.py it can't rely on a
     repo-relative PROJECT_ROOT — it must discover lib/community/ at runtime."""
     candidates = []
+    configured = os.environ.get("COMMUNITY_LIB")
+    if configured:
+        candidates.append(configured)
     repo_root = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
@@ -832,7 +835,7 @@ def parse_strict_status(tlapm_exit, tlapm_output):
 def _run_in_container(filepath, args):
     """Run check_proof_bin inside Docker container."""
     try:
-        ensure_image(force=getattr(args, "force_build", False))
+        container_image = ensure_image(force=getattr(args, "force_build", False))
     except DockerUnavailableError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(3)
@@ -878,6 +881,7 @@ def _run_in_container(filepath, args):
         cmd += ["--shards", str(args.shards)]
 
     config = ContainerConfig(
+        image=container_image,
         workspace=workspace,
         result_dir=result_dir,
         benchmark_dir=os.path.abspath(args.benchmark_dir) if args.benchmark_dir else "",

@@ -1,4 +1,4 @@
---------------------------- MODULE EWD687a_proof_TypeCorrect ---------------------------
+--------------------------- MODULE EWD687a_proof_Invariant1 ---------------------------
 (***************************************************************************)
 (* Proofs of the theorems stated in EWD687a.tla.                           *)
 (***************************************************************************)
@@ -20,9 +20,6 @@ EXTENDS EWD687a, NaturalsInduction, FiniteSetTheorems, GraphTheorems, TLAPS
 Inv1 == TypeOK /\ CountersConsistent
 
 THEOREM Invariant1 == Spec => []Inv1 
-PROOF OMITTED
-
-THEOREM TypeCorrect == Spec => []TypeOK
 PROOF OBVIOUS
 
 (***************************************************************************)

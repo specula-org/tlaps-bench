@@ -94,8 +94,15 @@ _GROUP_URL = {
     "ZooKeeper": "https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/blob/main/high-level-spec/Zab.tla",
     "ZooKeeper_LowLevel": "https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/tree/main/low-level-spec/zk-3.7",
     "tlaplus_examples_BlockingQueue": "https://github.com/lemmy/BlockingQueue",
+    "tlaplus_examples_GermanProtocol": (
+        "https://github.com/tlaplus/Examples/blob/"
+        "aba0cef20ce694f97612ad36a873734a1314534a/"
+        "specifications/GermanProtocol/GermanCoherence.tla"
+    ),
+    "tlaplus_examples_ewd687a": (
+        "https://github.com/tlaplus/Examples/tree/91c22ea537853196ed1e03e9ad91693ec37642de/specifications/ewd687a"
+    ),
     "two_thread_mutex": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
-    # The upstream location of tlaplus_examples_GermanProtocol could not be found.
 }
 
 
@@ -108,8 +115,6 @@ def group_url(group):
         return f"https://github.com/kenmcmil/ivy/blob/master/examples/liveness/{name}.ivy"
     if group.startswith("tlaplus_examples_"):
         x = group[len("tlaplus_examples_") :]
-        if x == "GermanProtocol":
-            return None
         if x.startswith("SpecifyingSystems_"):
             chapter = x[len("SpecifyingSystems_") :]
             return f"{_EX}/SpecifyingSystems/{chapter}"

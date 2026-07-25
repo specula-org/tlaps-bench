@@ -31,6 +31,9 @@ class LiteLLMOneShotBackend(OneShotBackend):
 
         return (
             super().validate_request_audit(audit, request_count)
+            and not isinstance(request_count, bool)
+            and request_count in {0, 1}
+            and audit.get("retries_enabled") is False
             and audit.get("audit_scope") == "adapter"
             and audit.get("wire_audited") is False
             and self._is_exact_count(audit.get("litellm_completion_invocations"), request_count)

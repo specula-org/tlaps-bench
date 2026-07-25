@@ -7,6 +7,7 @@ from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend
 from .copilot import CopilotBackend
 from .copilot_oneshot import CopilotOneShotBackend
+from .cursor import CursorBackend
 from .litellm import LiteLLMBackend
 from .litellm_oneshot import LiteLLMOneShotBackend
 from .oneshot import OneShotBackend as OneShotBackend
@@ -15,6 +16,7 @@ from .pi import PiBackend
 _REGISTRY = {
     CodexBackend.name: CodexBackend,
     ClaudeCodeBackend.name: ClaudeCodeBackend,
+    CursorBackend.name: CursorBackend,
     CopilotBackend.name: CopilotBackend,
     CopilotOneShotBackend.name: CopilotOneShotBackend,
     LiteLLMBackend.name: LiteLLMBackend,

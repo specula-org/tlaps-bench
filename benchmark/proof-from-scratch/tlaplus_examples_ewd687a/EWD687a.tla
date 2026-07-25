@@ -1,6 +1,6 @@
 ------------------------------ MODULE EWD687a ------------------------------
 
-EXTENDS Integers
+EXTENDS Integers, Graphs
 
 CONSTANTS Procs, Leader, Edges
 
@@ -101,36 +101,35 @@ RcvMsg(p) == \E e \in InEdges(p) :
                                              ELSE upEdge
                   /\ UNCHANGED <<acks, sentUnacked>>
 
-Idle(p) == /\ active' = [active EXCEPT ![p] = FALSE]
+Idle(p) == /\ active[p]
+           /\ active' = [active EXCEPT ![p] = FALSE]
            /\ UNCHANGED <<msgs, acks, sentUnacked, rcvdUnacked, upEdge>>
 
 ----------------------------------------------------------------------------
-           
+
 Next == \E p \in Procs : SendMsg(p) \/ SendAck(p) \/ RcvMsg(p) \/ RcvAck(p)
                              \/ Idle(p)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
- 
+
 ----------------------------------------------------------------------------
 
 CountersConsistent ==
-    [] \A e \in Edges: sentUnacked[e] = rcvdUnacked[e] + acks[e] + msgs[e]
+    \A e \in Edges: sentUnacked[e] = rcvdUnacked[e] + acks[e] + msgs[e]
 
-THEOREM Spec => CountersConsistent
+THEOREM Spec => []CountersConsistent
   PROOF OMITTED
 
 TreeWithRoot ==
     LET E == {upEdge[p] : p \in DOMAIN upEdge} \ {NotAnEdge}
-        N == {e[1] : e \in E} \cup {e[2] : e \in E}
-        G == INSTANCE Graphs
-        O == G!Transpose([edge |-> E, node |-> N])
-    IN [](
-          
-          /\ O.edge # {} => G!IsTreeWithRoot(O, Leader)
-          
-          /\ N:: \A n \in O.node: ~neutral(n))
+        N == {e[2] : e \in E} \cup {Leader}
+        O == Transpose([edge |-> E, node |-> N])
+    IN 
+       /\ IsTreeWithRoot(O, Leader)
+       
+       /\ N:: \A n \in O.node \ {Leader} : ~neutral(n)
 
-THEOREM Spec => TreeWithRoot
+THEOREM Spec => []TreeWithRoot
   PROOF OMITTED
 
 ---------------------------------------------------------------------------

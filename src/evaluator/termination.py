@@ -15,11 +15,12 @@ never INFRA_ERROR), then runs a registry of INFRA RULES (criteria). Each rule
 inspects a ``TerminationContext`` and returns a reason if it fires, else
 ``None``; the first that fires wins. There is one rule per backend
 (:func:`codex_turn_failed`, :func:`claude_code_result_error`,
-:func:`copilot_session_error`, :func:`litellm_completion_error`), each branching
-on ``ctx.backend`` to read its own event vocabulary, plus one backend-independent startup rule
-(:func:`agent_startup_failure`) for the CLI dying before emitting a single
-event. The one-shot rule may also return TIMEOUT for a strictly audited
-provider deadline. Add more by appending to :data:`INFRA_RULES`.
+:func:`copilot_session_error`, :func:`cursor_result_error`,
+:func:`litellm_completion_error`), each branching on ``ctx.backend`` to read its
+own event vocabulary, plus one backend-independent startup rule
+(:func:`agent_startup_failure`) for the CLI dying before emitting a single event.
+The one-shot rule may also return TIMEOUT for a strictly audited provider
+deadline. Add more by appending to :data:`INFRA_RULES`.
 
 This module only CLASSIFIES. Acting on the classification (the runner auto-
 retries an INFRA_ERROR run whose model did no work) is left to the caller.
@@ -241,6 +242,33 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
     return TerminationReason.INFRA_ERROR
 
 
+def cursor_result_error(ctx: TerminationContext) -> str | None:
+    """Cursor rule: require one clean terminal ``result`` event.
+
+    Cursor's ``stream-json`` contract ends every successful run with exactly one
+    terminal ``result`` whose ``subtype`` is ``success`` and ``is_error`` is
+    false. On failure, the CLI may exit nonzero after emitting only a partial
+    stream, with the error itself written to stderr. A non-empty stream that is
+    malformed, lacks that terminal, or ends in an explicit error is therefore
+    not a trustworthy model attempt.
+
+    An empty or wholly malformed stream is also infrastructure failure: a clean
+    Cursor run cannot exit without the terminal success event.
+    """
+    if ctx.backend != "cursor":
+        return None
+    events = ctx.events()
+    if not events or not ctx.event_stream_valid():
+        return TerminationReason.INFRA_ERROR
+    results = [event for event in events if event.get("type") == "result"]
+    if len(results) != 1 or events[-1] is not results[0]:
+        return TerminationReason.INFRA_ERROR
+    terminal = results[0]
+    if terminal.get("subtype") != "success" or terminal.get("is_error") is not False:
+        return TerminationReason.INFRA_ERROR
+    return None
+
+
 def litellm_completion_error(ctx: TerminationContext) -> str | None:
     """LiteLLM rule: the agent stopped on a completion error.
 
@@ -295,7 +323,7 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
 
     terminal = results[0]
     request_count = terminal.get("model_requests")
-    if not isinstance(request_count, int) or isinstance(request_count, bool) or request_count not in {0, 1}:
+    if not isinstance(request_count, int) or isinstance(request_count, bool) or request_count < 0:
         return TerminationReason.INFRA_ERROR
 
     audit = audits[0]
@@ -303,10 +331,13 @@ def one_shot_result_error(ctx: TerminationContext) -> str | None:
         return TerminationReason.INFRA_ERROR
 
     responses = [event for event in events if event.get("type") == "response"]
+    completed_responses = audit.get("completed_responses")
+    if completed_responses is not None and not is_count(completed_responses, len(responses)):
+        return TerminationReason.INFRA_ERROR
     if terminal.get("status") == "timeout":
-        return TerminationReason.TIMEOUT if not responses else TerminationReason.INFRA_ERROR
+        return TerminationReason.TIMEOUT
 
-    if not is_count(request_count, 1) or len(responses) != 1:
+    if request_count < 1 or len(responses) != 1:
         return TerminationReason.INFRA_ERROR
     if terminal.get("status") != "success":
         return TerminationReason.INFRA_ERROR
@@ -345,6 +376,7 @@ INFRA_RULES: list[Rule] = [
     codex_turn_failed,
     claude_code_result_error,
     copilot_session_error,
+    cursor_result_error,
     litellm_completion_error,
     one_shot_result_error,
     agent_startup_failure,

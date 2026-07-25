@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from common.container import ContainerConfig, ContainerRunner, forward_env
+from common.container import ContainerConfig, ContainerRunner, _cursor_credential_dir, forward_env
 from evaluator.backends.claude_code import ClaudeCodeBackend
 from evaluator.backends.codex import CodexBackend
 from evaluator.backends.copilot import CopilotBackend
@@ -135,8 +135,46 @@ class TestBuildDockerArgs:
         args, _ = runner.build_docker_args(config)
 
         assert "--cap-add=NET_ADMIN" in args
+        assert "--cap-drop=ALL" not in args
+        assert "--security-opt=no-new-privileges:true" not in args
         env_args = [args[i + 1] for i, a in enumerate(args) if a == "-e"]
         assert "FIREWALL_HOSTS=api.openai.com,api.anthropic.com" in env_args
+        assert "DYNAMIC_FIREWALL=1" not in env_args
+        assert not any("ALLOW_ALL_HTTPS" in value for value in env_args)
+
+    def test_dynamic_firewall_uses_only_initialization_capabilities(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(
+            firewall_hosts=["api2.cursor.sh"],
+            dynamic_firewall=True,
+            cap_net_admin=False,
+        )
+        args, _ = runner.build_docker_args(config)
+
+        cap_adds = {argument.removeprefix("--cap-add=") for argument in args if argument.startswith("--cap-add=")}
+        assert cap_adds == {
+            "NET_ADMIN",
+            "NET_BIND_SERVICE",
+            "NET_RAW",
+            "SETPCAP",
+            "SETUID",
+            "SETGID",
+            "CHOWN",
+            "FOWNER",
+            "DAC_OVERRIDE",
+        }
+        assert "--cap-drop=ALL" in args
+        assert "--security-opt=no-new-privileges:true" in args
+        env_args = [args[i + 1] for i, argument in enumerate(args) if argument == "-e"]
+        assert "FIREWALL_HOSTS=api2.cursor.sh" in env_args
+        assert "DYNAMIC_FIREWALL=1" in env_args
+
+    def test_dynamic_firewall_requires_hosts(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(dynamic_firewall=True)
+
+        with pytest.raises(ValueError, match="requires at least one firewall host"):
+            runner.build_docker_args(config)
 
     def test_no_firewall_when_empty(self):
         runner = ContainerRunner()
@@ -234,6 +272,59 @@ class TestBuildDockerArgs:
         finally:
             runner.cleanup_credential_tmps()
 
+    def test_cursor_mount_uses_macos_credential_dir(self, tmp_path):
+        cursor_home = tmp_path / ".cursor"
+        cursor_home.mkdir()
+        (cursor_home / "auth.json").write_text('{"accessToken": "secret"}\n')
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["cursor"])
+        try:
+            with (
+                patch("common.container.sys.platform", "darwin"),
+                patch("common.container.Path.home", return_value=tmp_path),
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, arg in enumerate(args) if arg == "-v"]
+            cursor_mount = next(m for m in mount_args if m.endswith(":/root/.config/cursor:rw"))
+            copied_home = cursor_mount.split(":", 1)[0]
+            assert os.path.exists(os.path.join(copied_home, "auth.json"))
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_cursor_mount_uses_linux_xdg_config_home(self, tmp_path):
+        xdg_config_home = tmp_path / "xdg"
+        cursor_home = xdg_config_home / "cursor"
+        cursor_home.mkdir(parents=True)
+        (cursor_home / "auth.json").write_text('{"accessToken": "secret"}\n')
+
+        runner = ContainerRunner()
+        config = ContainerConfig(credential_mounts=["cursor"])
+        try:
+            with (
+                patch("common.container.sys.platform", "linux"),
+                patch("common.container.Path.home", return_value=tmp_path / "unused-home"),
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": str(xdg_config_home)}, clear=True),
+            ):
+                args, _ = runner.build_docker_args(config)
+
+            mount_args = [args[i + 1] for i, arg in enumerate(args) if arg == "-v"]
+            cursor_mount = next(m for m in mount_args if m.endswith(":/root/.config/cursor:rw"))
+            copied_home = cursor_mount.split(":", 1)[0]
+            assert os.path.exists(os.path.join(copied_home, "auth.json"))
+        finally:
+            runner.cleanup_credential_tmps()
+
+    def test_cursor_credential_dir_uses_linux_default_config_home(self, tmp_path):
+        with (
+            patch("common.container.sys.platform", "linux"),
+            patch("common.container.Path.home", return_value=tmp_path),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            assert _cursor_credential_dir() == tmp_path / ".config" / "cursor"
+
     def test_codex_mount_copies_only_minimal_bedrock_config(self, tmp_path):
         codex_home = tmp_path / ".codex"
         codex_home.mkdir()
@@ -288,6 +379,23 @@ class TestBuildCompositeCommand:
         assert "/opt/firewall.sh" in result
         assert "capsh --drop=cap_net_admin" in result
         assert "codex exec --model gpt-5.5" in result
+
+    def test_dynamic_firewall_drops_initialization_caps_but_keeps_dac_override(self):
+        runner = ContainerRunner()
+        result = runner.build_composite_command(
+            ["cursor-agent", "--print"],
+            dynamic_firewall=True,
+        )
+
+        assert "/opt/firewall.sh" in result
+        assert (
+            "--drop=cap_net_admin,cap_net_bind_service,cap_net_raw,cap_setpcap,"
+            "cap_setuid,cap_setgid,cap_chown,cap_fowner"
+        ) in result
+        assert "--caps=cap_dac_override+eip" in result
+        drop_arg = result.split("--drop=", 1)[1].split(" ", 1)[0]
+        assert "cap_dac_override" not in drop_arg
+        assert result.endswith("-c 'cursor-agent --print'")
 
     def test_command_quoting(self):
         runner = ContainerRunner()
@@ -543,6 +651,7 @@ class TestRunAgentContainerSessionWiring:
             check_timeout=600,
             keep_container=keep_container,
             session_dir=session_dir,
+            container_image="tlaps-bench-base:immutable",
         )
         captured = {}
 
@@ -586,6 +695,7 @@ class TestRunAgentContainerSessionWiring:
 
     def test_no_session_dir_leaves_config_empty(self, tmp_path):
         config = self._capture_config(tmp_path, session_dir="")
+        assert config.image == "tlaps-bench-base:immutable"
         assert config.session_dir == ""
         assert config.session_container_path == ""
 

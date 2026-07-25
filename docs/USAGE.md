@@ -59,6 +59,22 @@ uv run tlaps-bench run --backend litellm --model claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm_oneshot --model claude-sonnet-4-6
 ```
 
+### OpenAI-compatible endpoints
+
+To target any OpenAI-compatible endpoint (a self-hosted gateway, a vendor's
+inference API, etc.), use the LiteLLM backend with an `openai/<model>` model id
+and point `OPENAI_API_BASE` (or `OPENAI_BASE_URL`) at the endpoint. The host is
+forwarded into the container and automatically added to the firewall allow-list:
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_API_BASE=https://inference-api.somecompany.com/v1
+uv run tlaps-bench run --backend litellm --model openai/somecompany/some-model
+```
+
+The leading `openai/` selects LiteLLM's OpenAI-compatible transport; everything
+after it is sent to the endpoint as the wire model id.
+
 ### Reasoning effort
 
 Use the optional `--reasoning-effort` flag to override a model's reasoning budget:
@@ -66,6 +82,19 @@ Use the optional `--reasoning-effort` flag to override a model's reasoning budge
 ```bash
 uv run tlaps-bench run --backend codex --model gpt-5.6-sol --reasoning-effort low
 ```
+
+### Output token limit
+
+`copilot_oneshot` accepts an explicit positive per-request output limit. When
+set, the wire guard replaces the Copilot runtime's output limit and records
+both values in the result audit:
+
+```bash
+uv run tlaps-bench run --backend copilot_oneshot --model claude-opus-4.8 --max-output-tokens 64000
+```
+
+Omit `--max-output-tokens` to preserve the runtime's default. Other backends
+currently reject this option instead of silently ignoring it.
 
 ### Authentication
 
@@ -92,21 +121,23 @@ For the `pi` backend, the model format is `provider/model` (e.g. `openai/gpt-5.5
 
 ### Strict one-shot backends
 
-`litellm_oneshot` and `copilot_oneshot` use the same provider-neutral one-shot contract. The target module and its dependencies are embedded in one user prompt, only one provider invocation is permitted, and the requested response is either one complete TLA+ module or exactly one `tla` code fence containing that module. The runner materializes the sole non-empty response as `solution.tla` and leaves syntax and proof validity to the normal grader; there is no agent tool loop or opportunity to inspect and edit the workspace.
+`litellm_oneshot` and `copilot_oneshot` use the same provider-neutral one-shot contract. The target module and its dependencies are embedded in one user prompt, which requests either one complete TLA+ module or exactly one `tla` code fence containing that module. The runner accepts and materializes at most one non-empty assistant response as `solution.tla`, then leaves syntax and proof validity to the normal grader; there is no agent tool loop or opportunity to inspect and edit the workspace.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 uv run tlaps-bench run --backend litellm_oneshot --model claude-sonnet-4-6 --filter GCD_GCD3
 
 export COPILOT_GITHUB_TOKEN=github_pat_...
-uv run tlaps-bench run --backend copilot_oneshot --model claude-opus-4.8 --filter GCD_GCD3
+uv run tlaps-bench run --backend copilot_oneshot --model claude-opus-4.8 --max-output-tokens 64000 --filter GCD_GCD3
 ```
 
-The LiteLLM backend makes one non-streaming `litellm.completion` invocation with the prompt as its sole user message and no tools or system message. LiteLLM-level retries are disabled, but provider transport behavior below that adapter boundary is not wire-audited. Its normalized `model_requests: 1` therefore means one logical completion invocation, not an observed wire-request count. The Copilot backend uses the official Python Copilot SDK. Its request handler rebuilds the SDK's outbound inference request from endpoint-specific control-field allowlists before forwarding it: system and developer messages, tool definitions and tool choice, and SDK-added current date/time context are removed. The handler blocks unknown model-layer endpoints and any second inference attempt. This is an auditable exactly-one-request guarantee at the SDK-to-Copilot-API boundary; it does not claim control over prompts or processing that GitHub's gateway may apply after receiving the request.
+LiteLLM makes one completion call per outer attempt and disables adapter retries. Copilot makes one logical `send_and_wait` call; before a complete response, its native runtime may retry an identical transient request up to six total wire attempts. A complete response, permanent error, changed request, or deadline stops further requests. Native retries currently apply only to `copilot_oneshot`.
 
-Copilot receives the benchmark's absolute deadline, so SDK and session startup count against the same wall-clock budget as inference. At the deadline an independent watchdog freezes the wire guard, cancels in-flight forwarding, emits and flushes usage plus request-audit evidence, and only then attempts the SDK's abort/teardown; the host allows a bounded 10-second drain window before a hard kill. The frozen guard rejects any late SDK inference attempt, so that window is cleanup time only: the verdict is already `TIMEOUT`, and recorded model runtime is capped at the benchmark timeout.
+Copilot audits every forwarded request. Missing token or cost telemetry is marked as a lower bound, never treated as zero. Extra usage records are discarded.
 
-Strict one-shot runs automatically skip the model preflight because it would consume another inference. Their inline infrastructure retry count is fixed at `0`, and `--max-continuations` must also remain `0`. `copilot_oneshot` accepts only an explicit `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`; it does not probe a Copilot CLI login, mount stored session credentials, or accept the agentic backend's BYOK settings.
+Both backends default to three outer infrastructure retries, but only for explicitly transient failures with no model output. Copilot reasoning may continue through a native retry inside the same turn, but it prevents a fresh outer Agent attempt. Each outer retry uses a fresh workspace and preserves earlier evidence under `agent/attempts/`. `--max-continuations` must remain `0`.
+
+Copilot uses the benchmark deadline for startup and inference, records `TIMEOUT` before bounded teardown, and blocks late requests. It accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`; stored CLI sessions and agentic BYOK settings are not used.
 
 With `--no-container`, the runner uses its source-tree path instead of `/opt`. LiteLLM is already a project dependency; native Copilot runs additionally require `github-copilot-sdk==1.0.7` and its runtime (`python3 -m copilot download-runtime`) in the active environment.
 
@@ -148,13 +179,14 @@ uv run tlaps-bench run [flags]
 | `--mode` | `proof-completion` | Benchmark mode |
 | `--model` | (backend default) | Override the model |
 | `--reasoning-effort` | (backend behavior) | Pass a backend/model-specific reasoning effort |
+| `--max-output-tokens` | (backend behavior) | Positive per-request output limit; currently supported by `copilot_oneshot` |
 | `--filter` | (all benchmarks) | Substring match on path, comma-separated |
 | `--jobs` | `1` | Number of parallel backend runs |
 | `--timeout` | `28800` | Per-benchmark backend timeout in seconds |
 | `--check-timeout` | `600` | Per-benchmark checker (tlapm) timeout in seconds |
 | `--output-dir` | auto-generated | Output directory |
 | `--resume` | off | Skip benchmarks already marked `SKIP` or genuine `PASS` (first-attempt or continuation) |
-| `--infra-retries` | `3` agentic; `0` one-shot | Extra attempts after a transient agent startup/infra failure (0 output tokens); strict one-shot backends require `0` |
+| `--infra-retries` | `3` | Extra attempts after a backend-approved transient startup/infra failure with no model output evidence |
 | `--max-continuations` | `0` | Run up to N same-workspace continuation attempts after the first attempt completes without PASS; strict one-shot backends require `0` (see [Continuation runs](#continuation-runs)) |
 | `--force-build` | off | Rebuild the Docker image |
 | `--no-container` | off | Run without Docker (requires native setup) |
@@ -301,7 +333,15 @@ The first-attempt verdict stays in `check_verdict`. Continuation rounds are save
 
 Each run spins up an isolated container that installs the agent CLI, applies a network firewall (only LLM API hosts are reachable), and mounts benchmarks read-only to prevent tampering.
 
-To force a rebuild after changing source code:
+Cursor uses a DNS-backed IP set so newly discovered or rotated Cursor endpoints
+become reachable without adding one firewall rule per resolved address. Other
+DNS names, non-HTTPS traffic, and IPv6 remain blocked. Default Cursor entries
+act as DNS suffixes and last for the container lifetime; a custom
+`CURSOR_API_ENDPOINT` keeps the existing exact-host firewall behavior.
+
+The runner fingerprints the Docker inputs and automatically rebuilds when the
+embedded source or checker changes. Use `--force-build` only when you need to
+rebuild the current fingerprint explicitly:
 
 ```bash
 uv run tlaps-bench run --backend codex --model gpt-5.5 --force-build
@@ -379,7 +419,7 @@ This installs the Python environment, downloads tlapm 1.6, compiles the checker 
 
 ## Backend Architecture
 
-All entries in the backend registry share the neutral `Backend` lifecycle. Tool-using workspace editors inherit `AgenticBackend`; strict single-request implementations inherit the sibling `OneShotBackend`. Prompt construction, command/deadline propagation, option validation, result metadata, request-audit validation, and submission preparation are polymorphic backend hooks, so the common runner and termination classifier do not special-case one-shot names or provider names. Runtime one-shot providers implement the `OneShotProvider` protocol and are selected through a registry; each one-shot backend cross-checks the common request contract against its provider's raw audit evidence. A provider may report one `usage_details` entry per model request; each entry must explicitly include both `input_tokens` and `output_tokens` to be complete. Providers without per-request details can return exact aggregate token counts instead. Unavailable counts must be `None`, which becomes `null` and makes the record a lower bound; explicit zeroes remain exact zeroes.
+All entries in the backend registry share the neutral `Backend` lifecycle. Tool-using workspace editors inherit `AgenticBackend`; strict single-response implementations inherit the sibling `OneShotBackend`. Prompt construction, command/deadline propagation, option validation, result metadata, request-audit validation, and submission preparation are polymorphic backend hooks, so the common runner and termination classifier do not special-case one-shot names or provider names. Runtime one-shot providers implement the `OneShotProvider` protocol and are selected through a registry; each one-shot backend cross-checks the common request contract against its provider's raw audit evidence. A provider may report one `usage_details` entry per model request; each entry must explicitly include both `input_tokens` and `output_tokens` to be complete. Providers without per-request details can return exact aggregate token counts instead. Unavailable counts must be `None`, which becomes `null` and makes the record a lower bound; explicit zeroes remain exact zeroes.
 
 ## Adding a New Agentic Backend
 

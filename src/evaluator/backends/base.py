@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from evaluator.termination import TerminationContext
 from evaluator.usage import UsageSummary
 
 BEDROCK_HOSTS = [
@@ -83,14 +84,15 @@ ALL_API_HOSTS = (
 )
 
 
-def _azure_openai_hosts() -> list[str]:
-    """Extract Azure OpenAI endpoint host(s) from environment variables.
+def _hosts_from_env(*env_vars: str) -> list[str]:
+    """Extract deduplicated hostnames from endpoint URLs in the given env vars.
 
-    Azure OpenAI uses customer-specific hostnames (e.g.
-    my-resource.openai.azure.com) that cannot be statically enumerated.
+    Used for endpoints with customer/provider-specific hostnames that cannot be
+    statically enumerated (Azure OpenAI, OpenAI-compatible base URLs, etc.). The
+    ``//`` prefix lets ``urlparse`` extract a host even from a scheme-less value.
     """
     hosts: list[str] = []
-    for var in ("AZURE_OPENAI_HOST", "AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT"):
+    for var in env_vars:
         val = os.environ.get(var, "").strip()
         if not val:
             continue
@@ -102,7 +104,16 @@ def _azure_openai_hosts() -> list[str]:
 
 def detect_firewall_hosts(model: str) -> list[str]:
     """All known LLM API hosts. Blocks general internet, allows any provider."""
-    return ALL_API_HOSTS + _azure_openai_hosts()
+    # Azure OpenAI and custom OpenAI-compatible endpoints use non-enumerable
+    # hostnames supplied through env, so derive them at run time.
+    dynamic_hosts = _hosts_from_env(
+        "AZURE_OPENAI_HOST",
+        "AZURE_API_BASE",
+        "AZURE_OPENAI_ENDPOINT",
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
+    )
+    return ALL_API_HOSTS + dynamic_hosts
 
 
 def has_aws_env_credentials() -> bool:
@@ -174,6 +185,7 @@ class Backend(ABC):
     approach: str = "agentic"
     provider: str | None = None
     install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
+    dynamic_firewall: bool = False  # resolve allowed DNS suffixes throughout the run
     env_keys: list[str] = []  # host env vars to forward into container
     credential_mounts: list[str] = []  # host credential dirs to copy into agent containers
     # Container path holding this backend's session state; --session-dir mounts
@@ -182,6 +194,8 @@ class Backend(ABC):
     capabilities = BackendCapabilities()
     reasoning_effort: str | None = None
     reasoning_effort_values: tuple[str, ...] = ()
+    max_output_tokens: int | None = None
+    supports_max_output_tokens: bool = False
 
     def set_reasoning_effort(self, reasoning_effort: str | None) -> None:
         """Validate and store an optional backend-native reasoning effort."""
@@ -201,6 +215,20 @@ class Backend(ABC):
                 f"backend {self.name!r}: invalid --reasoning-effort {reasoning_effort!r}; choose from: {choices}"
             )
         self.reasoning_effort = reasoning_effort
+
+    def set_max_output_tokens(self, max_output_tokens: int | None) -> None:
+        """Validate and store an optional per-request output token limit."""
+
+        if max_output_tokens is None:
+            self.max_output_tokens = None
+            return
+        if not isinstance(max_output_tokens, int) or isinstance(max_output_tokens, bool):
+            raise ValueError("--max-output-tokens must be an integer")
+        if max_output_tokens <= 0:
+            raise ValueError("--max-output-tokens must be > 0")
+        if not self.supports_max_output_tokens:
+            raise ValueError(f"backend {self.name!r} does not support --max-output-tokens")
+        self.max_output_tokens = max_output_tokens
 
     def get_credential_mounts(self) -> list[str]:
         """Credential directories this backend needs mounted for the current run."""
@@ -232,6 +260,17 @@ class Backend(ABC):
             output_tokens,
             source=f"{self.name or self.__class__.__name__}_legacy_output",
         )
+
+    def is_infra_retryable(self, ctx: TerminationContext) -> bool:
+        """Whether a zero-output ``INFRA_ERROR`` is safe to replay.
+
+        Agentic backends retain the historical behavior: after the common
+        runner has proved that no output tokens were produced, an
+        infrastructure failure may be retried. Stricter approaches can inspect
+        their event contract and require explicit transient-error evidence.
+        """
+
+        return True
 
     def execution_environment(self, result_dir: str) -> dict[str, str]:
         """Backend-owned environment additions for one isolated execution."""
@@ -284,6 +323,8 @@ class Backend(ABC):
             metadata["provider"] = self.provider
         if self.reasoning_effort is not None:
             metadata["reasoning_effort"] = self.reasoning_effort
+        if self.max_output_tokens is not None:
+            metadata["requested_max_output_tokens"] = self.max_output_tokens
         return metadata
 
     def prepare_submission(
@@ -314,8 +355,6 @@ class Backend(ABC):
             raise ValueError("--infra-retries must be >= 0")
         maximum = self.capabilities.max_infra_retries
         if maximum is not None and retries > maximum:
-            if maximum == 0 and self.approach == "one_shot":
-                raise ValueError("strict one-shot backends require --infra-retries 0")
             raise ValueError(f"backend {self.name!r} supports at most {maximum} infrastructure retries")
         return retries
 
@@ -339,7 +378,11 @@ class Backend(ABC):
         return None
 
     def firewall_hosts(self) -> list[str]:
-        """API hosts that must be reachable."""
+        """API hosts that must be reachable.
+
+        When ``dynamic_firewall`` is enabled, each entry also covers its
+        subdomains so newly discovered service endpoints can be admitted.
+        """
         return []
 
     def detect_quota_block(self, jsonl_path: str) -> int | None:

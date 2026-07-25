@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import shlex
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -17,6 +20,28 @@ from pathlib import Path
 
 IMAGE_TAG = "tlaps-bench-base"
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_IMAGE_BUILD_FINGERPRINT_LABEL = "org.specula.tlaps-bench.build-sha256"
+_IMAGE_BUILD_FINGERPRINT_ARG = "TLAPS_BENCH_BUILD_SHA256"
+_IMAGE_SOURCE_PATHS = (
+    ".dockerignore",
+    "docker/base.Dockerfile",
+    "docker/base-entrypoint.sh",
+    "docker/firewall.sh",
+    "docker/install-scripts",
+    "pyproject.toml",
+    "src",
+)
+_IGNORED_IMAGE_SOURCE_PARTS = {
+    "__pycache__",
+    ".tlacache",
+    ".venv",
+    "dist",
+    "node_modules",
+    "results",
+    "slides",
+    "tlaps-bench-private",
+    "venv",
+}
 
 
 class DockerUnavailableError(RuntimeError):
@@ -100,6 +125,7 @@ class ContainerConfig:
     benchmark_dir: str = ""  # host path, mounted to /benchmark (ro) for tamper-proof baseline
     env: dict[str, str] = field(default_factory=dict)
     firewall_hosts: list[str] = field(default_factory=list)
+    dynamic_firewall: bool = False
     install_script: str | None = None  # run at container start before agent cmd
     cap_net_admin: bool = True
     memory: str = ""
@@ -129,6 +155,9 @@ class CredentialMount:
 
     mount_path: str
     copy: Callable[[Path, Path], bool]
+    # Host source directory. Defaults to ``~/.<name>``; set explicitly for
+    # backends whose credentials live elsewhere or vary by host platform.
+    source_dir: Callable[[], Path] | None = None
 
 
 def _copy_all_credentials(src: Path, dst: Path) -> bool:
@@ -169,6 +198,21 @@ def _copy_pi_credentials(src: Path, dst: Path) -> bool:
     auth_dst.mkdir(parents=True, exist_ok=True)
     shutil.copy2(auth_src, auth_dst / "auth.json")
     return True
+
+
+def _copy_cursor_credentials(src: Path, dst: Path) -> bool:
+    """Copy only the Cursor CLI's OAuth credential file (accessToken/refreshToken)."""
+    return _copy_named_credential_file(src, dst, "auth.json")
+
+
+def _cursor_credential_dir() -> Path:
+    """Return the host-specific Cursor CLI credential directory."""
+    if sys.platform == "darwin":
+        return Path.home() / ".cursor"
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    config_home = Path(xdg_config_home).expanduser() if xdg_config_home else Path.home() / ".config"
+    return config_home / "cursor"
 
 
 def _copy_codex_credentials(src: Path, dst: Path) -> bool:
@@ -216,15 +260,44 @@ def _copy_codex_bedrock_config(src: Path, dst: Path) -> bool:
 class ContainerRunner:
     """Programmatic interface to Docker for running evaluator backends in isolation."""
 
+    _DYNAMIC_FIREWALL_CAPS = (
+        "NET_ADMIN",
+        "NET_BIND_SERVICE",
+        "NET_RAW",
+        "SETPCAP",
+        "SETUID",
+        "SETGID",
+        "CHOWN",
+        "FOWNER",
+        "DAC_OVERRIDE",
+    )
+    _DYNAMIC_AGENT_DROP_CAPS = (
+        "cap_net_admin",
+        "cap_net_bind_service",
+        "cap_net_raw",
+        "cap_setpcap",
+        "cap_setuid",
+        "cap_setgid",
+        "cap_chown",
+        "cap_fowner",
+    )
     _CREDENTIAL_MOUNTS = {
         "aws": CredentialMount("/root/.aws", _copy_all_credentials),
         "claude": CredentialMount("/root/.claude", _copy_claude_credentials),
         "codex": CredentialMount("/root/.codex", _copy_codex_credentials),
+        "cursor": CredentialMount(
+            "/root/.config/cursor",
+            _copy_cursor_credentials,
+            source_dir=_cursor_credential_dir,
+        ),
         "pi": CredentialMount("/root/.pi", _copy_pi_credentials),
     }
 
     def build_docker_args(self, config: ContainerConfig) -> tuple[list[str], str]:
         """Build the `docker run` argument list from config."""
+        if config.dynamic_firewall and not config.firewall_hosts:
+            raise ValueError("dynamic_firewall requires at least one firewall host")
+
         cid_file = f"/tmp/tlaps-bench-{uuid.uuid4().hex[:8]}.cid"
 
         args = [
@@ -251,7 +324,11 @@ class ContainerRunner:
         if config.memory:
             args.append(f"--memory={config.memory}")
 
-        if config.cap_net_admin and config.firewall_hosts:
+        if config.dynamic_firewall:
+            args.append("--cap-drop=ALL")
+            args.extend(f"--cap-add={capability}" for capability in self._DYNAMIC_FIREWALL_CAPS)
+            args.append("--security-opt=no-new-privileges:true")
+        elif config.cap_net_admin and config.firewall_hosts:
             args.append("--cap-add=NET_ADMIN")
 
         # Workspace and result mounts
@@ -273,7 +350,7 @@ class ContainerRunner:
             mount = self._CREDENTIAL_MOUNTS.get(name)
             if mount is None:
                 raise ValueError(f"unknown credential mount: {name}")
-            src = Path.home() / f".{name}"
+            src = mount.source_dir() if mount.source_dir else (Path.home() / f".{name}")
             if not src.is_dir():
                 continue
             # Session dir targets this path: copy credentials into it (not a
@@ -298,29 +375,45 @@ class ContainerRunner:
         for key, value in config.env.items():
             args.extend(["-e", f"{key}={value}"])
 
-        # Firewall hosts as env var (read by firewall.sh inside container)
+        # Firewall config as env vars (read by firewall.sh inside container)
         if config.firewall_hosts:
             args.extend(["-e", f"FIREWALL_HOSTS={','.join(config.firewall_hosts)}"])
+            if config.dynamic_firewall:
+                args.extend(["-e", "DYNAMIC_FIREWALL=1"])
         else:
             args.extend(["-e", "DISABLE_FIREWALL=1"])
 
         args.append(config.image)
         return args, cid_file
 
-    def build_composite_command(self, cmd: list[str], install_script: str | None = None) -> str:
+    def build_composite_command(
+        self,
+        cmd: list[str],
+        install_script: str | None = None,
+        *,
+        dynamic_firewall: bool = False,
+    ) -> str:
         """Build shell command: install script → firewall → agent command."""
         agent_cmd = " ".join(shlex.quote(c) for c in cmd)
         parts = []
         if install_script:
             parts.append(f"/opt/install-scripts/{install_script} >&2")
         parts.append("/opt/firewall.sh >&2")
-        parts.append(f"exec capsh --drop=cap_net_admin -- -c {shlex.quote(agent_cmd)}")
+        if dynamic_firewall:
+            drop_caps = ",".join(self._DYNAMIC_AGENT_DROP_CAPS)
+            parts.append(f"exec capsh --drop={drop_caps} --caps=cap_dac_override+eip -- -c {shlex.quote(agent_cmd)}")
+        else:
+            parts.append(f"exec capsh --drop=cap_net_admin -- -c {shlex.quote(agent_cmd)}")
         return " && ".join(parts)
 
     def run(self, config: ContainerConfig, cmd: list[str], stdin_data: str | None = None) -> ContainerRun:
         """Launch a container with the given command. Returns handle."""
         docker_args, cid_file = self.build_docker_args(config)
-        composite = self.build_composite_command(cmd, config.install_script)
+        composite = self.build_composite_command(
+            cmd,
+            config.install_script,
+            dynamic_firewall=config.dynamic_firewall,
+        )
         full_cmd = docker_args + ["bash", "-c", composite]
 
         proc = subprocess.Popen(
@@ -346,7 +439,11 @@ class ContainerRunner:
     ) -> tuple[int, str, str]:
         """Run container to completion. Returns (exit_code, stdout, stderr)."""
         docker_args, cid_file = self.build_docker_args(config)
-        composite = self.build_composite_command(cmd, config.install_script)
+        composite = self.build_composite_command(
+            cmd,
+            config.install_script,
+            dynamic_firewall=config.dynamic_firewall,
+        )
         full_cmd = docker_args + ["bash", "-c", composite]
 
         try:
@@ -379,7 +476,11 @@ class ContainerRunner:
         so could not have caught an auth-host block.)
         """
         docker_args, cid_file = self.build_docker_args(config)
-        composite = self.build_composite_command(cmd, config.install_script)
+        composite = self.build_composite_command(
+            cmd,
+            config.install_script,
+            dynamic_firewall=config.dynamic_firewall,
+        )
         full_cmd = docker_args + ["bash", "-c", composite]
         try:
             result = subprocess.run(full_cmd, input=stdin_data, capture_output=True, text=True, timeout=timeout)
@@ -497,10 +598,18 @@ class ContainerRunner:
         _docker_ok = True
 
     @staticmethod
-    def build_image(dockerfile: str, tag: str, context: str, build_args: dict | None = None) -> None:
+    def build_image(
+        dockerfile: str,
+        tag: str,
+        context: str,
+        build_args: dict | None = None,
+        additional_tags: list[str] | None = None,
+    ) -> None:
         """Build a Docker image, streaming output to stdout."""
         print(f"[build] docker build -t {tag}...")
         cmd = ["docker", "build", "--platform", "linux/amd64", "-f", dockerfile, "-t", tag]
+        for additional_tag in additional_tags or []:
+            cmd.extend(["-t", additional_tag])
         for k, v in (build_args or {}).items():
             cmd += ["--build-arg", f"{k}={v}"]
         result = subprocess.run(cmd + [context])
@@ -508,13 +617,33 @@ class ContainerRunner:
             raise RuntimeError(f"Docker build failed (exit {result.returncode})")
 
     @staticmethod
-    def image_exists(tag: str) -> bool:
-        """Check if a Docker image exists locally."""
+    def image_exists(tag: str, build_sha256: str | None = None) -> bool:
+        """Check that a Docker image exists and optionally matches its build inputs."""
+        cmd = ["docker", "image", "inspect"]
+        if build_sha256 is not None:
+            cmd.extend(["--format", f'{{{{ index .Config.Labels "{_IMAGE_BUILD_FINGERPRINT_LABEL}" }}}}'])
+        cmd.append(tag)
         result = subprocess.run(
-            ["docker", "image", "inspect", tag],
+            cmd,
             capture_output=True,
+            text=True,
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
+        return build_sha256 is None or result.stdout.strip() == build_sha256
+
+    @staticmethod
+    def tag_image(source_tag: str, target_tag: str) -> None:
+        """Update a local Docker image alias."""
+        result = subprocess.run(
+            ["docker", "image", "tag", source_tag, target_tag],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(f"Docker image tag failed (exit {result.returncode}){suffix}")
 
 
 def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, str]:
@@ -541,17 +670,100 @@ def forward_env(backend_keys: list[str], model: str | None = None) -> dict[str, 
     return env
 
 
-def ensure_image(force: bool = False) -> None:
-    """Build the Docker image if missing or forced."""
+def _image_source_fingerprint(repo_root: str = _REPO_ROOT) -> str:
+    """Hash semantic Docker build inputs, including dirty working-tree edits."""
+
+    root = Path(repo_root)
+    sources: list[Path] = []
+    for relative in _IMAGE_SOURCE_PATHS:
+        path = root / relative
+        if path.is_dir():
+            sources.extend(
+                candidate for candidate in path.rglob("*") if candidate.is_symlink() or not candidate.is_dir()
+            )
+        else:
+            sources.append(path)
+
+    digest = hashlib.sha256()
+
+    def update_field(value: bytes) -> None:
+        digest.update(len(value).to_bytes(8, byteorder="big"))
+        digest.update(value)
+
+    for path in sorted(sources, key=lambda candidate: candidate.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        parts = path.relative_to(root).parts
+        if (
+            _IGNORED_IMAGE_SOURCE_PARTS.intersection(parts)
+            or path.suffix == ".pyc"
+            or path.name.endswith(".tar.gz")
+            or path.suffix == ".result"
+            or relative == "src/common/_build_version.py"
+            or relative.startswith("src/dataset/sany-dump/build/")
+        ):
+            continue
+
+        update_field(b"source-entry")
+        update_field(relative.encode("utf-8"))
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            update_field(b"")
+            update_field(b"missing")
+            update_field(b"")
+            continue
+        update_field(f"{stat.S_IMODE(metadata.st_mode):o}".encode("ascii"))
+        if path.is_symlink():
+            update_field(b"symlink")
+            update_field(os.readlink(path).encode("utf-8", errors="surrogateescape"))
+        else:
+            content_digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    content_digest.update(chunk)
+            update_field(b"file")
+            update_field(content_digest.digest())
+    return digest.hexdigest()
+
+
+def _checker_version() -> str:
+    """Return the version embedded in check_proof_bin by the Docker build."""
+
+    describe = subprocess.run(
+        ["git", "describe", "--always", "--dirty"], capture_output=True, text=True, cwd=_REPO_ROOT
+    )
+    return describe.stdout.strip() if describe.returncode == 0 and describe.stdout.strip() else "dev"
+
+
+def _image_build_fingerprint(source_sha256: str, checker_version: str) -> str:
+    """Hash every value that can change the locally built image."""
+
+    return hashlib.sha256(f"{source_sha256}\0{checker_version}".encode()).hexdigest()
+
+
+def ensure_image(force: bool = False) -> str:
+    """Build the Docker image if missing, stale, or forced."""
     ContainerRunner.require_docker()
-    if force or not ContainerRunner.image_exists(IMAGE_TAG):
+    source_sha256 = _image_source_fingerprint()
+    version = _checker_version()
+    build_sha256 = _image_build_fingerprint(source_sha256, version)
+    build_tag = f"{IMAGE_TAG}:{build_sha256}"
+    if force or not ContainerRunner.image_exists(build_tag, build_sha256):
         dockerfile = os.path.join(_REPO_ROOT, "docker", "base.Dockerfile")
         if force:
             print("Building Docker image (--force-build)...")
         else:
-            print("Docker image not found, building...")
-        describe = subprocess.run(
-            ["git", "describe", "--always", "--dirty"], capture_output=True, text=True, cwd=_REPO_ROOT
+            print("Docker image missing or out of date, building...")
+        ContainerRunner.build_image(
+            dockerfile,
+            build_tag,
+            _REPO_ROOT,
+            {
+                "CHECKER_VERSION": version,
+                _IMAGE_BUILD_FINGERPRINT_ARG: build_sha256,
+            },
+            [f"{IMAGE_TAG}:latest"],
         )
-        version = describe.stdout.strip() if describe.returncode == 0 else "dev"
-        ContainerRunner.build_image(dockerfile, IMAGE_TAG, _REPO_ROOT, {"CHECKER_VERSION": version or "dev"})
+    elif not ContainerRunner.image_exists(f"{IMAGE_TAG}:latest", build_sha256):
+        ContainerRunner.tag_image(build_tag, f"{IMAGE_TAG}:latest")
+    return build_tag

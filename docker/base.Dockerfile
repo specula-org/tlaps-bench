@@ -35,7 +35,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     curl ca-certificates git python3 python3-pip \
     libstdc++6 libgmp10 make \
     default-jdk-headless \
-    iptables iproute2 dnsutils libcap2-bin
+    iptables iproute2 dnsutils libcap2-bin \
+    dnsmasq-base ipset \
+    && groupadd --system tlaps-dnsmasq \
+    && useradd --system --gid tlaps-dnsmasq --home-dir /nonexistent \
+        --no-create-home --shell /usr/sbin/nologin tlaps-dnsmasq
 
 # Layer 2: Node.js (rarely changes)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -66,7 +70,7 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && cp /tmp/downloads/tla2tools-${TLATOOLS_TAG}.jar /opt/sany/lib/tla2tools.jar
 
 # Layer 5: Community modules (downloaded inside Docker — no host dependency)
-ARG COMMUNITY_TAG=202604221529
+ARG COMMUNITY_TAG=202607181436
 ARG COMMUNITY_URL=https://github.com/tlaplus/CommunityModules/archive/refs/tags/${COMMUNITY_TAG}.tar.gz
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz ]; then \
@@ -75,6 +79,8 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && mkdir -p /opt/community \
     && tar -xzf /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz -C /tmp/ \
     && cp /tmp/CommunityModules-${COMMUNITY_TAG}/modules/*.tla /opt/community/ \
+    && test -f /opt/community/Graphs.tla \
+    && test -f /opt/community/GraphTheorems.tla \
     && rm -rf /tmp/CommunityModules-${COMMUNITY_TAG}
 
 # Layer 6: SANY DumpSemantics compilation (needs tla2tools.jar + JDK)
@@ -110,6 +116,11 @@ COPY docker/base-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 WORKDIR /workspace
+
+# Invalidate locally cached images when sources or the checker version change.
+# Keep this label last so the expensive dependency layers remain cacheable.
+ARG TLAPS_BENCH_BUILD_SHA256=unknown
+LABEL org.specula.tlaps-bench.build-sha256="${TLAPS_BENCH_BUILD_SHA256}"
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

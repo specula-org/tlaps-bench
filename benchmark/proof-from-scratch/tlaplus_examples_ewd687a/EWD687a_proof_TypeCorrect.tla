@@ -1,15 +1,11 @@
 --------------------------- MODULE EWD687a_proof_TypeCorrect ---------------------------
 
-EXTENDS EWD687a, NaturalsInduction, FiniteSetTheorems, TLAPS
+EXTENDS EWD687a, NaturalsInduction, FiniteSetTheorems, GraphTheorems, TLAPS
 
 -----------------------------------------------------------------------------
 
 THEOREM TypeCorrect == Spec => []TypeOK
 PROOF OBVIOUS
-
------------------------------------------------------------------------------
-
-ASSUME ProcsFinite == IsFiniteSet(Procs)
 
 -----------------------------------------------------------------------------
 
