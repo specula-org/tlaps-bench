@@ -125,6 +125,7 @@ class ContainerConfig:
     benchmark_dir: str = ""  # host path, mounted to /benchmark (ro) for tamper-proof baseline
     env: dict[str, str] = field(default_factory=dict)
     firewall_hosts: list[str] = field(default_factory=list)
+    dynamic_firewall: bool = False
     install_script: str | None = None  # run at container start before agent cmd
     cap_net_admin: bool = True
     memory: str = ""
@@ -259,6 +260,27 @@ def _copy_codex_bedrock_config(src: Path, dst: Path) -> bool:
 class ContainerRunner:
     """Programmatic interface to Docker for running evaluator backends in isolation."""
 
+    _DYNAMIC_FIREWALL_CAPS = (
+        "NET_ADMIN",
+        "NET_BIND_SERVICE",
+        "NET_RAW",
+        "SETPCAP",
+        "SETUID",
+        "SETGID",
+        "CHOWN",
+        "FOWNER",
+        "DAC_OVERRIDE",
+    )
+    _DYNAMIC_AGENT_DROP_CAPS = (
+        "cap_net_admin",
+        "cap_net_bind_service",
+        "cap_net_raw",
+        "cap_setpcap",
+        "cap_setuid",
+        "cap_setgid",
+        "cap_chown",
+        "cap_fowner",
+    )
     _CREDENTIAL_MOUNTS = {
         "aws": CredentialMount("/root/.aws", _copy_all_credentials),
         "claude": CredentialMount("/root/.claude", _copy_claude_credentials),
@@ -273,6 +295,9 @@ class ContainerRunner:
 
     def build_docker_args(self, config: ContainerConfig) -> tuple[list[str], str]:
         """Build the `docker run` argument list from config."""
+        if config.dynamic_firewall and not config.firewall_hosts:
+            raise ValueError("dynamic_firewall requires at least one firewall host")
+
         cid_file = f"/tmp/tlaps-bench-{uuid.uuid4().hex[:8]}.cid"
 
         args = [
@@ -299,7 +324,11 @@ class ContainerRunner:
         if config.memory:
             args.append(f"--memory={config.memory}")
 
-        if config.cap_net_admin and config.firewall_hosts:
+        if config.dynamic_firewall:
+            args.append("--cap-drop=ALL")
+            args.extend(f"--cap-add={capability}" for capability in self._DYNAMIC_FIREWALL_CAPS)
+            args.append("--security-opt=no-new-privileges:true")
+        elif config.cap_net_admin and config.firewall_hosts:
             args.append("--cap-add=NET_ADMIN")
 
         # Workspace and result mounts
@@ -349,26 +378,42 @@ class ContainerRunner:
         # Firewall config as env vars (read by firewall.sh inside container)
         if config.firewall_hosts:
             args.extend(["-e", f"FIREWALL_HOSTS={','.join(config.firewall_hosts)}"])
+            if config.dynamic_firewall:
+                args.extend(["-e", "DYNAMIC_FIREWALL=1"])
         else:
             args.extend(["-e", "DISABLE_FIREWALL=1"])
 
         args.append(config.image)
         return args, cid_file
 
-    def build_composite_command(self, cmd: list[str], install_script: str | None = None) -> str:
+    def build_composite_command(
+        self,
+        cmd: list[str],
+        install_script: str | None = None,
+        *,
+        dynamic_firewall: bool = False,
+    ) -> str:
         """Build shell command: install script → firewall → agent command."""
         agent_cmd = " ".join(shlex.quote(c) for c in cmd)
         parts = []
         if install_script:
             parts.append(f"/opt/install-scripts/{install_script} >&2")
         parts.append("/opt/firewall.sh >&2")
-        parts.append(f"exec capsh --drop=cap_net_admin -- -c {shlex.quote(agent_cmd)}")
+        if dynamic_firewall:
+            drop_caps = ",".join(self._DYNAMIC_AGENT_DROP_CAPS)
+            parts.append(f"exec capsh --drop={drop_caps} --caps=cap_dac_override+eip -- -c {shlex.quote(agent_cmd)}")
+        else:
+            parts.append(f"exec capsh --drop=cap_net_admin -- -c {shlex.quote(agent_cmd)}")
         return " && ".join(parts)
 
     def run(self, config: ContainerConfig, cmd: list[str], stdin_data: str | None = None) -> ContainerRun:
         """Launch a container with the given command. Returns handle."""
         docker_args, cid_file = self.build_docker_args(config)
-        composite = self.build_composite_command(cmd, config.install_script)
+        composite = self.build_composite_command(
+            cmd,
+            config.install_script,
+            dynamic_firewall=config.dynamic_firewall,
+        )
         full_cmd = docker_args + ["bash", "-c", composite]
 
         proc = subprocess.Popen(
@@ -394,7 +439,11 @@ class ContainerRunner:
     ) -> tuple[int, str, str]:
         """Run container to completion. Returns (exit_code, stdout, stderr)."""
         docker_args, cid_file = self.build_docker_args(config)
-        composite = self.build_composite_command(cmd, config.install_script)
+        composite = self.build_composite_command(
+            cmd,
+            config.install_script,
+            dynamic_firewall=config.dynamic_firewall,
+        )
         full_cmd = docker_args + ["bash", "-c", composite]
 
         try:
@@ -427,7 +476,11 @@ class ContainerRunner:
         so could not have caught an auth-host block.)
         """
         docker_args, cid_file = self.build_docker_args(config)
-        composite = self.build_composite_command(cmd, config.install_script)
+        composite = self.build_composite_command(
+            cmd,
+            config.install_script,
+            dynamic_firewall=config.dynamic_firewall,
+        )
         full_cmd = docker_args + ["bash", "-c", composite]
         try:
             result = subprocess.run(full_cmd, input=stdin_data, capture_output=True, text=True, timeout=timeout)

@@ -35,7 +35,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     curl ca-certificates git python3 python3-pip \
     libstdc++6 libgmp10 make \
     default-jdk-headless \
-    iptables iproute2 dnsutils libcap2-bin
+    iptables iproute2 dnsutils libcap2-bin \
+    dnsmasq-base ipset \
+    && groupadd --system tlaps-dnsmasq \
+    && useradd --system --gid tlaps-dnsmasq --home-dir /nonexistent \
+        --no-create-home --shell /usr/sbin/nologin tlaps-dnsmasq
 
 # Layer 2: Node.js (rarely changes)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

@@ -135,9 +135,46 @@ class TestBuildDockerArgs:
         args, _ = runner.build_docker_args(config)
 
         assert "--cap-add=NET_ADMIN" in args
+        assert "--cap-drop=ALL" not in args
+        assert "--security-opt=no-new-privileges:true" not in args
         env_args = [args[i + 1] for i, a in enumerate(args) if a == "-e"]
         assert "FIREWALL_HOSTS=api.openai.com,api.anthropic.com" in env_args
+        assert "DYNAMIC_FIREWALL=1" not in env_args
         assert not any("ALLOW_ALL_HTTPS" in value for value in env_args)
+
+    def test_dynamic_firewall_uses_only_initialization_capabilities(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(
+            firewall_hosts=["api2.cursor.sh"],
+            dynamic_firewall=True,
+            cap_net_admin=False,
+        )
+        args, _ = runner.build_docker_args(config)
+
+        cap_adds = {argument.removeprefix("--cap-add=") for argument in args if argument.startswith("--cap-add=")}
+        assert cap_adds == {
+            "NET_ADMIN",
+            "NET_BIND_SERVICE",
+            "NET_RAW",
+            "SETPCAP",
+            "SETUID",
+            "SETGID",
+            "CHOWN",
+            "FOWNER",
+            "DAC_OVERRIDE",
+        }
+        assert "--cap-drop=ALL" in args
+        assert "--security-opt=no-new-privileges:true" in args
+        env_args = [args[i + 1] for i, argument in enumerate(args) if argument == "-e"]
+        assert "FIREWALL_HOSTS=api2.cursor.sh" in env_args
+        assert "DYNAMIC_FIREWALL=1" in env_args
+
+    def test_dynamic_firewall_requires_hosts(self):
+        runner = ContainerRunner()
+        config = ContainerConfig(dynamic_firewall=True)
+
+        with pytest.raises(ValueError, match="requires at least one firewall host"):
+            runner.build_docker_args(config)
 
     def test_no_firewall_when_empty(self):
         runner = ContainerRunner()
@@ -342,6 +379,23 @@ class TestBuildCompositeCommand:
         assert "/opt/firewall.sh" in result
         assert "capsh --drop=cap_net_admin" in result
         assert "codex exec --model gpt-5.5" in result
+
+    def test_dynamic_firewall_drops_initialization_caps_but_keeps_dac_override(self):
+        runner = ContainerRunner()
+        result = runner.build_composite_command(
+            ["cursor-agent", "--print"],
+            dynamic_firewall=True,
+        )
+
+        assert "/opt/firewall.sh" in result
+        assert (
+            "--drop=cap_net_admin,cap_net_bind_service,cap_net_raw,cap_setpcap,"
+            "cap_setuid,cap_setgid,cap_chown,cap_fowner"
+        ) in result
+        assert "--caps=cap_dac_override+eip" in result
+        drop_arg = result.split("--drop=", 1)[1].split(" ", 1)[0]
+        assert "cap_dac_override" not in drop_arg
+        assert result.endswith("-c 'cursor-agent --print'")
 
     def test_command_quoting(self):
         runner = ContainerRunner()

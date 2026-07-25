@@ -1069,6 +1069,7 @@ def _run_backend_container(
         benchmark_dir=canonical_dir or "",
         env=backend_env,
         firewall_hosts=backend.firewall_hosts(),
+        dynamic_firewall=backend.dynamic_firewall,
         install_script=backend.install_script,
         credential_mounts=backend.get_credential_mounts(),
         keep_container=item.keep_container,
@@ -1476,6 +1477,7 @@ def _run_preflight(backend, container_image: str) -> None:
             result_dir=result_dir,
             env=forward_env(backend.env_keys, model=getattr(backend, "model", None)),
             firewall_hosts=backend.firewall_hosts(),
+            dynamic_firewall=backend.dynamic_firewall,
             install_script=backend.install_script,
             credential_mounts=backend.get_credential_mounts(),
         )

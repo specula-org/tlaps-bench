@@ -10,10 +10,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from evaluator.backends.cursor import CursorBackend
 
 
-def test_cursor_firewall_uses_exact_default_api_host(monkeypatch):
+def test_cursor_uses_dynamic_firewall_with_default_runtime_hosts(monkeypatch):
     monkeypatch.delenv("CURSOR_API_ENDPOINT", raising=False)
+    backend = CursorBackend()
 
-    assert CursorBackend().firewall_hosts() == ["api2.cursor.sh"]
+    assert backend.dynamic_firewall is True
+    assert backend.firewall_hosts() == [
+        "api2.cursor.sh",
+        "api2direct.cursor.sh",
+        "api5.cursor.sh",
+        "authenticate.cursor.sh",
+        "authenticator.cursor.sh",
+        "authentication.cursor.sh",
+        "repo42.cursor.sh",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -27,8 +37,10 @@ def test_cursor_firewall_uses_exact_default_api_host(monkeypatch):
 )
 def test_cursor_firewall_uses_configured_https_endpoint(monkeypatch, endpoint, hostname):
     monkeypatch.setenv("CURSOR_API_ENDPOINT", endpoint)
+    backend = CursorBackend()
 
-    assert CursorBackend().firewall_hosts() == [hostname]
+    assert backend.dynamic_firewall is False
+    assert backend.firewall_hosts() == [hostname]
 
 
 @pytest.mark.parametrize(

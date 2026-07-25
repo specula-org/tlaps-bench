@@ -185,6 +185,7 @@ class Backend(ABC):
     approach: str = "agentic"
     provider: str | None = None
     install_script: str | None = None  # run at container start (e.g. "install-codex.sh")
+    dynamic_firewall: bool = False  # resolve allowed DNS suffixes throughout the run
     env_keys: list[str] = []  # host env vars to forward into container
     credential_mounts: list[str] = []  # host credential dirs to copy into agent containers
     # Container path holding this backend's session state; --session-dir mounts
@@ -377,7 +378,11 @@ class Backend(ABC):
         return None
 
     def firewall_hosts(self) -> list[str]:
-        """API hosts that must be reachable."""
+        """API hosts that must be reachable.
+
+        When ``dynamic_firewall`` is enabled, each entry also covers its
+        subdomains so newly discovered service endpoints can be admitted.
+        """
         return []
 
     def detect_quota_block(self, jsonl_path: str) -> int | None:

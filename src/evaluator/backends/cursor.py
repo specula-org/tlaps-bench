@@ -12,7 +12,15 @@ from urllib.parse import urlparse
 from .agentic import AgenticBackend
 
 DEFAULT_MODEL = "sonnet-4.5"
-DEFAULT_API_ENDPOINT = "https://api2.cursor.sh"
+DEFAULT_RUNTIME_HOSTS = [
+    "api2.cursor.sh",
+    "api2direct.cursor.sh",
+    "api5.cursor.sh",
+    "authenticate.cursor.sh",
+    "authenticator.cursor.sh",
+    "authentication.cursor.sh",
+    "repo42.cursor.sh",
+]
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
@@ -76,14 +84,23 @@ class CursorBackend(AgenticBackend):
             pass
         return "cursor: no auth detected. Set CURSOR_API_KEY or run `cursor-agent login`."
 
-    def firewall_hosts(self) -> list[str]:
-        """Allow only the configured Cursor API endpoint.
+    @property
+    def dynamic_firewall(self) -> bool:
+        """Use dynamic DNS only for Cursor's public service endpoints."""
+        return "CURSOR_API_ENDPOINT" not in os.environ
 
-        The container firewall supports HTTPS on port 443 only, so reject
-        endpoint values that it cannot enforce instead of silently widening
-        egress or letting the run fail later inside Cursor.
+    def firewall_hosts(self) -> list[str]:
+        """Return the Cursor hosts that must be reachable during a run.
+
+        Default Cursor domains use dynamic DNS suffix matching. A custom
+        endpoint keeps the legacy exact-host firewall behavior so private
+        enterprise gateways remain supported.
         """
-        endpoint = os.environ.get("CURSOR_API_ENDPOINT", DEFAULT_API_ENDPOINT).strip()
+        configured_endpoint = os.environ.get("CURSOR_API_ENDPOINT")
+        if configured_endpoint is None:
+            return list(DEFAULT_RUNTIME_HOSTS)
+
+        endpoint = configured_endpoint.strip()
         try:
             parsed = urlparse(endpoint)
             port = parsed.port

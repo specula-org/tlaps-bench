@@ -326,6 +326,12 @@ The first-attempt verdict stays in `check_verdict`. Continuation rounds are save
 
 Each run spins up an isolated container that installs the agent CLI, applies a network firewall (only LLM API hosts are reachable), and mounts benchmarks read-only to prevent tampering.
 
+Cursor uses a DNS-backed IP set so newly discovered or rotated Cursor endpoints
+become reachable without adding one firewall rule per resolved address. Other
+DNS names, non-HTTPS traffic, and IPv6 remain blocked. Default Cursor entries
+act as DNS suffixes and last for the container lifetime; a custom
+`CURSOR_API_ENDPOINT` keeps the existing exact-host firewall behavior.
+
 The runner fingerprints the Docker inputs and automatically rebuilds when the
 embedded source or checker changes. Use `--force-build` only when you need to
 rebuild the current fingerprint explicitly:
