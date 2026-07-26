@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install host-side dependencies for tlaps-bench:
 #   - tlapm 1.6 pre-release  -> ~/.tlapm
-#   - Apalache 0.57.0        -> ~/.apalache
+#   - Apalache 0.58.3        -> ~/.apalache
 #   - tla2tools.jar (SANY)   -> <repo>/lib/tla2tools.jar
 #
 # Idempotent: skips downloads when the target is already present.
@@ -32,7 +32,7 @@ case "${HOST_OS} ${HOST_ARCH}" in
 esac
 TLAPM_URL="https://github.com/tlaplus/tlapm/releases/download/${TLAPM_TAG}/${TLAPM_ASSET}"
 
-APALACHE_TAG="v0.57.0"
+APALACHE_TAG="v0.58.3"
 APALACHE_VERSION="${APALACHE_TAG#v}"
 APALACHE_ASSET="apalache-${APALACHE_VERSION}.tgz"
 APALACHE_URL="https://github.com/apalache-mc/apalache/releases/download/${APALACHE_TAG}/${APALACHE_ASSET}"

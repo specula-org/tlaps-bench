@@ -83,6 +83,23 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && test -f /opt/community/GraphTheorems.tla \
     && rm -rf /tmp/CommunityModules-${COMMUNITY_TAG}
 
+# Layer 5b: Apalache model checker (downloaded inside Docker — no host
+# dependency). Kept in sync with scripts/install_deps.sh (host → ~/.apalache).
+# The tgz unpacks to apalache-${APALACHE_VERSION}/ with bin/apalache-mc + lib/;
+# symlinked onto PATH so agents can invoke `apalache-mc` directly.
+ARG APALACHE_TAG=v0.58.3
+ARG APALACHE_VERSION=0.58.3
+ARG APALACHE_ASSET=apalache-${APALACHE_VERSION}.tgz
+ARG APALACHE_URL=https://github.com/apalache-mc/apalache/releases/download/${APALACHE_TAG}/${APALACHE_ASSET}
+RUN --mount=type=cache,target=/tmp/downloads \
+    if [ ! -f /tmp/downloads/${APALACHE_ASSET} ]; then \
+      curl -fsSL -o /tmp/downloads/${APALACHE_ASSET} "${APALACHE_URL}"; \
+    fi \
+    && tar -xzf /tmp/downloads/${APALACHE_ASSET} -C /opt/ \
+    && mv /opt/apalache-${APALACHE_VERSION} /opt/apalache \
+    && test -x /opt/apalache/bin/apalache-mc \
+    && ln -s /opt/apalache/bin/apalache-mc /usr/local/bin/apalache-mc
+
 # Layer 6: SANY DumpSemantics compilation (needs tla2tools.jar + JDK)
 COPY src/dataset/sany-dump /opt/sany/src/dataset/sany-dump
 RUN cp -r /opt/community /opt/sany/lib/community \
