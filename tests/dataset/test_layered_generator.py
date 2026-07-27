@@ -12,15 +12,21 @@ Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_layered_generator.py
 
 import json
 
+from dataset.proof_from_scratch import generate
 from dataset.proof_from_scratch.generate import (
     BEGIN_AGENT_HELPERS,
     BEGIN_AGENT_PROOF,
     END_AGENT_HELPERS,
     END_AGENT_PROOF,
+    _defined_names,
     _strip_module_directives,
     _unneeded_decl_edits,
     build_task_module,
+    copy_deps_layered,
+    dep_keep_names,
     layered_cross_dir_dedup,
+    prune_dep_module,
+    referenced_identifiers,
 )
 
 
@@ -191,3 +197,121 @@ def test_surviving_instance_disables_declaration_pruning():
         "instances": [{"name": None, "module": "Stuttering", "loc": {"line_start": 2, "line_end": 2}}],
     }
     assert _unneeded_decl_edits(lines, dump, {"Op"}) == []
+
+
+def test_copied_dependency_keeps_no_theorem_to_cite(tmp_path, monkeypatch):
+    """A context module must not ship a THEOREM the agent can cite.
+
+    Regression: `copy_deps` rewrote a dependency's proofs to `PROOF OMITTED` and
+    kept the statements. An OMITTED theorem is a usable fact, so
+    `Voting_proof_AllSafeAtZero_T` — whose goal restates `AllSafeAtZero` — was
+    discharged by `BY AllSafeAtZero` without proving anything.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Dep.tla").write_text(
+        "---- MODULE Dep ----\n"
+        "SafeAt(b, v) == TRUE\n"
+        "THEOREM AllSafeAtZero == \\A v \\in Value : SafeAt(0, v)\n"
+        "<1>1. TRUE OBVIOUS\n"
+        "<1> QED BY <1>1\n"
+        "====\n"
+    )
+    (src / "Main.tla").write_text("---- MODULE Main ----\nEXTENDS Dep\n====\n")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    dump = {"extends": ["Dep"], "instances": []}
+    copied = copy_deps_layered(dump, str(src / "Main.tla"), str(out), set())
+
+    assert copied == ["Dep.tla"]
+    text = (out / "Dep.tla").read_text()
+    assert "SafeAt" in text, "given definitions must survive"
+    assert "THEOREM" not in text, "no goal may remain for the agent to cite"
+    assert "AllSafeAtZero" not in text
+    assert "OMITTED" not in text
+
+
+def test_defined_names_reads_back_emitted_definitions():
+    text = "---- MODULE M ----\nInv == TRUE\nSafeAt(b, v) == TRUE\nTHEOREM T == TRUE\n====\n"
+    assert _defined_names(text) == {"Inv", "SafeAt"}
+
+
+def test_prune_dep_module_drops_proof_helpers_but_keeps_needed_definitions(tmp_path, monkeypatch):
+    """A dependency must not hand over the original proof's scaffolding.
+
+    `TypeOK` is an inductive invariant no task's statement mentions, so it is
+    exactly what a from-scratch task should make the agent rediscover;
+    `Coherence` is named by the target theorem and has to stay.
+    """
+    dep = tmp_path / "Dep.tla"
+    dep.write_text(
+        "---- MODULE Dep ----\nVARIABLE x\nCoherence == x = 1\nTypeOK == x \\in Nat\nTHEOREM Safety == TypeOK\n====\n"
+    )
+    fake_dump = {
+        "operators": [
+            {"name": "Coherence", "loc": {"line_start": 3, "line_end": 3}, "references": []},
+            {"name": "TypeOK", "loc": {"line_start": 4, "line_end": 4}, "references": []},
+        ],
+        "instances": [],
+        "assumes": [],
+    }
+    monkeypatch.setattr(generate, "dump_sany", lambda _p: fake_dump)
+
+    text = prune_dep_module(str(dep), {"Coherence"})
+
+    assert "Coherence" in text, "a definition the target statement needs must stay"
+    assert "TypeOK" not in text, "an unused proof helper must be pruned"
+    assert "THEOREM" not in text, "a dependency never states a goal"
+    assert "VARIABLE x" in text, "declarations are always kept"
+
+
+def test_dep_keep_names_returns_none_when_an_unnamed_instance_is_present(tmp_path, monkeypatch):
+    """An unnamed INSTANCE re-exports names implicitly, so nothing is provably
+    unused and the whole group must be kept."""
+    dep = tmp_path / "Dep.tla"
+    dep.write_text("---- MODULE Dep ----\nINSTANCE Other\nTypeOK == TRUE\n====\n")
+    fake_dump = {
+        "operators": [{"name": "TypeOK", "loc": {"line_start": 3, "line_end": 3}, "references": []}],
+        "instances": [{"name": None, "module": "Other", "loc": {"line_start": 2, "line_end": 2}}],
+        "assumes": [],
+    }
+    monkeypatch.setattr(generate, "dump_sany", lambda _p: fake_dump)
+
+    assert dep_keep_names([str(dep)], set()) is None
+    # keep_names=None means "keep every definition".
+    assert "TypeOK" in prune_dep_module(str(dep), None)
+
+
+def test_dep_keep_names_closes_across_sibling_dependencies(tmp_path, monkeypatch):
+    """Closure must span the group: a definition one dep needs from another
+    must survive, or the pruned module stops parsing."""
+    a, b = tmp_path / "A.tla", tmp_path / "B.tla"
+    a.write_text("---- MODULE A ----\nUsesChosen == chosen\n====\n")
+    b.write_text("---- MODULE B ----\nchosen == 1\nUnused == 2\n====\n")
+    dumps = {
+        str(a): {
+            "operators": [{"name": "UsesChosen", "loc": {"line_start": 2, "line_end": 2}, "references": ["chosen"]}],
+            "instances": [],
+            "assumes": [],
+        },
+        str(b): {
+            "operators": [
+                {"name": "chosen", "loc": {"line_start": 2, "line_end": 2}, "references": []},
+                {"name": "Unused", "loc": {"line_start": 3, "line_end": 3}, "references": []},
+            ],
+            "instances": [],
+            "assumes": [],
+        },
+    }
+    monkeypatch.setattr(generate, "dump_sany", lambda p: dumps[str(p)])
+
+    keep = dep_keep_names([str(a), str(b)], {"UsesChosen"})
+
+    assert "chosen" in keep, "a sibling dep's definition must survive"
+    assert "Unused" not in keep
+
+
+def test_referenced_identifiers_ignores_tla_backslash_operators():
+    assert "A" not in referenced_identifiers("\\A p \\in S : TRUE")
+    assert {"p", "S", "TRUE"} <= referenced_identifiers("\\A p \\in S : TRUE")

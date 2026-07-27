@@ -104,6 +104,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
@@ -523,6 +524,161 @@ def copy_deps(dump, source_path, out_dir, reachable):
     return copied
 
 
+def layered_dep_paths(dump, source_path, reachable):
+    """Local-module dependencies a task needs, as (module, path) pairs.
+
+    Same edge set as `copy_deps`: every non-stdlib EXTENDS, plus the module
+    behind each INSTANCE whose binding survived reachability stripping.
+    """
+    src_dir = os.path.dirname(os.path.abspath(source_path))
+    direct = [e for e in dump.get("extends", []) if e not in STDLIB_MODULES]
+    for inst in dump.get("instances", []):
+        mod = inst.get("module")
+        if not mod:
+            continue
+        if inst.get("name") and inst["name"] not in reachable:
+            continue
+        direct.append(mod)
+    return _gather_local_deps(direct, src_dir)
+
+
+def copy_deps_layered(dump, source_path, out_dir, reachable):
+    """Like `copy_deps`, but DELETES every THEOREM/LEMMA from the dependency.
+
+    `copy_deps` rewrites a dependency's proofs to `PROOF OMITTED` and keeps the
+    statements. In a read-only context that is a cheat vector, not a hint: an
+    OMITTED theorem is a usable fact, so a task whose goal restates one of them
+    is discharged by citing it. `Voting_proof_AllSafeAtZero_T` must prove
+    `\\A v \\in Value : SafeAt(0, v)` and its context shipped
+    `THEOREM AllSafeAtZero` with exactly that statement — `BY AllSafeAtZero`
+    passes without proving anything.
+
+    A context module exists to supply given semantics (declarations,
+    assumptions, definitions), never goals, so the statements are removed
+    outright rather than admitted.
+
+    Returns the list of copied basenames.
+    """
+    copied = []
+    for _mod, dep_path in layered_dep_paths(dump, source_path, reachable):
+        with open(dep_path, encoding="utf-8") as f:
+            dep_lines = f.read().split("\n")
+        drop = set()
+        for thm in parse_theorems(dep_lines):
+            end = thm.proof_end if thm.proof_end is not None else thm.statement_end
+            drop.update(range(thm.statement_start, end + 1))
+        dep_text = "\n".join(line for i, line in enumerate(dep_lines) if i not in drop)
+        dep_text = _strip_module_directives(strip_comments(dep_text))
+        dep_text = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", dep_text)
+        dest = os.path.join(out_dir, os.path.basename(dep_path))
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(dep_text if dep_text.endswith("\n") else dep_text + "\n")
+        copied.append(os.path.basename(dep_path))
+    return copied
+
+
+_IDENTIFIER = re.compile(r"(?<!\\)\b[A-Za-z_]\w*\b")
+
+
+def prune_dep_module(dep_path, keep_names, audit_writer=None):
+    """Text of a dependency module reduced to the definitions in `keep_names`.
+
+    A dependency is copied into read-only context, so anything it defines is
+    given to the agent for free. Left whole it hands over the original proof's
+    scaffolding — `TypeOK`, `Inv` and friends — which is exactly what a
+    from-scratch task must make the agent rediscover.
+
+    Declarations and ASSUMEs are always kept (the module must still parse and
+    carry its hypotheses) and every theorem is deleted. `keep_names` is `None`
+    to keep all definitions, used when the module cannot be dumped or re-exports
+    names through an unnamed INSTANCE, so a dep is never silently emptied.
+    """
+    with open(dep_path, encoding="utf-8") as f:
+        dep_lines = f.read().split("\n")
+
+    drop_lines = set()
+    for thm in parse_theorems(dep_lines):
+        end = thm.proof_end if thm.proof_end is not None else thm.statement_end
+        drop_lines.update(range(thm.statement_start, end + 1))
+
+    if keep_names is not None:
+        try:
+            dep_dump = dump_sany(dep_path)
+        except Exception as e:
+            if audit_writer:
+                audit_writer.write(f"[audit] {os.path.basename(dep_path)}: not dumpable, definitions kept — {e}\n")
+            dep_dump = None
+        if dep_dump is not None:
+            for o in dep_dump["operators"]:
+                if o["name"] not in keep_names:
+                    drop_lines.update(range(o["loc"]["line_start"] - 1, o["loc"]["line_end"]))
+
+    text = "\n".join(line for i, line in enumerate(dep_lines) if i not in drop_lines)
+    text = _strip_module_directives(strip_comments(text))
+    return re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", text)
+
+
+def dep_keep_names(dep_entries, seeds, audit_writer=None):
+    """Definitions to keep across a group of dependencies that share a directory.
+
+    The closure must span the whole group, not each file: dependencies reference
+    each other (`PaxosProof` uses `chosen` from a sibling), so closing per file
+    prunes a definition another dependency still needs and the module stops
+    parsing. Returns `None` to mean "keep everything" when any module cannot be
+    dumped or re-exports names through an unnamed INSTANCE, since then nothing
+    can be shown unused.
+    """
+    adj = {}
+    stack = list(seeds)
+    for path in dep_entries:
+        try:
+            d = dump_sany(path)
+        except Exception as e:
+            if audit_writer:
+                audit_writer.write(f"[audit] {os.path.basename(path)}: not dumpable, group kept whole — {e}\n")
+            return None
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        for o in d["operators"]:
+            refs = set(o.get("references", []))
+            # SANY does not report an operator passed as an argument, so
+            # `WaitingToRead == ... SelectSeq(waiting, read)` looks independent of
+            # `read`. Pruning on the reported graph alone drops `read` and the
+            # module stops parsing, so union in a textual scan of the body: over-
+            # keeping is harmless, under-keeping breaks the task.
+            body = strip_comments("\n".join(lines[o["loc"]["line_start"] - 1 : o["loc"]["line_end"]]))
+            refs |= set(_IDENTIFIER.findall(body))
+            adj.setdefault(o["name"], set()).update(refs)
+        for i in d.get("instances", []):
+            if not i.get("name"):
+                return None
+            adj.setdefault(i["name"], set()).update(i.get("references", []))
+        for a in d.get("assumes", []):
+            stack.extend(a.get("references", []))
+            loc = a.get("loc")
+            if loc:
+                stack.extend(
+                    _IDENTIFIER.findall(strip_comments("\n".join(lines[loc["line_start"] - 1 : loc["line_end"]])))
+                )
+
+    keep = set()
+    while stack:
+        n = stack.pop()
+        if n in keep:
+            continue
+        keep.add(n)
+        stack.extend(r for r in adj.get(n, ()) if r not in keep)
+    return keep
+
+
+def referenced_identifiers(*texts):
+    """Every identifier mentioned across `texts` — the seeds for dep pruning."""
+    names = set()
+    for t in texts:
+        names.update(_IDENTIFIER.findall(t))
+    return names
+
+
 def cross_dir_dedup(target_paths, audit_writer, preferred_dir="Data"):
     """Filter C — drop target benchmarks that are byte-identical to a target
     in another output directory.
@@ -916,6 +1072,12 @@ def compute_sibling_deps(targets):
 
 
 _THEOREM_SCAN = re.compile(r"^[ \t]*(THEOREM|LEMMA|COROLLARY|PROPOSITION)\b", re.MULTILINE)
+_DEFINITION_SCAN = re.compile(r"^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*==", re.MULTILINE)
+
+
+def _defined_names(text):
+    """Names a module defines at top level, read back from emitted text."""
+    return set(_DEFINITION_SCAN.findall(text))
 
 
 def _emit_layered(
@@ -945,6 +1107,7 @@ def _emit_layered(
     # shared across the file's spec-goal tasks). Pure lemma files with no spec
     # get an empty model_set — their declarations live in each Defs layer.
     model_module = None
+    model_text = ""
     if model_set:
         model_module = f"{base_module}Model"
         model_text = _rename_header(_strip_module_directives(build_model(source_lines, dump, model_set)), model_module)
@@ -989,11 +1152,6 @@ def _emit_layered(
             f.write(defs_text if defs_text.endswith("\n") else defs_text + "\n")
         if _THEOREM_SCAN.search(defs_text):
             audit_writer.write(f"[audit] {source_path}: LEAK Defs {defs_module} contains a THEOREM/LEMMA\n")
-        if defs_set & artifacts:
-            audit_writer.write(
-                f"[audit] {source_path}: LEAK Defs {defs_module} exposes proof artifact(s) "
-                f"{sorted(defs_set & artifacts)}\n"
-            )
 
         statement_text = strip_comments(_statement_text(target_thm, source_lines)).strip()
         task_text = build_task_module(bench_module_name, defs_module, statement_text)
@@ -1001,17 +1159,41 @@ def _emit_layered(
         with open(task_path, "w", encoding="utf-8") as f:
             f.write(task_text)
 
-        dep_basenames = copy_deps(dump, source_path, out_dir, reachable)
-
+        # Dependencies are written once at finalize, pruned to the union of what
+        # every task using them mentions — a per-task copy is impossible because
+        # they share one filename, and the module name must match the filename.
         context = []
         if use_model:
             context.append(f"{subdir}/{model_module}.tla")
         context.append(f"{subdir}/{defs_module}.tla")
-        for dep in dep_basenames:
-            context.append(f"{subdir}/{dep}")
+        seeds = referenced_identifiers(defs_text, statement_text, model_text or "")
+        for _mod, dep_path in layered_dep_paths(dump, source_path, reachable):
+            rel = f"{subdir}/{os.path.basename(dep_path)}"
+            context.append(rel)
+            if audit_state is not None:
+                entry = audit_state.setdefault("deps", {}).setdefault(rel, {"path": dep_path, "seeds": set()})
+                entry["seeds"] |= seeds
         context = sorted(set(context))
 
         task_key = f"{subdir}/{bench_module_name}.tla"
+
+        # Audit what the task can actually SEE by reading the emitted files back,
+        # rather than trusting the sets used to build them. No context module may
+        # state a goal. The artifact-name check applies only to the layers
+        # derived from THIS source, since `artifacts` is computed from this
+        # source's operators — a dependency module is a different namespace, and
+        # matching it here would flag an unrelated same-named operator.
+        own_layers = {f"{subdir}/{defs_module}.tla"} | ({f"{subdir}/{model_module}.tla"} if use_model else set())
+        for rel in sorted(own_layers):
+            ctx_text = Path(out_dir, os.path.basename(rel)).read_text(encoding="utf-8")
+            if _THEOREM_SCAN.search(ctx_text):
+                audit_writer.write(f"[audit] {task_key}: LEAK context {rel} states a THEOREM/LEMMA\n")
+            leaked = _defined_names(ctx_text) & artifacts
+            if leaked:
+                audit_writer.write(
+                    f"[audit] {task_key}: LEAK context {rel} defines proof artifact(s) {sorted(leaked)}\n"
+                )
+
         if manifest is not None:
             manifest[task_key] = {"context": context}
         if audit_state is not None:
@@ -1298,6 +1480,12 @@ def main():
         "manifest.json mapping each task to its exact read-only context "
         "(Issue #64 / PR #71 contract). Implies the shared-model split.",
     )
+    parser.add_argument(
+        "--skip-gates",
+        action="store_true",
+        help="Layered mode only: skip the SANY and triviality gates. "
+        "For fast iteration — a shipped dataset must be generated with them.",
+    )
     args = parser.parse_args()
     if args.layered and args.shared_model:
         parser.error("--layered already performs the model split; do not combine with --shared-model")
@@ -1355,7 +1543,7 @@ def main():
 
         if args.layered:
             removed = dropped = 0
-            _finalize_layered(output_root, manifest, audit_state, audit_writer)
+            _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=not args.skip_gates)
         else:
             removed = cross_dir_dedup(generated_paths, audit_writer)
             # Input SANY gate: every emitted task must parse under standalone
@@ -1375,6 +1563,124 @@ def main():
             f"({total} generated, {removed} removed by cross-dir dedup, {dropped} dropped as degenerate)"
         )
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
+
+
+def _materialize_task(output_root, task_key, context, dest):
+    """Copy a task and exactly its manifest context into `dest`.
+
+    This is the environment the evaluator builds, so the gates below see what
+    grading will see — no sibling module the manifest did not assign.
+    """
+    import shutil
+
+    shutil.copy2(os.path.join(output_root, task_key), os.path.join(dest, os.path.basename(task_key)))
+    for rel in context:
+        shutil.copy2(os.path.join(output_root, rel), os.path.join(dest, os.path.basename(rel)))
+    return os.path.join(dest, os.path.basename(task_key))
+
+
+def layered_sany_gate(output_root, manifest, audit_writer, jobs=16):
+    """Every task must parse under standalone SANY with only its own context.
+
+    The suite-wide `sany_gate` cannot serve here: it finds tasks by filename and
+    hands each one every sibling module in the directory, so it would both miss
+    manifest tasks and hide a missing context entry. Flags; does not drop.
+    """
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from dataset.sany_audit import validate_task
+
+    def check(item):
+        task_key, entry = item
+        with tempfile.TemporaryDirectory(prefix="layered_sany_") as tmp:
+            path = _materialize_task(output_root, task_key, entry["context"], tmp)
+            ok, err = validate_task(path, tmp)
+            return task_key, ok, err
+
+    failures = []
+    with ThreadPoolExecutor(max_workers=jobs) as ex:
+        futs = [ex.submit(check, it) for it in manifest.items()]
+        for fut in as_completed(futs):
+            task_key, ok, err = fut.result()
+            if not ok:
+                failures.append((task_key, err))
+                audit_writer.write(f"[audit] {task_key}: FAILED standalone SANY with its manifest context — {err}\n")
+
+    # Unlike the suite-wide gate this one DROPS. In layered mode the manifest is
+    # the contract the evaluator runs from, so a task that cannot even parse with
+    # its own context would fail every submission; leaving it listed is worse
+    # than omitting it. The files stay on disk for whoever fixes the cause.
+    total = len(manifest)
+    for task_key, _ in failures:
+        del manifest[task_key]
+    if failures:
+        print(f"⚠️  [layered-sany-gate] dropped {len(failures)}/{total} task(s) that failed SANY")
+    return sorted(failures)
+
+
+def layered_triviality_gate(output_root, manifest, audit_writer, jobs=16, timeout=120):
+    """Drop tasks whose `PROOF OBVIOUS` placeholder already verifies.
+
+    Such a task is worthless: an empty submission PASSes grading. Checked with
+    the task's exact context so the verdict matches what the grader will do.
+    Returns the dropped task keys; the caller sweeps orphaned context files.
+    """
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from dataset.triviality_audit import check_task, find_tlapm, find_tlapm_lib
+
+    tlapm_path = find_tlapm()
+    tlapm_lib = find_tlapm_lib(tlapm_path) if tlapm_path else None
+    if not tlapm_path or not tlapm_lib:
+        msg = "tlapm not found — layered triviality gate SKIPPED (degenerate tasks may ship)"
+        audit_writer.write(f"[audit] {msg}\n")
+        print(f"⚠️  [layered-triviality-gate] {msg}")
+        return []
+
+    def check(item):
+        task_key, entry = item
+        with tempfile.TemporaryDirectory(prefix="layered_triv_") as tmp:
+            path = _materialize_task(output_root, task_key, entry["context"], tmp)
+            degenerate, detail = check_task(path, tlapm_path, tlapm_lib, timeout)
+            return task_key, degenerate, detail
+
+    flagged = []
+    with ThreadPoolExecutor(max_workers=jobs) as ex:
+        futs = [ex.submit(check, it) for it in manifest.items()]
+        for fut in as_completed(futs):
+            task_key, degenerate, detail = fut.result()
+            if degenerate:
+                flagged.append(task_key)
+                audit_writer.write(f"[audit] {task_key}: degenerate (placeholder verifies) — dropped — {detail}\n")
+
+    for task_key in flagged:
+        del manifest[task_key]
+        path = os.path.join(output_root, task_key)
+        if os.path.exists(path):
+            os.remove(path)
+    if flagged:
+        print(f"⚠️  [layered-triviality-gate] dropped {len(flagged)} degenerate task(s)")
+    return sorted(flagged)
+
+
+def sweep_unreferenced_context(output_root, manifest, audit_writer):
+    """Delete context files no surviving task references."""
+    still_used = {rel for entry in manifest.values() for rel in entry["context"]}
+    removed = 0
+    for subdir in sorted(e.name for e in os.scandir(output_root) if e.is_dir()):
+        d = os.path.join(output_root, subdir)
+        for fname in sorted(os.listdir(d)):
+            if not fname.endswith(".tla"):
+                continue
+            rel = f"{subdir}/{fname}"
+            if rel in manifest or rel in still_used:
+                continue
+            os.remove(os.path.join(d, fname))
+            audit_writer.write(f"[audit] {rel}: unreferenced by any task — removed\n")
+            removed += 1
+    return removed
 
 
 def layered_cross_dir_dedup(output_root, manifest, audit_writer, preferred_dir="Data"):
@@ -1418,31 +1724,58 @@ def layered_cross_dir_dedup(output_root, manifest, audit_writer, preferred_dir="
             )
             removed += 1
 
-    # Sweep context files that no surviving task references.
-    still_used = {rel for entry in manifest.values() for rel in entry["context"]}
-    # Every output subdir, not just those with surviving tasks: dedup can empty
-    # a directory entirely, and its context files must go with it.
-    for subdir in sorted(e.name for e in os.scandir(output_root) if e.is_dir()):
-        d = os.path.join(output_root, subdir)
-        for fname in sorted(os.listdir(d)):
-            if not fname.endswith(".tla"):
-                continue
-            rel = f"{subdir}/{fname}"
-            if rel in manifest or rel in still_used:
-                continue
-            os.remove(os.path.join(d, fname))
-            audit_writer.write(f"[audit] {rel}: unreferenced after cross-dir dedup — removed\n")
+    sweep_unreferenced_context(output_root, manifest, audit_writer)
     return removed
 
 
-def _finalize_layered(output_root, manifest, audit_state, audit_writer):
-    """Write manifest.json and run the cross-task isolation audit.
+def write_pruned_deps(output_root, audit_state, audit_writer):
+    """Write every dependency module, pruned to the union of what its users need.
+
+    Deferred to finalize because several tasks — sometimes from different source
+    files — share one dependency filename, so the kept set is only known once
+    every task has been emitted.
+    """
+    deps = (audit_state or {}).get("deps", {})
+    groups = {}
+    for rel, entry in deps.items():
+        groups.setdefault(rel.split("/")[0], {})[rel] = entry
+
+    for group in groups.values():
+        seeds = set()
+        for entry in group.values():
+            seeds |= entry["seeds"]
+        keep = dep_keep_names([e["path"] for e in group.values()], seeds, audit_writer)
+        for rel, entry in sorted(group.items()):
+            text = prune_dep_module(entry["path"], keep, audit_writer)
+            dest = os.path.join(output_root, *rel.split("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as f:
+                f.write(text if text.endswith("\n") else text + "\n")
+            if _THEOREM_SCAN.search(text):
+                audit_writer.write(f"[audit] LEAK dependency {rel} still states a THEOREM/LEMMA\n")
+    return len(deps)
+
+
+def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=True):
+    """Dedup, gate, audit isolation, then write manifest.json.
 
     Isolation invariant (Issue #64): each `<task>Defs.tla` is the context of
     exactly one task, so no task can inherit another task's target-specific
     definitions. Any Defs owned by more than one task is a leak and is flagged.
+
+    Both gates run against each task's exact manifest context, so their verdict
+    is the one the grader will reach.
     """
+    write_pruned_deps(output_root, audit_state, audit_writer)
+
     removed = layered_cross_dir_dedup(output_root, manifest, audit_writer)
+
+    dropped = []
+    if run_gates:
+        unparseable = layered_sany_gate(output_root, manifest, audit_writer)
+        dropped = layered_triviality_gate(output_root, manifest, audit_writer)
+        if dropped or unparseable:
+            sweep_unreferenced_context(output_root, manifest, audit_writer)
 
     owners = (audit_state or {}).get("defs_owner", {})
     owners = {k: [t for t in v if t in manifest] for k, v in owners.items()}
@@ -1460,7 +1793,8 @@ def _finalize_layered(output_root, manifest, audit_state, audit_writer):
         f.write("\n")
     print(
         f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} "
-        f"({len(manifest)} tasks, {removed} removed by cross-dir dedup)"
+        f"({len(manifest)} tasks, {removed} removed by cross-dir dedup, "
+        f"{len(dropped)} dropped as degenerate)"
     )
 
 
