@@ -69,6 +69,13 @@ VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": 
 # Set to True to stream agent output to terminal during container runs
 STREAM_AGENT_OUTPUT = True
 
+# Heading of the prompt section that teaches falsifying an inductive invariant
+# candidate with a model checker (Apalache, or TLC when a spec cannot be typed).
+# Its presence is stamped on every result: the container always ships both
+# checkers, so what actually varies between runs is whether the agent was told
+# to use them, and a result is only comparable against others prompted alike.
+INDINV_PROMPT_MARKER = "# Validating inductive invariant candidates"
+
 # Backoff between infra retries (seconds); the last value repeats. Short: the
 # observed startup blips clear within seconds-to-minutes.
 INFRA_RETRY_BACKOFF = (15, 30, 60)
@@ -755,6 +762,7 @@ def run_single_benchmark(item: WorkItem):
         )
         with open(os.path.join(input_dir, "prompt.txt"), "w") as f:
             f.write(prompt)
+        result["indinv_check_prompted"] = INDINV_PROMPT_MARKER in prompt
 
         # Run the agent
         agent_jsonl = os.path.join(agent_dir, "output.jsonl")
