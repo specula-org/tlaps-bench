@@ -65,6 +65,7 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [Majority](https://github.com/tlaplus/Examples/tree/master/specifications/Majority) | tlaplus/Examples | 9 | – | 9 |
 | [ewd687a](https://github.com/tlaplus/Examples/tree/91c22ea537853196ed1e03e9ad91693ec37642de/specifications/ewd687a) | tlaplus/Examples | 6 | 3 | 9 |
 | [glowingRaccoon](https://github.com/tlaplus/Examples/tree/master/specifications/glowingRaccoon) | tlaplus/Examples | 6 | 3 | 9 |
+| [GermanProtocol](https://github.com/tlaplus/Examples/tree/91c22ea537853196ed1e03e9ad91693ec37642de/specifications/GermanProtocol) | tlaplus/Examples | – | 7 | 7 |
 | [Paxos](https://github.com/tlaplus/Examples/tree/master/specifications/Paxos) | tlaplus/Examples | 3 | 4 | 7 |
 | [Bakery-Boulangerie](https://github.com/tlaplus/Examples/tree/master/specifications/Bakery-Boulangerie) | tlaplus/Examples | 2 | 4 | 6 |
 | [ReadersWriters](https://github.com/tlaplus/Examples/tree/master/specifications/ReadersWriters) | tlaplus/Examples | 3 | 2 | 5 |
@@ -85,8 +86,7 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpanningTree](https://github.com/tlaplus/Examples/tree/master/specifications/SpanningTree) | tlaplus/Examples | 1 | 1 | 2 |
 | [SpecifyingSystems_TLC](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/TLC) | tlaplus/Examples | 1 | 1 | 2 |
 | [byihive](https://github.com/tlaplus/Examples/tree/master/specifications/byihive) | tlaplus/Examples | 1 | 1 | 2 |
-| [GermanProtocol](https://github.com/tlaplus/Examples/blob/aba0cef20ce694f97612ad36a873734a1314534a/specifications/GermanProtocol/GermanCoherence.tla) | tlaplus/Examples | – | 1 | 1 |
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
-**Total: 70 examples — 473 proof-completion + 227 proof-from-scratch = 700 tasks.**
+**Total: 70 examples — 473 proof-completion + 233 proof-from-scratch = 706 tasks.**

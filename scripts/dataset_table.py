@@ -95,9 +95,9 @@ _GROUP_URL = {
     "ZooKeeper_LowLevel": "https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/tree/main/low-level-spec/zk-3.7",
     "tlaplus_examples_BlockingQueue": "https://github.com/lemmy/BlockingQueue",
     "tlaplus_examples_GermanProtocol": (
-        "https://github.com/tlaplus/Examples/blob/"
-        "aba0cef20ce694f97612ad36a873734a1314534a/"
-        "specifications/GermanProtocol/GermanCoherence.tla"
+        "https://github.com/tlaplus/Examples/tree/"
+        "91c22ea537853196ed1e03e9ad91693ec37642de/"
+        "specifications/GermanProtocol"
     ),
     "tlaplus_examples_ewd687a": (
         "https://github.com/tlaplus/Examples/tree/91c22ea537853196ed1e03e9ad91693ec37642de/specifications/ewd687a"
