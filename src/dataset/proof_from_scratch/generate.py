@@ -69,6 +69,33 @@ Spec formulas are identified by SANY-AST shape (see src/dataset/sany-dump/),
 not by name match. The audit log flags non-`Spec` names, zero specs,
 multiple specs, multiple top-level theorems, unnamed top-levels, and
 every drop made by filters A, B, and C.
+
+Layered layout (`--layered`, Issue #64)
+---------------------------------------
+By default everything above lands in ONE editable module, so an agent can make
+the theorem easier without proving the original obligation (redefine the target
+property, weaken fairness). `--layered` instead splits each task by ownership so
+the obligation is immutable by construction:
+
+    <base>Model.tla    declarations, assumptions, state machine, Spec, fairness
+    <task>Defs.tla     EXTENDS the model; only this target's given definitions
+    <task>.tla         EXTENDS its Defs; the theorem, the markers, the proof
+
+Only `<task>.tla` is editable, and within it only the two marked regions:
+
+    \\* BEGIN AGENT HELPERS / \\* END AGENT HELPERS   fresh helper defs + lemmas
+    \\* BEGIN AGENT PROOF   / \\* END AGENT PROOF     the proof
+
+A suite-level `manifest.json` maps each task to the exact read-only modules
+assigned to it, so the evaluator never infers context by copying siblings and
+one task cannot inherit another task's target definitions. The marker strings
+and manifest schema are the contract in src/common/proof_from_scratch_contract.py;
+the two must stay byte-compatible.
+
+Only spec-goal targets extend the shared model. A pure lemma target keeps a
+self-contained Defs layer holding just the declarations it uses, because handing
+it the state machine both over-exposes hidden context and can break TLA+ scoping
+(a hoisted VARIABLE shadowing a bound variable in the theorem).
 """
 
 import argparse
@@ -689,6 +716,175 @@ def _strip_bare_decls(text):
     return _BARE_DECL.sub("", text)
 
 
+# Layered emission (Issue #64) — see the module docstring for the layout.
+# These four markers must match src/common/proof_from_scratch_contract.py
+# byte-for-byte; the evaluator compares them to detect scaffold tampering.
+MANIFEST_FILENAME = "manifest.json"
+
+BEGIN_AGENT_HELPERS = r"\* BEGIN AGENT HELPERS"
+END_AGENT_HELPERS = r"\* END AGENT HELPERS"
+BEGIN_AGENT_PROOF = r"\* BEGIN AGENT PROOF"
+END_AGENT_PROOF = r"\* END AGENT PROOF"
+
+# `USE`/`HIDE` are prover hints from the original proof, not given semantics, so
+# they never belong in a read-only layer. Every occurrence in source/ is one line.
+_MODULE_DIRECTIVE = re.compile(r"(?m)^[ \t]*(USE|HIDE)\b[^\n]*\n?")
+
+
+def _strip_module_directives(text):
+    return _MODULE_DIRECTIVE.sub("", text)
+
+
+def _set_extends(text, module):
+    """Force the module's EXTENDS clause to be exactly `EXTENDS <module>`.
+
+    Rewrites an existing (possibly multi-line) EXTENDS statement, or inserts one
+    right after the `---- MODULE ... ----` header when the source has none. Used
+    for the Defs layer, which pulls all declarations in through the shared model.
+    """
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if _EXTENDS_START.match(line):
+            j = i
+            while lines[j].rstrip().endswith(","):
+                j += 1
+            return "\n".join(lines[:i] + [f"EXTENDS {module}"] + lines[j + 1 :])
+    for i, line in enumerate(lines):
+        if MODULE_HEADER.match(line):
+            return "\n".join(lines[: i + 1] + [f"EXTENDS {module}"] + lines[i + 1 :])
+    return f"EXTENDS {module}\n" + text
+
+
+_DECL_KEYWORD = re.compile(r"^[ \t]*(CONSTANTS?|VARIABLES?)\b")
+
+
+def _decl_statement_extent(source_lines, line):
+    """Line span of the whole declaration statement containing `line`.
+
+    SANY reports one loc per declared name, but a single `VARIABLE a, b`
+    statement can span several lines (Voting.tla puts `votes` on line 40 and
+    `maxBal` on 41). Deleting one name's line alone leaves a dangling
+    `VARIABLE votes,` that no longer parses, so the statement is one unit.
+    """
+    if not 1 <= line <= len(source_lines):
+        return (line, line)
+    start = line
+    while start > 1 and not _DECL_KEYWORD.match(source_lines[start - 1]):
+        start -= 1
+    if not _DECL_KEYWORD.match(source_lines[start - 1]):
+        return (line, line)  # no keyword found; fall back to the reported loc
+    end = start
+    while end < len(source_lines) and strip_comments(source_lines[end - 1]).rstrip().endswith(","):
+        end += 1
+    return (start, max(end, line))
+
+
+def _unneeded_decl_edits(source_lines, dump, defs_set):
+    """Delete CONSTANT/VARIABLE statements no kept content refers to.
+
+    A self-contained Defs layer would otherwise re-declare the whole state
+    machine for a target that never mentions it. That is both over-exposure and
+    a correctness hazard: TLA+ scoping is order-sensitive, so a VARIABLE declared
+    *after* a theorem in the source does not shadow that theorem's bound
+    variables — but once hoisted into a module the task EXTENDS, it does (e.g.
+    BubbleSort's `IsPermOfTransitive` binds `\\A A, B, C` while the source later
+    declares `VARIABLES A, A0, ...`).
+
+    A declaration is "needed" if its name occurs in a kept definition body or a
+    kept ASSUME, and a statement is dropped only when none of its names are.
+    Keeping an unneeded declaration is harmless; dropping a needed one fails the
+    per-task SANY isolation check.
+    """
+    # An INSTANCE substitutes declarations implicitly by name — `INSTANCE
+    # Stuttering` needs the local `VARIABLE s` though nothing mentions `s`. No
+    # textual scan sees that, so if one survives here, prune nothing.
+    for inst in dump.get("instances", []):
+        if not inst.get("name") or inst["name"] in defs_set:
+            return []
+
+    kept = []
+    for o in dump["operators"]:
+        if o["name"] in defs_set:
+            kept.append("".join(source_lines[o["loc"]["line_start"] - 1 : o["loc"]["line_end"]]))
+    for a in dump.get("assumes", []):
+        loc = a.get("loc")
+        if loc:
+            kept.append("".join(source_lines[loc["line_start"] - 1 : loc["line_end"]]))
+    kept_text = strip_comments("\n".join(kept))
+
+    by_stmt = {}
+    for d in list(dump.get("constants", [])) + list(dump.get("variables", [])):
+        loc = d.get("loc")
+        name = d.get("name")
+        if not loc or not name:
+            continue
+        by_stmt.setdefault(_decl_statement_extent(source_lines, loc["line_start"]), []).append(name)
+
+    edits = []
+    for (start, end), names in by_stmt.items():
+        # The lookbehind keeps TLA+ backslash operators from counting as uses:
+        # without it `\A p \in ...` reads as a use of a VARIABLE named `A`.
+        if not any(re.search(rf"(?<!\\)\b{re.escape(n)}\b", kept_text) for n in names):
+            edits.append((start, end, ""))
+    return edits
+
+
+def build_defs(source_lines, dump, defs_set, defs_module_name, model_module, keep_decls):
+    """Read-only target-definitions module (the `<task>Defs.tla` layer).
+
+    Keeps only the `==` definitions / named INSTANCE bindings in `defs_set`
+    (reachable from the theorem statement MINUS the shared model set). Every
+    THEOREM/LEMMA and every proof is removed — a Defs file states given
+    semantics, never a goal or a proof.
+
+    When a shared model was emitted (`keep_decls=False`) the module becomes
+    `EXTENDS <model_module>`, which owns the CONSTANT/VARIABLE/ASSUME
+    declarations. When no model was emitted (`keep_decls=True`) the declarations
+    and the original EXTENDS stay here.
+    """
+    edits = []
+    if keep_decls:
+        edits += _unneeded_decl_edits(source_lines, dump, defs_set)
+    else:
+        edits += _decl_edits(dump)
+    for t in dump["theorems"]:
+        loc = t["loc"]
+        edits.append((loc["line_start"], loc["line_end"], ""))
+    for o in dump["operators"]:
+        if o["name"] not in defs_set:
+            edits.append((o["loc"]["line_start"], o["loc"]["line_end"], ""))
+    for inst in dump["instances"]:
+        if inst.get("name") and inst["name"] not in defs_set:
+            edits.append((inst["loc"]["line_start"], inst["loc"]["line_end"], ""))
+    text = apply_edits(source_lines, edits)
+    text = strip_comments(text)
+    text = _strip_module_directives(text)
+    if not keep_decls:
+        text = _strip_bare_decls(text)
+        text = _set_extends(text, model_module)
+    text = _rename_header(text, defs_module_name)
+    return _sm_tidy(text)
+
+
+def build_task_module(task_module_name, defs_module, statement_text):
+    """The editable task file: EXTENDS the Defs layer, then the four marker
+    lines around an empty helper region and a `PROOF OBVIOUS` proof region, with
+    the canonical theorem statement fixed in between. Built from scratch (not by
+    editing source) so the marker structure the evaluator parses is exact."""
+    stmt = statement_text.rstrip("\n")
+    return (
+        f"---- MODULE {task_module_name} ----\n"
+        f"EXTENDS {defs_module}\n"
+        f"{BEGIN_AGENT_HELPERS}\n"
+        f"{END_AGENT_HELPERS}\n"
+        f"{stmt}\n"
+        f"{BEGIN_AGENT_PROOF}\n"
+        f"PROOF OBVIOUS\n"
+        f"{END_AGENT_PROOF}\n"
+        f"====\n"
+    )
+
+
 def compute_sibling_deps(targets):
     """Map output-subdir -> set of local module names that a SIBLING source file
     EXTENDS or INSTANCEs. Such a module must stay FULL (a stripped shared model
@@ -719,6 +915,116 @@ def compute_sibling_deps(targets):
     return result
 
 
+_THEOREM_SCAN = re.compile(r"^[ \t]*(THEOREM|LEMMA|COROLLARY|PROPOSITION)\b", re.MULTILINE)
+
+
+def _emit_layered(
+    source_path,
+    source_lines,
+    dump,
+    top_level,
+    out_dir,
+    subdir,
+    base_module,
+    audit_writer,
+    generated_paths,
+    manifest,
+    audit_state,
+):
+    """Emit the three-layer split + manifest entries for one source file.
+
+    Layout per task (Issue #64 / PR #71 contract):
+      <base>Model.tla   shared benchmark-owned model      (read-only)
+      <task>Defs.tla    target-specific given definitions (read-only)
+      <task>.tla        theorem + markers + PROOF OBVIOUS (editable)
+    """
+    targets = [entry[0] for entry in top_level]
+    model_set, main_specs = compute_model_set(dump, targets)
+
+    # Emit the shared model only when it carries content (a state machine / spec
+    # shared across the file's spec-goal tasks). Pure lemma files with no spec
+    # get an empty model_set — their declarations live in each Defs layer.
+    model_module = None
+    if model_set:
+        model_module = f"{base_module}Model"
+        model_text = _rename_header(_strip_module_directives(build_model(source_lines, dump, model_set)), model_module)
+        model_path = os.path.join(out_dir, f"{model_module}.tla")
+        with open(model_path, "w", encoding="utf-8") as f:
+            f.write(model_text if model_text.endswith("\n") else model_text + "\n")
+        if _THEOREM_SCAN.search(model_text):
+            audit_writer.write(f"[audit] {source_path}: LEAK model {model_module} contains a THEOREM/LEMMA\n")
+        print(f"  generated model: {os.path.relpath(model_path, PROJECT_ROOT)}")
+
+    # Leak guard: nothing outside the union of the targets' statement-reachable
+    # sets may be exposed (that set is exactly the proof artifacts to hide).
+    all_ops = {o["name"] for o in dump["operators"]}
+    union_reach = set()
+    for t in targets:
+        union_reach |= compute_reachable(dump, t)
+    artifacts = all_ops - union_reach
+
+    used_names = set()
+    count = 0
+    for target_thm in targets:
+        thm_name, _ = target_theorem_name(target_thm)
+        bench_module_name = f"{base_module}_{thm_name}"
+        if bench_module_name in used_names:
+            bench_module_name = f"{bench_module_name}_L{target_thm['loc']['line_start']}"
+        used_names.add(bench_module_name)
+
+        reachable = compute_reachable(dump, target_thm)
+        # Only a spec-goal target extends the shared model. A pure lemma target
+        # (no behavioral Spec on its left-hand side) does not reason about the
+        # state machine, so handing it the model would over-expose context it is
+        # meant to hide — and can break scoping (see _unneeded_decl_edits).
+        is_spec = target_thm["shape"].get("lhs_spec_ref") in main_specs
+        use_model = model_module is not None and is_spec
+        defs_set = reachable - model_set if use_model else reachable
+        defs_module = f"{bench_module_name}Defs"
+        keep_decls = not use_model
+
+        defs_text = build_defs(source_lines, dump, defs_set, defs_module, model_module, keep_decls)
+        defs_path = os.path.join(out_dir, f"{defs_module}.tla")
+        with open(defs_path, "w", encoding="utf-8") as f:
+            f.write(defs_text if defs_text.endswith("\n") else defs_text + "\n")
+        if _THEOREM_SCAN.search(defs_text):
+            audit_writer.write(f"[audit] {source_path}: LEAK Defs {defs_module} contains a THEOREM/LEMMA\n")
+        if defs_set & artifacts:
+            audit_writer.write(
+                f"[audit] {source_path}: LEAK Defs {defs_module} exposes proof artifact(s) "
+                f"{sorted(defs_set & artifacts)}\n"
+            )
+
+        statement_text = strip_comments(_statement_text(target_thm, source_lines)).strip()
+        task_text = build_task_module(bench_module_name, defs_module, statement_text)
+        task_path = os.path.join(out_dir, f"{bench_module_name}.tla")
+        with open(task_path, "w", encoding="utf-8") as f:
+            f.write(task_text)
+
+        dep_basenames = copy_deps(dump, source_path, out_dir, reachable)
+
+        context = []
+        if use_model:
+            context.append(f"{subdir}/{model_module}.tla")
+        context.append(f"{subdir}/{defs_module}.tla")
+        for dep in dep_basenames:
+            context.append(f"{subdir}/{dep}")
+        context = sorted(set(context))
+
+        task_key = f"{subdir}/{bench_module_name}.tla"
+        if manifest is not None:
+            manifest[task_key] = {"context": context}
+        if audit_state is not None:
+            audit_state.setdefault("defs_owner", {}).setdefault(f"{subdir}/{defs_module}.tla", []).append(task_key)
+
+        count += 1
+        if generated_paths is not None:
+            generated_paths.append(task_path)
+        print(f"  generated task: {os.path.relpath(task_path, PROJECT_ROOT)}")
+
+    return count
+
+
 def process_file(
     source_path,
     audit_writer,
@@ -728,11 +1034,20 @@ def process_file(
     shared_model=False,
     skip_model_modules=(),
     allow_no_proof=False,
+    layered=False,
+    manifest=None,
+    audit_state=None,
 ):
     """Generate proof-from-scratch benchmarks for one source .tla file. Returns count emitted.
 
     If `generated_paths` is a list, each generated target benchmark path is
     appended to it (for downstream cross-directory dedup).
+
+    When `layered` is True, each task is emitted as three files by ownership
+    (`<base>Model.tla`, `<task>Defs.tla`, `<task>.tla`) plus a `manifest`
+    entry mapping the task to its exact read-only context (Issue #64). This is
+    mutually exclusive with `shared_model`. `audit_state` accumulates data for
+    the cross-file isolation audit (each Defs used by exactly one task).
     """
     with open(source_path, encoding="utf-8") as f:
         text = f.read()
@@ -853,7 +1168,23 @@ def process_file(
         audit_writer.write(f"[audit] {source_path}: multiple top-level THEOREMs: {names}\n")
 
     out_dir = os.path.join(output_root, module_subdir or module)
+    subdir = module_subdir or module
     os.makedirs(out_dir, exist_ok=True)
+
+    if layered:
+        return _emit_layered(
+            source_path,
+            source_lines,
+            dump,
+            top_level,
+            out_dir,
+            subdir,
+            base_module,
+            audit_writer,
+            generated_paths,
+            manifest,
+            audit_state,
+        )
 
     # Shared-model mode: emit one proof-free `<module>.tla` model and have
     # spec-based tasks EXTEND it instead of inlining the spec. A module that a
@@ -959,7 +1290,17 @@ def main():
         "hard from-scratch benchmarks (e.g. ZooKeeper Zab) that "
         "are graded by tlapm, not against a human reference.",
     )
+    parser.add_argument(
+        "--layered",
+        action="store_true",
+        help="Split each task into <base>Model.tla + <task>Defs.tla + "
+        "<task>.tla (editable, with helper/proof markers) and write "
+        "manifest.json mapping each task to its exact read-only context "
+        "(Issue #64 / PR #71 contract). Implies the shared-model split.",
+    )
     args = parser.parse_args()
+    if args.layered and args.shared_model:
+        parser.error("--layered already performs the model split; do not combine with --shared-model")
 
     output_root = os.path.abspath(args.output_dir)
     os.makedirs(output_root, exist_ok=True)
@@ -988,6 +1329,8 @@ def main():
 
     total = 0
     generated_paths = []
+    manifest = {} if args.layered else None
+    audit_state = {} if args.layered else None
     with open(audit_path, "w", encoding="utf-8") as audit_writer:
         for path, subdir in targets:
             print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
@@ -1002,23 +1345,123 @@ def main():
                     shared_model=args.shared_model,
                     skip_model_modules=sibling_deps.get(key, set()),
                     allow_no_proof=args.allow_no_proof,
+                    layered=args.layered,
+                    manifest=manifest,
+                    audit_state=audit_state,
                 )
             except Exception as e:
                 audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
                 print(f"  ERROR: {e}", file=sys.stderr)
-        removed = cross_dir_dedup(generated_paths, audit_writer)
-        # Input SANY gate: every emitted task must parse under standalone
-        # tla2sany. Flags failures (manifest + audit log); does not drop.
-        sany_gate(output_root, audit_writer=audit_writer, label="sany-gate-l2")
-        # Triviality gate: a task whose PROOF OBVIOUS placeholder already
-        # verifies is degenerate (a no-op submission would PASS grading).
-        dropped = len(triviality_gate(output_root, audit_writer=audit_writer, label="triviality-gate-l2", drop=True))
 
-    print(
-        f"\nTotal proof-from-scratch benchmarks: {total - removed - dropped} "
-        f"({total} generated, {removed} removed by cross-dir dedup, {dropped} dropped as degenerate)"
-    )
+        if args.layered:
+            removed = dropped = 0
+            _finalize_layered(output_root, manifest, audit_state, audit_writer)
+        else:
+            removed = cross_dir_dedup(generated_paths, audit_writer)
+            # Input SANY gate: every emitted task must parse under standalone
+            # tla2sany. Flags failures (manifest + audit log); does not drop.
+            sany_gate(output_root, audit_writer=audit_writer, label="sany-gate-l2")
+            # Triviality gate: a task whose PROOF OBVIOUS placeholder already
+            # verifies is degenerate (a no-op submission would PASS grading).
+            dropped = len(
+                triviality_gate(output_root, audit_writer=audit_writer, label="triviality-gate-l2", drop=True)
+            )
+
+    if args.layered:
+        print(f"\nTotal proof-from-scratch tasks: {total} (layered; manifest.json written)")
+    else:
+        print(
+            f"\nTotal proof-from-scratch benchmarks: {total - removed - dropped} "
+            f"({total} generated, {removed} removed by cross-dir dedup, {dropped} dropped as degenerate)"
+        )
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
+
+
+def layered_cross_dir_dedup(output_root, manifest, audit_writer, preferred_dir="Data"):
+    """Filter C for the layered layout — drop a task whose scaffold AND whole
+    read-only context are byte-identical to another task's in a different
+    directory (e.g. the `Sets_*` pairs duplicated under `Consensus/` and
+    `Data/`). Identity spans the context because in this layout the task file is
+    a thin scaffold: two tasks are the same prompt only if their given semantics
+    match too.
+
+    Removes the losing task, its manifest entry, and any context file left
+    unreferenced by the surviving tasks. Returns the number of tasks removed.
+    """
+    import hashlib
+
+    def digest(task_key):
+        h = hashlib.sha256()
+        for rel in [task_key] + list(manifest[task_key]["context"]):
+            h.update(os.path.basename(rel).encode())
+            with open(os.path.join(output_root, rel), "rb") as f:
+                h.update(f.read())
+        return h.hexdigest()
+
+    groups = {}
+    for task_key in manifest:
+        groups.setdefault(digest(task_key), []).append(task_key)
+
+    removed = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        preferred = sorted(k for k in group if k.split("/")[0] == preferred_dir)
+        keeper = preferred[0] if preferred else sorted(group)[0]
+        for task_key in group:
+            if task_key == keeper:
+                continue
+            del manifest[task_key]
+            os.remove(os.path.join(output_root, task_key))
+            audit_writer.write(
+                f"[audit] {task_key}: identical task and context to {keeper} — removed (filter C, cross-dir dedup)\n"
+            )
+            removed += 1
+
+    # Sweep context files that no surviving task references.
+    still_used = {rel for entry in manifest.values() for rel in entry["context"]}
+    # Every output subdir, not just those with surviving tasks: dedup can empty
+    # a directory entirely, and its context files must go with it.
+    for subdir in sorted(e.name for e in os.scandir(output_root) if e.is_dir()):
+        d = os.path.join(output_root, subdir)
+        for fname in sorted(os.listdir(d)):
+            if not fname.endswith(".tla"):
+                continue
+            rel = f"{subdir}/{fname}"
+            if rel in manifest or rel in still_used:
+                continue
+            os.remove(os.path.join(d, fname))
+            audit_writer.write(f"[audit] {rel}: unreferenced after cross-dir dedup — removed\n")
+    return removed
+
+
+def _finalize_layered(output_root, manifest, audit_state, audit_writer):
+    """Write manifest.json and run the cross-task isolation audit.
+
+    Isolation invariant (Issue #64): each `<task>Defs.tla` is the context of
+    exactly one task, so no task can inherit another task's target-specific
+    definitions. Any Defs owned by more than one task is a leak and is flagged.
+    """
+    removed = layered_cross_dir_dedup(output_root, manifest, audit_writer)
+
+    owners = (audit_state or {}).get("defs_owner", {})
+    owners = {k: [t for t in v if t in manifest] for k, v in owners.items()}
+    owners = {k: v for k, v in owners.items() if v}
+    for defs_key, task_keys in sorted(owners.items()):
+        if len(task_keys) > 1:
+            audit_writer.write(
+                f"[audit] LEAK Defs {defs_key} is shared by multiple tasks {sorted(task_keys)} "
+                f"— target-specific definitions must belong to exactly one task\n"
+            )
+
+    manifest_path = os.path.join(output_root, MANIFEST_FILENAME)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(manifest.items())), f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print(
+        f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} "
+        f"({len(manifest)} tasks, {removed} removed by cross-dir dedup)"
+    )
 
 
 if __name__ == "__main__":
