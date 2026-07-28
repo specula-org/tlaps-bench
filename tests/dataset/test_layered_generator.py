@@ -11,7 +11,6 @@ Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_layered_generator.py
 """
 
 import json
-import pathlib
 
 import pytest
 
@@ -30,7 +29,6 @@ from dataset.proof_from_scratch.generate import (
     layered_cross_dir_dedup,
     prune_dep_module,
     referenced_identifiers,
-    stage_benchmark_only_sources,
 )
 
 
@@ -130,8 +128,11 @@ def test_cross_dir_dedup_keeps_the_preferred_copy_and_sweeps_its_context(tmp_pat
     assert "Data/Sets_Thm.tla" in manifest, "the Data/ copy is preferred"
     assert "Consensus/Sets_Thm.tla" not in manifest
     assert "Other/Sets_Thm.tla" in manifest, "different context is a different task"
-    # The losing task's files are gone; survivors' context is untouched.
-    assert not (tmp_path / "Consensus" / "Sets_Thm.tla").exists()
+    assert not (tmp_path / "Consensus" / "Sets_Thm.tla").exists(), "the losing task file goes"
+
+    # Dedup drops the task; the caller sweeps orphaned context once, against the
+    # complete manifest, so a filtered run cannot delete what it never touched.
+    generate.sweep_unreferenced_context(str(tmp_path), manifest, _Audit())
     assert not (tmp_path / "Consensus" / "Sets_ThmDefs.tla").exists()
     assert (tmp_path / "Data" / "Sets_ThmDefs.tla").exists()
     assert (tmp_path / "Other" / "Sets_ThmDefs.tla").exists()
@@ -270,21 +271,33 @@ def test_prune_dep_module_drops_proof_helpers_but_keeps_needed_definitions(tmp_p
     assert "VARIABLE x" in text, "declarations are always kept"
 
 
-def test_dep_keep_names_returns_none_when_an_unnamed_instance_is_present(tmp_path, monkeypatch):
-    """An unnamed INSTANCE re-exports names implicitly, so nothing is provably
-    unused and the whole group must be kept."""
+def test_unnamed_instance_stays_live_without_disabling_pruning(tmp_path, monkeypatch):
+    """An unnamed INSTANCE line is never deleted, so the names it mentions stay.
+
+    That must not stop the rest of the module being pruned: keeping the whole
+    group would hand a task definitions only a sibling needs, which is the very
+    thing the split exists to prevent.
+    """
     dep = tmp_path / "Dep.tla"
-    dep.write_text("---- MODULE Dep ----\nINSTANCE Other\nTypeOK == TRUE\n====\n")
+    dep.write_text("---- MODULE Dep ----\nINSTANCE Other WITH chosen <- chosen\nchosen == 1\nTypeOK == TRUE\n====\n")
     fake_dump = {
-        "operators": [{"name": "TypeOK", "loc": {"line_start": 3, "line_end": 3}, "references": []}],
+        "operators": [
+            {"name": "chosen", "loc": {"line_start": 3, "line_end": 3}, "references": []},
+            {"name": "TypeOK", "loc": {"line_start": 4, "line_end": 4}, "references": []},
+        ],
         "instances": [{"name": None, "module": "Other", "loc": {"line_start": 2, "line_end": 2}}],
         "assumes": [],
     }
     monkeypatch.setattr(generate, "dump_sany", lambda _p: fake_dump)
 
-    assert dep_keep_names([str(dep)], set()) is None
-    # keep_names=None means "keep every definition".
-    assert "TypeOK" in prune_dep_module(str(dep), None)
+    keep = dep_keep_names([str(dep)], set())
+
+    assert keep is not None, "an unnamed INSTANCE must not disable pruning"
+    assert "chosen" in keep, "a name the INSTANCE substitutes stays live"
+    assert "TypeOK" not in keep, "an unused proof helper is still pruned"
+    text = prune_dep_module(str(dep), keep)
+    assert "INSTANCE Other" in text, "the INSTANCE line itself is never deleted"
+    assert "TypeOK" not in text
 
 
 def test_dep_keep_names_closes_across_sibling_dependencies(tmp_path, monkeypatch):
@@ -338,34 +351,6 @@ def test_missing_tlapm_fails_generation_rather_than_skipping(tmp_path, monkeypat
         generate.layered_triviality_gate(str(tmp_path), {}, _Audit())
 
 
-def test_stage_benchmark_only_sources_picks_up_dirs_missing_from_source(tmp_path):
-    """OpenAddressing and etcd_raft live only under the benchmark tree; scanning
-    `source/` alone silently loses those tasks."""
-    src = tmp_path / "source"
-    (src / "Peterson").mkdir(parents=True)
-    legacy = tmp_path / "benchmark"
-    (legacy / "Peterson").mkdir(parents=True)  # mirrored — must be skipped
-    (legacy / "etcd_raft").mkdir(parents=True)
-    (legacy / "etcd_raft" / "EtcdRaft.tla").write_text("---- MODULE EtcdRaft ----\n====\n")
-    (legacy / "etcd_raft" / "etcd_raft_LogInv.tla").write_text(
-        "---- MODULE etcd_raft_LogInv ----\nTHEOREM Spec => []LogInv\n====\n"
-    )
-
-    targets = stage_benchmark_only_sources(str(src), str(legacy))
-
-    subdirs = {sub for _p, sub in targets}
-    assert subdirs == {"etcd_raft"}, "only directories absent from source/ are staged"
-    # Only the task file is a target; EtcdRaft.tla is a dependency, and treating
-    # a theorem library as a source would turn each of its lemmas into a task.
-    assert [pathlib.Path(p).name for p, _ in targets] == ["etcd_raft_LogInv.tla"]
-    # Staged out of the benchmark tree, which is also the output tree.
-    assert all(str(legacy) not in path for path, _ in targets)
-
-
-def test_stage_benchmark_only_sources_disabled_when_no_legacy_root():
-    assert stage_benchmark_only_sources("/nonexistent/source", "") == []
-
-
 def test_subscript_names_are_seen_as_references():
     """`[][Next]_vars` and `WF_vars(p)` bind `vars` with a leading underscore.
 
@@ -375,3 +360,48 @@ def test_subscript_names_are_seen_as_references():
     names = referenced_identifiers("Spec == Init /\\ [][Next]_vars /\\ WF_vars(proc)")
     assert "vars" in names
     assert {"Init", "Next", "Spec", "proc"} <= names
+
+
+def test_filtered_run_keeps_tasks_outside_the_filter(tmp_path):
+    """A `--filter` run must leave the rest of the dataset alone.
+
+    Regression: the sweep deleted every file the filtered manifest did not
+    reference, so regenerating one group wiped the other tasks off disk and
+    replaced the manifest with just the filtered subset.
+    """
+    untouched_key, untouched_entry = _write_task(tmp_path, "Peterson", "Peterson_MutualExclusion")
+    stored = {untouched_key: untouched_entry}
+    (tmp_path / "manifest.json").write_text(json.dumps(stored, indent=2))
+
+    regenerated_key, regenerated_entry = _write_task(tmp_path, "Paxos", "Paxos_Consistent")
+
+    class _Audit:
+        def write(self, _):
+            pass
+
+    generate._finalize_layered(
+        str(tmp_path), {regenerated_key: regenerated_entry}, {}, _Audit(), run_gates=False, incremental=True
+    )
+
+    written = json.loads((tmp_path / "manifest.json").read_text())
+    assert set(written) == {untouched_key, regenerated_key}, "unselected tasks stay in the manifest"
+    assert (tmp_path / untouched_key).exists(), "unselected task file survives"
+    assert (tmp_path / "Peterson" / "Peterson_MutualExclusionDefs.tla").exists(), "its context survives"
+
+
+def test_full_run_replaces_the_manifest(tmp_path):
+    """Without a filter the run owns the whole dataset, so a task that is no
+    longer generated must disappear rather than linger from the old manifest."""
+    stale_key, stale_entry = _write_task(tmp_path, "Old", "Old_Thm")
+    (tmp_path / "manifest.json").write_text(json.dumps({stale_key: stale_entry}, indent=2))
+    fresh_key, fresh_entry = _write_task(tmp_path, "New", "New_Thm")
+
+    class _Audit:
+        def write(self, _):
+            pass
+
+    generate._finalize_layered(
+        str(tmp_path), {fresh_key: fresh_entry}, {}, _Audit(), run_gates=False, incremental=False
+    )
+
+    assert set(json.loads((tmp_path / "manifest.json").read_text())) == {fresh_key}

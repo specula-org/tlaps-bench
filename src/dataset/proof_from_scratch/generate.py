@@ -140,6 +140,18 @@ KNOWN_FALSE_TARGETS = {
     "StructOK and left its inductive step PROOF OMITTED.",
 }
 
+# Top-level theorems that restate a theorem declared in another module rather
+# than stating a goal of their own. `TwoPhase_proof.tla:17` is literally
+# `THEOREM Implementation` — a second proof of `TwoPhase.tla`'s
+# `THEOREM Implementation == Spec => A!Spec`. A context module carries no
+# theorems by design, so the name cannot resolve and the task cannot even be
+# stated. The source file stays untouched; only the task is not generated.
+# Keyed by (source-module basename, target name).
+RESTATED_TARGETS = {
+    ("TwoPhase_proof", "line17"): "restates THEOREM Implementation from TwoPhase.tla, which read-only "
+    "context modules do not carry; the goal is already covered by that theorem.",
+}
+
 
 def dump_sany(tla_path):
     res = subprocess.run([SANY_DUMP, tla_path], capture_output=True, text=True)
@@ -640,9 +652,8 @@ def dep_keep_names(dep_entries, seeds, audit_writer=None):
     The closure must span the whole group, not each file: dependencies reference
     each other (`PaxosProof` uses `chosen` from a sibling), so closing per file
     prunes a definition another dependency still needs and the module stops
-    parsing. Returns `None` to mean "keep everything" when any module cannot be
-    dumped or re-exports names through an unnamed INSTANCE, since then nothing
-    can be shown unused.
+    parsing. Returns `None` to mean "keep everything" only when a module cannot
+    be dumped at all, since then nothing can be shown unused.
     """
     adj = {}
     stack = list(seeds)
@@ -666,12 +677,15 @@ def dep_keep_names(dep_entries, seeds, audit_writer=None):
             refs |= _scan_identifiers(body)
             adj.setdefault(o["name"], set()).update(refs)
         for i in d.get("instances", []):
-            if not i.get("name"):
-                return None
-            adj.setdefault(i["name"], set()).update(i.get("references", []))
             # An INSTANCE statement is never deleted from a dependency, so every
-            # name in its WITH substitution stays live — `WITH chosen <- chosen`
-            # keeps `chosen` even when no task mentions it.
+            # name it mentions stays live — `WITH chosen <- chosen` keeps
+            # `chosen` even when no task mentions it. That is true of an unnamed
+            # (or LOCAL) INSTANCE too: seed from its own line and keep pruning
+            # the rest, rather than giving up on the whole group.
+            if i.get("name"):
+                adj.setdefault(i["name"], set()).update(i.get("references", []))
+            else:
+                stack.extend(i.get("references", []))
             loc = i.get("loc")
             if loc:
                 stack.extend(
@@ -1116,7 +1130,6 @@ def _emit_layered(
     generated_paths,
     manifest,
     audit_state,
-    preserve_module_name=False,
 ):
     """Emit the three-layer split + manifest entries for one source file.
 
@@ -1155,10 +1168,7 @@ def _emit_layered(
     count = 0
     for target_thm in targets:
         thm_name, _ = target_theorem_name(target_thm)
-        # A benchmark-resident source IS the task, already named for its goal, so
-        # appending again would give `etcd_raft_LogInv_LogInvariant`. Keep its
-        # name so the regenerated task matches the one it replaces.
-        bench_module_name = base_module if preserve_module_name else f"{base_module}_{thm_name}"
+        bench_module_name = f"{base_module}_{thm_name}"
         if bench_module_name in used_names:
             bench_module_name = f"{bench_module_name}_L{target_thm['loc']['line_start']}"
         used_names.add(bench_module_name)
@@ -1250,7 +1260,6 @@ def process_file(
     layered=False,
     manifest=None,
     audit_state=None,
-    preserve_module_name=False,
 ):
     """Generate proof-from-scratch benchmarks for one source .tla file. Returns count emitted.
 
@@ -1321,6 +1330,17 @@ def process_file(
                 f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} asserts a FALSE goal — skipped (filter A', known-false): "
                 f"{reason}\n"
+            )
+        elif (
+            base_module,
+            target_theorem_name(target_thm)[0],
+        ) in RESTATED_TARGETS:
+            # Filter A'' — a target that merely restates another module's theorem
+            # is not a goal of its own; see RESTATED_TARGETS.
+            reason = RESTATED_TARGETS[(base_module, target_theorem_name(target_thm)[0])]
+            audit_writer.write(
+                f"[audit] {source_path}: top-level THEOREM {name} at line "
+                f"{line} — skipped (filter A'', restated target): {reason}\n"
             )
         elif _proof_has_omitted_substep(target_thm, source_lines):
             # An OMITTED sub-step is NO LONGER grounds for dropping: the proof is
@@ -1398,7 +1418,6 @@ def process_file(
             generated_paths,
             manifest,
             audit_state,
-            preserve_module_name=preserve_module_name,
         )
 
     # Shared-model mode: emit one proof-free `<module>.tla` model and have
@@ -1479,70 +1498,6 @@ def process_file(
     return count
 
 
-def _is_legacy_task_file(path):
-    """Whether a benchmark-resident module is a task rather than a dependency.
-
-    These directories were committed already generated, so their tasks carry the
-    `<Module>_<Theorem>` naming and a top-level goal, while their dependencies
-    (`EtcdRaft`, `BagsExt`, `SequencesExtTheorems`) do not have both.
-    """
-    stem = os.path.splitext(os.path.basename(path))[0]
-    if "_" not in stem:
-        return False
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return _THEOREM_SCAN.search(f.read()) is not None
-    except OSError:
-        return False
-
-
-def stage_benchmark_only_sources(src_root, legacy_root, filter_pattern=None):
-    """Targets for examples whose sources live under the benchmark tree.
-
-    Not every example is mirrored under `source/`: OpenAddressing and etcd_raft
-    were committed straight into `benchmark/proof-from-scratch/`, so a scan of
-    `source/` alone silently loses those tasks. Their directories are treated as
-    source too.
-
-    The files are staged into a temp directory first because the benchmark tree
-    is also the output tree — generating in place would overwrite a module while
-    a later task still needs to read the original.
-
-    Returns a list of `(path, subdir)` targets, empty when `legacy_root` is unset
-    or missing.
-    """
-    import shutil
-    import tempfile
-
-    if not legacy_root or not os.path.isdir(legacy_root):
-        return []
-
-    targets = []
-    staging = None
-    for name in sorted(os.listdir(legacy_root)):
-        legacy_dir = os.path.join(legacy_root, name)
-        if not os.path.isdir(legacy_dir) or os.path.isdir(os.path.join(src_root, name)):
-            continue
-        if staging is None:
-            staging = tempfile.mkdtemp(prefix="pfs_legacy_src_")
-        dest_dir = os.path.join(staging, name)
-        # The whole directory is staged so EXTENDS still resolves, but only the
-        # task files become targets. The rest are dependency modules — several
-        # are theorem libraries (SequencesExtTheorems, FunctionTheorems), and
-        # treating those as sources would turn every lemma in them into a task.
-        shutil.copytree(legacy_dir, dest_dir, ignore=shutil.ignore_patterns("*.json", "*.log", ".tlacache"))
-        for fname in sorted(os.listdir(dest_dir)):
-            full = os.path.join(dest_dir, fname)
-            if not fname.endswith(".tla") or (filter_pattern and filter_pattern not in os.path.join(legacy_dir, fname)):
-                continue
-            if not _is_legacy_task_file(full):
-                continue
-            targets.append((full, name))
-    if targets:
-        print(f"Staged {len(targets)} benchmark-resident source file(s) from {legacy_root}")
-    return targets
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1578,14 +1533,6 @@ def main():
         "(Issue #64 / PR #71 contract). Implies the shared-model split.",
     )
     parser.add_argument(
-        "--legacy-source-dir",
-        default=BENCHMARK_DIR,
-        help="Tree holding examples that were committed straight to the "
-        "benchmark instead of source/ (OpenAddressing, etcd_raft). Its "
-        "directories with no source/ counterpart are staged and generated "
-        "from, so those tasks are not silently lost. Pass '' to disable.",
-    )
-    parser.add_argument(
         "--skip-gates",
         action="store_true",
         help="Layered mode only: skip the SANY and triviality gates. "
@@ -1599,7 +1546,6 @@ def main():
     os.makedirs(output_root, exist_ok=True)
     audit_path = os.path.join(output_root, "audit.log")
 
-    legacy_paths = set()
     if args.files:
         targets = [(os.path.abspath(p), None) for p in args.files]
     else:
@@ -1618,9 +1564,6 @@ def main():
                 if subdir == ".":
                     subdir = os.path.splitext(fname)[0]
                 targets.append((full, subdir))
-        legacy_targets = stage_benchmark_only_sources(src_root, args.legacy_source_dir, args.filter)
-        legacy_paths = {p for p, _ in legacy_targets}
-        targets += legacy_targets
 
     sibling_deps = compute_sibling_deps(targets) if args.shared_model else {}
 
@@ -1645,7 +1588,6 @@ def main():
                     layered=args.layered,
                     manifest=manifest,
                     audit_state=audit_state,
-                    preserve_module_name=path in legacy_paths,
                 )
             except Exception as e:
                 audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
@@ -1653,7 +1595,14 @@ def main():
 
         if args.layered:
             removed = dropped = 0
-            _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=not args.skip_gates)
+            _finalize_layered(
+                output_root,
+                manifest,
+                audit_state,
+                audit_writer,
+                run_gates=not args.skip_gates,
+                incremental=bool(args.filter or args.files),
+            )
         else:
             removed = cross_dir_dedup(generated_paths, audit_writer)
             # Input SANY gate: every emitted task must parse under standalone
@@ -1833,7 +1782,9 @@ def layered_cross_dir_dedup(output_root, manifest, audit_writer, preferred_dir="
             )
             removed += 1
 
-    sweep_unreferenced_context(output_root, manifest, audit_writer)
+    # The caller sweeps once, against the complete manifest — sweeping here with
+    # only the regenerated subset would delete files a `--filter` run never
+    # touched.
     return removed
 
 
@@ -1864,7 +1815,18 @@ def write_pruned_deps(output_root, audit_state, audit_writer):
     return written
 
 
-def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=True):
+def _load_existing_manifest(output_root):
+    path = os.path.join(output_root, MANIFEST_FILENAME)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=True, incremental=False):
     """Dedup, gate, audit isolation, then write manifest.json.
 
     Isolation invariant (Issue #64): each `<task>Defs.tla` is the context of
@@ -1873,17 +1835,29 @@ def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gate
 
     Both gates run against each task's exact manifest context, so their verdict
     is the one the grader will reach.
+
+    `incremental` (a `--filter` run) regenerates only the selected tasks: dedup
+    and the gates see just those, and the manifest and the file sweep are done
+    against the union with what is already on disk, so an unselected task is
+    neither dropped from the manifest nor swept off disk.
     """
+    existing = _load_existing_manifest(output_root) if incremental else {}
+    regenerated = set(manifest)  # before dedup/gates drop from it
+
     write_pruned_deps(output_root, audit_state, audit_writer)
 
     removed = layered_cross_dir_dedup(output_root, manifest, audit_writer)
 
     dropped = []
     if run_gates:
-        unparseable = layered_sany_gate(output_root, manifest, audit_writer)
+        layered_sany_gate(output_root, manifest, audit_writer)
         dropped = layered_triviality_gate(output_root, manifest, audit_writer)
-        if dropped or unparseable:
-            sweep_unreferenced_context(output_root, manifest, audit_writer)
+
+    # Untouched tasks keep their stored entry; a task this run regenerated is
+    # represented only by what survived dedup and the gates.
+    complete = {k: v for k, v in existing.items() if k not in regenerated}
+    complete.update(manifest)
+    sweep_unreferenced_context(output_root, complete, audit_writer)
 
     owners = (audit_state or {}).get("defs_owner", {})
     owners = {k: [t for t in v if t in manifest] for k, v in owners.items()}
@@ -1897,12 +1871,12 @@ def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gate
 
     manifest_path = os.path.join(output_root, MANIFEST_FILENAME)
     with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(dict(sorted(manifest.items())), f, indent=2, ensure_ascii=False)
+        json.dump(dict(sorted(complete.items())), f, indent=2, ensure_ascii=False)
         f.write("\n")
+    scope = f"{len(manifest)} regenerated, {len(complete)} total" if incremental else f"{len(complete)} tasks"
     print(
         f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} "
-        f"({len(manifest)} tasks, {removed} removed by cross-dir dedup, "
-        f"{len(dropped)} dropped as degenerate)"
+        f"({scope}, {removed} removed by cross-dir dedup, {len(dropped)} dropped as degenerate)"
     )
 
 
