@@ -11,6 +11,9 @@ Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_layered_generator.py
 """
 
 import json
+import pathlib
+
+import pytest
 
 from dataset.proof_from_scratch import generate
 from dataset.proof_from_scratch.generate import (
@@ -27,6 +30,7 @@ from dataset.proof_from_scratch.generate import (
     layered_cross_dir_dedup,
     prune_dep_module,
     referenced_identifiers,
+    stage_benchmark_only_sources,
 )
 
 
@@ -315,3 +319,59 @@ def test_dep_keep_names_closes_across_sibling_dependencies(tmp_path, monkeypatch
 def test_referenced_identifiers_ignores_tla_backslash_operators():
     assert "A" not in referenced_identifiers("\\A p \\in S : TRUE")
     assert {"p", "S", "TRUE"} <= referenced_identifiers("\\A p \\in S : TRUE")
+
+
+def test_missing_tlapm_fails_generation_rather_than_skipping(tmp_path, monkeypatch):
+    """A degenerate task PASSes with an empty submission, so it must never ship.
+
+    Without tlapm the gate cannot tell, and skipping would let one through, so
+    generation fails instead. `--skip-gates` is the deliberate opt-out.
+    """
+    monkeypatch.setattr(generate, "find_tlapm", lambda: None, raising=False)
+    monkeypatch.setattr("dataset.triviality_audit.find_tlapm", lambda: None)
+
+    class _Audit:
+        def write(self, _):
+            pass
+
+    with pytest.raises(RuntimeError, match="tlapm not found"):
+        generate.layered_triviality_gate(str(tmp_path), {}, _Audit())
+
+
+def test_stage_benchmark_only_sources_picks_up_dirs_missing_from_source(tmp_path):
+    """OpenAddressing and etcd_raft live only under the benchmark tree; scanning
+    `source/` alone silently loses those tasks."""
+    src = tmp_path / "source"
+    (src / "Peterson").mkdir(parents=True)
+    legacy = tmp_path / "benchmark"
+    (legacy / "Peterson").mkdir(parents=True)  # mirrored — must be skipped
+    (legacy / "etcd_raft").mkdir(parents=True)
+    (legacy / "etcd_raft" / "EtcdRaft.tla").write_text("---- MODULE EtcdRaft ----\n====\n")
+    (legacy / "etcd_raft" / "etcd_raft_LogInv.tla").write_text(
+        "---- MODULE etcd_raft_LogInv ----\nTHEOREM Spec => []LogInv\n====\n"
+    )
+
+    targets = stage_benchmark_only_sources(str(src), str(legacy))
+
+    subdirs = {sub for _p, sub in targets}
+    assert subdirs == {"etcd_raft"}, "only directories absent from source/ are staged"
+    # Only the task file is a target; EtcdRaft.tla is a dependency, and treating
+    # a theorem library as a source would turn each of its lemmas into a task.
+    assert [pathlib.Path(p).name for p, _ in targets] == ["etcd_raft_LogInv.tla"]
+    # Staged out of the benchmark tree, which is also the output tree.
+    assert all(str(legacy) not in path for path, _ in targets)
+
+
+def test_stage_benchmark_only_sources_disabled_when_no_legacy_root():
+    assert stage_benchmark_only_sources("/nonexistent/source", "") == []
+
+
+def test_subscript_names_are_seen_as_references():
+    """`[][Next]_vars` and `WF_vars(p)` bind `vars` with a leading underscore.
+
+    Regression: the raw token is `_vars`, so `vars` looked unused and was pruned
+    out of a dependency that still needed it (Unknown operator: `vars').
+    """
+    names = referenced_identifiers("Spec == Init /\\ [][Next]_vars /\\ WF_vars(proc)")
+    assert "vars" in names
+    assert {"Init", "Next", "Spec", "proc"} <= names

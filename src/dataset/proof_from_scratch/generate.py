@@ -580,6 +580,22 @@ def copy_deps_layered(dump, source_path, out_dir, reachable):
 _IDENTIFIER = re.compile(r"(?<!\\)\b[A-Za-z_]\w*\b")
 
 
+def _scan_identifiers(text):
+    """Identifiers mentioned in `text`, including TLA+ subscript forms.
+
+    A stuttering subscript binds the name with a leading underscore —
+    `[][Next]_vars` and `WF_vars(p)` both use `vars` — so the raw token is
+    `_vars`. Yield the bare name too, or `vars` looks unused and gets pruned
+    out of a dependency that still needs it.
+    """
+    names = set()
+    for tok in _IDENTIFIER.findall(text):
+        names.add(tok)
+        if tok.startswith("_") and len(tok) > 1:
+            names.add(tok.lstrip("_"))
+    return names
+
+
 def prune_dep_module(dep_path, keep_names, audit_writer=None):
     """Text of a dependency module reduced to the definitions in `keep_names`.
 
@@ -647,18 +663,26 @@ def dep_keep_names(dep_entries, seeds, audit_writer=None):
             # module stops parsing, so union in a textual scan of the body: over-
             # keeping is harmless, under-keeping breaks the task.
             body = strip_comments("\n".join(lines[o["loc"]["line_start"] - 1 : o["loc"]["line_end"]]))
-            refs |= set(_IDENTIFIER.findall(body))
+            refs |= _scan_identifiers(body)
             adj.setdefault(o["name"], set()).update(refs)
         for i in d.get("instances", []):
             if not i.get("name"):
                 return None
             adj.setdefault(i["name"], set()).update(i.get("references", []))
+            # An INSTANCE statement is never deleted from a dependency, so every
+            # name in its WITH substitution stays live — `WITH chosen <- chosen`
+            # keeps `chosen` even when no task mentions it.
+            loc = i.get("loc")
+            if loc:
+                stack.extend(
+                    _scan_identifiers(strip_comments("\n".join(lines[loc["line_start"] - 1 : loc["line_end"]])))
+                )
         for a in d.get("assumes", []):
             stack.extend(a.get("references", []))
             loc = a.get("loc")
             if loc:
                 stack.extend(
-                    _IDENTIFIER.findall(strip_comments("\n".join(lines[loc["line_start"] - 1 : loc["line_end"]])))
+                    _scan_identifiers(strip_comments("\n".join(lines[loc["line_start"] - 1 : loc["line_end"]])))
                 )
 
     keep = set()
@@ -675,7 +699,7 @@ def referenced_identifiers(*texts):
     """Every identifier mentioned across `texts` — the seeds for dep pruning."""
     names = set()
     for t in texts:
-        names.update(_IDENTIFIER.findall(t))
+        names.update(_scan_identifiers(t))
     return names
 
 
@@ -1092,6 +1116,7 @@ def _emit_layered(
     generated_paths,
     manifest,
     audit_state,
+    preserve_module_name=False,
 ):
     """Emit the three-layer split + manifest entries for one source file.
 
@@ -1130,7 +1155,10 @@ def _emit_layered(
     count = 0
     for target_thm in targets:
         thm_name, _ = target_theorem_name(target_thm)
-        bench_module_name = f"{base_module}_{thm_name}"
+        # A benchmark-resident source IS the task, already named for its goal, so
+        # appending again would give `etcd_raft_LogInv_LogInvariant`. Keep its
+        # name so the regenerated task matches the one it replaces.
+        bench_module_name = base_module if preserve_module_name else f"{base_module}_{thm_name}"
         if bench_module_name in used_names:
             bench_module_name = f"{bench_module_name}_L{target_thm['loc']['line_start']}"
         used_names.add(bench_module_name)
@@ -1159,20 +1187,23 @@ def _emit_layered(
         with open(task_path, "w", encoding="utf-8") as f:
             f.write(task_text)
 
-        # Dependencies are written once at finalize, pruned to the union of what
-        # every task using them mentions — a per-task copy is impossible because
-        # they share one filename, and the module name must match the filename.
+        # Each task gets its OWN pruned copy of every dependency, under a
+        # per-task directory. Sharing one copy would let a task see definitions
+        # only a sibling needs; the filename can repeat across tasks because a
+        # task is graded in its own workspace, and the module name still matches.
         context = []
         if use_model:
             context.append(f"{subdir}/{model_module}.tla")
         context.append(f"{subdir}/{defs_module}.tla")
         seeds = referenced_identifiers(defs_text, statement_text, model_text or "")
-        for _mod, dep_path in layered_dep_paths(dump, source_path, reachable):
-            rel = f"{subdir}/{os.path.basename(dep_path)}"
-            context.append(rel)
-            if audit_state is not None:
-                entry = audit_state.setdefault("deps", {}).setdefault(rel, {"path": dep_path, "seeds": set()})
-                entry["seeds"] |= seeds
+        dep_paths = [p for _mod, p in layered_dep_paths(dump, source_path, reachable)]
+        for dep_path in dep_paths:
+            context.append(f"{subdir}/{bench_module_name}/{os.path.basename(dep_path)}")
+        if dep_paths and audit_state is not None:
+            audit_state.setdefault("deps", {})[f"{subdir}/{bench_module_name}"] = {
+                "paths": dep_paths,
+                "seeds": seeds,
+            }
         context = sorted(set(context))
 
         task_key = f"{subdir}/{bench_module_name}.tla"
@@ -1219,6 +1250,7 @@ def process_file(
     layered=False,
     manifest=None,
     audit_state=None,
+    preserve_module_name=False,
 ):
     """Generate proof-from-scratch benchmarks for one source .tla file. Returns count emitted.
 
@@ -1366,6 +1398,7 @@ def process_file(
             generated_paths,
             manifest,
             audit_state,
+            preserve_module_name=preserve_module_name,
         )
 
     # Shared-model mode: emit one proof-free `<module>.tla` model and have
@@ -1446,6 +1479,70 @@ def process_file(
     return count
 
 
+def _is_legacy_task_file(path):
+    """Whether a benchmark-resident module is a task rather than a dependency.
+
+    These directories were committed already generated, so their tasks carry the
+    `<Module>_<Theorem>` naming and a top-level goal, while their dependencies
+    (`EtcdRaft`, `BagsExt`, `SequencesExtTheorems`) do not have both.
+    """
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if "_" not in stem:
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return _THEOREM_SCAN.search(f.read()) is not None
+    except OSError:
+        return False
+
+
+def stage_benchmark_only_sources(src_root, legacy_root, filter_pattern=None):
+    """Targets for examples whose sources live under the benchmark tree.
+
+    Not every example is mirrored under `source/`: OpenAddressing and etcd_raft
+    were committed straight into `benchmark/proof-from-scratch/`, so a scan of
+    `source/` alone silently loses those tasks. Their directories are treated as
+    source too.
+
+    The files are staged into a temp directory first because the benchmark tree
+    is also the output tree — generating in place would overwrite a module while
+    a later task still needs to read the original.
+
+    Returns a list of `(path, subdir)` targets, empty when `legacy_root` is unset
+    or missing.
+    """
+    import shutil
+    import tempfile
+
+    if not legacy_root or not os.path.isdir(legacy_root):
+        return []
+
+    targets = []
+    staging = None
+    for name in sorted(os.listdir(legacy_root)):
+        legacy_dir = os.path.join(legacy_root, name)
+        if not os.path.isdir(legacy_dir) or os.path.isdir(os.path.join(src_root, name)):
+            continue
+        if staging is None:
+            staging = tempfile.mkdtemp(prefix="pfs_legacy_src_")
+        dest_dir = os.path.join(staging, name)
+        # The whole directory is staged so EXTENDS still resolves, but only the
+        # task files become targets. The rest are dependency modules — several
+        # are theorem libraries (SequencesExtTheorems, FunctionTheorems), and
+        # treating those as sources would turn every lemma in them into a task.
+        shutil.copytree(legacy_dir, dest_dir, ignore=shutil.ignore_patterns("*.json", "*.log", ".tlacache"))
+        for fname in sorted(os.listdir(dest_dir)):
+            full = os.path.join(dest_dir, fname)
+            if not fname.endswith(".tla") or (filter_pattern and filter_pattern not in os.path.join(legacy_dir, fname)):
+                continue
+            if not _is_legacy_task_file(full):
+                continue
+            targets.append((full, name))
+    if targets:
+        print(f"Staged {len(targets)} benchmark-resident source file(s) from {legacy_root}")
+    return targets
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1481,6 +1578,14 @@ def main():
         "(Issue #64 / PR #71 contract). Implies the shared-model split.",
     )
     parser.add_argument(
+        "--legacy-source-dir",
+        default=BENCHMARK_DIR,
+        help="Tree holding examples that were committed straight to the "
+        "benchmark instead of source/ (OpenAddressing, etcd_raft). Its "
+        "directories with no source/ counterpart are staged and generated "
+        "from, so those tasks are not silently lost. Pass '' to disable.",
+    )
+    parser.add_argument(
         "--skip-gates",
         action="store_true",
         help="Layered mode only: skip the SANY and triviality gates. "
@@ -1494,6 +1599,7 @@ def main():
     os.makedirs(output_root, exist_ok=True)
     audit_path = os.path.join(output_root, "audit.log")
 
+    legacy_paths = set()
     if args.files:
         targets = [(os.path.abspath(p), None) for p in args.files]
     else:
@@ -1512,6 +1618,9 @@ def main():
                 if subdir == ".":
                     subdir = os.path.splitext(fname)[0]
                 targets.append((full, subdir))
+        legacy_targets = stage_benchmark_only_sources(src_root, args.legacy_source_dir, args.filter)
+        legacy_paths = {p for p, _ in legacy_targets}
+        targets += legacy_targets
 
     sibling_deps = compute_sibling_deps(targets) if args.shared_model else {}
 
@@ -1536,6 +1645,7 @@ def main():
                     layered=args.layered,
                     manifest=manifest,
                     audit_state=audit_state,
+                    preserve_module_name=path in legacy_paths,
                 )
             except Exception as e:
                 audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
@@ -1607,15 +1717,10 @@ def layered_sany_gate(output_root, manifest, audit_writer, jobs=16):
                 failures.append((task_key, err))
                 audit_writer.write(f"[audit] {task_key}: FAILED standalone SANY with its manifest context — {err}\n")
 
-    # Unlike the suite-wide gate this one DROPS. In layered mode the manifest is
-    # the contract the evaluator runs from, so a task that cannot even parse with
-    # its own context would fail every submission; leaving it listed is worse
-    # than omitting it. The files stay on disk for whoever fixes the cause.
-    total = len(manifest)
-    for task_key, _ in failures:
-        del manifest[task_key]
     if failures:
-        print(f"⚠️  [layered-sany-gate] dropped {len(failures)}/{total} task(s) that failed SANY")
+        print(f"⚠️  [layered-sany-gate] {len(failures)}/{len(manifest)} task(s) FAILED standalone SANY")
+        for task_key, err in sorted(failures):
+            print(f"     {task_key}: {err[:160]}")
     return sorted(failures)
 
 
@@ -1631,13 +1736,16 @@ def layered_triviality_gate(output_root, manifest, audit_writer, jobs=16, timeou
 
     from dataset.triviality_audit import check_task, find_tlapm, find_tlapm_lib
 
+    # A degenerate task PASSes grading with an empty submission, so it must never
+    # ship. Without tlapm we cannot tell, and silently skipping would let one
+    # through — fail instead, matching the suite-wide gate. `--skip-gates` is the
+    # deliberate opt-out.
     tlapm_path = find_tlapm()
-    tlapm_lib = find_tlapm_lib(tlapm_path) if tlapm_path else None
-    if not tlapm_path or not tlapm_lib:
-        msg = "tlapm not found — layered triviality gate SKIPPED (degenerate tasks may ship)"
-        audit_writer.write(f"[audit] {msg}\n")
-        print(f"⚠️  [layered-triviality-gate] {msg}")
-        return []
+    if not tlapm_path:
+        raise RuntimeError("tlapm not found — cannot run the layered triviality gate (pass --skip-gates to bypass)")
+    tlapm_lib = find_tlapm_lib(tlapm_path)
+    if not tlapm_lib:
+        raise RuntimeError("tlapm lib not found — cannot run the layered triviality gate (pass --skip-gates to bypass)")
 
     def check(item):
         task_key, entry = item
@@ -1669,17 +1777,18 @@ def sweep_unreferenced_context(output_root, manifest, audit_writer):
     """Delete context files no surviving task references."""
     still_used = {rel for entry in manifest.values() for rel in entry["context"]}
     removed = 0
-    for subdir in sorted(e.name for e in os.scandir(output_root) if e.is_dir()):
-        d = os.path.join(output_root, subdir)
-        for fname in sorted(os.listdir(d)):
+    for root, _dirs, files in os.walk(output_root, topdown=False):
+        for fname in sorted(files):
             if not fname.endswith(".tla"):
                 continue
-            rel = f"{subdir}/{fname}"
+            rel = os.path.relpath(os.path.join(root, fname), output_root).replace(os.sep, "/")
             if rel in manifest or rel in still_used:
                 continue
-            os.remove(os.path.join(d, fname))
+            os.remove(os.path.join(root, fname))
             audit_writer.write(f"[audit] {rel}: unreferenced by any task — removed\n")
             removed += 1
+        if root != output_root and not os.listdir(root):
+            os.rmdir(root)
     return removed
 
 
@@ -1736,24 +1845,23 @@ def write_pruned_deps(output_root, audit_state, audit_writer):
     every task has been emitted.
     """
     deps = (audit_state or {}).get("deps", {})
-    groups = {}
-    for rel, entry in deps.items():
-        groups.setdefault(rel.split("/")[0], {})[rel] = entry
-
-    for group in groups.values():
-        seeds = set()
-        for entry in group.values():
-            seeds |= entry["seeds"]
-        keep = dep_keep_names([e["path"] for e in group.values()], seeds, audit_writer)
-        for rel, entry in sorted(group.items()):
-            text = prune_dep_module(entry["path"], keep, audit_writer)
-            dest = os.path.join(output_root, *rel.split("/"))
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
+    written = 0
+    for task_dir, entry in sorted(deps.items()):
+        # One closure per task over all of that task's dependencies together:
+        # they reference each other, so closing per file would prune a
+        # definition a sibling module still needs.
+        keep = dep_keep_names(entry["paths"], entry["seeds"], audit_writer)
+        dest_dir = os.path.join(output_root, *task_dir.split("/"))
+        os.makedirs(dest_dir, exist_ok=True)
+        for dep_path in entry["paths"]:
+            text = prune_dep_module(dep_path, keep, audit_writer)
+            dest = os.path.join(dest_dir, os.path.basename(dep_path))
             with open(dest, "w", encoding="utf-8") as f:
                 f.write(text if text.endswith("\n") else text + "\n")
             if _THEOREM_SCAN.search(text):
-                audit_writer.write(f"[audit] LEAK dependency {rel} still states a THEOREM/LEMMA\n")
-    return len(deps)
+                audit_writer.write(f"[audit] LEAK dependency {task_dir}/{os.path.basename(dep_path)} states a goal\n")
+            written += 1
+    return written
 
 
 def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=True):
