@@ -26,9 +26,11 @@ from dataset.proof_from_scratch.generate import (
     build_task_module,
     copy_deps_layered,
     dep_keep_names,
+    incremental_precondition_error,
     layered_cross_dir_dedup,
     prune_dep_module,
     referenced_identifiers,
+    tasks_owned_by,
 )
 
 
@@ -405,3 +407,71 @@ def test_full_run_replaces_the_manifest(tmp_path):
     )
 
     assert set(json.loads((tmp_path / "manifest.json").read_text())) == {fresh_key}
+
+
+def test_regenerated_source_drops_its_stale_tasks(tmp_path):
+    """A target its source no longer emits must leave the manifest.
+
+    Regression: keying the removal on what the run PRODUCED meant a task that
+    stopped being generated — filtered out, deduped, or gated — survived from
+    the previous manifest, so `--filter TwoPhase` left TwoPhase_proof_line17
+    behind on disk and in the manifest.
+    """
+    stale_key, stale_entry = _write_task(tmp_path, "TP", "TwoPhase_proof_line17")
+    kept_key, kept_entry = _write_task(tmp_path, "Other", "Other_Thm")
+    (tmp_path / "manifest.json").write_text(json.dumps({stale_key: stale_entry, kept_key: kept_entry}, indent=2))
+    fresh_key, fresh_entry = _write_task(tmp_path, "TP", "TwoPhase_Implementation")
+
+    class _Audit:
+        def write(self, _):
+            pass
+
+    all_bases = {"TP": {"TwoPhase", "TwoPhase_proof"}, "Other": {"Other"}}
+    generate._finalize_layered(
+        str(tmp_path),
+        {fresh_key: fresh_entry},
+        {},
+        _Audit(),
+        run_gates=False,
+        incremental=True,
+        scope=(all_bases, {"TP": {"TwoPhase", "TwoPhase_proof"}}),
+    )
+
+    written = json.loads((tmp_path / "manifest.json").read_text())
+    assert stale_key not in written, "a target its source no longer emits must go"
+    assert not (tmp_path / stale_key).exists(), "and its file must be swept"
+    assert kept_key in written, "a source this run skipped is untouched"
+    assert fresh_key in written
+
+
+def test_task_ownership_uses_the_longest_matching_source():
+    """`TwoPhase_proof_line17` belongs to TwoPhase_proof, not to its sibling
+    source TwoPhase — otherwise regenerating one would delete the other's tasks.
+    """
+    all_bases = {"TP": {"TwoPhase", "TwoPhase_proof"}}
+    existing = {"TP/TwoPhase_Implementation.tla": {}, "TP/TwoPhase_proof_line17.tla": {}}
+
+    assert tasks_owned_by(existing, all_bases, {"TP": {"TwoPhase"}}) == {"TP/TwoPhase_Implementation.tla"}
+    assert tasks_owned_by(existing, all_bases, {"TP": {"TwoPhase_proof"}}) == {"TP/TwoPhase_proof_line17.tla"}
+
+
+def test_partial_run_refuses_an_output_dir_with_no_usable_manifest(tmp_path):
+    """A partial run trusts the manifest to know what it is not regenerating.
+
+    Without one it would treat its own tasks as the whole dataset and sweep
+    everything else away, so it must refuse before writing anything.
+    """
+    assert incremental_precondition_error(str(tmp_path)) is None, "an empty dir has nothing to lose"
+
+    (tmp_path / "Peterson").mkdir()
+    (tmp_path / "Peterson" / "X_Thm.tla").write_text("---- MODULE X_Thm ----\n====\n")
+    assert "no manifest.json" in incremental_precondition_error(str(tmp_path))
+
+    (tmp_path / "manifest.json").write_text("not json")
+    assert "unreadable" in incremental_precondition_error(str(tmp_path))
+
+    (tmp_path / "manifest.json").write_text("[]")
+    assert "not a JSON object" in incremental_precondition_error(str(tmp_path))
+
+    (tmp_path / "manifest.json").write_text("{}")
+    assert incremental_precondition_error(str(tmp_path)) is None
