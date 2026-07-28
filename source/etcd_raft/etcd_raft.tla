@@ -1,4 +1,4 @@
---------------------------------- MODULE etcdraft ---------------------------------
+--------------------------------- MODULE etcd_raft ---------------------------------
 \* Copyright 2024 The etcd Authors
 \*
 \* Licensed under the Apache License, Version 2.0 (the "License");
@@ -875,6 +875,33 @@ CommittedIsDurableInv ==
 
 -----
 
+
+
+(***************************************************************************)
+(* Benchmark targets. `Spec => []LogInv` is upstream's own theorem; the     *)
+(* remaining invariants are defined upstream but never asserted, so they    *)
+(* are stated here. Everything above this banner is upstream.               *)
+(***************************************************************************)
+THEOREM CommittedIsDurable == Spec => []CommittedIsDurableInv
+PROOF OBVIOUS
+
+THEOREM ElectionSafety == Spec => []ElectionSafetyInv
+PROOF OBVIOUS
+
+THEOREM LeaderCompleteness == Spec => []LeaderCompletenessInv
+PROOF OBVIOUS
+
+THEOREM LogMatching == Spec => []LogMatchingInv
+PROOF OBVIOUS
+
+THEOREM MoreThanOneLeader == Spec => []MoreThanOneLeaderInv
+PROOF OBVIOUS
+
+THEOREM MoreUpToDate == Spec => []MoreUpToDateCorrectInv
+PROOF OBVIOUS
+
+THEOREM QuorumLog == Spec => []QuorumLogInv
+PROOF OBVIOUS
 
 ===============================================================================
 

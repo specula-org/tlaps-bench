@@ -871,5 +871,26 @@ Complete == <>[](history = fps)
 (* property can be checked faster.                                         *)
 (***************************************************************************)
 CompleteAsSafety == \A self \in ProcSet: pc[self] = "Done" => (history = fps)
+
+(***************************************************************************)
+(* Benchmark targets. The upstream specification defines each property     *)
+(* below but declares no theorem, so on its own it yields no               *)
+(* proof-from-scratch task. Everything above this banner is upstream.      *)
+(***************************************************************************)
+THEOREM Spec => []CompleteAsSafety
+PROOF OBVIOUS
+
+THEOREM Spec => []Consistent
+PROOF OBVIOUS
+
+THEOREM Spec => []Contains
+PROOF OBVIOUS
+
+THEOREM Spec => []Duplicates
+PROOF OBVIOUS
+
+THEOREM Spec => []Sorted
+PROOF OBVIOUS
+
 =============================================================================
 \* \end{ppcal}  (* literate-programming marker; commented for SANY/tlapm *)

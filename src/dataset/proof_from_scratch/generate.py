@@ -92,10 +92,8 @@ one task cannot inherit another task's target definitions. The marker strings
 and manifest schema are the contract in src/common/proof_from_scratch_contract.py;
 the two must stay byte-compatible.
 
-Only spec-goal targets extend the shared model. A pure lemma target keeps a
-self-contained Defs layer holding just the declarations it uses, because handing
-it the state machine both over-exposes hidden context and can break TLA+ scoping
-(a hoisted VARIABLE shadowing a bound variable in the theorem).
+Only spec-goal targets extend the shared model; a pure lemma target keeps a
+self-contained Defs layer with just the declarations it uses.
 """
 
 import argparse
@@ -140,13 +138,9 @@ KNOWN_FALSE_TARGETS = {
     "StructOK and left its inductive step PROOF OMITTED.",
 }
 
-# Top-level theorems that restate a theorem declared in another module rather
-# than stating a goal of their own. `TwoPhase_proof.tla:17` is literally
-# `THEOREM Implementation` — a second proof of `TwoPhase.tla`'s
-# `THEOREM Implementation == Spec => A!Spec`. A context module carries no
-# theorems by design, so the name cannot resolve and the task cannot even be
-# stated. The source file stays untouched; only the task is not generated.
-# Keyed by (source-module basename, target name).
+# Top-level theorems that restate another module's theorem instead of stating a
+# goal of their own. A context module carries no theorems by design, so the name
+# cannot resolve and the task cannot be stated. Keyed by (basename, target).
 RESTATED_TARGETS = {
     ("TwoPhase_proof", "line17"): "restates THEOREM Implementation from TwoPhase.tla, which read-only "
     "context modules do not carry; the goal is already covered by that theorem.",
@@ -910,7 +904,6 @@ def _strip_bare_decls(text):
     return _BARE_DECL.sub("", text)
 
 
-# Layered emission (Issue #64) — see the module docstring for the layout.
 # These four markers must match src/common/proof_from_scratch_contract.py
 # byte-for-byte; the evaluator compares them to detect scaffold tampering.
 MANIFEST_FILENAME = "manifest.json"
@@ -1141,9 +1134,7 @@ def _emit_layered(
     targets = [entry[0] for entry in top_level]
     model_set, main_specs = compute_model_set(dump, targets)
 
-    # Emit the shared model only when it carries content (a state machine / spec
-    # shared across the file's spec-goal tasks). Pure lemma files with no spec
-    # get an empty model_set — their declarations live in each Defs layer.
+    # A file with no spec has an empty model_set; its declarations live in Defs.
     model_module = None
     model_text = ""
     if model_set:
@@ -1156,8 +1147,7 @@ def _emit_layered(
             audit_writer.write(f"[audit] {source_path}: LEAK model {model_module} contains a THEOREM/LEMMA\n")
         print(f"  generated model: {os.path.relpath(model_path, PROJECT_ROOT)}")
 
-    # Leak guard: nothing outside the union of the targets' statement-reachable
-    # sets may be exposed (that set is exactly the proof artifacts to hide).
+    # Anything no target's statement reaches is a proof artifact to hide.
     all_ops = {o["name"] for o in dump["operators"]}
     union_reach = set()
     for t in targets:
@@ -1174,10 +1164,8 @@ def _emit_layered(
         used_names.add(bench_module_name)
 
         reachable = compute_reachable(dump, target_thm)
-        # Only a spec-goal target extends the shared model. A pure lemma target
-        # (no behavioral Spec on its left-hand side) does not reason about the
-        # state machine, so handing it the model would over-expose context it is
-        # meant to hide — and can break scoping (see _unneeded_decl_edits).
+        # A pure lemma target does not reason about the state machine, so giving
+        # it the model would over-expose context and can break scoping.
         is_spec = target_thm["shape"].get("lhs_spec_ref") in main_specs
         use_model = model_module is not None and is_spec
         defs_set = reachable - model_set if use_model else reachable
@@ -1197,10 +1185,9 @@ def _emit_layered(
         with open(task_path, "w", encoding="utf-8") as f:
             f.write(task_text)
 
-        # Each task gets its OWN pruned copy of every dependency, under a
-        # per-task directory. Sharing one copy would let a task see definitions
-        # only a sibling needs; the filename can repeat across tasks because a
-        # task is graded in its own workspace, and the module name still matches.
+        # Each task gets its own pruned copy of every dependency: sharing one
+        # would let a task see definitions only a sibling needs. The filename may
+        # repeat because each task is graded in its own workspace.
         context = []
         if use_model:
             context.append(f"{subdir}/{model_module}.tla")
@@ -1218,12 +1205,9 @@ def _emit_layered(
 
         task_key = f"{subdir}/{bench_module_name}.tla"
 
-        # Audit what the task can actually SEE by reading the emitted files back,
-        # rather than trusting the sets used to build them. No context module may
-        # state a goal. The artifact-name check applies only to the layers
-        # derived from THIS source, since `artifacts` is computed from this
-        # source's operators — a dependency module is a different namespace, and
-        # matching it here would flag an unrelated same-named operator.
+        # Read the emitted files back rather than trusting the sets used to build
+        # them. The artifact check covers only this source's own layers, since a
+        # dependency is a different namespace where the names would collide.
         own_layers = {f"{subdir}/{defs_module}.tla"} | ({f"{subdir}/{model_module}.tla"} if use_model else set())
         for rel in sorted(own_layers):
             ctx_text = Path(out_dir, os.path.basename(rel)).read_text(encoding="utf-8")
