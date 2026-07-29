@@ -423,8 +423,10 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         return _ParsedPiRun(
             transcript="".join(transcript_parts),
             usage=UsageSummary(
+                model_requests=assistant_provider_starts or None,
                 sources=("pi_cli_jsonl",),
-                available=False,
+                available=bool(assistant_provider_starts),
+                is_lower_bound=bool(assistant_provider_starts),
                 warnings=tuple(dict.fromkeys(warnings)),
             ),
             model_activity=model_activity,

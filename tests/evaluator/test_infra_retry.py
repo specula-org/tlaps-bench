@@ -577,7 +577,8 @@ def test_pi_provider_adapter_error_without_stream_start_is_not_retried(tmp_path,
     assert agent["n"] == 1
     assert grader["n"] == 1
     assert result["termination_reason"] == TerminationReason.INFRA_ERROR
-    assert result["usage"]["status"] == "unavailable"
+    assert result["usage"]["status"] == "lower_bound"
+    assert result["usage"]["model_requests"] == 1
     assert "infra_retries" not in result
     assert sleeps == []
 
