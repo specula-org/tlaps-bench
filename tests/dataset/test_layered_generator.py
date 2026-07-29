@@ -11,6 +11,8 @@ Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_layered_generator.py
 """
 
 import json
+import sys
+from io import StringIO
 
 import pytest
 
@@ -21,6 +23,7 @@ from dataset.proof_from_scratch.generate import (
     END_AGENT_HELPERS,
     END_AGENT_PROOF,
     _defined_names,
+    _plan_layered_targets,
     _strip_module_directives,
     _unneeded_decl_edits,
     build_task_module,
@@ -28,6 +31,8 @@ from dataset.proof_from_scratch.generate import (
     dep_keep_names,
     incremental_precondition_error,
     layered_cross_dir_dedup,
+    load_dataset_task_keys,
+    positional_targets,
     prune_dep_module,
     referenced_identifiers,
     tasks_owned_by,
@@ -109,6 +114,169 @@ def _write_task(root, subdir, name, body="THEOREM TRUE", defs_body="Inv == TRUE"
     (d / f"{name}.tla").write_text(build_task_module(name, f"{name}Defs", body))
     (d / f"{name}Defs.tla").write_text(f"---- MODULE {name}Defs ----\n{defs_body}\n====\n")
     return f"{subdir}/{name}.tla", {"context": [f"{subdir}/{name}Defs.tla"]}
+
+
+def test_dataset_selection_bootstraps_from_flat_task_tree(tmp_path):
+    task_key, _entry = _write_task(tmp_path, "Existing", "Existing_Thm")
+    (tmp_path / "Existing" / "Model_with_underscore.tla").write_text(
+        "---- MODULE Model_with_underscore ----\nValue == 1\n====\n"
+    )
+
+    assert load_dataset_task_keys(str(tmp_path)) == {task_key}
+
+
+def test_layered_manifest_becomes_the_dataset_selection(tmp_path):
+    _write_task(tmp_path, "Legacy", "Legacy_Thm")
+    manifest_key = "Current/Current_Thm.tla"
+    (tmp_path / "manifest.json").write_text(json.dumps({manifest_key: {"context": []}}))
+
+    assert load_dataset_task_keys(str(tmp_path)) == {manifest_key}
+
+
+def test_positional_repository_files_keep_their_dataset_group(tmp_path):
+    source_root = tmp_path / "source"
+    nested = source_root / "OpenAddressing" / "OpenAddressing.tla"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("---- MODULE OpenAddressing ----\n====\n")
+
+    targets, repository_sources = positional_targets([str(nested)], str(source_root))
+
+    assert targets == [(str(nested), "OpenAddressing")]
+    assert repository_sources
+
+
+def test_external_positional_file_disables_repository_selection(tmp_path):
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    external = tmp_path / "source-other" / "External.tla"
+    external.parent.mkdir()
+    external.write_text("---- MODULE External ----\n====\n")
+
+    targets, repository_sources = positional_targets([str(external)], str(source_root))
+
+    assert targets == [(str(external), None)]
+    assert not repository_sources
+
+
+def test_mixed_positional_files_are_distinguishable_before_generation(tmp_path):
+    source_root = tmp_path / "source"
+    repository_file = source_root / "Group" / "Repository.tla"
+    repository_file.parent.mkdir(parents=True)
+    repository_file.write_text("---- MODULE Repository ----\n====\n")
+    external = tmp_path / "external" / "External.tla"
+    external.parent.mkdir()
+    external.write_text("---- MODULE External ----\n====\n")
+
+    targets, repository_sources = positional_targets([str(repository_file), str(external)], str(source_root))
+
+    assert targets == [(str(repository_file), "Group"), (str(external), None)]
+    assert not repository_sources
+
+
+def test_positional_symlink_to_repository_source_uses_canonical_identity(tmp_path):
+    source_root = tmp_path / "source"
+    source = source_root / "Group" / "Canonical.tla"
+    source.parent.mkdir(parents=True)
+    source.write_text("---- MODULE Canonical ----\n====\n")
+    alias = tmp_path / "Alias.tla"
+    alias.symlink_to(source)
+
+    targets, repository_sources = positional_targets([str(alias)], str(source_root))
+
+    assert targets == [(str(source), "Group")]
+    assert repository_sources
+
+
+def test_positional_repository_run_keeps_overlapping_sibling_source_task(tmp_path, monkeypatch):
+    source_root = tmp_path / "source"
+    source = source_root / "TwoPhase" / "TwoPhase.tla"
+    source.parent.mkdir(parents=True)
+    source.write_text("---- MODULE TwoPhase ----\n====\n")
+    sibling_source = source.parent / "TwoPhase_proof.tla"
+    sibling_source.write_text("---- MODULE TwoPhase_proof ----\n====\n")
+
+    output = tmp_path / "benchmark"
+    task_key, task_entry = _write_task(output, "TwoPhase", "TwoPhase_Implementation")
+    sibling_key, sibling_entry = _write_task(output, "TwoPhase", "TwoPhase_proof_line17")
+    existing = {task_key: task_entry, sibling_key: sibling_entry}
+    (output / "manifest.json").write_text(json.dumps(existing))
+
+    def fake_process_file(
+        _path,
+        _audit_writer,
+        _output_root,
+        *,
+        module_subdir,
+        manifest,
+        reference_task_keys,
+        **_kwargs,
+    ):
+        assert module_subdir == "TwoPhase"
+        assert reference_task_keys == set(existing)
+        manifest[task_key] = task_entry
+        return 1
+
+    monkeypatch.setattr(generate, "SOURCE_ROOT", str(source_root))
+    monkeypatch.setattr(generate, "BENCHMARK_DIR", str(output))
+    monkeypatch.setattr(generate, "process_file", fake_process_file)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate.py",
+            "--layered",
+            "--skip-gates",
+            "--output-dir",
+            str(output),
+            str(source),
+        ],
+    )
+
+    generate.main()
+
+    assert set(json.loads((output / "manifest.json").read_text())) == set(existing)
+
+
+def test_unnamed_target_preserves_an_existing_line_based_key():
+    target = {
+        "name": None,
+        "loc": {"line_start": 17},
+        "shape": {"rhs_primary_name": "A!Spec"},
+    }
+    audit = StringIO()
+
+    planned = _plan_layered_targets(
+        [(target, True, False, False)],
+        "TP",
+        "TwoPhase_proof",
+        {"TP/TwoPhase_proof_line17.tla"},
+        audit,
+        "source/TP/TwoPhase_proof.tla",
+    )
+
+    assert planned == [(target, "TwoPhase_proof_line17", "TP/TwoPhase_proof_line17.tla")]
+    assert "preserving that key" in audit.getvalue()
+
+
+def test_candidate_outside_dataset_selection_is_audited_and_skipped():
+    target = {
+        "name": "NewTarget",
+        "loc": {"line_start": 10},
+        "shape": {"rhs_primary_name": None},
+    }
+    audit = StringIO()
+
+    planned = _plan_layered_targets(
+        [(target, False, False, True)],
+        "Example",
+        "Spec",
+        {"Example/Spec_ExistingTarget.tla"},
+        audit,
+        "source/Example/Spec.tla",
+    )
+
+    assert planned == []
+    assert "outside the existing dataset selection" in audit.getvalue()
 
 
 def test_cross_dir_dedup_keeps_the_preferred_copy_and_sweeps_its_context(tmp_path, capsys):
@@ -409,24 +577,42 @@ def test_full_run_replaces_the_manifest(tmp_path):
     assert set(json.loads((tmp_path / "manifest.json").read_text())) == {fresh_key}
 
 
+def test_dataset_selection_difference_is_audited_not_rejected(tmp_path):
+    fresh_key, fresh_entry = _write_task(tmp_path, "New", "New_Thm")
+    audit = StringIO()
+
+    final_count = generate._finalize_layered(
+        str(tmp_path),
+        {fresh_key: fresh_entry},
+        {},
+        audit,
+        run_gates=False,
+        reference_task_keys={"Old/Old_Thm.tla"},
+    )
+
+    assert final_count == 1
+    assert set(json.loads((tmp_path / "manifest.json").read_text())) == {fresh_key}
+    assert "Old/Old_Thm.tla: existing dataset task was not regenerated" in audit.getvalue()
+    assert "New/New_Thm.tla: generated task is not in the existing dataset selection" in audit.getvalue()
+
+
 def test_regenerated_source_drops_its_stale_tasks(tmp_path):
     """A target its source no longer emits must leave the manifest.
 
     Regression: keying the removal on what the run PRODUCED meant a task that
     stopped being generated — filtered out, deduped, or gated — survived from
-    the previous manifest, so `--filter TwoPhase` left TwoPhase_proof_line17
-    behind on disk and in the manifest.
+    the previous manifest.
     """
-    stale_key, stale_entry = _write_task(tmp_path, "TP", "TwoPhase_proof_line17")
+    stale_key, stale_entry = _write_task(tmp_path, "Group", "Source_OldTarget")
     kept_key, kept_entry = _write_task(tmp_path, "Other", "Other_Thm")
     (tmp_path / "manifest.json").write_text(json.dumps({stale_key: stale_entry, kept_key: kept_entry}, indent=2))
-    fresh_key, fresh_entry = _write_task(tmp_path, "TP", "TwoPhase_Implementation")
+    fresh_key, fresh_entry = _write_task(tmp_path, "Group", "Source_NewTarget")
 
     class _Audit:
         def write(self, _):
             pass
 
-    all_bases = {"TP": {"TwoPhase", "TwoPhase_proof"}, "Other": {"Other"}}
+    all_bases = {"Group": {"Source"}, "Other": {"Other"}}
     generate._finalize_layered(
         str(tmp_path),
         {fresh_key: fresh_entry},
@@ -434,7 +620,7 @@ def test_regenerated_source_drops_its_stale_tasks(tmp_path):
         _Audit(),
         run_gates=False,
         incremental=True,
-        scope=(all_bases, {"TP": {"TwoPhase", "TwoPhase_proof"}}),
+        scope=(all_bases, {"Group": {"Source"}}),
     )
 
     written = json.loads((tmp_path / "manifest.json").read_text())

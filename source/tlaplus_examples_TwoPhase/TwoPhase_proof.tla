@@ -14,7 +14,7 @@ EXTENDS TwoPhase, TLAPS
 (* non-temporal leaf proofs will be replaced by fairly long structured     *)
 (* proofs--especially the two substeps numbered <2>2.                      *)
 (***************************************************************************)
-THEOREM Implementation
+THEOREM Spec => A!Spec
 <1>1. Spec => []Inv
   <2>1. Init => Inv
     BY DEF Init, Inv

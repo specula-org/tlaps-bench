@@ -118,6 +118,7 @@ from dataset.proof_completion.generate import (  # noqa: E402
     strip_all_proofs,
 )
 from dataset.sany_audit import gate as sany_gate  # noqa: E402
+from dataset.sany_audit import is_task_file  # noqa: E402
 from dataset.triviality_audit import gate as triviality_gate  # noqa: E402
 
 KEYWORD_PATTERN = re.compile(r"^\s*(THEOREM|LEMMA|AXIOM|COROLLARY|PROPOSITION)\b")
@@ -136,14 +137,6 @@ KNOWN_FALSE_TARGETS = {
     "can carry two distinct 2a values, violating StructOK3's one-value-per-"
     "ballot conjunct. The author commented StructOK3 out of the proven "
     "StructOK and left its inductive step PROOF OMITTED.",
-}
-
-# Top-level theorems that restate another module's theorem instead of stating a
-# goal of their own. A context module carries no theorems by design, so the name
-# cannot resolve and the task cannot be stated. Keyed by (basename, target).
-RESTATED_TARGETS = {
-    ("TwoPhase_proof", "line17"): "restates THEOREM Implementation from TwoPhase.tla, which read-only "
-    "context modules do not carry; the goal is already covered by that theorem.",
 }
 
 
@@ -1084,6 +1077,130 @@ def _defined_names(text):
     return set(_DEFINITION_SCAN.findall(text))
 
 
+def load_dataset_task_keys(root):
+    """Task keys that define the repository's curated dataset selection.
+
+    Once a layered manifest exists it is authoritative. During the first
+    migration, derive the same set from the existing flat benchmark tree using
+    the evaluator's task-file rule. The dataset itself is the selection input;
+    the generator carries no per-group or per-theorem allow-list.
+    """
+    manifest_path = os.path.join(root, MANIFEST_FILENAME)
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            if isinstance(manifest, dict):
+                return set(manifest)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    keys = set()
+    if not os.path.isdir(root):
+        return keys
+    for current_root, _dirs, files in os.walk(root):
+        for fname in files:
+            if not fname.endswith(".tla"):
+                continue
+            path = os.path.join(current_root, fname)
+            if is_task_file(path):
+                keys.add(os.path.relpath(path, root).replace(os.sep, "/"))
+    return keys
+
+
+def positional_targets(files, source_root=SOURCE_ROOT):
+    """Resolve positional files without losing repository dataset ownership.
+
+    Files below the repository source root use the same first-directory
+    grouping as a normal source-tree scan.  This keeps partial layered runs in
+    the correct manifest namespace instead of treating each module as a new
+    top-level group.
+    """
+    canonical_root = os.path.realpath(os.path.abspath(source_root))
+    targets = []
+    all_repository_sources = bool(files)
+    for path in files:
+        absolute = os.path.abspath(path)
+        canonical_path = os.path.realpath(absolute)
+        try:
+            in_repository = os.path.commonpath([canonical_root, canonical_path]) == canonical_root
+        except ValueError:
+            in_repository = False
+
+        subdir = None
+        if in_repository:
+            relative = os.path.relpath(canonical_path, canonical_root)
+            if relative != ".":
+                parts = relative.split(os.sep)
+                subdir = parts[0] if len(parts) > 1 else os.path.splitext(parts[0])[0]
+            else:
+                in_repository = False
+
+        all_repository_sources &= in_repository
+        targets.append((canonical_path, subdir))
+    return targets, all_repository_sources
+
+
+def scan_source_targets(source_root):
+    """Return source-tree targets with the repository's output grouping."""
+    targets = []
+    for root, _, files in os.walk(os.path.abspath(source_root)):
+        if ".tlaps" in root:
+            continue
+        for fname in sorted(files):
+            if not fname.endswith(".tla"):
+                continue
+            subdir = os.path.relpath(root, source_root).split(os.sep)[0]
+            if subdir == ".":
+                subdir = os.path.splitext(fname)[0]
+            targets.append((os.path.join(root, fname), subdir))
+    return targets
+
+
+def _plan_layered_targets(top_level, subdir, base_module, reference_task_keys, audit_writer, source_path):
+    """Choose task module names before writing any layered files.
+
+    A repository generation uses the existing dataset/manifest as its vetted
+    target selection. An unnamed theorem may have acquired a semantic RHS name
+    since its first generation; if its historical line-based key still exists,
+    preserve that key generically. Candidates outside the reference set are
+    audited and skipped, never treated as errors.
+    """
+    used_names = set()
+    planned = []
+    for entry in top_level:
+        target_thm = entry[0]
+        thm_name, _ = target_theorem_name(target_thm)
+        bench_module_name = f"{base_module}_{thm_name}"
+        if bench_module_name in used_names:
+            bench_module_name = f"{bench_module_name}_L{target_thm['loc']['line_start']}"
+        used_names.add(bench_module_name)
+
+        task_key = f"{subdir}/{bench_module_name}.tla"
+        if reference_task_keys is not None and task_key not in reference_task_keys:
+            legacy_module = None
+            if not target_thm["name"]:
+                line = target_thm["loc"]["line_start"]
+                candidate = f"{base_module}_line{line}"
+                candidate_key = f"{subdir}/{candidate}.tla"
+                if candidate_key in reference_task_keys:
+                    legacy_module = candidate
+                    audit_writer.write(
+                        f"[audit] {source_path}: generated target name `{bench_module_name}` maps to "
+                        f"existing line-based task key {candidate_key} — preserving that key\n"
+                    )
+            if legacy_module is None:
+                audit_writer.write(
+                    f"[audit] {task_key}: source candidate is outside the existing dataset selection — skipped\n"
+                )
+                continue
+            bench_module_name = legacy_module
+            task_key = f"{subdir}/{bench_module_name}.tla"
+
+        planned.append((target_thm, bench_module_name, task_key))
+    return planned
+
+
 def _emit_layered(
     source_path,
     source_lines,
@@ -1096,6 +1213,7 @@ def _emit_layered(
     generated_paths,
     manifest,
     audit_state,
+    reference_task_keys,
 ):
     """Emit the three-layer split + manifest entries for one source file.
 
@@ -1104,7 +1222,18 @@ def _emit_layered(
       <task>Defs.tla    target-specific given definitions (read-only)
       <task>.tla        theorem + markers + PROOF OBVIOUS (editable)
     """
-    targets = [entry[0] for entry in top_level]
+    planned = _plan_layered_targets(
+        top_level,
+        subdir,
+        base_module,
+        reference_task_keys,
+        audit_writer,
+        source_path,
+    )
+    if not planned:
+        return 0
+
+    targets = [target for target, _module, _key in planned]
     model_set, main_specs = compute_model_set(dump, targets)
 
     model_module = None
@@ -1125,15 +1254,8 @@ def _emit_layered(
         union_reach |= compute_reachable(dump, t)
     artifacts = all_ops - union_reach
 
-    used_names = set()
     count = 0
-    for target_thm in targets:
-        thm_name, _ = target_theorem_name(target_thm)
-        bench_module_name = f"{base_module}_{thm_name}"
-        if bench_module_name in used_names:
-            bench_module_name = f"{bench_module_name}_L{target_thm['loc']['line_start']}"
-        used_names.add(bench_module_name)
-
+    for target_thm, bench_module_name, task_key in planned:
         reachable = compute_reachable(dump, target_thm)
         is_spec = target_thm["shape"].get("lhs_spec_ref") in main_specs
         use_model = model_module is not None and is_spec
@@ -1170,8 +1292,6 @@ def _emit_layered(
                 "seeds": seeds,
             }
         context = sorted(set(context))
-
-        task_key = f"{subdir}/{bench_module_name}.tla"
 
         # Read the files back rather than trust the sets that built them. Only
         # this source's layers: a dependency is a different namespace.
@@ -1211,6 +1331,7 @@ def process_file(
     layered=False,
     manifest=None,
     audit_state=None,
+    reference_task_keys=None,
 ):
     """Generate proof-from-scratch benchmarks for one source .tla file. Returns count emitted.
 
@@ -1263,7 +1384,7 @@ def process_file(
         line = target_thm["loc"]["line_start"]
         name = target_thm["name"] or f"<unnamed L{line}>"
         has_proof = _has_manual_proof(target_thm, source_lines)
-        if not has_proof and not allow_no_proof:
+        if not has_proof and not allow_no_proof and reference_task_keys is None:
             audit_writer.write(
                 f"[audit] {source_path}: top-level THEOREM {name} at line "
                 f"{line} has no manual TLAPS proof body — skipped (filter A)\n"
@@ -1282,16 +1403,6 @@ def process_file(
                 f"{line} asserts a FALSE goal — skipped (filter A', known-false): "
                 f"{reason}\n"
             )
-        elif (
-            base_module,
-            target_theorem_name(target_thm)[0],
-        ) in RESTATED_TARGETS:
-            # Filter A'' — see RESTATED_TARGETS.
-            reason = RESTATED_TARGETS[(base_module, target_theorem_name(target_thm)[0])]
-            audit_writer.write(
-                f"[audit] {source_path}: top-level THEOREM {name} at line "
-                f"{line} — skipped (filter A'', restated target): {reason}\n"
-            )
         elif _proof_has_omitted_substep(target_thm, source_lines):
             # An OMITTED sub-step is NO LONGER grounds for dropping: the proof is
             # structured (an OMITTED leaf still "counts as a proof"), the goal is
@@ -1306,15 +1417,21 @@ def process_file(
             )
             survivors.append(entry)
         elif not has_proof:
-            # --allow-no-proof: the source carries only PROOF OBVIOUS/OMITTED
-            # (no reference proof), but the goal is a vetted hard property
-            # (e.g. the ZooKeeper Zab safety theorems). proof-from-scratch grades by tlapm, not
-            # by the human reference, so keep it as a from-scratch benchmark.
-            audit_writer.write(
-                f"[audit] {source_path}: top-level THEOREM {name} at line "
-                f"{line} has no manual proof — kept (--allow-no-proof; tlapm-graded "
-                f"from-scratch benchmark)\n"
-            )
+            if reference_task_keys is not None:
+                audit_writer.write(
+                    f"[audit] {source_path}: top-level THEOREM {name} at line "
+                    f"{line} has no manual proof — retained for existing-dataset selection\n"
+                )
+            else:
+                # --allow-no-proof: the source carries only PROOF OBVIOUS/OMITTED
+                # (no reference proof), but the goal is a vetted hard property
+                # (e.g. the ZooKeeper Zab safety theorems). proof-from-scratch grades by tlapm, not
+                # by the human reference, so keep it as a from-scratch benchmark.
+                audit_writer.write(
+                    f"[audit] {source_path}: top-level THEOREM {name} at line "
+                    f"{line} has no manual proof — kept (--allow-no-proof; tlapm-graded "
+                    f"from-scratch benchmark)\n"
+                )
             survivors.append(entry)
         else:
             survivors.append(entry)
@@ -1368,6 +1485,7 @@ def process_file(
             generated_paths,
             manifest,
             audit_state,
+            reference_task_keys,
         )
 
     # Shared-model mode: emit one proof-free `<module>.tla` model and have
@@ -1472,7 +1590,9 @@ def main():
         help="Keep top-level theorems whose source has only PROOF "
         "OBVIOUS/OMITTED (no reference proof). Use for vetted "
         "hard from-scratch benchmarks (e.g. ZooKeeper Zab) that "
-        "are graded by tlapm, not against a human reference.",
+        "are graded by tlapm, not against a human reference. In a "
+        "repository-wide layered run, this explicitly expands beyond "
+        "the existing dataset selection.",
     )
     parser.add_argument(
         "--layered",
@@ -1480,7 +1600,9 @@ def main():
         help="Split each task into <base>Model.tla + <task>Defs.tla + "
         "<task>.tla (editable, with helper/proof markers) and write "
         "manifest.json mapping each task to its exact read-only context "
-        "(Issue #64 / PR #71 contract). Implies the shared-model split.",
+        "(Issue #64 / PR #71 contract). For the repository source tree, "
+        "the existing dataset/manifest supplies the vetted target selection. "
+        "Implies the shared-model split.",
     )
     parser.add_argument(
         "--skip-gates",
@@ -1499,28 +1621,33 @@ def main():
     # Scan unfiltered, then select: a filtered run needs every possible source to
     # tell a regenerated task's source from one it skipped.
     if args.files:
-        all_targets = [(os.path.abspath(p), None) for p in args.files]
+        all_targets, repository_sources = positional_targets(args.files, SOURCE_ROOT)
+        if args.layered and not repository_sources and any(subdir is not None for _, subdir in all_targets):
+            parser.error(
+                "a layered positional run cannot mix repository source files with external files; "
+                "run the two source sets separately"
+            )
+        ownership_targets = scan_source_targets(SOURCE_ROOT) if repository_sources else all_targets
     else:
         src_root = os.path.abspath(args.source_dir)
-        all_targets = []
-        for root, _, files in os.walk(src_root):
-            if ".tlaps" in root:
-                continue
-            for fname in sorted(files):
-                if not fname.endswith(".tla"):
-                    continue
-                subdir = os.path.relpath(root, src_root).split(os.sep)[0]
-                if subdir == ".":
-                    subdir = os.path.splitext(fname)[0]
-                all_targets.append((os.path.join(root, fname), subdir))
+        repository_sources = os.path.realpath(src_root) == os.path.realpath(SOURCE_ROOT)
+        all_targets = scan_source_targets(src_root)
+        ownership_targets = all_targets
     targets = [t for t in all_targets if not args.filter or args.filter in t[0]]
+
+    reference_task_keys = None
+    if args.layered and not args.allow_no_proof and repository_sources:
+        keys = load_dataset_task_keys(BENCHMARK_DIR)
+        if keys:
+            reference_task_keys = keys
+            print(f"Using existing proof-from-scratch dataset selection: {len(keys)} tasks")
 
     incremental = bool(args.layered and (args.filter or args.files))
     if incremental:
         reason = incremental_precondition_error(output_root)
         if reason:
             parser.error(f"a partial run needs a valid manifest to preserve the tasks it is not regenerating: {reason}")
-    scope = (source_bases(all_targets), source_bases(targets))
+    scope = (source_bases(ownership_targets), source_bases(targets))
 
     sibling_deps = compute_sibling_deps(targets) if args.shared_model else {}
 
@@ -1545,6 +1672,7 @@ def main():
                     layered=args.layered,
                     manifest=manifest,
                     audit_state=audit_state,
+                    reference_task_keys=reference_task_keys,
                 )
             except Exception as e:
                 audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
@@ -1552,7 +1680,7 @@ def main():
 
         if args.layered:
             removed = dropped = 0
-            _finalize_layered(
+            final_count = _finalize_layered(
                 output_root,
                 manifest,
                 audit_state,
@@ -1560,6 +1688,7 @@ def main():
                 run_gates=not args.skip_gates,
                 incremental=incremental,
                 scope=scope,
+                reference_task_keys=reference_task_keys,
             )
         else:
             removed = cross_dir_dedup(generated_paths, audit_writer)
@@ -1573,7 +1702,10 @@ def main():
             )
 
     if args.layered:
-        print(f"\nTotal proof-from-scratch tasks: {total} (layered; manifest.json written)")
+        print(
+            f"\nTotal proof-from-scratch tasks: {final_count} "
+            f"({total} generated before dedup/gates; layered manifest written)"
+        )
     else:
         print(
             f"\nTotal proof-from-scratch benchmarks: {total - removed - dropped} "
@@ -1828,7 +1960,16 @@ def _load_existing_manifest(output_root):
         return {}
 
 
-def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gates=True, incremental=False, scope=None):
+def _finalize_layered(
+    output_root,
+    manifest,
+    audit_state,
+    audit_writer,
+    run_gates=True,
+    incremental=False,
+    scope=None,
+    reference_task_keys=None,
+):
     """Dedup, gate, audit isolation, then write manifest.json.
 
     Both gates run against each task's exact manifest context, so their verdict
@@ -1858,6 +1999,24 @@ def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gate
     complete.update(manifest)
     sweep_unreferenced_context(output_root, complete, audit_writer)
 
+    if reference_task_keys is not None:
+        if incremental:
+            expected = tasks_owned_by(reference_task_keys, all_bases, processed_bases)
+            actual = tasks_owned_by(complete, all_bases, processed_bases)
+        else:
+            expected = set(reference_task_keys)
+            actual = set(complete)
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        for key in missing:
+            audit_writer.write(f"[audit] {key}: existing dataset task was not regenerated\n")
+        for key in unexpected:
+            audit_writer.write(f"[audit] {key}: generated task is not in the existing dataset selection\n")
+        print(
+            f"Dataset selection: {len(expected)} reference, {len(actual)} generated "
+            f"({len(missing)} missing, {len(unexpected)} unexpected)"
+        )
+
     owners = (audit_state or {}).get("defs_owner", {})
     owners = {k: [t for t in v if t in manifest] for k, v in owners.items()}
     owners = {k: v for k, v in owners.items() if v}
@@ -1877,6 +2036,7 @@ def _finalize_layered(output_root, manifest, audit_state, audit_writer, run_gate
         f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} "
         f"({scope}, {removed} removed by cross-dir dedup, {len(dropped)} dropped as degenerate)"
     )
+    return len(complete)
 
 
 if __name__ == "__main__":
