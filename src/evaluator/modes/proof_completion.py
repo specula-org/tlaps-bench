@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from functools import cached_property
+from glob import glob
 from pathlib import Path
 
 from common.proof_completion_contract import (
@@ -34,7 +35,7 @@ class ProofCompletion(Mode):
             return tuple(load_proof_completion_manifest(suite).values())
 
         if suite.is_dir():
-            for path in sorted(suite.rglob("*.tla")):
+            for path in map(Path, sorted(glob(str(suite / "**" / "*.tla"), recursive=True))):
                 try:
                     source = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeError) as exc:

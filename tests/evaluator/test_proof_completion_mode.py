@@ -134,6 +134,17 @@ def test_marker_without_manifest_cannot_downgrade_to_legacy(tmp_path, marker):
         _mode(tmp_path).get_benchmark_files()
 
 
+def test_marker_in_symlinked_directory_cannot_downgrade_to_legacy(tmp_path):
+    suite = tmp_path / "proof-completion"
+    linked_suite = tmp_path / "linked"
+    _write_task(linked_suite, "Example_Target.tla")
+    suite.mkdir()
+    (suite / "linked").symlink_to(linked_suite, target_is_directory=True)
+
+    with pytest.raises(ManifestError, match="marked task.*cannot use legacy discovery"):
+        _mode(tmp_path).get_benchmark_files()
+
+
 def test_strict_and_legacy_modes_select_matching_prompts(tmp_path):
     strict_suite = tmp_path / "strict" / "proof-completion"
     _write_task(strict_suite, "Task.tla")
