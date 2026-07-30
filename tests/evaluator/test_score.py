@@ -218,7 +218,7 @@ def test_comparison_preserves_legacy_columns_without_equivalent_cost():
     assert "| legacy | cursor | proof-completion | 100.0% | 1/1 | 0/0 | 1s |" in md
 
 
-def test_mixed_comparison_preserves_deferred_backend_time_semantics():
+def test_mixed_comparison_excludes_cursor_infra_accounting():
     runs = [
         {
             "id": "priced",
@@ -239,7 +239,7 @@ def test_mixed_comparison_preserves_deferred_backend_time_semantics():
 
     md = comparison_md(runs, EQUAL, "equal")
 
-    assert "| deferred | cursor | proof-completion | 100.0% | 1/1 (+1 infra-cut) | 0/0 | 102s | unavailable |" in md
+    assert "| deferred | cursor | proof-completion | 100.0% | 1/1 (+1 infra-cut) | 0/0 | 2.0s | unavailable |" in md
 
 
 def test_load_run_from_dir(tmp_path):

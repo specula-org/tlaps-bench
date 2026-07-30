@@ -232,7 +232,7 @@ def test_summary_reports_time_and_equivalent_cost_without_zero_filling(tmp_path)
     assert "`legacy.tla` | ❌ FAIL | 2.8s | unavailable" in summary
 
 
-def test_summary_preserves_legacy_format_for_deferred_backend(tmp_path):
+def test_cursor_summary_uses_cost_time_format(tmp_path):
     results = [_result("cursor.tla", "PASS", time_secs=1.25)]
 
     runner.update_summary(
@@ -244,10 +244,10 @@ def test_summary_preserves_legacy_format_for_deferred_backend(tmp_path):
     )
 
     summary = (tmp_path / "summary.md").read_text()
-    assert "**Equivalent cost**:" not in summary
-    assert "**Total task time**:" not in summary
-    assert "| Benchmark | Verdict | Time | Obligations |" in summary
-    assert "`cursor.tla` | ✅ PASS | 1s |" in summary
+    assert "**Equivalent cost**: unavailable" in summary
+    assert "**Total task time**: 1.2s" in summary
+    assert "| Benchmark | Verdict | Time | Equivalent cost | Obligations |" in summary
+    assert "`cursor.tla` | ✅ PASS | 1.2s | unavailable |" in summary
 
 
 def test_summary_reports_cost_warning_and_excludes_infra_accounting(tmp_path):

@@ -57,7 +57,16 @@ from collections.abc import Callable
 PASS_VERDICT = "PASS"
 SKIP_VERDICT = "SKIP"
 NON_GENUINE_TERMINATIONS = {"INFRA_ERROR", "QUOTA_EXHAUSTED"}
-COST_TIME_BACKENDS = {"codex", "claude_code", "copilot", "litellm", "pi"}
+COST_TIME_BACKENDS = {
+    "codex",
+    "claude_code",
+    "copilot",
+    "copilot_oneshot",
+    "cursor",
+    "litellm",
+    "litellm_oneshot",
+    "pi",
+}
 
 
 def is_pass(result: dict) -> bool:

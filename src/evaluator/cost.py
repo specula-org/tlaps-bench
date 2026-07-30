@@ -20,6 +20,7 @@ _PI_AGGREGATE_SOURCE = "pi.session.usage.cost.total"
 _PI_COMPACTION_USAGE_SOURCE = "pi_cli_compaction_end"
 _PI_COMPACTION_BOUNDARY_WARNING = "pi compaction usage may aggregate one or more summarizer calls"
 _COST_DIFFERENCE_LIMIT = 0.10
+_MODEL_ALIASES = {"sonnet-4.5": "claude-sonnet-4-5"}
 _REQUEST_USD_SOURCES = {
     "litellm.completion_cost",
     "litellm.response_cost",
@@ -61,7 +62,8 @@ def _normalize_fallback_model(model: str | None, provider: str | None) -> str | 
     """Strip Pi's ``provider/model`` CLI prefix for provider-scoped lookup."""
 
     prefix = f"{provider}/" if provider else None
-    return model[len(prefix) :] if model and prefix and model.startswith(prefix) else model
+    normalized = model[len(prefix) :] if model and prefix and model.startswith(prefix) else model
+    return _MODEL_ALIASES.get(normalized, normalized)
 
 
 def _model_candidates(request: RequestUsage | None, fallback_model: str | None) -> tuple[str, ...]:

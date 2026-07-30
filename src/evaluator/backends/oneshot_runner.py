@@ -156,9 +156,9 @@ _FORBIDDEN_FORWARD_HEADERS = {
     "upgrade",
 }
 _COPILOT_TOKEN_KEYS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
-# The pinned Copilot CLI currently performs one initial inference plus at most
-# five native retries.  This benchmark-owned cap keeps a future runtime change
-# from silently turning one logical turn into an unbounded number of requests.
+# One Copilot turn may retry an incomplete inference. This benchmark-owned cap
+# keeps a future runtime change from silently making an unbounded number of
+# requests.
 COPILOT_MAX_INFERENCE_ATTEMPTS = 6
 _COPILOT_CONTEXT_IDENTITY_FIELDS = ("agent_id", "parent_agent_id", "interaction_type")
 _MAX_AUDIT_ERROR_LENGTH = 500
@@ -1060,7 +1060,7 @@ def _copilot_event_error_retryability(events: list[object]) -> bool | None:
                     saw_transient = True
         else:
             if status == 400 and event_type == "session.error":
-                # The pinned runtime emits this top-level companion after a
+                # The Copilot runtime emits this top-level companion after a
                 # model.call_failure(bodyless 400). Pair only the next failure
                 # event so historical transient evidence cannot mask a later
                 # standalone bad request.
@@ -1115,7 +1115,7 @@ def _response_finish_reason(response: object) -> str | None:
 
 
 def _litellm_max_tokens(litellm: object, model: str) -> int:
-    """Use pinned LiteLLM metadata without a provider lookup or network preflight."""
+    """Use installed LiteLLM metadata without a provider lookup or network preflight."""
     model_cost = getattr(litellm, "model_cost", {})
     if not isinstance(model_cost, dict):
         return 32_768

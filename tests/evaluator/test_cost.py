@@ -608,7 +608,14 @@ def test_public_price_preflight_normalizes_pi_github_copilot_provider():
     assert public_price_error("github-copilot/claude-opus-4.8", "github-copilot") is None
 
 
-@pytest.mark.parametrize("backend_name", ["codex", "claude_code", "copilot", "litellm", "pi"])
+def test_public_price_preflight_normalizes_cursor_default_model():
+    assert public_price_error("sonnet-4.5") is None
+
+
+@pytest.mark.parametrize(
+    "backend_name",
+    ["codex", "claude_code", "copilot", "copilot_oneshot", "cursor", "litellm", "litellm_oneshot", "pi"],
+)
 def test_supported_backends_require_public_price_preflight(backend_name):
     assert get_backend(backend_name).requires_public_pricing
 

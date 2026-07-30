@@ -910,7 +910,7 @@ def test_litellm_falls_back_to_completion_cost_and_omits_unpriceable(monkeypatch
     assert "costs" not in detail
 
 
-def test_litellm_clamps_output_budget_to_pinned_model_metadata(monkeypatch):
+def test_litellm_clamps_output_budget_to_installed_model_metadata(monkeypatch):
     calls: list[dict] = []
 
     def completion(**kwargs):

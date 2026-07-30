@@ -139,7 +139,7 @@ Both backends default to three outer infrastructure retries, but only for explic
 
 Copilot uses the benchmark deadline for startup and inference, records `TIMEOUT` before bounded teardown, and blocks late requests. It accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`; stored CLI sessions and agentic BYOK settings are not used.
 
-With `--no-container`, the runner uses its source-tree path instead of `/opt`. LiteLLM is already a project dependency; native Copilot runs additionally require `github-copilot-sdk==1.0.7` and its runtime (`python3 -m copilot download-runtime`) in the active environment.
+With `--no-container`, the runner uses its source-tree path instead of `/opt`. LiteLLM is already a project dependency; native Copilot runs additionally require `github-copilot-sdk` and its runtime (`python3 -m copilot download-runtime`) in the active environment.
 
 ---
 
@@ -290,12 +290,12 @@ With `--max-continuations`, each continuation round also writes a `continuations
 
 ### Usage and cost telemetry
 
-For `codex`, `claude_code`, `copilot`, `litellm`, and `pi`, each formal benchmark result records:
+For `codex`, `claude_code`, `copilot`, `copilot_oneshot`, `cursor`, `litellm`, `litellm_oneshot`, and `pi`, each formal benchmark result records:
 
 - `time_secs`: agent wall time, excluding the checker
 - `equivalent_cost_usd`: the same usage valued at public API prices, not the actual subscription spend
 
-Infra and quota attempts are saved separately and excluded from formal results and totals. Cursor and one-shot cost support is deferred.
+Infra and quota attempts are saved separately and excluded from formal results and totals.
 
 Agent-reported USD is preferred; otherwise complete token usage is priced with `genai-prices`. Missing or partial data leaves the cost blank. If pricing is unavailable before a non-interactive run, use `--allow-unpriced-model` to continue with blank cost.
 

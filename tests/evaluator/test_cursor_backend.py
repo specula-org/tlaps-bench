@@ -1,5 +1,6 @@
-"""Focused tests for the Cursor backend's network boundary."""
+"""Focused tests for the Cursor backend."""
 
+import json
 import os
 import sys
 
@@ -8,6 +9,93 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from evaluator.backends.cursor import CursorBackend
+from evaluator.cost import calculate_equivalent_cost_usd
+
+
+def _write_jsonl(path, *events):
+    path.write_text("".join(json.dumps(event) + "\n" for event in events))
+
+
+def test_cursor_terminal_usage_drives_structured_tokens_and_cost(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {
+            "type": "tool_call",
+            "subtype": "started",
+            "tool_call": {"taskToolCall": {"args": {"description": "delegate"}}},
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": "Done",
+            "duration_ms": 2500,
+            "duration_api_ms": 2500,
+            "usage": {
+                "inputTokens": 100,
+                "outputTokens": 40,
+                "cacheReadTokens": 60,
+                "cacheWriteTokens": 10,
+            },
+        },
+    )
+    backend = CursorBackend()
+
+    transcript, input_tokens, output_tokens = backend.parse_output(str(output))
+    usage = backend.parse_usage(str(output), input_tokens=input_tokens, output_tokens=output_tokens)
+
+    assert transcript.endswith("[RESULT/success] Done\n")
+    assert (input_tokens, output_tokens) == (170, 40)
+    assert usage.status == "complete"
+    assert usage.input_tokens == 170
+    assert usage.output_tokens == 40
+    assert usage.cache_read_input_tokens == 60
+    assert usage.cache_write_input_tokens == 10
+    assert usage.model_time_secs is None
+    assert usage.requests == ()
+    assert usage.costs == ()
+    assert usage.sources == ("cursor_cli_result",)
+    assert calculate_equivalent_cost_usd(usage, backend.model) == (pytest.approx(0.0009555), None)
+
+
+def test_cursor_missing_terminal_usage_is_unavailable(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(output, {"type": "result", "subtype": "success", "result": "Done"})
+    backend = CursorBackend(model="gpt-5.2")
+
+    _transcript, input_tokens, output_tokens = backend.parse_output(str(output))
+    usage = backend.parse_usage(str(output), input_tokens=input_tokens, output_tokens=output_tokens)
+
+    assert (input_tokens, output_tokens) == (0, 0)
+    assert usage.status == "unavailable"
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert calculate_equivalent_cost_usd(usage, backend.model) == (
+        None,
+        "aggregate token usage is incomplete",
+    )
+
+
+def test_cursor_trusts_zero_terminal_usage(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {
+            "type": "result",
+            "subtype": "success",
+            "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+            },
+        },
+    )
+
+    usage = CursorBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "complete"
+    assert (usage.input_tokens, usage.output_tokens) == (0, 0)
 
 
 def test_cursor_uses_dynamic_firewall_with_default_runtime_hosts(monkeypatch):

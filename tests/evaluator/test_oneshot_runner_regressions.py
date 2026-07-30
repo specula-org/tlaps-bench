@@ -118,10 +118,36 @@ def _make_item(tmp_path: Path, timeout: int = 10) -> tuple[runner.WorkItem, Path
     return item, Path(item.output_dir) / "Suite" / "Example"
 
 
+def _assert_formal_usage_excludes_infra(result: dict) -> None:
+    assert (result["input_tokens"], result["output_tokens"]) == (0, 0)
+    assert result["time_secs"] is None
+    assert result["equivalent_cost_usd"] is None
+    assert result["usage"]["status"] == "unavailable"
+    assert result["usage"]["model_requests"] is None
+
+
 def _write_clean_response(path: str) -> None:
     events = [
         {"type": "response", "text": MODULE},
-        {"type": "usage", "input_tokens": 10, "output_tokens": 5, "model_requests": 1},
+        {
+            "type": "usage",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "model_requests": 1,
+            "model": "claude-sonnet-4-6",
+            "costs": [
+                {
+                    "amount": 0.000105,
+                    "unit": "usd",
+                    "source": "litellm.completion_cost",
+                }
+            ],
+            "source": "litellm",
+            "complete": True,
+            "is_lower_bound": False,
+        },
         {
             "type": "request_audit",
             "provider": "litellm",
@@ -205,6 +231,10 @@ def test_rerun_clears_owned_artifacts_and_preserves_unknown_files(tmp_path, monk
     assert (result_dir / "review-notes.txt").read_text() == "keep me"
     assert (unknown_dir / "evidence.txt").read_text() == "keep me too"
     assert "stale" not in json.loads((result_dir / "result.json").read_text())
+    assert (result["input_tokens"], result["output_tokens"]) == (10, 5)
+    assert result["time_secs"] >= 0
+    assert result["equivalent_cost_usd"] == pytest.approx(0.000105)
+    assert result["usage"]["status"] == "complete"
 
 
 def test_quota_skipped_rerun_removes_old_result_json(tmp_path, monkeypatch):
@@ -599,7 +629,7 @@ def test_zero_request_provider_error_preserves_root_cause(tmp_path, monkeypatch)
 
 
 def test_post_request_contract_error_preserves_root_cause(tmp_path, monkeypatch):
-    item, _result_dir = _make_item(tmp_path)
+    item, result_dir = _make_item(tmp_path)
     item.infra_retries = 3
     attempts = 0
 
@@ -634,7 +664,9 @@ def test_post_request_contract_error_preserves_root_cause(tmp_path, monkeypatch)
     assert result["check_verdict"] == "ERROR"
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["error"] == "strict one-shot: blocked second request"
-    assert (result["input_tokens"], result["output_tokens"]) == (11, 0)
+    _assert_formal_usage_excludes_infra(result)
+    accounting = json.loads((result_dir / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text())
+    assert (accounting["usage"]["input_tokens"], accounting["usage"]["output_tokens"]) == (11, 0)
 
 
 def test_invalid_model_zero_output_is_not_retried(tmp_path, monkeypatch):
@@ -682,13 +714,12 @@ def test_invalid_model_zero_output_is_not_retried(tmp_path, monkeypatch):
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["error"] == "invalid model"
-    assert result["usage"]["model_requests"] == 1
-    assert (result["input_tokens"], result["output_tokens"]) == (12, 0)
+    _assert_formal_usage_excludes_infra(result)
     assert "infra_retries" not in result
 
 
 def test_nonempty_response_without_terminal_events_is_not_retried(tmp_path, monkeypatch):
-    item, _result_dir = _make_item(tmp_path)
+    item, result_dir = _make_item(tmp_path)
     item.infra_retries = 3
     workspaces = []
 
@@ -709,10 +740,10 @@ def test_nonempty_response_without_terminal_events_is_not_retried(tmp_path, monk
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["model_requests"] == 1
-    assert result["usage"]["model_requests"] == 1
-    assert result["usage"]["status"] == "lower_bound"
-    assert result["usage"]["input_tokens"] is None
-    assert result["usage"]["output_tokens"] is None
+    _assert_formal_usage_excludes_infra(result)
+    accounting = json.loads((result_dir / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text())
+    assert accounting["usage"]["status"] == "lower_bound"
+    assert accounting["usage"]["model_requests"] == 1
     assert "infra_retries" not in result
 
 
@@ -739,7 +770,7 @@ def test_whitespace_response_is_model_output_and_is_not_retried(tmp_path, monkey
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["model_requests"] == 1
-    assert result["usage"]["model_requests"] == 1
+    _assert_formal_usage_excludes_infra(result)
     assert "infra_retries" not in result
 
 
@@ -775,8 +806,7 @@ def test_partial_model_output_marker_without_terminal_events_is_not_retried(tmp_
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["model_requests"] == 1
-    assert result["usage"]["model_requests"] == 1
-    assert result["usage"]["status"] == "lower_bound"
+    _assert_formal_usage_excludes_infra(result)
     assert "infra_retries" not in result
 
 
@@ -825,8 +855,7 @@ def test_response_evidence_overrides_zero_request_terminal(tmp_path, monkeypatch
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["model_requests"] == 1
-    assert result["usage"]["model_requests"] == 1
-    assert result["usage"]["status"] == "lower_bound"
+    _assert_formal_usage_excludes_infra(result)
     assert "infra_retries" not in result
 
 
@@ -857,8 +886,7 @@ def test_truncated_response_event_is_not_treated_as_empty_startup(tmp_path, monk
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["model_requests"] == 1
-    assert result["usage"]["model_requests"] == 1
-    assert result["usage"]["status"] == "lower_bound"
+    _assert_formal_usage_excludes_infra(result)
     assert "infra_retries" not in result
 
 
@@ -896,7 +924,25 @@ def test_copilot_oneshot_retries_zero_output_infra_then_succeeds(tmp_path, monke
         else:
             events = [
                 {"type": "response", "text": MODULE},
-                {"type": "usage", "input_tokens": 10, "output_tokens": 5, "model_requests": 1},
+                {
+                    "type": "usage",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 0,
+                    "cache_write_input_tokens": 0,
+                    "model_requests": 1,
+                    "model": "claude-opus-4.8",
+                    "costs": [
+                        {
+                            "amount": 1.0,
+                            "unit": "model_multiplier",
+                            "source": "assistant.usage.cost",
+                        }
+                    ],
+                    "source": "github_copilot_sdk",
+                    "complete": True,
+                    "is_lower_bound": False,
+                },
                 {
                     "type": "request_audit",
                     **_copilot_audit(
@@ -929,8 +975,15 @@ def test_copilot_oneshot_retries_zero_output_infra_then_succeeds(tmp_path, monke
     assert result["requested_max_output_tokens"] == 64_000
     assert result["runtime_max_output_tokens"] == 32_000
     assert result["wire_max_output_tokens"] == 64_000
+    assert (result["input_tokens"], result["output_tokens"]) == (10, 5)
+    assert result["usage"]["model_requests"] == 1
+    assert result["equivalent_cost_usd"] == pytest.approx(0.000175)
+    assert result["time_secs"] >= 0
     attempt_events = result_dir / "agent" / "attempts" / "attempt-0" / "output.jsonl"
     assert "HTTP 503 Service Unavailable" in attempt_events.read_text()
+    attempt_accounting = json.loads((result_dir / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text())
+    assert attempt_accounting["usage"]["model_requests"] == 6
+    assert attempt_accounting["usage"]["status"] == "lower_bound"
 
 
 def test_copilot_native_retry_success_grades_one_response_without_outer_retry(tmp_path, monkeypatch):
@@ -997,7 +1050,7 @@ def test_copilot_native_retry_success_grades_one_response_without_outer_retry(tm
 
 
 def test_copilot_reasoning_then_native_retry_exhaustion_does_not_outer_retry(tmp_path, monkeypatch):
-    item, _result_dir = _make_item(tmp_path)
+    item, result_dir = _make_item(tmp_path)
     item.backend = CopilotOneShotBackend()
     item.infra_retries = 3
     workspaces = []
@@ -1034,8 +1087,10 @@ def test_copilot_reasoning_then_native_retry_exhaustion_does_not_outer_retry(tmp
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
     assert result["model_requests"] == 6
-    assert result["usage"]["model_requests"] == 6
-    assert result["usage"]["status"] == "lower_bound"
+    _assert_formal_usage_excludes_infra(result)
+    accounting = json.loads((result_dir / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text())
+    assert accounting["usage"]["model_requests"] == 6
+    assert accounting["usage"]["status"] == "lower_bound"
     assert "infra_retries" not in result
 
 
@@ -1124,7 +1179,7 @@ def test_copilot_retry_result_does_not_keep_prior_attempt_wire_metadata(tmp_path
 
 
 def test_copilot_oneshot_does_not_retry_positive_output_length_failure(tmp_path, monkeypatch):
-    item, _result_dir = _make_item(tmp_path)
+    item, result_dir = _make_item(tmp_path)
     item.backend = CopilotOneShotBackend()
     item.infra_retries = 3
     calls = []
@@ -1169,7 +1224,9 @@ def test_copilot_oneshot_does_not_retry_positive_output_length_failure(tmp_path,
     assert len(calls) == 1
     assert result["termination_reason"] == "INFRA_ERROR"
     assert result["check_verdict"] == "ERROR"
-    assert result["output_tokens"] == 32_000
+    _assert_formal_usage_excludes_infra(result)
+    accounting = json.loads((result_dir / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text())
+    assert accounting["usage"]["output_tokens"] == 32_000
     assert result["finish_reason"] == "length"
     assert "infra_retries" not in result
 
