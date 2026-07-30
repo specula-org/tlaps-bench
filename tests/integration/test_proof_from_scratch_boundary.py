@@ -104,4 +104,4 @@ def test_real_checker_accepts_helpers_and_rejects_forbidden_declaration(tmp_path
 
     assert invalid.returncode == 1, invalid.stdout + invalid.stderr
     assert "HELPER_REGION_VIOLATION" in invalid.stdout
-    assert "CHEAT-DETECTED: helper_region_valid" in invalid.stdout
+    assert "CHEAT-DETECTED: editable_regions_valid" in invalid.stdout

@@ -42,7 +42,7 @@ from common.container import (
     ensure_image,
     forward_env,
 )
-from common.proof_from_scratch_contract import ProofFromScratchContractError
+from common.task_contract import TaskContractError
 from evaluator import quota
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import Backend, SubmissionDisposition
@@ -265,9 +265,11 @@ def kill_agent_tree(proc, workspace: str):
     with contextlib.suppress(Exception):
         targets.update(_procs_with_cwd_under(workspace))
     targets.add(pid)
-    # Process group first (cheap, scoped to our own session).
+    # Local backends are launched with start_new_session=True, so their PID is
+    # also the process-group ID. Use the saved ID directly: the group can still
+    # contain background children after the reaped leader no longer exists.
     with contextlib.suppress(Exception):
-        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        os.killpg(pid, signal.SIGKILL)
     for t in targets:
         with contextlib.suppress(Exception):
             os.kill(t, signal.SIGKILL)
@@ -1561,6 +1563,9 @@ def _run_backend_local(
                     timer.cancel()
                 if hard_kill_timer:
                     hard_kill_timer.cancel()
+                # The backend leader may exit while leaving background helpers
+                # in its session. Reap them before fresh canonical grading.
+                kill_agent_tree(proc, workspace)
         result["agent_exit"] = proc.returncode
         if stderr:
             with open(os.path.join(agent_dir, "stderr.txt"), "w") as f:
@@ -1909,7 +1914,7 @@ def main():
     mode = get_mode(args.mode, benchmark_root, checker_binary)
     try:
         benchmark_files = mode.get_benchmark_files(args.filter)
-    except ProofFromScratchContractError as exc:
+    except TaskContractError as exc:
         parser.exit(2, f"{parser.prog}: error: {exc}\n")
     if not benchmark_files:
         if args.filter:
@@ -1931,7 +1936,7 @@ def main():
                     os.path.basename(benchmark_path),
                     dependencies,
                 )
-        except (OSError, ProofFromScratchContractError, ValueError) as exc:
+        except (OSError, TaskContractError, ValueError) as exc:
             parser.exit(2, f"{parser.prog}: error: cannot capture canonical inputs: {exc}\n")
 
     # Resolve capability-dependent defaults only after task discovery. This

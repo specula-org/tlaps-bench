@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from common.proof_completion_contract import parse_proof_region
 from common.proof_from_scratch_contract import (
     BEGIN_AGENT_HELPERS,
     BEGIN_AGENT_PROOF,
@@ -34,6 +35,21 @@ def _marked_module(*, helper="", proof="PROOF OBVIOUS"):
             BEGIN_AGENT_HELPERS,
             helper,
             END_AGENT_HELPERS,
+            "THEOREM Target == TRUE",
+            BEGIN_AGENT_PROOF,
+            proof,
+            END_AGENT_PROOF,
+            "====",
+            "",
+        )
+    )
+
+
+def _proof_marked_module(*, proof="PROOF OBVIOUS"):
+    return "\n".join(
+        (
+            "---- MODULE Example ----",
+            "EXTENDS Naturals",
             "THEOREM Target == TRUE",
             BEGIN_AGENT_PROOF,
             proof,
@@ -544,6 +560,20 @@ def test_marked_solution_preserves_canonical_crlf_scaffold(tmp_path):
     expected = parse_editable_regions(canonical).render(helpers="Fresh == TRUE\n", proof="PROOF BY Fresh\n")
     with destination.open(newline="") as stream:
         assert stream.read() == expected
+
+
+def test_proof_only_marked_solution_reconstructs_only_proof_region(tmp_path):
+    events = tmp_path / "output.jsonl"
+    destination = tmp_path / "Example.tla"
+    canonical = _proof_marked_module()
+    destination.write_text(canonical)
+    response = _proof_marked_module(proof="PROOF BY TRUE")
+    response = response.replace("THEOREM Target == TRUE", "THEOREM Target == FALSE").removesuffix("\n")
+    _write_events(events, {"type": "response", "text": response})
+
+    assert LiteLLMOneShotBackend().materialize_solution(str(events), str(destination)) is True
+    expected = parse_proof_region(canonical).render(proof="PROOF BY TRUE\n")
+    assert destination.read_text() == expected
 
 
 def test_marked_solution_rejects_ambiguous_regions_without_overwriting(tmp_path):

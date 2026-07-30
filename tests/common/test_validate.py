@@ -1,7 +1,10 @@
+import sys
 from types import SimpleNamespace
 
 import pytest
 
+from common import validate
+from common.task_contract import TaskContractError
 from common.validate import _validation_work_item, discover_benchmarks, validation_dependencies, validation_exit_code
 
 
@@ -38,6 +41,7 @@ def test_validation_exit_code_fails_for_any_non_pass_status(status):
 def test_validation_work_item_keeps_image_for_initial_and_rerun_pools():
     item = _validation_work_item(
         "/bench/Example.tla",
+        ["/bench/Model.tla"],
         [("Example", "/source/Example.tla")],
         "/opt/tlapm/bin/tlapm",
         "/opt/tlapm/lib",
@@ -46,4 +50,22 @@ def test_validation_work_item_keeps_image_for_initial_and_rerun_pools():
         "tlaps-bench-base:immutable",
     )
 
+    assert item[1] == ["/bench/Model.tla"]
     assert item[-2:] == (True, "tlaps-bench-base:immutable")
+
+
+def test_validation_cli_reports_contract_errors_without_traceback(monkeypatch, capsys):
+    class InvalidMode:
+        def get_benchmark_files(self, _filter):
+            raise TaskContractError("marked proof-completion suite is missing its manifest")
+
+    monkeypatch.setattr(validate, "_proof_completion_mode", InvalidMode)
+    monkeypatch.setattr(sys, "argv", ["tlaps-bench validate"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        validate.main()
+
+    assert exc_info.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "marked proof-completion suite is missing its manifest" in stderr
+    assert "Traceback" not in stderr

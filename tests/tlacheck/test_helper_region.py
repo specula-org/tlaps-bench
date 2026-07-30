@@ -79,6 +79,34 @@ def _context(helper: str, module: Module, proof: str = "PROOF OBVIOUS") -> Check
     )
 
 
+def _proof_only_source(proof: str = "PROOF OBVIOUS") -> str:
+    return "\n".join(
+        (
+            "---- MODULE Task ----",
+            "EXTENDS Model",
+            "THEOREM Target == TRUE",
+            BEGIN_AGENT_PROOF,
+            proof,
+            END_AGENT_PROOF,
+            "====",
+            "",
+        )
+    )
+
+
+def _proof_only_context(module: Module, proof: str = "PROOF OBVIOUS") -> CheckContext:
+    source = _proof_only_source(proof)
+    return CheckContext(
+        target_name="Task",
+        solution_dir=".",
+        solution=module,
+        baseline=_module(),
+        provenance=Provenance(target="Task"),
+        solution_source=source,
+        baseline_source=source,
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "declaration", "kind"),
     [
@@ -185,7 +213,30 @@ def test_rejects_module_declarations_in_proof_region(field, declaration):
     issues = helper_region.check(_context("", _module(**{field: [declaration]})))
 
     assert len(issues) == 1
-    assert "belong in the helper region" in issues[0].message
+    assert "not allowed in the proof region" in issues[0].message
+
+
+def test_proof_only_contract_rejects_module_declaration_in_proof_region():
+    operator = Operator("Late", Loc(6, 1, 6, 12), False, None, [])
+    context = _proof_only_context(_module(operators=[operator]), "PROOF OBVIOUS\nLate == TRUE")
+
+    issues = helper_region.check(context)
+
+    assert len(issues) == 1
+    assert "module-level operator declarations are not allowed in the proof region" in issues[0].message
+
+
+def test_proof_only_contract_allows_proof_local_define_and_use(tmp_path):
+    model = tmp_path / "Model.tla"
+    task = tmp_path / "Task.tla"
+    model.write_text("---- MODULE Model ----\nTHEOREM Fact == TRUE\nPROOF OBVIOUS\n====\n")
+    proof = "PROOF\n<1>1. DEFINE StepFact == TRUE\n<1>2. USE Fact\n<1>3. QED BY StepFact"
+    task.write_text(_proof_only_source(proof))
+    module = dump_normalized(str(task), dep_dir=str(tmp_path))
+
+    assert "StepFact" not in {operator.name for operator in module.operators}
+    assert module.directives == []
+    assert helper_region.check(_proof_only_context(module, proof)) == []
 
 
 def test_proof_bounds_match_sany_when_helper_comment_contains_form_feed(tmp_path):
@@ -201,7 +252,7 @@ def test_proof_bounds_match_sany_when_helper_comment_contains_form_feed(tmp_path
 
     assert [constant.loc.line_start for constant in module.constants] == [8]
     assert len(issues) == 1
-    assert "module-level CONSTANT declarations belong in the helper region" in issues[0].message
+    assert "module-level CONSTANT declarations are not allowed in the proof region" in issues[0].message
 
 
 def test_rejects_nested_module():

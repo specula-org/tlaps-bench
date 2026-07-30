@@ -17,9 +17,10 @@ Each task presents a TLA+ theorem whose proof body is replaced by `PROOF OBVIOUS
 the AI must replace it with a real proof that `tlapm` accepts. Tasks come in two
 types:
 
-- **Proof completion** (`--mode proof-completion`) — the full scaffolding (inductive
-  invariants, lemma decomposition, and preceding lemmas marked `PROOF OMITTED`)
-  is given, and the AI fills in one target proof.
+- **Proof completion** (`--mode proof-completion`) — the model and proof scaffold
+  (inductive invariants, lemma decomposition, and preceding lemmas marked
+  `PROOF OMITTED`) are given as read-only context, and the AI fills in one
+  marked target proof.
 - **Proof from scratch** (`--mode proof-from-scratch`) — only the model and
   the target theorem statement remain; the AI must invent the entire proof
   structure, including any helper lemmas.

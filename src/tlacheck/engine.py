@@ -24,7 +24,7 @@ SANY_RULES = [
     extra_axiom,
     dependency_modified,
     statement_modified,  # target theorem statement must not be weakened/altered
-    helper_region,  # marked helper region allows only safe same-module scaffolding
+    helper_region,  # marked regions allow safe helpers and proof-local steps only
     incomplete_proof,  # bare-QED / missing step inside a structured proof
 ]
 

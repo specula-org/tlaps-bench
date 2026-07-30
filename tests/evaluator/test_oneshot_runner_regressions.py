@@ -359,6 +359,43 @@ def test_local_runner_launches_copilot_with_absolute_deadline(tmp_path, monkeypa
     assert result["agent_exit"] == 0
 
 
+def test_local_runner_reaps_background_processes_after_normal_exit(tmp_path):
+    item, _result_dir = _make_item(tmp_path, timeout=10)
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    survived = tmp_path / "background-survived"
+    child_code = f"import pathlib, time; time.sleep(0.5); pathlib.Path({str(survived)!r}).write_text('survived')"
+    leader_code = (
+        "import subprocess, sys; "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+    )
+    backend = SimpleNamespace(
+        name="test-local",
+        capabilities=SimpleNamespace(cooperative_deadline=False, timeout_drain_grace=0.0),
+        build_run_command=lambda _workspace, _result_dir, _deadline: [sys.executable, "-c", leader_code],
+        prepare_invocation=lambda command, _prompt: (command, None),
+        execution_environment=lambda _result_dir: {},
+    )
+
+    result = {}
+    runner._run_backend_local(
+        item,
+        backend,
+        item.mode,
+        str(tmp_path),
+        str(agent_dir),
+        str(agent_dir / "output.jsonl"),
+        "prompt",
+        result,
+        "/bin/true",
+    )
+
+    time.sleep(0.7)
+    assert result["agent_exit"] == 0
+    assert not survived.exists()
+
+
 def test_container_runner_launches_copilot_with_absolute_deadline(tmp_path, monkeypatch):
     item, _result_dir = _make_item(tmp_path, timeout=40_000)
     item.backend = CopilotOneShotBackend()

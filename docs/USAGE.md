@@ -149,7 +149,7 @@ A mode defines what the agent is asked to do.
 
 | Mode | What the agent sees | What it must do |
 |------|---------------------|-----------------|
-| `proof-completion` | Full scaffolding. Preceding proofs marked `PROOF OMITTED`. Last theorem has `PROOF OBVIOUS`. | Replace `PROOF OBVIOUS` with a valid proof. Cannot change anything above it. |
+| `proof-completion` | A fixed target theorem plus its exact read-only model and scaffold context. Scaffold lemmas marked `PROOF OMITTED` are trusted givens. | Replace the marked target proof without changing the theorem, scaffold, imports, or context. |
 | `proof-from-scratch` | An editable target theorem plus only its declared read-only model/definition context. | Invent the proof structure, including fresh helper definitions and proved lemmas. |
 
 Select a mode with `--mode`:
@@ -161,11 +161,15 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --mode proof-from-scratch
 
 Benchmark files live in `benchmark/proof-completion/` and `benchmark/proof-from-scratch/` respectively.
 
-### Proof-from-scratch trust boundary
+### Layered-task trust boundary
 
-`benchmark/proof-from-scratch/manifest.json` is the authority for task discovery and context. Each entry names one editable target and its complete local TLA+ dependency closure. The runner does not infer dependencies from neighboring filenames, so sibling tasks and unrelated definition modules never enter the workspace, prompt, input artifact, or verifier. A missing or invalid manifest stops the run.
+For layered suites, `benchmark/<mode>/manifest.json` is the authority for task discovery and context. Each entry names one editable target and its complete local TLA+ dependency closure. The runner does not infer dependencies from neighboring filenames, so sibling tasks and unrelated definition modules never enter the workspace, prompt, input artifact, or verifier. An invalid manifest stops the run.
 
-The target contains separate `AGENT HELPERS` and `AGENT PROOF` marker pairs. Only their interiors may change; all other bytes must match the canonical target. Extra newlines at EOF are ignored; other newline-only differences fail but are not labeled cheating. The helper region accepts fresh operator definitions, module-level `USE DEF` / `HIDE DEF`, and fully proved named lemmas or theorems. Constants, variables, assumptions, instances, nested modules, shadowed names, and module-level declarations in the proof region are rejected.
+Proof-completion targets contain one `AGENT PROOF` marker pair. Only its interior may change; imports, the target theorem statement, marker lines, and all surrounding text remain canonical. Module-level declarations are rejected inside the proof region, while proof-local steps such as `DEFINE` and `USE` remain valid. Model and scaffold modules are read-only context; their admitted scaffold lemmas are allowed as givens.
+
+Proof-from-scratch targets contain separate `AGENT HELPERS` and `AGENT PROOF` marker pairs. The helper region accepts fresh operator definitions, module-level `USE DEF` / `HIDE DEF`, and fully proved named lemmas or theorems. Constants, variables, assumptions, instances, nested modules, shadowed names, and module-level declarations in the proof region are rejected.
+
+For both marked layouts, all fixed bytes must match the canonical target. Extra newlines at EOF are ignored; other newline-only differences fail but are not labeled cheating. Proof completion temporarily retains compatibility with the checked-in legacy unmarked dataset: when its manifest is absent and no task contains proof markers, the evaluator emits one warning and uses the previous heuristic discovery and preamble check. A malformed manifest or any marked proof-completion task without a manifest fails closed. Proof from scratch has no fallback.
 
 The runner captures canonical inputs before starting the agent and grades from a separate copy. Docker makes context read-only; native `--no-container` uses advisory `0444` permissions and is not a host-security boundary. Canonical validation failures are infrastructure errors.
 
@@ -213,7 +217,7 @@ uv run tlaps-bench check path/to/file.tla --mode proof-from-scratch --benchmark-
 uv run tlaps-bench check path/to/file.tla --sany-only
 ```
 
-Proof-from-scratch checks automatically require canonical replay. Pass the directory containing the original target and its declared context with `--benchmark-dir`; inside the evaluator runner this directory is supplied automatically. The command fails closed when no canonical context is available.
+Proof-from-scratch and marked proof-completion checks automatically require canonical replay. Pass the directory containing the original target and its declared context with `--benchmark-dir`; inside the evaluator runner this directory is supplied automatically. The command fails closed when no canonical context is available. Legacy unmarked proof-completion checks keep their previous behavior.
 
 By default, `check` reuses `<target-dir>/.tlacache`; use `--no-cache` for a cold check, or `--timeout 0` for no checker deadline.
 

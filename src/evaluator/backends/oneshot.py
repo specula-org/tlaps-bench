@@ -13,7 +13,18 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from common.proof_from_scratch_contract import EditableRegionError, parse_editable_regions
+from common.task_contract import (
+    BEGIN_AGENT_HELPERS,
+    BEGIN_AGENT_PROOF,
+    END_AGENT_HELPERS,
+    END_AGENT_PROOF,
+    EditableRegionError,
+    EditableRegions,
+    ProofRegion,
+    has_marker_line,
+    parse_editable_regions,
+    parse_proof_region,
+)
 from evaluator.termination import TerminationContext, TerminationReason
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
@@ -95,15 +106,29 @@ def _reconstruct_marked_solution(target: Path, solution: str) -> str | None:
     try:
         with target.open(encoding="utf-8", newline="") as stream:
             canonical_source = stream.read()
-        canonical_regions = parse_editable_regions(canonical_source)
-    except (OSError, UnicodeError, EditableRegionError):
+    except (OSError, UnicodeError):
+        return solution
+
+    helper_markers = (BEGIN_AGENT_HELPERS, END_AGENT_HELPERS)
+    proof_markers = (BEGIN_AGENT_PROOF, END_AGENT_PROOF)
+    if has_marker_line(canonical_source, helper_markers):
+        parser = parse_editable_regions
+    elif has_marker_line(canonical_source, proof_markers):
+        parser = parse_proof_region
+    else:
         return solution
 
     try:
-        submitted_regions = parse_editable_regions(solution)
+        canonical_regions = parser(canonical_source)
+        submitted_regions = parser(solution)
     except EditableRegionError:
         return None
-    return canonical_regions.render(helpers=submitted_regions.helpers, proof=submitted_regions.proof)
+
+    if isinstance(canonical_regions, EditableRegions) and isinstance(submitted_regions, EditableRegions):
+        return canonical_regions.render(helpers=submitted_regions.helpers, proof=submitted_regions.proof)
+    if isinstance(canonical_regions, ProofRegion) and isinstance(submitted_regions, ProofRegion):
+        return canonical_regions.render(proof=submitted_regions.proof)
+    return None
 
 
 class OneShotBackend(Backend):

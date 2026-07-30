@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 # Internal imports
 from common.cheating_detection import CheatingIssue, detect_proof_omitted
 from common.container import IMAGE_TAG, ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image
+from common.task_contract import TaskContractError
 from dataset.proof_completion.generate import (
     BENCHMARK_DIR,
     PROJECT_ROOT,
@@ -251,6 +252,7 @@ def run_tlapm_docker(
 
 def _validation_work_item(
     benchmark_path,
+    dependencies,
     source_files,
     tlapm_path,
     tlapm_lib,
@@ -260,12 +262,23 @@ def _validation_work_item(
 ):
     """Build the picklable worker tuple shared by initial and rerun pools."""
 
-    return (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout, use_container, container_image)
+    return (
+        benchmark_path,
+        dependencies,
+        source_files,
+        tlapm_path,
+        tlapm_lib,
+        timeout,
+        use_container,
+        container_image,
+    )
 
 
 def validate_single_benchmark(args_tuple):
     """Validate a single benchmark. Designed for ProcessPoolExecutor."""
-    (benchmark_path, source_files, tlapm_path, tlapm_lib, timeout, use_container, container_image) = args_tuple
+    (benchmark_path, dependencies, source_files, tlapm_path, tlapm_lib, timeout, use_container, container_image) = (
+        args_tuple
+    )
 
     basename = os.path.basename(benchmark_path)
     module_dir = os.path.basename(os.path.dirname(benchmark_path))
@@ -368,9 +381,7 @@ def validate_single_benchmark(args_tuple):
         with open(tmp_file, "w") as f:
             f.write(ported_content)
 
-        # Use the runner's dependency discovery so shared modules whose names
-        # contain underscores (for example CRDT_proof.tla) are not omitted.
-        for dep_file in validation_dependencies(benchmark_path):
+        for dep_file in dependencies:
             shutil.copy2(dep_file, os.path.join(tmp_dir, os.path.basename(dep_file)))
 
         exit_code, output, elapsed = (
@@ -525,7 +536,14 @@ def main():
     )
     args = parser.parse_args()
 
-    benchmark_files = discover_benchmarks(args.filter)
+    try:
+        validation_mode = _proof_completion_mode()
+        benchmark_files = validation_mode.get_benchmark_files(args.filter)
+        dependencies_by_benchmark = {
+            benchmark_path: validation_mode.get_dependencies(benchmark_path) for benchmark_path in benchmark_files
+        }
+    except TaskContractError as exc:
+        parser.error(str(exc))
     if not benchmark_files:
         if args.filter:
             parser.error(f"no benchmarks matched --filter {args.filter!r}")
@@ -586,6 +604,7 @@ def main():
     work_items = [
         _validation_work_item(
             bf,
+            dependencies_by_benchmark[bf],
             source_files,
             tlapm_path,
             tlapm_lib,
@@ -644,6 +663,7 @@ def main():
             rerun_items.append(
                 _validation_work_item(
                     bench_path,
+                    dependencies_by_benchmark[bench_path],
                     source_files,
                     rerun_tlapm,
                     rerun_tlapm_lib,

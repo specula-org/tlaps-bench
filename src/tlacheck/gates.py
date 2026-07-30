@@ -6,9 +6,9 @@ This module IS the framework (W0): a benchmark solution passes iff
 
   A — IDENTITY:  the thing that got proved IS the canonical target. The target
                  statement / CONSTANT / VARIABLE / ASSUME and the definitions it
-                 depends on are unchanged (proof-completion preamble byte-identical); no new
-                 AXIOM/ASSUME; no smuggled module or definition; the file parses
-                 under standalone SANY.
+                 depends on are unchanged (legacy preamble or marked fixed text);
+                 no new AXIOM/ASSUME; no smuggled module or definition; the file
+                 parses under standalone SANY.
   B — DISCHARGE: the target goal is genuinely discharged. tlapm proved every
                  generated obligation, no step is MISSING (bare QED / unproven
                  helper / unfinished target), the goal is not admitted as a
@@ -84,9 +84,9 @@ class GraderInputs:
     extra_axiom: bool = False  # new AXIOM/ASSUME beyond baseline
     smuggled_module: bool = False  # agent-created module sneaking content in
     preamble_modified: bool = False  # proof-completion preamble (defs/CONSTANT/VARIABLE/ASSUME) changed
-    scaffold_modified: bool = False  # proof-from-scratch fixed text outside editable regions changed
+    scaffold_modified: bool = False  # fixed text outside marked editable regions changed
     scaffold_format_modified: bool = False  # only newline representation changed outside editable regions
-    helper_policy_violated: bool = False
+    editable_region_policy_violated: bool = False
     # Gate B — discharge
     tlapm_obligations_proved: bool = False  # every generated obligation PROVED, none failed
     n_missing: int = 0  # `--strict` MISSING steps (agent gaps)
@@ -147,7 +147,7 @@ INTEGRITY_CHECKS = frozenset(
         "no_smuggled_definition",
         "preamble_unchanged",
         "scaffold_unchanged",
-        "helper_region_valid",
+        "editable_regions_valid",
         "no_admitted_goal",
         "no_added_omitted",
         "admitted_set_eq_baseline",
@@ -200,7 +200,7 @@ def grade(inp: GraderInputs) -> GradeResult:
             Gate.A_IDENTITY,
             Status.WIRED,
             not inp.scaffold_modified,
-            "fixed task text outside the proof-from-scratch editable regions was modified",
+            "fixed task text outside the marked editable regions was modified",
         ),
         Check(
             "scaffold_format_unchanged",
@@ -210,10 +210,10 @@ def grade(inp: GraderInputs) -> GradeResult:
             "fixed task text used different line endings or final-newline formatting",
         ),
         Check(
-            "helper_region_valid",
+            "editable_regions_valid",
             Gate.A_IDENTITY,
             Status.WIRED,
-            not inp.helper_policy_violated,
+            not inp.editable_region_policy_violated,
             "an editable region contains a forbidden, misplaced, or unproved declaration",
         ),
         Check(
@@ -288,8 +288,8 @@ def from_tlacheck(
     ``.issues`` where each issue has ``.vector`` and ``.severity`` (with a
     ``.value``/name distinguishing ``WARNING``).
 
-    ``preamble_modified`` (proof-completion byte-match), ``scaffold_modified``
-    (proof-from-scratch fixed-region content), ``scaffold_format_modified``
+    ``preamble_modified`` (legacy proof-completion byte-match), ``scaffold_modified``
+    (marked-task fixed-region content), ``scaffold_format_modified``
     (line-ending-only fixed-region changes), ``proof_omitted`` (agent-added
     PROOF OMITTED / bare OMITTED), and ``legacy_issue_vectors`` are caller-computed
     detections. Required canonical replay is a fail-closed checker precondition,
@@ -309,7 +309,7 @@ def from_tlacheck(
         preamble_modified=preamble_modified,
         scaffold_modified=scaffold_modified,
         scaffold_format_modified=scaffold_format_modified,
-        helper_policy_violated="HELPER_REGION_VIOLATION" in vectors,
+        editable_region_policy_violated="HELPER_REGION_VIOLATION" in vectors,
         tlapm_obligations_proved=tlapm_obligations_proved,
         n_missing=n_missing,
         admitted_goal=bool(vectors & {"ADMITTED_STATEMENT", "ADMITTED_FALLBACK"}),

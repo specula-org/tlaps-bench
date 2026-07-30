@@ -47,9 +47,11 @@ def _mode(tmp_path):
     return ProofFromScratch(str(tmp_path), "/checker")
 
 
-def test_only_proof_from_scratch_requires_read_only_dependencies():
+def test_unmarked_proof_completion_keeps_legacy_dependency_permissions(tmp_path):
+    (tmp_path / "proof-completion").mkdir()
+
     assert ProofFromScratch.read_only_dependencies is True
-    assert ProofCompletion.read_only_dependencies is False
+    assert ProofCompletion(str(tmp_path), "/checker").read_only_dependencies is False
 
 
 def test_discovers_only_sorted_manifest_tasks(tmp_path):
