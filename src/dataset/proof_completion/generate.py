@@ -27,6 +27,44 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
 BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "proof-completion")
 
+# Exact-byte duplicate targets from source modules intentionally copied across
+# upstream directories.  The canonical directory is kept; copies are dropped.
+_DUPLICATE_TASK_FAMILIES = (
+    ("Sets_", "Data", frozenset({"Consensus"})),
+    (
+        "Channel_proof_",
+        "tlaplus_examples_SpecifyingSystems_AsynchronousInterface",
+        frozenset(
+            {
+                "tlaplus_examples_SpecifyingSystems_Composing",
+                "tlaplus_examples_SpecifyingSystems_FIFO",
+            }
+        ),
+    ),
+    (
+        "HourClock_proof_",
+        "tlaplus_examples_SpecifyingSystems_HourClock",
+        frozenset(
+            {
+                "tlaplus_examples_SpecifyingSystems_Composing",
+                "tlaplus_examples_SpecifyingSystems_Liveness",
+                "tlaplus_examples_SpecifyingSystems_RealTime",
+            }
+        ),
+    ),
+    (
+        "InternalMemory_proof_",
+        "tlaplus_examples_SpecifyingSystems_CachingMemory",
+        frozenset(
+            {
+                "tlaplus_examples_SpecifyingSystems_Composing",
+                "tlaplus_examples_SpecifyingSystems_Liveness",
+                "tlaplus_examples_SpecifyingSystems_RealTime",
+            }
+        ),
+    ),
+)
+
 
 def find_source_dirs():
     """Find all top-level module directories under source/ containing .tla files."""
@@ -1120,6 +1158,59 @@ def _run_sany_gate(directory):
     return _run_triviality_gate(directory)
 
 
+def _run_duplicate_gate(directory):
+    """Drop approved exact-byte duplicate targets; reject unknown groups."""
+    import hashlib
+
+    from dataset.sany_audit import is_task_file
+
+    tasks = sorted(glob.glob(os.path.join(directory, "**", "*.tla"), recursive=True))
+    tasks = [path for path in tasks if is_task_file(path)]
+    by_hash = {}
+    for path in tasks:
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        by_hash.setdefault(digest, []).append(path)
+
+    approved = []
+    unknown = []
+    for group in (paths for paths in by_hash.values() if len(paths) > 1):
+        basenames = {os.path.basename(path) for path in group}
+        source_dirs = {os.path.relpath(path, directory).split(os.sep, 1)[0] for path in group}
+        keeper = None
+        if len(basenames) == 1:
+            basename = next(iter(basenames))
+            for prefix, canonical, copies in _DUPLICATE_TASK_FAMILIES:
+                keepers = [path for path in group if os.path.relpath(path, directory).split(os.sep, 1)[0] == canonical]
+                if basename.startswith(prefix) and len(keepers) == 1 and source_dirs <= copies | {canonical}:
+                    keeper = keepers[0]
+                    break
+        if keeper is None:
+            unknown.append(group)
+        else:
+            approved.append((keeper, group))
+
+    if unknown:
+        detail = "\n".join(
+            "  - " + "\n    ".join(os.path.relpath(path, directory) for path in group) for group in unknown
+        )
+        raise RuntimeError(f"duplicate task gate found {len(unknown)} unapproved exact-byte group(s):\n{detail}")
+
+    removed = []
+    for keeper, group in approved:
+        for path in group:
+            if path == keeper:
+                continue
+            os.remove(path)
+            removed.append(path)
+            print(
+                f"  [duplicate-gate-l1] removed {os.path.relpath(path, directory)} "
+                f"(same target as {os.path.relpath(keeper, directory)})"
+            )
+    print(f"[duplicate-gate-l1] checked {len(tasks)} task(s), removed {len(removed)} approved duplicate(s)")
+    return removed
+
+
 def _run_triviality_gate(directory):
     """Post-generation triviality gate: a task whose PROOF OBVIOUS placeholder
     already verifies is degenerate (a no-op submission would PASS grading).
@@ -1146,9 +1237,10 @@ def main():
 
     if args.shared_model:
         total = generate_shared_model_l1(output_root=args.output_dir)
+        duplicates = _run_duplicate_gate(args.output_dir or BENCHMARK_DIR)
         dropped = _run_sany_gate(args.output_dir or BENCHMARK_DIR)
-        detail = f" ({total} generated, {dropped} dropped as degenerate)" if dropped else ""
-        print(f"Total proof-completion benchmarks (shared-model): {total - dropped}{detail}")
+        detail = f" ({total} generated, {len(duplicates)} duplicates and {dropped} degenerate tasks dropped)"
+        print(f"Total proof-completion benchmarks (shared-model): {total - len(duplicates) - dropped}{detail}")
         return
 
     # Clean benchmark dir
@@ -1168,9 +1260,10 @@ def main():
         if count:
             print(f"  -> {count} benchmarks")
 
+    duplicates = _run_duplicate_gate(BENCHMARK_DIR)
     dropped = _run_sany_gate(BENCHMARK_DIR)
-    detail = f" ({total} generated, {dropped} dropped as degenerate)" if dropped else ""
-    print(f"\nTotal benchmarks generated: {total - dropped}{detail}")
+    detail = f" ({total} generated, {len(duplicates)} duplicates and {dropped} degenerate tasks dropped)"
+    print(f"\nTotal benchmarks generated: {total - len(duplicates) - dropped}{detail}")
 
 
 if __name__ == "__main__":
