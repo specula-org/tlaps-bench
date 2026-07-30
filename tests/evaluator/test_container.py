@@ -1,7 +1,9 @@
 """Tests for ContainerRunner."""
 
 import os
+import subprocess
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -420,6 +422,18 @@ class TestBuildCompositeCommand:
         result = runner.build_composite_command(["echo", "hello world"])
         assert "hello world" in result  # should be quoted
 
+    def test_agent_start_marker_follows_setup_and_precedes_agent(self):
+        runner = ContainerRunner()
+        result = runner.build_composite_command(
+            ["codex", "exec"],
+            install_script="install-codex.sh",
+            agent_start_marker="START",
+        )
+
+        assert result.index("install-codex.sh") < result.index("/opt/firewall.sh")
+        assert result.index("/opt/firewall.sh") < result.index("printf")
+        assert result.index("printf") < result.index("capsh")
+
 
 class TestBackendCredentialMounts:
     def test_backend_credential_mounts_use_only_needed_filesystem_auth(self, tmp_path):
@@ -658,6 +672,65 @@ class TestRunAgentContainerSessionWiring:
         assert captured["stdin_data"] is None
         assert captured["config"].env["COPILOT_OTEL_EXPORTER_TYPE"] == "file"
         assert captured["config"].env["COPILOT_OTEL_FILE_EXPORTER_PATH"] == "/results/copilot-otel.jsonl"
+        assert captured["config"].agent_start_marker
+
+    def test_container_time_starts_at_marker_and_marker_is_not_agent_output(self, tmp_path, monkeypatch):
+        from evaluator import runner as runner_mod
+
+        backend = CopilotBackend(model="test-model")
+        item = SimpleNamespace(
+            benchmark_path=str(tmp_path / "Bench.tla"),
+            timeout=0,
+            check_timeout=600,
+            keep_container=False,
+            session_dir="",
+            container_image="unused",
+            mode=SimpleNamespace(canonical_replay_required=False),
+        )
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir()
+
+        class _FakeRunner:
+            def run(self, config, _cmd, stdin_data=None):
+                assert stdin_data is None
+                proc = subprocess.Popen(
+                    [
+                        "bash",
+                        "-c",
+                        f"printf '%s\\n' {config.agent_start_marker!r}; printf '%s\\n' '{{\"type\":\"result\"}}'",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                return SimpleNamespace(proc=proc, container_id="")
+
+            def kill(self, _run):
+                pytest.fail("completed fake container must not be killed")
+
+            def cleanup_credential_tmps(self):
+                pass
+
+        clock = iter((100.0, 105.0))
+        monkeypatch.setattr(runner_mod, "ContainerRunner", _FakeRunner)
+        monkeypatch.setattr(runner_mod.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(runner_mod, "STREAM_AGENT_OUTPUT", False)
+        output = agent_dir / "output.jsonl"
+        result = {}
+
+        duration = runner_mod._run_backend_container(
+            item,
+            backend,
+            str(tmp_path / "workspace"),
+            str(agent_dir),
+            str(output),
+            "prompt",
+            result,
+        )
+
+        assert duration == 5.0
+        assert output.read_text() == '{"type":"result"}\n'
+        assert result["agent_exit"] == 0
 
     def _capture_config(
         self,

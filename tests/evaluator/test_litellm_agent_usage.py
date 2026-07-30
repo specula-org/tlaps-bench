@@ -48,17 +48,7 @@ def test_hidden_response_cost_is_preferred(capsys):
     assert event["output_tokens"] == 10
 
 
-def test_completion_cost_is_the_fallback(capsys, monkeypatch):
-    monkeypatch.setattr(litellm_agent.litellm, "completion_cost", lambda **_: 0.5, raising=False)
-    response = _FakeResponse(usage=_usage(prompt_tokens=10, completion_tokens=5))
-
-    event = _emit(capsys, response)
-
-    assert event["costs"] == [{"amount": 0.5, "unit": "usd", "source": "litellm.completion_cost"}]
-
-
-def test_nonfinite_hidden_cost_falls_back_to_completion_cost(capsys, monkeypatch):
-    monkeypatch.setattr(litellm_agent.litellm, "completion_cost", lambda **_: 0.25, raising=False)
+def test_nonfinite_hidden_cost_is_omitted(capsys):
     response = _FakeResponse(
         usage=_usage(prompt_tokens=10, completion_tokens=5),
         hidden={"response_cost": float("inf")},
@@ -66,14 +56,10 @@ def test_nonfinite_hidden_cost_falls_back_to_completion_cost(capsys, monkeypatch
 
     event = _emit(capsys, response)
 
-    assert event["costs"] == [{"amount": 0.25, "unit": "usd", "source": "litellm.completion_cost"}]
+    assert "costs" not in event
 
 
-def test_cost_failure_omits_cost_rather_than_reporting_zero(capsys, monkeypatch):
-    def _boom(**_):
-        raise RuntimeError("no pricing for model")
-
-    monkeypatch.setattr(litellm_agent.litellm, "completion_cost", _boom, raising=False)
+def test_missing_hidden_cost_is_omitted(capsys):
     response = _FakeResponse(usage=_usage(prompt_tokens=10, completion_tokens=5))
 
     event = _emit(capsys, response)
@@ -110,12 +96,7 @@ def test_absent_token_fields_are_omitted_not_zeroed(capsys):
     assert event["costs"] == [{"amount": 0.0, "unit": "usd", "source": "litellm.response_cost"}]
 
 
-def test_response_without_usage_still_emits_request_evidence(capsys, monkeypatch):
-    def _unpriceable(**_):
-        raise RuntimeError("usage unavailable")
-
-    monkeypatch.setattr(litellm_agent.litellm, "completion_cost", _unpriceable, raising=False)
-
+def test_response_without_usage_still_emits_request_evidence(capsys):
     event = _emit(capsys, _FakeResponse(usage=None))
 
     assert event["type"] == "request_usage"
@@ -139,12 +120,6 @@ def test_agent_can_finish_a_response_without_usage(monkeypatch, capsys):
         choices=[SimpleNamespace(finish_reason="stop", message=message)],
     )
     monkeypatch.setattr(litellm_agent.litellm, "completion", lambda **_: response)
-    monkeypatch.setattr(
-        litellm_agent.litellm,
-        "completion_cost",
-        lambda **_: (_ for _ in ()).throw(RuntimeError("usage unavailable")),
-        raising=False,
-    )
     monkeypatch.setattr(sys, "stdin", io.StringIO("prove this"))
     monkeypatch.setattr(
         sys,

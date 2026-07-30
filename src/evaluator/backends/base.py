@@ -196,6 +196,7 @@ class Backend(ABC):
     reasoning_effort_values: tuple[str, ...] = ()
     max_output_tokens: int | None = None
     supports_max_output_tokens: bool = False
+    requires_public_pricing: bool = False
 
     def set_reasoning_effort(self, reasoning_effort: str | None) -> None:
         """Validate and store an optional backend-native reasoning effort."""

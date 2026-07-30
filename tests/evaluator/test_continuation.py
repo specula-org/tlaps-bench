@@ -395,6 +395,14 @@ def test_stale_agent_check_not_copied_into_round(tmp_path, monkeypatch):
 
 def test_costs_accumulate_into_top_level(tmp_path, monkeypatch):
     # Verdict fields stay first-attempt; cost fields cover the whole chain.
+    monkeypatch.setattr(
+        runner,
+        "calculate_equivalent_cost_usd",
+        lambda usage, *_args: (
+            sum(cost.amount for cost in usage.costs if cost.source == "test.cost"),
+            None,
+        ),
+    )
     backend = _ScriptedBackend()
     _install_agent(
         monkeypatch,
@@ -410,8 +418,10 @@ def test_costs_accumulate_into_top_level(tmp_path, monkeypatch):
     assert result["output_tokens"] == 800
     assert result["usage"]["costs"] == [{"amount": 0.016, "unit": "provider_monetary", "source": "test.cost"}]
     assert result["usage"]["requests"][1]["continuation_round"] == 1
+    assert result["equivalent_cost_usd"] == 0.016
     assert result["continuations"][0]["input_tokens"] == 60
     assert result["continuations"][0]["output_tokens"] == 300
+    assert result["continuations"][0]["equivalent_cost_usd"] == 0.006
     assert result["continuations"][0]["usage"]["costs"] == [
         {"amount": 0.006, "unit": "provider_monetary", "source": "test.cost"}
     ]

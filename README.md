@@ -84,7 +84,8 @@ uv run tlaps-bench run --jobs 10 --timeout 7200
 uv run tlaps-bench run --mode proof-from-scratch --jobs 10
 ```
 
-Each run writes `results.json` and `summary.md` (with the headline pass rate);
+Each run writes `results.json` and `summary.md` with pass rate and total task time;
+Codex, Claude Code, Copilot, LiteLLM, and Pi also report equivalent public API cost.
 `uv run tlaps-bench score` (re)computes and compares pass rates. Use `--resume`
 with a fixed `--output-dir` to skip tasks already recorded as PASS, and
 `--force-build` to rebuild the image after changing source.

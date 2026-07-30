@@ -8,6 +8,7 @@ import os
 import subprocess
 from typing import Any
 
+from evaluator.cost import calculate_model_aggregate_cost_usd
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
 from .agentic import AgenticBackend
@@ -51,6 +52,7 @@ def _streamed_request(
     message: dict[str, Any],
     requested_model: str | None,
     *,
+    provider: str,
     provider_request_id: str | None,
     trust_output: bool,
 ) -> RequestUsage:
@@ -70,7 +72,7 @@ def _streamed_request(
         cache_write_input_tokens=cache_write,
         requested_model=requested_model,
         resolved_model=_optional_str(message.get("model")),
-        provider=PROVIDER,
+        provider=provider,
         finish_reasons=((stop_reason,) if stop_reason is not None else ()),
         request_id=_optional_str(message.get("id")),
         provider_request_id=provider_request_id,
@@ -79,7 +81,9 @@ def _streamed_request(
 
 def _model_usage_aggregate(
     value: object,
-) -> tuple[dict[str, int], float | None, tuple[str, ...], tuple[str, ...]] | None:
+    *,
+    provider: str,
+) -> tuple[dict[str, int], float | None, tuple[RequestUsage, ...], tuple[str, ...]] | None:
     """Normalize Claude Code's authoritative per-model session aggregate.
 
     ``result.usage`` can cover only the primary model while ``modelUsage`` also
@@ -129,12 +133,33 @@ def _model_usage_aggregate(
     costs = [nonnegative_float(usage.get("costUSD")) for _model, usage in entries]
     if any(cost is None for cost in costs):
         warnings.append("Claude Code modelUsage costUSD is missing for some models")
-    known_costs = [cost for cost in costs if cost is not None]
-    aggregate_cost = sum(known_costs) if known_costs else None
-    return totals, aggregate_cost, tuple(model for model, _usage in entries), tuple(warnings)
+    aggregate_cost = sum(costs) if all(cost is not None for cost in costs) else None
+    model_aggregates: list[RequestUsage] = []
+    for index, (model, _usage) in enumerate(entries):
+        input_parts = [
+            components["base_input_tokens"][index],
+            components["cache_read_input_tokens"][index],
+            components["cache_write_input_tokens"][index],
+        ]
+        model_aggregates.append(
+            RequestUsage(
+                input_tokens=sum(input_parts) if all(part is not None for part in input_parts) else None,
+                output_tokens=components["output_tokens"][index],
+                cache_read_input_tokens=components["cache_read_input_tokens"][index],
+                cache_write_input_tokens=components["cache_write_input_tokens"][index],
+                resolved_model=model,
+                provider=provider,
+            )
+        )
+    return totals, aggregate_cost, tuple(model_aggregates), tuple(warnings)
 
 
-def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = None) -> UsageSummary | None:
+def parse_claude_code_usage(
+    jsonl_path: str,
+    *,
+    requested_model: str | None = None,
+    provider: str = PROVIDER,
+) -> UsageSummary | None:
     """Parse Claude Code stream-json usage into an authoritative usage record.
 
     Streamed ``assistant`` input/cache are final, but streamed ``output_tokens``
@@ -145,13 +170,14 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
 
     streamed: list[tuple[dict[str, Any], str | None]] = []
     warnings: list[str] = []
-    result_seen = False
+    result_count = 0
+    malformed_json = False
     result_error = False
     result_totals: dict[str, int | None] = {}
     result_cost: UsageCost | None = None
     model_usage_totals: dict[str, int] | None = None
     model_usage_cost: float | None = None
-    model_usage_models: tuple[str, ...] = ()
+    model_usage_aggregates: tuple[RequestUsage, ...] = ()
     model_usage_warnings: tuple[str, ...] = ()
     model_time_secs: float | None = None
     num_turns: int | None = None
@@ -168,8 +194,10 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
                 try:
                     event = json.loads(raw)
                 except json.JSONDecodeError:
+                    malformed_json = True
                     continue
                 if not isinstance(event, dict):
+                    malformed_json = True
                     continue
                 etype = event.get("type", "")
 
@@ -185,7 +213,7 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
                     streamed.append((message, _optional_str(event.get("request_id"))))
 
                 elif etype == "result":
-                    result_seen = True
+                    result_count += 1
                     result_error = event.get("is_error") is True
                     total_input, cache_read, cache_write, output = _message_usage(event.get("usage"))
                     result_totals = {
@@ -201,12 +229,20 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
                     )
                     model_usage_totals = None
                     model_usage_cost = None
-                    model_usage_models = ()
+                    model_usage_aggregates = ()
                     model_usage_warnings = ()
                     raw_model_usage = event.get("modelUsage")
-                    model_aggregate = _model_usage_aggregate(raw_model_usage)
+                    model_aggregate = _model_usage_aggregate(
+                        raw_model_usage,
+                        provider=provider,
+                    )
                     if model_aggregate is not None:
-                        model_usage_totals, model_usage_cost, model_usage_models, model_usage_warnings = model_aggregate
+                        (
+                            model_usage_totals,
+                            model_usage_cost,
+                            model_usage_aggregates,
+                            model_usage_warnings,
+                        ) = model_aggregate
                     elif raw_model_usage is not None:
                         model_usage_warnings = ("Claude Code modelUsage is malformed",)
                     api_ms = nonnegative_float(event.get("duration_api_ms"))
@@ -215,15 +251,22 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
     except FileNotFoundError:
         return None
 
-    if not streamed and not result_seen:
+    if not streamed and result_count == 0:
         return None
+
+    if malformed_json:
+        warnings.append("Claude Code stream contains malformed JSON")
+    if result_count > 1:
+        warnings.append(f"Claude Code stream contains {result_count} terminal result events")
+    result_stream_valid = result_count == 1 and not malformed_json
 
     requests = [
         _streamed_request(
             message,
             requested_model,
+            provider=provider,
             provider_request_id=provider_request_id,
-            trust_output=not result_seen,
+            trust_output=result_count == 0,
         )
         for message, provider_request_id in streamed
     ]
@@ -233,7 +276,7 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
     cost_discrepancy = False
     request_count_lower_bound = False
     missing_core_totals: list[str] = []
-    if result_seen:
+    if result_count:
         authoritative_totals: dict[str, int | None] = (
             {**result_totals, **model_usage_totals} if model_usage_totals is not None else result_totals
         )
@@ -241,15 +284,43 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
             if value is not None:
                 totals[field] = value
 
-        authoritative_cost = result_cost
+        authoritative_cost = result_cost if result_stream_valid else None
         if authoritative_cost is None and model_usage_cost is not None:
-            authoritative_cost = UsageCost(model_usage_cost, "usd", "claude_code.modelUsage.costUSD")
-        if authoritative_cost is not None:
-            totals["costs"] = (authoritative_cost,)
+            authoritative_cost = (
+                UsageCost(model_usage_cost, "usd", "claude_code.modelUsage.costUSD") if result_stream_valid else None
+            )
+        public_price_cost, public_price_warning = (
+            calculate_model_aggregate_cost_usd(model_usage_aggregates, provider)
+            if (
+                result_stream_valid
+                and model_usage_aggregates
+                and all(
+                    warning == "Claude Code modelUsage costUSD is missing for some models"
+                    for warning in model_usage_warnings
+                )
+            )
+            else (None, None)
+        )
+        costs = [authoritative_cost] if authoritative_cost is not None else []
+        if public_price_cost is not None:
+            costs.append(
+                UsageCost(
+                    public_price_cost,
+                    "usd",
+                    "claude_code.modelUsage.public_price",
+                )
+            )
+        if costs:
+            totals["costs"] = tuple(costs)
+        elif not result_stream_valid:
+            warnings.append("Claude Code cost ignored because the terminal stream is invalid")
         else:
             warnings.append("Claude Code result event did not report total_cost_usd or modelUsage costUSD")
+            if public_price_warning is not None:
+                warnings.append(f"Claude Code modelUsage public-price fallback failed: {public_price_warning}")
         if (
-            result_cost is not None
+            result_stream_valid
+            and result_cost is not None
             and model_usage_cost is not None
             and not math.isclose(result_cost.amount, model_usage_cost, rel_tol=1e-9, abs_tol=1e-12)
         ):
@@ -273,7 +344,9 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
                     "model_requests is a lower bound"
                 )
             streamed_models = {request.resolved_model for request in requests if request.resolved_model is not None}
-            unstreamed_models = set(model_usage_models) - streamed_models
+            unstreamed_models = {
+                aggregate.resolved_model for aggregate in model_usage_aggregates if aggregate.resolved_model is not None
+            } - streamed_models
             if unstreamed_models:
                 request_count_lower_bound = True
                 known_request_floor += len(unstreamed_models)
@@ -294,9 +367,9 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
                     "Claude Code modelUsage includes usage without streamed request events; "
                     "model_requests is a lower bound"
                 )
-        elif model_usage_models:
-            known_request_floor = len(model_usage_models)
-            if len(model_usage_models) > 1:
+        elif model_usage_aggregates:
+            known_request_floor = len(model_usage_aggregates)
+            if len(model_usage_aggregates) > 1:
                 request_count_lower_bound = True
                 warnings.append(
                     "Claude Code cross-model usage has no per-request events; model_requests is a lower bound"
@@ -337,29 +410,22 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
     else:
         warnings.append("Claude Code result event missing; usage is a lower bound")
 
+    complete = (
+        result_count > 0
+        and not result_error
+        and not input_discrepancy
+        and not cost_discrepancy
+        and not request_count_lower_bound
+        and result_stream_valid
+        and not model_usage_warnings
+        and not missing_core_totals
+        and "costs" in totals
+    )
     return UsageSummary.from_requests(
         requests,
         source="claude_code_stream_json",
-        complete=(
-            result_seen
-            and not result_error
-            and not input_discrepancy
-            and not cost_discrepancy
-            and not request_count_lower_bound
-            and not model_usage_warnings
-            and not missing_core_totals
-            and "costs" in totals
-        ),
-        is_lower_bound=(
-            not result_seen
-            or result_error
-            or input_discrepancy
-            or cost_discrepancy
-            or request_count_lower_bound
-            or bool(model_usage_warnings)
-            or bool(missing_core_totals)
-            or "costs" not in totals
-        ),
+        complete=complete,
+        is_lower_bound=not complete,
         warnings=tuple(dict.fromkeys(warnings)),
         totals=totals,
     )
@@ -367,6 +433,7 @@ def parse_claude_code_usage(jsonl_path: str, *, requested_model: str | None = No
 
 class ClaudeCodeBackend(AgenticBackend):
     name = "claude_code"
+    requires_public_pricing = True
     install_script = "install-claudecode.sh"
     session_state_dir = "/root/.claude"
     env_keys = [
@@ -407,6 +474,7 @@ class ClaudeCodeBackend(AgenticBackend):
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
+        self.provider = "amazon-bedrock" if self._uses_aws_provider() else PROVIDER
 
     def get_credential_mounts(self) -> list[str]:
         if self._uses_aws_provider() and needs_aws_shared_credentials():
@@ -601,7 +669,7 @@ class ClaudeCodeBackend(AgenticBackend):
         return "\n".join(lines), in_tok, out_tok
 
     def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
-        usage = parse_claude_code_usage(jsonl_path, requested_model=self.model)
+        usage = parse_claude_code_usage(jsonl_path, requested_model=self.model, provider=self.provider)
         if usage is not None:
             return usage
         if input_tokens or output_tokens:

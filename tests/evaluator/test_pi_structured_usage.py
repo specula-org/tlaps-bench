@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from evaluator.backends.pi import PiBackend
+from evaluator.cost import calculate_equivalent_cost_usd
 
 _MISSING = object()
 
@@ -154,6 +155,9 @@ def test_multi_turn_tool_run_maps_each_finalized_assistant_request(tmp_path):
     assert usage.costs[0].amount == pytest.approx(0.014)
     assert usage.costs[0].unit == "usd"
     assert usage.costs[0].source == "pi.usage.cost.total"
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost == pytest.approx(0.014)
+    assert warning is None
 
     first, second = usage.requests
     assert first.input_tokens == 170
@@ -281,6 +285,158 @@ def test_valid_error_and_recovered_response_are_each_counted_once(tmp_path):
     assert [request.finish_reasons for request in usage.requests] == [("error",), ("stop",)]
 
 
+def test_auto_retry_counts_failed_and_successful_native_usage_and_cost(tmp_path):
+    output = tmp_path / "output.jsonl"
+    failed_usage = _native_usage(
+        input_tokens=20,
+        output_tokens=2,
+        cache_read=0,
+        cache_write=0,
+        reasoning=0,
+        cost_total=0.002,
+    )
+    recovered_usage = _native_usage(
+        input_tokens=30,
+        output_tokens=5,
+        cache_read=10,
+        cache_write=0,
+        reasoning=0,
+        cost_total=0.006,
+    )
+    _write_jsonl(
+        output,
+        _message_end(
+            usage=failed_usage,
+            stop_reason="error",
+            error_message="transient provider failure",
+        ),
+        {
+            "type": "auto_retry_start",
+            "attempt": 1,
+            "maxAttempts": 3,
+            "delayMs": 2000,
+            "errorMessage": "transient provider failure",
+        },
+        _message_end(usage=recovered_usage, response_id="response-2"),
+        {"type": "auto_retry_end", "success": True, "attempt": 1},
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+
+    assert usage.status == "complete"
+    assert usage.model_requests == 2
+    assert (usage.input_tokens, usage.output_tokens) == (60, 7)
+    assert [request.finish_reasons for request in usage.requests] == [("error",), ("stop",)]
+    assert usage.costs[0].amount == pytest.approx(0.008)
+    assert cost == pytest.approx(0.008)
+    assert warning is None
+    assert backend.retry_may_duplicate_model_work(str(output)) is True
+
+
+def test_multiple_auto_retry_starts_are_valid_when_each_follows_accounted_error(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        _message_end(stop_reason="error", error_message="first transient failure"),
+        {"type": "auto_retry_start"},
+        _message_end(
+            stop_reason="error",
+            response_id="response-2",
+            error_message="second transient failure",
+        ),
+        {"type": "auto_retry_start"},
+        _message_end(response_id="response-3"),
+        {"type": "auto_retry_end", "success": True},
+        {"type": "agent_settled"},
+    )
+
+    usage = PiBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "complete"
+    assert usage.model_requests == 3
+    assert len(usage.requests) == 3
+    assert usage.costs[0].amount == pytest.approx(0.03)
+    assert not any("auto_retry" in warning for warning in usage.warnings)
+
+
+@pytest.mark.parametrize(
+    "failed_event",
+    [
+        None,
+        _message_end(
+            usage=_zero_usage(),
+            stop_reason="error",
+            error_message="transient provider failure",
+        ),
+    ],
+    ids=("missing-failed-message", "all-zero-failed-usage"),
+)
+def test_auto_retry_without_trustworthy_failed_usage_fails_closed(failed_event, tmp_path):
+    output = tmp_path / "output.jsonl"
+    events = [] if failed_event is None else [failed_event]
+    _write_jsonl(
+        output,
+        *events,
+        {"type": "auto_retry_start"},
+        _message_end(response_id="response-2"),
+        {"type": "auto_retry_end", "success": True},
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+    cost, _ = calculate_equivalent_cost_usd(usage, backend.model)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert len(usage.requests) == 1
+    assert cost is None
+    assert any("no preceding trustworthy error attempt usage" in warning for warning in usage.warnings)
+
+
+@pytest.mark.parametrize(
+    ("events", "warning"),
+    [
+        (
+            (
+                _message_end(),
+                {"type": "auto_retry_end", "success": True},
+                {"type": "agent_settled"},
+            ),
+            "without a matching auto_retry_start",
+        ),
+        (
+            (
+                _message_end(
+                    stop_reason="error",
+                    error_message="transient provider failure",
+                ),
+                {"type": "auto_retry_start"},
+                {"type": "agent_settled"},
+            ),
+            "unfinished auto retry",
+        ),
+    ],
+    ids=("unmatched-end", "unfinished-retry"),
+)
+def test_invalid_auto_retry_lifecycle_fails_closed(events, warning, tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(output, *events)
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+    cost, _ = calculate_equivalent_cost_usd(usage, backend.model)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 1
+    assert cost is None
+    assert any(warning in item for item in usage.warnings)
+    assert backend.retry_may_duplicate_model_work(str(output)) is True
+
+
 def test_agent_end_without_agent_settled_retains_usage_as_lower_bound(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(output, _message_end(), {"type": "agent_end", "messages": [], "willRetry": False})
@@ -309,13 +465,128 @@ def test_run_activity_after_agent_settled_cannot_be_reported_complete(tmp_path):
     assert any("activity after agent_settled" in warning for warning in usage.warnings)
 
 
-def test_compaction_makes_visible_usage_a_lower_bound_without_fabricating_hidden_request(tmp_path):
+def test_successful_compaction_adds_native_aggregate_without_fabricating_request(tmp_path):
+    output = tmp_path / "output.jsonl"
+    compaction_usage = _native_usage(
+        input_tokens=20,
+        output_tokens=10,
+        cache_read=5,
+        cache_write=2,
+        reasoning=4,
+        cost_total=0.003,
+    )
+    _write_jsonl(
+        output,
+        _message_end(),
+        {"type": "compaction_start", "reason": "threshold"},
+        {
+            "type": "compaction_end",
+            "result": {"summary": "compacted", "usage": compaction_usage},
+            "aborted": False,
+            "willRetry": False,
+        },
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend(model="openai/audit-model")
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.sources == ("pi_cli_message_end", "pi_cli_compaction_end")
+    assert usage.model_requests == 2
+    assert len(usage.requests) == 1
+    assert usage.input_tokens == 197
+    assert usage.output_tokens == 50
+    assert usage.cache_read_input_tokens == 65
+    assert usage.cache_write_input_tokens == 12
+    assert usage.reasoning_output_tokens == 29
+    assert len(usage.costs) == 1
+    assert usage.costs[0].amount == pytest.approx(0.013)
+    assert usage.costs[0].unit == "usd"
+    assert usage.costs[0].source == "pi.session.usage.cost.total"
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost == pytest.approx(0.013)
+    assert warning is None
+    assert any("aggregate one or more summarizer calls" in warning for warning in usage.warnings)
+    assert backend.retry_may_duplicate_model_work(str(output)) is True
+
+
+@pytest.mark.parametrize("cost_total", [0, None])
+def test_successful_compaction_without_native_cost_uses_public_price(cost_total, tmp_path):
+    output = tmp_path / "output.jsonl"
+    compaction_usage = _native_usage(
+        input_tokens=20,
+        output_tokens=10,
+        cache_read=5,
+        cache_write=2,
+        reasoning=4,
+        cost_total=cost_total,
+    )
+    _write_jsonl(
+        output,
+        _message_end(model="gpt-5.5", response_model="gpt-5.5"),
+        {"type": "compaction_start", "reason": "threshold"},
+        {
+            "type": "compaction_end",
+            "result": {"summary": "compacted", "usage": compaction_usage},
+            "aborted": False,
+            "willRetry": False,
+        },
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model, backend.provider)
+
+    assert backend.provider == "openai"
+    assert usage.model_requests == 2
+    assert len(usage.requests) == 1
+    assert cost == pytest.approx(0.0021925)
+    assert warning is None
+
+
+def test_overflow_compaction_will_retry_is_still_a_successful_compaction(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        _message_end(stop_reason="error"),
+        {"type": "compaction_start", "reason": "overflow"},
+        {
+            "type": "compaction_end",
+            "result": {"summary": "compacted", "usage": _native_usage(cost_total=0.003)},
+            "aborted": False,
+            "willRetry": True,
+        },
+        _message_end(response_id="response-2"),
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 3
+    assert len(usage.requests) == 2
+    assert usage.costs[0].amount == pytest.approx(0.023)
+    assert usage.costs[0].source == "pi.session.usage.cost.total"
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost == pytest.approx(0.023)
+    assert warning is None
+
+
+def test_successful_compaction_with_missing_usage_fails_closed(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
         output,
         _message_end(),
         {"type": "compaction_start", "reason": "threshold"},
-        {"type": "compaction_end", "result": {"summary": "hidden model output"}},
+        {
+            "type": "compaction_end",
+            "result": {"summary": "compacted"},
+            "aborted": False,
+            "willRetry": False,
+        },
         {"type": "agent_settled"},
     )
     backend = PiBackend()
@@ -324,20 +595,115 @@ def test_compaction_makes_visible_usage_a_lower_bound_without_fabricating_hidden
 
     assert usage.status == "lower_bound"
     assert usage.model_requests == 1
-    assert len(usage.requests) == 1
-    assert any("summarizer model usage is not exposed" in warning for warning in usage.warnings)
+    assert (usage.input_tokens, usage.output_tokens) == (170, 40)
+    assert not any(cost.source == "pi.session.usage.cost.total" for cost in usage.costs)
+    cost, _ = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost is None
+    assert any("missing or invalid usage" in warning for warning in usage.warnings)
     assert backend.retry_may_duplicate_model_work(str(output)) is True
 
 
-def test_compaction_without_visible_assistant_usage_is_unavailable_but_retry_unsafe(tmp_path):
+def test_successful_compaction_with_invalid_usage_fails_closed(tmp_path):
+    output = tmp_path / "output.jsonl"
+    invalid_usage = _native_usage()
+    invalid_usage["cacheRead"] = "60"
+    _write_jsonl(
+        output,
+        _message_end(),
+        {"type": "compaction_start", "reason": "threshold"},
+        {
+            "type": "compaction_end",
+            "result": {"summary": "compacted", "usage": invalid_usage},
+            "aborted": False,
+            "willRetry": False,
+        },
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 1
+    assert (usage.input_tokens, usage.output_tokens) == (170, 40)
+    assert not any(cost.source == "pi.session.usage.cost.total" for cost in usage.costs)
+    cost, _ = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost is None
+    assert any("missing or invalid usage" in warning for warning in usage.warnings)
+
+
+@pytest.mark.parametrize(
+    "compaction_end",
+    [
+        {"type": "compaction_end", "result": None, "aborted": True, "willRetry": False},
+        {
+            "type": "compaction_end",
+            "result": None,
+            "aborted": False,
+            "willRetry": False,
+            "errorMessage": "summary failed",
+        },
+    ],
+)
+def test_aborted_or_error_compaction_fails_closed(compaction_end, tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        _message_end(),
+        {"type": "compaction_start", "reason": "threshold"},
+        compaction_end,
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 1
+    assert not any(cost.source == "pi.session.usage.cost.total" for cost in usage.costs)
+    cost, _ = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost is None
+
+
+def test_summarization_retry_with_aggregate_cost_fails_closed(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        _message_end(),
+        {"type": "compaction_start", "reason": "threshold"},
+        {"type": "summarization_retry_scheduled"},
+        {"type": "summarization_retry_attempt_start"},
+        {
+            "type": "compaction_end",
+            "result": {"summary": "compacted", "usage": _native_usage(cost_total=0.003)},
+            "aborted": False,
+            "willRetry": False,
+        },
+        {"type": "summarization_retry_finished"},
+        {"type": "agent_settled"},
+    )
+    backend = PiBackend()
+
+    usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests == 2
+    assert not any(cost.source == "pi.session.usage.cost.total" for cost in usage.costs)
+    cost, _ = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost is None
+    assert any("per-attempt usage" in warning for warning in usage.warnings)
+
+
+def test_unfinished_compaction_without_assistant_usage_is_lower_bound_and_retry_unsafe(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(output, {"type": "compaction_start", "reason": "threshold"}, {"type": "agent_settled"})
     backend = PiBackend()
 
     usage = backend.parse_usage(str(output), input_tokens=0, output_tokens=0)
 
-    assert usage.status == "unavailable"
+    assert usage.status == "lower_bound"
     assert usage.model_requests is None
+    assert any("unfinished compaction" in warning for warning in usage.warnings)
     assert backend.retry_may_duplicate_model_work(str(output)) is True
 
 
@@ -689,6 +1055,8 @@ def test_empty_existing_stream_remains_retry_safe(tmp_path):
             },
             False,
         ),
+        ({"type": "auto_retry_start"}, True),
+        ({"type": "auto_retry_end"}, True),
     ],
 )
 def test_native_lifecycle_activity_controls_safe_infra_retry(event, expected, tmp_path):
@@ -748,11 +1116,8 @@ def test_exact_pre_stream_fallback_closes_open_turn_without_model_activity(tmp_p
     assert PiBackend().retry_may_duplicate_model_work(str(output)) is False
 
 
-def test_pi_cli_and_kiro_provider_installs_are_pinned_to_researched_versions():
+def test_pi_cli_and_kiro_provider_installs_use_latest_releases():
     script = Path("docker/install-scripts/install-pi.sh").read_text()
-    docs = Path("docs/USAGE.md").read_text()
 
-    assert "@earendil-works/pi-coding-agent@0.80.10" in script
-    assert "pi install npm:pi-provider-kiro@0.8.1" in script
-    assert "8dc78834cde4e329284cf505f9e3f99763df5529" in docs
-    assert "d2f8dafb0f07409758797c880fbc3d526fa7c5c6" not in docs
+    assert "npm install -g --ignore-scripts @earendil-works/pi-coding-agent --cache" in script
+    assert "pi install npm:pi-provider-kiro" in script

@@ -86,19 +86,13 @@ def _token_detail(details: object, *keys: str) -> int | None:
 
 
 def _response_cost(response: object) -> tuple[float, str] | None:
-    """Return LiteLLM's own USD cost for one response, without a local price table."""
+    """Return LiteLLM's provider-reported USD cost for one response."""
 
     hidden = getattr(response, "_hidden_params", None)
     if isinstance(hidden, dict):
         cost = hidden.get("response_cost")
         if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0 and math.isfinite(float(cost)):
             return float(cost), "litellm.response_cost"
-    try:
-        cost = litellm.completion_cost(completion_response=response)
-    except Exception:
-        return None
-    if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0 and math.isfinite(float(cost)):
-        return float(cost), "litellm.completion_cost"
     return None
 
 

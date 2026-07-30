@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from evaluator.backends.claude_code import ClaudeCodeBackend, parse_claude_code_usage
+from evaluator.cost import calculate_equivalent_cost_usd
 
 
 def _assistant(
@@ -118,6 +121,10 @@ def test_cache_tokens_classify_input_without_double_counting(tmp_path):
     assert [cost.to_dict() for cost in usage.costs] == [
         {"amount": 0.0125, "unit": "usd", "source": "claude_code.total_cost_usd"}
     ]
+    cost, warning = calculate_equivalent_cost_usd(usage, "claude-opus-4-8")
+    assert cost == 0.0125
+    assert warning is not None
+    assert "differs from token-priced cost" in warning
 
 
 def test_native_usd_cost_is_recorded_in_its_own_unit(tmp_path):
@@ -152,6 +159,27 @@ def test_per_request_evidence_is_preserved(tmp_path):
     assert usage.requests[0].requested_model == "claude-opus-4-8"
     assert usage.requests[0].provider == "anthropic"
     assert usage.status == "complete"
+
+
+@pytest.mark.parametrize("provider_flag", ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_MANTLE"])
+def test_aws_provider_is_preserved_for_public_price_fallback(provider_flag, monkeypatch, tmp_path):
+    monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_USE_MANTLE", raising=False)
+    monkeypatch.setenv(provider_flag, "1")
+    backend = ClaudeCodeBackend(model="claude-opus-4-8")
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=1_000, output_tokens=10, cache_read=0, cache_write=0),
+        _result(input_tokens=1_000, output_tokens=100, cache_read=0, cache_write=0),
+    )
+
+    usage = backend.parse_usage(path, input_tokens=0, output_tokens=0)
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model, backend.provider)
+
+    assert backend.provider == "amazon-bedrock"
+    assert usage.requests[0].provider == "amazon-bedrock"
+    assert cost == pytest.approx(0.00825)
+    assert warning is None
 
 
 def test_provider_request_id_is_preserved_separately_from_message_id(tmp_path):
@@ -207,9 +235,9 @@ def test_model_usage_supplies_cross_model_authoritative_totals(tmp_path):
     assert usage.output_tokens == 24
     assert usage.cache_read_input_tokens == 3
     assert usage.cache_write_input_tokens == 2
-    assert [cost.to_dict() for cost in usage.costs] == [
-        {"amount": 0.11, "unit": "usd", "source": "claude_code.total_cost_usd"}
-    ]
+    costs = {cost.source: cost.amount for cost in usage.costs}
+    assert costs["claude_code.total_cost_usd"] == 0.11
+    assert costs["claude_code.modelUsage.public_price"] == pytest.approx(0.0005778)
     # modelUsage is the exact cross-model aggregate. Per-request evidence can
     # cover only the primary-model stream, so the token/cost totals are exact
     # while the model-request count remains a lower bound.
@@ -241,9 +269,85 @@ def test_model_usage_cost_is_used_when_total_cost_is_absent(tmp_path):
 
     assert usage is not None
     assert usage.status == "complete"
-    assert [cost.to_dict() for cost in usage.costs] == [
-        {"amount": 0.1, "unit": "usd", "source": "claude_code.modelUsage.costUSD"}
-    ]
+    costs = {cost.source: cost.amount for cost in usage.costs}
+    assert costs["claude_code.modelUsage.costUSD"] == 0.1
+    assert costs["claude_code.modelUsage.public_price"] == pytest.approx(0.00055)
+
+
+def test_cross_model_tokens_are_priced_when_native_usd_is_absent(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2, model="claude-opus-4-8"),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 10,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                },
+                "claude-haiku-4-5": {
+                    "inputTokens": 5,
+                    "cacheReadInputTokens": 3,
+                    "cacheCreationInputTokens": 2,
+                    "outputTokens": 4,
+                },
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    cost, warning = calculate_equivalent_cost_usd(usage, "claude-opus-4-8", "anthropic")
+    assert cost == pytest.approx(0.0005778)
+    assert warning is None
+
+
+@pytest.mark.parametrize(
+    "helper_usage",
+    [
+        {
+            "inputTokens": 5,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "outputTokens": 4,
+        },
+        {
+            "inputTokens": 5,
+            "cacheReadInputTokens": 0,
+            "outputTokens": 4,
+        },
+    ],
+)
+def test_unpriceable_cross_model_helper_keeps_cost_blank(tmp_path, helper_usage):
+    helper_model = "unknown-helper" if "cacheCreationInputTokens" in helper_usage else "claude-haiku-4-5"
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2, model="claude-opus-4-8"),
+        _result(
+            input_tokens=10,
+            output_tokens=20,
+            model_usage={
+                "claude-opus-4-8": {
+                    "inputTokens": 10,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "outputTokens": 20,
+                },
+                helper_model: helper_usage,
+            },
+        ),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    cost, warning = calculate_equivalent_cost_usd(usage, "claude-opus-4-8", "anthropic")
+    assert cost is None
+    assert warning is not None
 
 
 def test_terminal_turn_count_and_hidden_helper_set_request_floor(tmp_path):
@@ -382,6 +486,56 @@ def test_malformed_model_usage_is_not_silently_ignored(tmp_path):
     assert "Claude Code modelUsage is malformed" in usage.warnings
 
 
+def test_malformed_json_invalidates_terminal_cost(tmp_path):
+    path = tmp_path / "output.jsonl"
+    path.write_text(
+        json.dumps(_assistant(input_tokens=10, output_tokens=2))
+        + "\n{not-json}\n"
+        + json.dumps(_result(input_tokens=10, output_tokens=20, total_cost_usd=0.1))
+        + "\n"
+    )
+
+    usage = parse_claude_code_usage(str(path))
+
+    assert usage is not None
+    assert usage.costs == ()
+    assert usage.status == "lower_bound"
+    assert "Claude Code stream contains malformed JSON" in usage.warnings
+
+
+def test_non_object_json_invalidates_terminal_cost(tmp_path):
+    path = tmp_path / "output.jsonl"
+    path.write_text(
+        json.dumps(_assistant(input_tokens=10, output_tokens=2))
+        + "\n[]\n"
+        + json.dumps(_result(input_tokens=10, output_tokens=20, total_cost_usd=0.1))
+        + "\n"
+    )
+
+    usage = parse_claude_code_usage(str(path))
+
+    assert usage is not None
+    assert usage.costs == ()
+    assert usage.status == "lower_bound"
+    assert "Claude Code stream contains malformed JSON" in usage.warnings
+
+
+def test_multiple_terminal_results_invalidate_cost(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        _assistant(input_tokens=10, output_tokens=2),
+        _result(input_tokens=10, output_tokens=20, total_cost_usd=0.1),
+        _result(input_tokens=10, output_tokens=20, total_cost_usd=0.1),
+    )
+
+    usage = parse_claude_code_usage(path)
+
+    assert usage is not None
+    assert usage.costs == ()
+    assert usage.status == "lower_bound"
+    assert "Claude Code stream contains 2 terminal result events" in usage.warnings
+
+
 def test_partially_malformed_model_usage_cannot_silently_omit_a_model(tmp_path):
     path = _write(
         tmp_path / "output.jsonl",
@@ -408,6 +562,8 @@ def test_partially_malformed_model_usage_cannot_silently_omit_a_model(tmp_path):
     assert usage is not None
     assert usage.status == "lower_bound"
     assert "Claude Code modelUsage contains malformed model entries" in usage.warnings
+    assert [cost.source for cost in usage.costs] == ["claude_code.total_cost_usd"]
+    assert calculate_equivalent_cost_usd(usage, "claude-opus-4-8") == (0.1, None)
 
 
 def test_summary_mismatch_against_messages_is_a_lower_bound(tmp_path):

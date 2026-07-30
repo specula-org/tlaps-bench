@@ -204,6 +204,7 @@ uv run tlaps-bench run [flags]
 | `--no-container` | off | Run without Docker (requires native setup) |
 | `--keep-container` | off | Retain each agent container after it exits (drop `--rm`) for debugging (see [Debugging a run](#debugging-a-run-keep-container)) |
 | `--session-dir` | off (default `~/.tlaps-bench/sessions` under `--keep-container`) | Persist each run's agent session state to this persistent host path (survives container removal and reboot; restore with `scripts/restore-session.sh`) |
+| `--allow-unpriced-model` | off | Continue with blank equivalent cost when public pricing is unavailable |
 
 Run `uv run tlaps-bench run --help` for the full flag list.
 
@@ -264,8 +265,8 @@ Each run writes results to a timestamped directory:
 
 ```
 results/<mode>/<backend>/<timestamp>/
-├── results.json              # All verdicts, timing, token counts
-├── summary.md                # Headline pass rate
+├── results.json              # All verdicts, time, equivalent cost, and tokens
+├── summary.md                # Pass rate, total task time, and equivalent cost
 └── <Module>/<Theorem>/
     ├── result.json           # Per-benchmark verdict and metadata
     ├── input/
@@ -276,7 +277,8 @@ results/<mode>/<backend>/<timestamp>/
     │   ├── solution.tla      # The agent's final output
     │   ├── output.jsonl      # Raw agent stdout capture
     │   ├── copilot-otel.jsonl # Copilot CLI only: official usage telemetry
-    │   ├── quota-attempts/    # Hard-cap launches preserved before a safe retry
+    │   ├── attempts/          # Infra attempts, each with separate accounting.json
+    │   ├── quota-attempts/    # Quota attempts, each with separate accounting.json
     │   ├── stderr.txt        # Agent stderr, if any — start here to debug a 0-token run
     │   └── transcript.txt    # Parsed transcript with token summary
     └── grading/
@@ -288,7 +290,18 @@ With `--max-continuations`, each continuation round also writes a `continuations
 
 ### Usage and cost telemetry
 
-Each `result.json` keeps the existing top-level `input_tokens`, `output_tokens`, and `time_secs` fields for compatibility. It also includes a versioned `usage` record with provider-neutral totals and, when the provider exposes them, one entry per model request:
+For `codex`, `claude_code`, `copilot`, `litellm`, and `pi`, each formal benchmark result records:
+
+- `time_secs`: agent wall time, excluding the checker
+- `equivalent_cost_usd`: the same model usage valued at public API prices, regardless of subscription or API-key authentication
+
+Cursor and one-shot equivalent-cost support are deferred. Their cost remains unavailable.
+
+Only the invocation selected by the existing retry flow contributes to the formal result. Infra/quota launches are saved under the agent artifacts with their own `accounting.json` and never enter benchmark totals. Valid continuation rounds are added to the formal result; a later `--resume` result replaces the earlier row rather than accumulating it.
+
+Authoritative agent-reported USD takes precedence. Otherwise, complete token usage is valued with the maintained `genai-prices` library; the project does not maintain its own price table. If native and token-priced USD differ by more than 10%, the native value is retained and the final report emits a warning. Missing or partial accounting produces `null`, never a misleading `$0`. If a supported backend's configured model has no public price before a run, the runner asks whether to continue; non-interactive runs must pass `--allow-unpriced-model` to continue with blank cost.
+
+The versioned `usage` record keeps provider-neutral totals and, when the provider exposes them, one entry per model request:
 
 - input, output, cache-read, cache-write, and reasoning tokens
 - model request count and summed model-call duration
@@ -298,25 +311,25 @@ Each `result.json` keeps the existing top-level `input_tokens`, `output_tokens`,
 
 An unavailable value is `null`, not zero. The legacy top-level token fields still use zero when a value is unavailable, so new analysis should read `usage` and its status. Cache tokens classify input tokens and reasoning tokens classify output tokens; they are not added to the input/output totals a second time.
 
-`time_secs` remains the active wall time for that benchmark task, including agent and tool work but excluding quota waits and infra-retry backoff. Retries and continuation rounds are added to the task total. Parallel tasks can overlap, so summing `time_secs` across a run gives task-time, not the experiment's wall-clock duration. `usage.model_time_secs` separately sums completed model-call spans and can also exceed wall-clock time when requests overlap.
+Parallel tasks can overlap, so summing `time_secs` across a run gives task-time, not the experiment's wall-clock duration. `usage.model_time_secs` separately sums completed model-call spans and can also exceed wall-clock time when requests overlap.
 
-Codex reads the official [`turn.completed` JSONL aggregate](https://learn.chatgpt.com/docs/non-interactive-mode#json-output) from pinned `@openai/codex@0.144.6`. Input already includes cached tokens and output already includes reasoning, so both are reported as subsets rather than added twice. The event exposes neither internal request details nor monetary cost, so those fields remain unavailable. Codex keeps its native child-agent capabilities enabled; after the CLI exits, a wrapper adds each child rollout's native token delta, subtracting copied parent counters at fork boundaries so nested agents are not double-counted. The wrapper emits only aggregate token totals and lifecycle state. Missing rollouts, damaged counters, aborted child turns, or an incomplete audit keep the known totals as a lower bound. Failed or truncated runs keep only trustworthy native data.
+Codex reads its native `turn.completed` JSONL aggregate, including cache-read, cache-write, and reasoning classifications. Input already includes cached tokens and output already includes reasoning, so neither subset is added twice. Codex keeps its native child-agent capabilities enabled; after the CLI exits, a wrapper adds each child rollout's native token delta, subtracting copied parent counters at fork boundaries so nested agents are not double-counted. Missing rollouts, damaged counters, aborted child turns, or an incomplete audit keep the known totals as a lower bound. Models with request-level price tiers are priced from an aggregate only while that aggregate cannot have crossed the tier boundary; otherwise the equivalent cost is unavailable rather than guessed.
 
-Pi reads finalized assistant `message_end` records from its pinned [`--mode json` stream](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/json.md). Each record represents one finalized logical response; total input is `input + cacheRead + cacheWrite`, while reasoning is already included in output. Cost is copied directly from Pi's `usage.cost.total` USD estimate, not reconstructed from another price table. Kiro may estimate token counts or retry provider requests without exposing per-attempt usage, so otherwise settled Kiro usage is retained as incomplete. Overlapping assistant starts indicate a damaged or unfinalized lifecycle: finalized counts are retained, the visible start count becomes a request floor, and the run is marked as a lower bound. Other incomplete or compacted streams are also lower bounds; unavailable values remain `null`.
+Pi reads finalized assistant `message_end` records and successful `compaction_end.result.usage` aggregates from its native `--mode json` stream. Total input is `input + cacheRead + cacheWrite`, while reasoning is already included in output. Pi's native `usage.cost.total` USD values provide an authoritative session cost when every assistant and compaction scope is present. A compaction aggregate may cover more than one summarizer call, so it contributes tokens and cost without being fabricated as one request; the reported request count remains a lower-bound floor. Missing or invalid usage, aborted/error compactions, summarization retries, Kiro estimates, and damaged lifecycles keep known totals as a lower bound and equivalent cost as `null`.
 
 Copilot uses GitHub's supported telemetry surfaces rather than inferring usage from text:
 
 - The agentic CLI writes [official OpenTelemetry JSONL](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#opentelemetry-monitoring) to `copilot-otel.jsonl`. Every completed `chat` span is counted once, including sub-agent requests; each `invoke_agent` span cross-checks only its direct chats, and the top-level root indicates that the trace finished. If a timeout prevents that root from being flushed, completed chats are retained as a lower bound. Message-content capture is explicitly disabled.
 - The one-shot backend records the official SDK's [`assistant.usage` event](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/streaming-events#assistantusage).
 
-Native Copilot cost values use provider accounting units: CLI `github.copilot.cost` and SDK `assistant.usage.cost` are stored as `model_multiplier`, CLI `github.copilot.aiu` as `aiu`, and nano-AIU values as `nano_aiu`. These are auditable provider values rather than a claimed invoice total or a locally reconstructed USD price. If an agent or sub-agent request omits a cost field that other requests report, the known amount is explicitly marked as a lower bound.
+Native Copilot cost values use provider accounting units: CLI `github.copilot.cost` and SDK `assistant.usage.cost` are stored as `model_multiplier`, CLI `github.copilot.aiu` as `aiu`, and nano-AIU values as `nano_aiu`. They remain as audit evidence, but the top-level equivalent USD cost is calculated independently from each request's model and token classes.
 
 Claude Code and LiteLLM report settled USD amounts, so their costs are stored in the `usd` unit and must not be compared directly against Copilot's `model_multiplier` or `aiu` values:
 
 - Claude Code takes authoritative cross-model token totals from the terminal result's `modelUsage` aggregate when available, falling back to `usage` for older output, and records the result's native `total_cost_usd` (or summed `modelUsage.costUSD` fallback). It streams one `assistant` event per content block and repeats the turn's whole `message.usage` on each, so events are collapsed by `message.id`; a streamed message's input and cache counts are final, but its `output_tokens` is only the partial known at message start, so per-request output is left null and the settled output total comes from the result event. Anthropic reports cache reads/creations beside `input_tokens`; they are folded into the input total exactly once and kept as classifications. The reliable per-message input and cache are cross-checked against the same-scope result usage. Terminal `num_turns` and streamed requests provide a request-count floor; helper models present only in `modelUsage` make that count an explicit lower bound because their exact call count is unavailable. Lost streamed turns, conflicting terminal counts, an error result, or unavailable cost likewise downgrade the record to a lower bound. Without a result event the streamed sums stand as an explicit lower bound.
-- LiteLLM emits one flushed `request_usage` event per completed model call from the in-container agent, with adapter retries disabled and each attempted call counted by the agent loop. Calls are priced with LiteLLM's own `response_cost` / `completion_cost` rather than a second price table maintained here. The trailing aggregate `usage` event records attempted calls and cross-checks both the completed per-request count and token sums. A completion error, a count or token mismatch, missing token fields, or a request whose cost LiteLLM cannot price keeps the total as an explicit lower bound instead of a silent zero.
+- LiteLLM emits one flushed `request_usage` event per completed model call from the in-container agent, with adapter retries disabled and each attempted call counted by the agent loop. Its provider-reported `response_cost` is preferred; public token pricing is used only when native USD is missing and the request's model, token classes, and request coverage remain complete. The trailing aggregate `usage` event cross-checks the completed request count and token sums.
 
-Cost values are only summed within a shared unit and source, so a run that mixes priced and unpriced requests reports the known amount plus a warning rather than an understated total.
+The top-level equivalent cost is all-or-null: a partially priced run is never published as an understated numeric total.
 
 ---
 
@@ -351,6 +364,7 @@ The first-attempt verdict stays in `check_verdict`. Continuation rounds are save
 ## Docker Details
 
 Each run spins up an isolated container that installs the agent CLI, applies a network firewall (only LLM API hosts are reachable), and mounts benchmarks read-only to prevent tampering.
+The five supported agent install scripts request the current package release rather than a benchmark-pinned agent version.
 
 Cursor uses a DNS-backed IP set so newly discovered or rotated Cursor endpoints
 become reachable without adding one firewall rule per resolved address. Other
