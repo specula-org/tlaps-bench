@@ -9,13 +9,48 @@ generate a standalone .tla file where:
 - Files with local EXTENDS dependencies are merged into the benchmark file
 - Files with INSTANCE dependencies have dependency files copied alongside
 - Each benchmark file works standalone (with its dependency files)
+
+Layered layout (`--layered`, Issue #86)
+---------------------------------------
+The layouts above put the whole task in ONE editable module, so an agent can
+"prove" the goal by weakening the specification, redefining the scaffolding, or
+restating the theorem. `--layered` splits each task by ownership instead:
+
+    <base>Model.tla        declarations, assumptions, state machine, Spec, fairness
+    <task>Scaffold.tla     this target's given definitions + preceding lemmas
+                           (structured proofs admitted as PROOF OMITTED)
+    <task>.tla             the target theorem, the markers, the proof
+
+Unlike proof-from-scratch, the scaffolding is deliberately kept: proof completion
+gives the agent the invariants and the preceding lemmas. What changes is that
+they now live in benchmark-owned modules the agent cannot write, and the target
+theorem statement sits in the fixed part of the submitted file, so only the
+marked proof region is editable:
+
+    \\* BEGIN AGENT PROOF / \\* END AGENT PROOF     the proof
+
+A suite-level `manifest.json` maps each task to the exact read-only modules
+assigned to it, so the evaluator never infers context by copying siblings. The
+marker strings and manifest schema come from `src/common/task_contract.py` —
+the same contract the evaluator parses — and every emitted task is re-read
+through it before the manifest is written.
 """
 
 import glob
+import json
 import os
 import re
+import sys
+from pathlib import Path
 
 from common import tla_modules as _tla_modules
+from common.proof_completion_contract import (
+    BEGIN_AGENT_PROOF,
+    END_AGENT_PROOF,
+    load_proof_completion_manifest,
+    parse_proof_completion_region,
+)
+from common.task_contract import MANIFEST_FILENAME
 
 COMMUNITY_MODULES = _tla_modules.COMMUNITY_MODULES
 RESOLVABLE_MODULES = _tla_modules.RESOLVABLE_MODULES
@@ -382,6 +417,13 @@ def parse_theorems(lines):
                     has_proof = True
                     break
                 if sline == "OBVIOUS" or sline.startswith("OBVIOUS "):
+                    proof_start = j
+                    has_proof = False
+                    break
+                # Missing this left the line orphaned when the theorem was
+                # rewritten: a copied dependency carried both `PROOF OMITTED`
+                # and a stray `PROOF OBVIOUS`, and SANY rejected the module.
+                if sline == "PROOF OBVIOUS" or sline.startswith("PROOF OBVIOUS "):
                     proof_start = j
                     has_proof = False
                     break
@@ -1106,6 +1148,571 @@ def generate_shared_model_l1(output_root=None):
     return total
 
 
+# ---------------------------------------------------------------------------
+# Layered proof-completion (Issue #86). Shares the dump/edit engine with
+# proof-from-scratch; the marker strings and manifest schema come from the
+# evaluator's own contract module, so the two sides cannot drift apart.
+# ---------------------------------------------------------------------------
+
+_COL0_DIRECTIVE = re.compile(r"^(USE|HIDE)\b")
+_PROOF_STEP_IN_COMMENT = re.compile(r"<\d+>")
+_STRUCTURED_PROOF_SCAN = re.compile(r"(?m)^[ \t]*(<\d+>|BY\b|PROOF\s+BY\b)")
+_BLANK_RUN = re.compile(r"\n[ \t]*\n(?:[ \t]*\n)+")
+
+
+def _engine():
+    """The proof-from-scratch generator, used as the shared dump/edit engine.
+
+    Imported lazily: proof-from-scratch imports *this* module at import time, so
+    a module-level import here would be circular.
+    """
+    import importlib
+
+    return importlib.import_module("dataset.proof_from_scratch.generate")
+
+
+def _write_module(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text if text.endswith("\n") else text + "\n")
+
+
+def theorem_spans(dump):
+    """Inclusive source line spans covered by each theorem and its proof."""
+    spans = []
+    for t in dump["theorems"]:
+        loc, ploc = t["loc"], t.get("proof_loc")
+        end = loc["line_end"]
+        if ploc and ploc.get("line_start", -1) > 0:
+            end = max(end, ploc["line_end"])
+        spans.append((loc["line_start"], end))
+    return spans
+
+
+def module_directives_before(source_lines, dump, target_line):
+    """Module-level `USE`/`HIDE` lines that precede the target theorem.
+
+    These must travel WITH the theorem into the task file: a module-level `USE`
+    is scoped to the proofs that follow it in its own module and is NOT
+    inherited through EXTENDS, so leaving `USE NAssumption` behind in the
+    scaffold would silently drop a fact the reference proof relies on. They land
+    outside the editable region, so they stay benchmark-owned.
+
+    Only column-0 lines outside every theorem span count; an indented `USE`
+    inside a proof body belongs to that proof.
+    """
+    spans = theorem_spans(dump)
+    out = []
+    for line_number, line in enumerate(source_lines, start=1):
+        if line_number >= target_line or not _COL0_DIRECTIVE.match(line):
+            continue
+        if any(start <= line_number <= end for start, end in spans):
+            continue
+        out.append(line.rstrip("\n"))
+    return out
+
+
+def strip_proof_step_comments(text):
+    """Drop comments that quote structured proof steps, keeping prose comments.
+
+    proof-completion keeps the source's comments — they are part of the given
+    context — but a comment such as "here is a more detailed proof of <1>1" is a
+    leftover of the reference proof this task asks the agent to write.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        two = text[i : i + 2]
+        if two == "(*":
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                if text[j : j + 2] == "(*":
+                    depth += 1
+                    j += 2
+                elif text[j : j + 2] == "*)":
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            block = text[i:j]
+            if not _PROOF_STEP_IN_COMMENT.search(block):
+                out.append(block)
+            else:
+                out.append("\n" * block.count("\n"))  # keep line geometry
+            i = j
+        elif two == "\\*":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            if not _PROOF_STEP_IN_COMMENT.search(text[i:j]):
+                out.append(text[i:j])
+            i = j
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def target_statement_text(sm, source_lines, target_thm):
+    """The target theorem's statement, without its proof and without comments.
+
+    SANY's theorem `loc` spans `THEOREM ... <proof>`, so the statement ends
+    where the proof begins — which may be mid-line for a one-line lemma such as
+    `LEMMA Foo == x  BY DEF y`; the proof's `column_start` is what separates
+    them there. Comments are stripped because this text is fixed scaffold in the
+    submitted file, and an attached comment can carry the original proof sketch.
+    """
+    loc = target_thm["loc"]
+    ploc = target_thm.get("proof_loc")
+    if ploc and ploc.get("line_start", -1) > 0:
+        text = "".join(source_lines[loc["line_start"] - 1 : ploc["line_start"] - 1])
+        text += source_lines[ploc["line_start"] - 1][: ploc.get("column_start", 1) - 1]
+    else:
+        text = "".join(source_lines[loc["line_start"] - 1 : loc["line_end"]])
+    return _BLANK_RUN.sub("\n", sm.strip_comments(text)).strip()
+
+
+def build_task_module(task_module_name, scaffold_module, statement_text, directives=()):
+    """The editable task file: EXTENDS the scaffold, then the fixed theorem
+    statement and the marked proof region holding the `PROOF OBVIOUS`
+    placeholder. Built from scratch rather than by editing source, so the marker
+    structure the evaluator parses is exact."""
+    stmt = statement_text.rstrip("\n")
+    head = "".join(f"{d}\n" for d in directives)
+    return (
+        f"---- MODULE {task_module_name} ----\n"
+        f"EXTENDS {scaffold_module}\n"
+        f"{head}"
+        f"{stmt}\n"
+        f"{BEGIN_AGENT_PROOF}\n"
+        f"PROOF OBVIOUS\n"
+        f"{END_AGENT_PROOF}\n"
+        f"====\n"
+    )
+
+
+def build_scaffold(sm, source_lines, dump, target_thm, scaffold_module_name, model_module, model_set):
+    """The read-only scaffold layer: this target's given definitions and lemmas.
+
+    Keeps every definition the source states ahead of the target (proof
+    completion gives the agent the invariants) and admits each preceding
+    structured proof as `PROOF OMITTED`. With a shared model the declarations
+    and the specification come through `EXTENDS <model_module>` instead.
+
+    The scaffold stops at the target theorem. Nothing after it is a given: TLA+
+    requires definition before use, so neither the target nor its proof can name
+    anything down there, while hoisting it into a module the task EXTENDS WOULD
+    change scoping — BubbleSort states `THEOREM ... \\A A \\in [1..N -> Int]`
+    ahead of `VARIABLES A, A0`, and that declaration then shadows the bound name
+    and SANY rejects the task.
+    """
+    use_model = bool(model_set)
+    target_start = target_thm["loc"]["line_start"]
+    prefix_lines = source_lines[: target_start - 1]
+
+    edits = list(sm._decl_edits(dump)) if use_model else []
+    for t in dump["theorems"]:
+        loc, ploc = t["loc"], t.get("proof_loc")
+        if loc["line_start"] >= target_start:
+            continue
+        if ploc and ploc.get("line_start", -1) > 0 and _is_structured_proof(sm, t, source_lines):
+            edits.append(_proof_edit(source_lines, ploc, "PROOF OMITTED"))
+    if use_model:
+        for o in dump["operators"]:
+            if o["name"] in model_set:
+                edits.append((o["loc"]["line_start"], o["loc"]["line_end"], ""))
+        for inst in dump["instances"]:
+            if inst.get("name") and inst["name"] in model_set:
+                edits.append((inst["loc"]["line_start"], inst["loc"]["line_end"], ""))
+    edits = [edit for edit in edits if edit[1] < target_start]
+
+    # Truncation drops the source's `====`, so the module needs a terminator.
+    text = sm.apply_edits(prefix_lines, edits) + "=" * 77 + "\n"
+    text = strip_proof_step_comments(text)
+    # `USE`/`HIDE` do not cross EXTENDS and the scaffold proves nothing, so they
+    # are dead here; `module_directives_before` re-emits them in the task file.
+    text = sm._strip_module_directives(text)
+    if use_model:
+        text = sm._strip_bare_decls(text)
+        text = sm._rewrite_extends_line(text, model_module)
+    text = sm._rename_header(text, scaffold_module_name)
+    return sm._sm_tidy(text)
+
+
+def dependency_module_text(sm, dep_path):
+    """A local dependency copied as given context: proofs admitted, comments out.
+
+    A dependency's THEOREM statements stay (they are usable givens, exactly like
+    the scaffold's preceding lemmas) but every proof becomes `PROOF OMITTED`, so
+    no reference proof is handed over. This is the rule the flat generator
+    already applied to copied dependencies.
+    """
+    with open(dep_path, encoding="utf-8") as f:
+        dep_lines = f.read().split("\n")
+    dep_theorems = parse_theorems(dep_lines)
+    text = strip_all_proofs(dep_lines, dep_theorems) if dep_theorems else "\n".join(dep_lines)
+    text = sm.strip_comments(text)
+    return _BLANK_RUN.sub("\n\n", text)
+
+
+def write_task_dependencies(sm, dump, source_path, out_dir, subdir, task_module, audit_writer, written):
+    """Write each local dependency of `source_path` and return its context paths.
+
+    Dependencies are shared per output directory — the copy is a function of the
+    source module alone, so every task in the directory gets the same bytes. If
+    two different modules ever claim one basename, the loser gets a private copy
+    under `<subdir>/<task>/` rather than silently overwriting the winner.
+    """
+    instance_names = {i["name"] for i in dump.get("instances", []) if i.get("name")}
+    context = []
+    for _mod, dep_path in sm.layered_dep_paths(dump, source_path, instance_names):
+        base = os.path.basename(dep_path)
+        text = dependency_module_text(sm, dep_path)
+        shared = os.path.join(out_dir, base)
+        previous = written.get(shared)
+        if previous is None or previous == text:
+            written[shared] = text
+            _write_module(shared, text)
+            context.append(f"{subdir}/{base}")
+            continue
+        private = os.path.join(out_dir, task_module, base)
+        _write_module(private, text)
+        context.append(f"{subdir}/{task_module}/{base}")
+        audit_writer.write(
+            f"[audit] {subdir}/{task_module}.tla: dependency {base} conflicts with another module of "
+            f"that name in {subdir}/ — given a private copy\n"
+        )
+    return context
+
+
+def _audit_scaffold(audit_writer, task_key, scaffold_key, scaffold_text, target_name):
+    """Flag a scaffold that leaks the target or keeps a real proof."""
+    if _STRUCTURED_PROOF_SCAN.search(scaffold_text):
+        audit_writer.write(f"[audit] {task_key}: LEAK scaffold {scaffold_key} still contains proof steps\n")
+    stated = re.search(
+        rf"(?m)^[ \t]*(THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+{re.escape(target_name)}\s*==",
+        scaffold_text,
+    )
+    if stated:
+        audit_writer.write(f"[audit] {task_key}: LEAK scaffold {scaffold_key} restates the target theorem\n")
+
+
+def _plan_targets(sm, dump, source_lines, base_module, subdir, reference_task_keys, audit_writer):
+    """Choose this source's task targets and their module names, in file order.
+
+    A target is a NAMED theorem carrying a structured proof, so every task has a
+    reference proof to validate against. A theorem whose task the dataset
+    already ships is kept even without one: dropping it would silently shrink
+    the benchmark, and the boundary this issue is about does not depend on where
+    the reference proof lives. Naming (including the `_2` suffix for a repeated
+    theorem name) follows the flat generator, so regeneration keeps task keys.
+    """
+    planned = []
+    used_names = {}
+    for target_thm in dump["theorems"]:
+        name = target_thm.get("name")
+        if not name:
+            continue
+        module = f"{base_module}_{name}"
+        emitted = used_names.get(module, 0)
+        task_module = module if emitted == 0 else f"{module}_{emitted}"
+        task_key = f"{subdir}/{task_module}.tla"
+
+        if not _is_structured_proof(sm, target_thm, source_lines):
+            if reference_task_keys is None or task_key not in reference_task_keys:
+                continue
+            audit_writer.write(
+                f"[audit] {task_key}: source states no reference proof — retained for existing-dataset selection\n"
+            )
+        elif reference_task_keys is not None and task_key not in reference_task_keys:
+            audit_writer.write(
+                f"[audit] {task_key}: source candidate is outside the existing dataset selection — generated anyway\n"
+            )
+
+        used_names[module] = emitted + 1
+        planned.append((target_thm, task_module, task_key))
+    return planned
+
+
+def emit_layered_source(
+    sm,
+    source_path,
+    subdir,
+    out_dir,
+    audit_writer,
+    manifest,
+    audit_state,
+    reference_task_keys=None,
+):
+    """Emit the layered split + manifest entries for one source file.
+
+    Layout per task (Issue #86 contract):
+      <base>Model.tla        shared benchmark-owned model      (read-only)
+      <task>Scaffold.tla     this target's given scaffolding   (read-only)
+      <task>.tla             theorem + markers + PROOF OBVIOUS (editable)
+    """
+    try:
+        dump = sm.dump_sany(source_path)
+    except Exception as e:
+        audit_writer.write(f"[audit] {source_path}: SANY parse failed — {e}\n")
+        return 0
+
+    with open(source_path, encoding="utf-8") as f:
+        source_lines = f.readlines()
+
+    base_module = os.path.splitext(os.path.basename(source_path))[0]
+    planned = _plan_targets(sm, dump, source_lines, base_module, subdir, reference_task_keys, audit_writer)
+    if not planned:
+        return 0
+    targets = [target for target, _module, _key in planned]
+
+    os.makedirs(out_dir, exist_ok=True)
+    written = audit_state.setdefault("written", {})
+
+    model_set, _main_specs = sm.compute_model_set(dump, targets)
+    model_module = None
+    if model_set:
+        model_module = f"{base_module}Model"
+        model_text = sm._rename_header(
+            sm._strip_module_directives(sm.build_model(source_lines, dump, model_set)),
+            model_module,
+        )
+        model_path = os.path.join(out_dir, f"{model_module}.tla")
+        written[model_path] = model_text
+        _write_module(model_path, model_text)
+        if sm._THEOREM_SCAN.search(model_text):
+            audit_writer.write(f"[audit] {source_path}: LEAK model {model_module} contains a THEOREM/LEMMA\n")
+
+    count = 0
+    for target_thm, task_module, task_key in planned:
+        scaffold_module = f"{task_module}Scaffold"
+        scaffold_text = build_scaffold(sm, source_lines, dump, target_thm, scaffold_module, model_module, model_set)
+        scaffold_path = os.path.join(out_dir, f"{scaffold_module}.tla")
+        written[scaffold_path] = scaffold_text
+        _write_module(scaffold_path, scaffold_text)
+        _audit_scaffold(
+            audit_writer,
+            task_key,
+            f"{subdir}/{scaffold_module}.tla",
+            scaffold_text,
+            target_thm["name"],
+        )
+
+        statement = target_statement_text(sm, source_lines, target_thm)
+        directives = module_directives_before(source_lines, dump, target_thm["loc"]["line_start"])
+        task_text = build_task_module(task_module, scaffold_module, statement, directives)
+        task_path = os.path.join(out_dir, f"{task_module}.tla")
+        written[task_path] = task_text
+        _write_module(task_path, task_text)
+
+        # Read the emitted task back through the evaluator's own parser: a task
+        # whose marker structure the grader cannot parse must never be written.
+        parse_proof_completion_region(task_text)
+
+        context = [f"{subdir}/{scaffold_module}.tla"]
+        if model_module:
+            context.append(f"{subdir}/{model_module}.tla")
+        context += write_task_dependencies(sm, dump, source_path, out_dir, subdir, task_module, audit_writer, written)
+        manifest[task_key] = {"context": sorted(set(context))}
+        audit_state.setdefault("scaffold_owner", {}).setdefault(f"{subdir}/{scaffold_module}.tla", []).append(task_key)
+
+        count += 1
+        print(f"  generated task: {os.path.relpath(task_path, PROJECT_ROOT)}")
+
+    return count
+
+
+def load_dataset_task_keys(root):
+    """Task keys that define the repository's curated dataset selection.
+
+    Once a layered manifest exists it is authoritative. Before the migration,
+    derive the same set from the existing flat benchmark tree using the
+    evaluator's task-file rule, so a regeneration can account for every task the
+    dataset used to ship.
+    """
+    from dataset.sany_audit import is_task_file
+
+    manifest_path = os.path.join(root, MANIFEST_FILENAME)
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            if isinstance(manifest, dict):
+                return set(manifest)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    keys = set()
+    if not os.path.isdir(root):
+        return keys
+    for current_root, dirs, files in os.walk(root):
+        # `.tlacache` holds tlapm's fingerprint history, not dataset tasks.
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".tla"):
+                continue
+            path = os.path.join(current_root, fname)
+            if is_task_file(path):
+                keys.add(os.path.relpath(path, root).replace(os.sep, "/"))
+    return keys
+
+
+def _finalize_layered(
+    sm,
+    output_root,
+    manifest,
+    audit_state,
+    audit_writer,
+    run_gates=True,
+    incremental=False,
+    scope=None,
+    reference_task_keys=None,
+):
+    """Gate, audit isolation, sweep, then write and re-validate manifest.json.
+
+    Both gates run against each task's exact manifest context, so their verdict
+    is the one the grader will reach. A partial run replaces only the tasks whose
+    source it regenerated and leaves every other stored task untouched.
+    """
+    existing = sm._load_existing_manifest(output_root) if incremental else {}
+    all_bases, processed_bases = scope or ({}, {})
+    superseded = sm.tasks_owned_by(existing, all_bases, processed_bases) if incremental else set(existing)
+
+    dropped = []
+    if run_gates:
+        sm.layered_sany_gate(output_root, manifest, audit_writer)
+        dropped = sm.layered_triviality_gate(output_root, manifest, audit_writer)
+
+    for key in sorted(superseded - set(manifest)):
+        audit_writer.write(f"[audit] {key}: no longer generated by its source — removed from the manifest\n")
+    complete = {k: v for k, v in existing.items() if k not in superseded}
+    complete.update(manifest)
+    sm.sweep_unreferenced_context(output_root, complete, audit_writer)
+
+    if reference_task_keys is not None:
+        if incremental:
+            expected = sm.tasks_owned_by(reference_task_keys, all_bases, processed_bases)
+            actual = sm.tasks_owned_by(complete, all_bases, processed_bases)
+        else:
+            expected = set(reference_task_keys)
+            actual = set(complete)
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        for key in missing:
+            audit_writer.write(f"[audit] {key}: existing dataset task was not regenerated\n")
+        for key in unexpected:
+            audit_writer.write(f"[audit] {key}: generated task is not in the existing dataset selection\n")
+        print(
+            f"Dataset selection: {len(expected)} reference, {len(actual)} generated "
+            f"({len(missing)} missing, {len(unexpected)} unexpected)"
+        )
+
+    owners = audit_state.get("scaffold_owner", {})
+    owners = {k: [t for t in v if t in manifest] for k, v in owners.items()}
+    for scaffold_key, task_keys in sorted(owners.items()):
+        if len(task_keys) > 1:
+            audit_writer.write(
+                f"[audit] LEAK scaffold {scaffold_key} is shared by multiple tasks {sorted(task_keys)} "
+                f"— a target's scaffolding must belong to exactly one task\n"
+            )
+
+    manifest_path = os.path.join(output_root, MANIFEST_FILENAME)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(complete.items())), f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    # Fail closed: what the evaluator will load must validate in full.
+    load_proof_completion_manifest(Path(output_root))
+
+    scope_note = f"{len(manifest)} regenerated, {len(complete)} total" if incremental else f"{len(complete)} tasks"
+    print(
+        f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} ({scope_note}, {len(dropped)} dropped as degenerate)"
+    )
+    return len(complete)
+
+
+def generate_layered(output_root=None, source_dir=None, filter_substring=None, files=(), run_gates=True):
+    """Generate the layered proof-completion dataset and its manifest."""
+    sm = _engine()
+    output_root = os.path.abspath(output_root or BENCHMARK_DIR)
+    source_dir = os.path.abspath(source_dir or SOURCE_ROOT)
+    os.makedirs(output_root, exist_ok=True)
+
+    # Scan unfiltered, then select: a filtered run needs every possible source to
+    # tell a regenerated task's source from one it skipped.
+    if files:
+        all_targets, repository_sources = sm.positional_targets(files, SOURCE_ROOT)
+        if not repository_sources and any(subdir is not None for _path, subdir in all_targets):
+            raise SystemExit(
+                "a layered positional run cannot mix repository source files with external files; "
+                "run the two source sets separately"
+            )
+        ownership_targets = sm.scan_source_targets(SOURCE_ROOT) if repository_sources else all_targets
+    else:
+        repository_sources = os.path.realpath(source_dir) == os.path.realpath(SOURCE_ROOT)
+        all_targets = sm.scan_source_targets(source_dir)
+        ownership_targets = all_targets
+    targets = [t for t in all_targets if not filter_substring or filter_substring in t[0]]
+
+    # The shipped dataset is the reference selection even when writing elsewhere,
+    # so a dry run into a scratch directory still accounts for every task.
+    reference_task_keys = None
+    if repository_sources:
+        keys = load_dataset_task_keys(BENCHMARK_DIR)
+        if keys:
+            reference_task_keys = keys
+            print(f"Using existing proof-completion dataset selection: {len(keys)} tasks")
+
+    incremental = bool(filter_substring or files)
+    if incremental:
+        reason = sm.incremental_precondition_error(output_root)
+        if reason:
+            raise SystemExit(
+                f"a partial run needs a valid manifest to preserve the tasks it is not regenerating: {reason}"
+            )
+    scope = (sm.source_bases(ownership_targets), sm.source_bases(targets))
+
+    manifest = {}
+    audit_state = {}
+    total = 0
+    audit_path = os.path.join(output_root, "audit.log")
+    with open(audit_path, "w", encoding="utf-8") as audit_writer:
+        for path, subdir in targets:
+            print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
+            key = subdir if subdir is not None else os.path.splitext(os.path.basename(path))[0]
+            try:
+                total += emit_layered_source(
+                    sm,
+                    path,
+                    key,
+                    os.path.join(output_root, key),
+                    audit_writer,
+                    manifest,
+                    audit_state,
+                    reference_task_keys,
+                )
+            except Exception as e:
+                audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
+                print(f"  ERROR: {e}", file=sys.stderr)
+
+        final_count = _finalize_layered(
+            sm,
+            output_root,
+            manifest,
+            audit_state,
+            audit_writer,
+            run_gates=run_gates,
+            incremental=incremental,
+            scope=scope,
+            reference_task_keys=reference_task_keys,
+        )
+
+    print(f"\nTotal proof-completion tasks: {final_count} ({total} generated before gates)")
+    print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")
+    return final_count
+
+
 def _run_sany_gate(directory):
     """Post-generation input SANY gate over the emitted proof-completion benchmark dir.
 
@@ -1141,8 +1748,44 @@ def main():
         help="Emit one proof-free <Module>.tla model per output dir "
         "and have tasks EXTEND it instead of inlining the spec.",
     )
+    parser.add_argument(
+        "--layered",
+        action="store_true",
+        help="Split each task into <base>Model.tla + <task>Scaffold.tla + "
+        "<task>.tla (editable, with proof markers) and write manifest.json "
+        "mapping each task to its exact read-only context (Issue #86). "
+        "Implies the shared-model split.",
+    )
+    parser.add_argument(
+        "--skip-gates",
+        action="store_true",
+        help="Layered mode only: skip the SANY and triviality gates. "
+        "For fast iteration — a shipped dataset must be generated with them.",
+    )
+    parser.add_argument(
+        "--source-dir", default=None, help="Directory of source .tla files (default: source/); layered mode only"
+    )
+    parser.add_argument(
+        "--filter", default=None, help="Substring limiting which source files are processed; layered mode only"
+    )
     parser.add_argument("--output-dir", default=None, help="Output directory (default: benchmark/proof-completion)")
+    parser.add_argument("files", nargs="*", help="Specific source .tla files to process; layered mode only")
     args = parser.parse_args()
+
+    if args.layered and args.shared_model:
+        parser.error("--layered already performs the model split; do not combine with --shared-model")
+    if not args.layered and (args.filter or args.files or args.source_dir or args.skip_gates):
+        parser.error("--source-dir, --filter, --skip-gates and positional files require --layered")
+
+    if args.layered:
+        generate_layered(
+            output_root=args.output_dir,
+            source_dir=args.source_dir,
+            filter_substring=args.filter,
+            files=args.files,
+            run_gates=not args.skip_gates,
+        )
+        return
 
     if args.shared_model:
         total = generate_shared_model_l1(output_root=args.output_dir)

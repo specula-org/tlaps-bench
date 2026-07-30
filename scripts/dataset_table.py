@@ -17,6 +17,7 @@ Run:  python3 scripts/dataset_table.py
 
 import collections
 import glob
+import json
 import os
 import re
 
@@ -138,14 +139,29 @@ def display_name(group):
 LIBRARIES = {"tlaplus/Examples", "TLAPS distribution examples"}
 
 
+def mode_tasks(mode):
+    """Suite-root-relative task keys for one mode.
+
+    A layered suite names its tasks in `manifest.json`; its read-only model and
+    scaffold layers are context, not tasks, and a scaffold states admitted
+    lemmas that the filename heuristic would miscount. Suites without a manifest
+    keep the heuristic.
+    """
+    root = os.path.join(REPO, "benchmark", mode)
+    manifest = os.path.join(root, "manifest.json")
+    if os.path.isfile(manifest):
+        with open(manifest, encoding="utf-8") as f:
+            return sorted(json.load(f))
+    files = sorted(glob.glob(os.path.join(root, "**", "*.tla"), recursive=True))
+    return [os.path.relpath(f, root) for f in files if is_task(f)]
+
+
 def collect():
     # (source_label, group) -> [pc, pfs]
     counts = collections.defaultdict(lambda: [0, 0])
     for i, mode in enumerate(MODES):
-        for f in sorted(glob.glob(os.path.join(REPO, "benchmark", mode, "**", "*.tla"), recursive=True)):
-            if not is_task(f):
-                continue
-            group = os.path.relpath(f, os.path.join(REPO, "benchmark", mode)).split(os.sep)[0]
+        for key in mode_tasks(mode):
+            group = key.replace(os.sep, "/").split("/")[0]
             counts[(source_label(group), group)][i] += 1
     return counts
 
