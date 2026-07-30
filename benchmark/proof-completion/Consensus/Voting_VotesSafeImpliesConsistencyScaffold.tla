@@ -1,0 +1,50 @@
+------------------------------- MODULE Voting_VotesSafeImpliesConsistencyScaffold -------------------------------
+EXTENDS VotingModel
+
+THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
+PROOF OMITTED
+
+TypeOK == /\ votes \in [Acceptor -> SUBSET (Ballot \X Value)]
+          /\ maxBal \in [Acceptor -> Ballot \cup {-1}]
+
+ChosenAt(b, v) == 
+    \E Q \in Quorum : \A a \in Q : VotedFor(a, b, v)
+
+chosen == {v \in Value : \E b \in Ballot : ChosenAt(b, v)}
+
+Consistency == chosen = {} \/ \E v \in Value : chosen = {v} \* Cardinality(chosen) <= 1
+CannotVoteAt(a, b) == 
+    /\ maxBal[a] > b
+    /\ DidNotVoteAt(a, b)
+
+NoneOtherChoosableAt(b, v) == 
+    \E Q \in Quorum : 
+        \A a \in Q : VotedFor(a, b, v) \/ CannotVoteAt(a, b)
+
+SafeAt(b, v) == 
+    \A c \in 0..(b-1) : NoneOtherChoosableAt(c, v)
+
+VotesSafe == 
+    \A a \in Acceptor, b \in Ballot, v \in Value : 
+        VotedFor(a, b, v) => SafeAt(b, v)
+
+OneVote == 
+    \A a \in Acceptor, b \in Ballot, v, w \in Value : 
+        VotedFor(a, b, v) /\ VotedFor(a, b, w) => (v = w)
+
+OneValuePerBallot ==
+    \A a1, a2 \in Acceptor, b \in Ballot, v1, v2 \in Value : 
+        VotedFor(a1, b, v1) /\ VotedFor(a2, b, v2) => (v1 = v2)
+
+Inv == TypeOK /\ VotesSafe /\ OneValuePerBallot
+THEOREM AllSafeAtZero == \A v \in Value : SafeAt(0, v)
+PROOF OMITTED
+
+THEOREM ChoosableThm ==
+          \A b \in Ballot, v \in Value :
+             ChosenAt(b, v) => NoneOtherChoosableAt(b, v)
+PROOF OMITTED
+
+THEOREM OneVoteThm == OneValuePerBallot => OneVote
+PROOF OMITTED
+=============================================================================

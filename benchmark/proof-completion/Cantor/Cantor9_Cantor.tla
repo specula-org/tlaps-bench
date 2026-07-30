@@ -1,11 +1,8 @@
--------------- MODULE Cantor9_Cantor --------------
-
-Range (f) == { f[x] : x \in DOMAIN f }
-
-Surj (f, S) == S \subseteq Range (f)
-
+---- MODULE Cantor9_Cantor ----
+EXTENDS Cantor9_CantorScaffold
 THEOREM Cantor ==
   ~ \E f : Surj (f, SUBSET (DOMAIN f))
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
+\* END AGENT PROOF
 ====

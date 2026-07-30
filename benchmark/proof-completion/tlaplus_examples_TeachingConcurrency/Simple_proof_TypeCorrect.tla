@@ -1,11 +1,7 @@
---------------------------- MODULE Simple_proof_TypeCorrect -------------------------------
-(***************************************************************************)
-(* Wrapper theorems exposing TypeOK and Inv as named invariants of Spec.  *)
-(* The actual inductive content is already in Simple.tla's `Correctness`. *)
-(***************************************************************************)
-EXTENDS Simple
-
+---- MODULE Simple_proof_TypeCorrect ----
+EXTENDS Simple_proof_TypeCorrectScaffold
 THEOREM TypeCorrect == Spec => []TypeOK
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-============================================================================
+\* END AGENT PROOF
+====

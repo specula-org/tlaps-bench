@@ -1,16 +1,8 @@
--------------------- MODULE Euclid_NextProperty --------------------
-EXTENDS Euclid
-
-ResultCorrect == (x = y) => x = GCD(M, N)
-
-InductiveInvariant ==
-  /\ x \in Number
-  /\ y \in Number
-  /\ GCD(x, y) = GCD(M, N)
+---- MODULE Euclid_NextProperty ----
+EXTENDS Euclid_NextPropertyScaffold
 USE DEF Number
-
-THEOREM InitProperty == Init => InductiveInvariant
-PROOF OMITTED
 THEOREM NextProperty == InductiveInvariant /\ Next => InductiveInvariant'
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=======================================================
+\* END AGENT PROOF
+====

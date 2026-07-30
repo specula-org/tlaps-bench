@@ -1,14 +1,8 @@
--------------------- MODULE Euclid_InitProperty --------------------
-EXTENDS Euclid
-
-ResultCorrect == (x = y) => x = GCD(M, N)
-
-InductiveInvariant ==
-  /\ x \in Number
-  /\ y \in Number
-  /\ GCD(x, y) = GCD(M, N)
+---- MODULE Euclid_InitProperty ----
+EXTENDS Euclid_InitPropertyScaffold
 USE DEF Number
-
 THEOREM InitProperty == Init => InductiveInvariant
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=======================================================
+\* END AGENT PROOF
+====

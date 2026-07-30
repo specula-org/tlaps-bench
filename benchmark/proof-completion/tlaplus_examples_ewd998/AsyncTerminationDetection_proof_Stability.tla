@@ -1,31 +1,7 @@
----------------------- MODULE AsyncTerminationDetection_proof_Stability ---------------------
-(*********************************************************************************)
-(* Proofs about the high-level specification of termination detection.           *)
-(*********************************************************************************)
-
-EXTENDS AsyncTerminationDetection, TLAPS
-
-LEMMA TypeCorrect == Init /\ [][Next]_vars => []TypeOK
-PROOF OMITTED
-
-(***************************************************************************)
-(* Proofs of safety and stability.                                         *)
-(***************************************************************************)
-THEOREM Safety == Init /\ [][Next]_vars => []Safe
-PROOF OMITTED
-
+---- MODULE AsyncTerminationDetection_proof_Stability ----
+EXTENDS AsyncTerminationDetection_proof_StabilityScaffold
 THEOREM Stability == Init /\ [][Next]_vars => Quiescence
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-(***************************************************************************)
-(* Proofs of liveness.                                                     *)
-(***************************************************************************)
-
-(***************************************************************************)
-(* We first reduce the enabledness condition that appears in the fairness  *)
-(* hypothesis to a standard state predicate.                               *)
-(***************************************************************************)
-
-=============================================================================
-\* Modification History
-\* Created Sun Jan 10 15:19:20 CET 2021 by merz
+\* END AGENT PROOF
+====

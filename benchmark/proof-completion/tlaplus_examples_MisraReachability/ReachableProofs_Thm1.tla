@@ -1,72 +1,7 @@
--------------------------- MODULE ReachableProofs_Thm1 --------------------------
-(***************************************************************************)
-(* This module contains the TLAPS checked proofs of partial correctness of *)
-(* the algorithm in module Reachable, based on the invariants Inv1, Inv2,  *)
-(* and Inv3 defined in that module.  The proofs here are pretty simple     *)
-(* because the difficult parts involve proving general results about       *)
-(* reachability that are independent of the algorithm.  Those results are  *)
-(* stated and proved in module ReachabilityProofs and are used by the      *)
-(* proofs in this module.                                                  *)
-(*                                                                         *)
-(* You might be sufficiently motivated to make sure the algorithm is       *)
-(* correct to want a machine-checked proof that is, but not motivated      *)
-(* enough to write machine-checked proofs of the properties of directed    *)
-(* graphs that the proof uses.  If that's the case, or you're curious      *)
-(* about why it might be the case, read module ReachabilityTest.           *)
-(*                                                                         *)
-(* After writing the proof, it occurred to me that it might be easier to   *)
-(* replace invariants Inv2 and Inv3 by the single invariant                *)
-(*                                                                         *)
-(*    Inv23 == Reachable = ReachableFrom(marked \cup vroot)                *)
-(*                                                                         *)
-(* Inv23 is obviously true initially and its invariance is maintained by   *)
-(* this general result about marked graphs                                 *)
-(*                                                                         *)
-(*     \A S \in SUBSET Nodes :                                             *)
-(*        \A n \in S : reachableFrom(S) = reachableFrom(S \cup Succ[n])    *)
-(*                                                                         *)
-(* since marked \cup vroot is changed only by adding successors of nodes   *)
-(* in vroot to it.  Partial correctness is true because when vroot = {},   *)
-(* we have                                                                 *)
-(*                                                                         *)
-(*    Inv1  => \A n \in marked : Succ[n] \subseteq marked                  *)
-(*    Inv23 <=>  Reachable = ReachableFrom(marked)                         *)
-(*                                                                         *)
-(* and the following is true for any directed graph:                       *)
-(*                                                                         *)
-(*    \A S \in SUBSET Nodes:                                               *)
-(*      (\A n \in S : Succ[n] \subseteq S) => (S = reachableFrom(S))       *)
-(*                                                                         *)
-(* As an exercise, you can try rewriting the proof of partial correctness  *)
-(* of the algorithm using only the invariants Inv1 and Inv23, using the    *)
-(* necessary results about reachability.  When you've finished doing that, *)
-(* you can try proving those reachability results.                         *)
-(***************************************************************************)
-EXTENDS Reachable, ReachabilityProofs, TLAPS
-
-(***************************************************************************)
-(* Note that there is no need to write a separate proof that TypeOK is     *)
-(* invariant, since its invariance is implied by the invariance of Inv1.   *)
-(***************************************************************************)
-
+---- MODULE ReachableProofs_Thm1 ----
+EXTENDS ReachableProofs_Thm1Scaffold
 THEOREM Thm1 == Spec => []Inv1
-  (*************************************************************************)
-  (* The three level <1> steps and its QED step's proof are the same for   *)
-  (* any inductive invariance proof.  Step <1>2 is the only one that TLAPS *)
-  (* couldn't prove with a BY proof.                                       *)
-  (*************************************************************************)
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-(***************************************************************************)
-(* The best way to read the proof of the following theorem is              *)
-(* hierarchically.  Read all the steps of a proof at a given level, then   *)
-(* read separately the proof of each of those steps, starting with the     *)
-(* proof of the QED step.  Start by executing the Hide Current Subtree     *)
-(* command on the theorem, then use the little + and - icons beside the    *)
-(* theorem and each proof step to show and hide its proof.                 *)
-(***************************************************************************)
-
-=============================================================================
-\* Modification History
-\* Last modified Sun Apr 14 16:24:32 PDT 2019 by lamport
-\* Created Thu Apr 11 18:41:11 PDT 2019 by lamport
+\* END AGENT PROOF
+====

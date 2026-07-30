@@ -1,14 +1,7 @@
-------------------------- MODULE KeyValueStore_proof_TypeAndLifecycle -----------------------
-(***************************************************************************)
-(* TLAPS proof of                                                          *)
-(*   THEOREM Spec => [](TypeInvariant /\ TxLifecycle)                      *)
-(* stated in KeyValueStore.tla.                                            *)
-(***************************************************************************)
-EXTENDS KeyValueStore, TLAPS
-
-Inv == TypeInvariant /\ TxLifecycle
-
+---- MODULE KeyValueStore_proof_TypeAndLifecycle ----
+EXTENDS KeyValueStore_proof_TypeAndLifecycleScaffold
 THEOREM TypeAndLifecycle == Spec => []Inv
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-============================================================================
+\* END AGENT PROOF
+====

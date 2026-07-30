@@ -1,33 +1,7 @@
------------------------ MODULE SimpleAllocator_proof_TypeCorrect -----------------------
-(***************************************************************************)
-(* TLAPS proofs of two safety properties of the SimpleAllocator spec:      *)
-(*                                                                         *)
-(*   SimpleAllocator => []TypeInvariant                                    *)
-(*   SimpleAllocator => []ResourceMutex                                    *)
-(*                                                                         *)
-(* TypeInvariant is directly inductive.  ResourceMutex needs TypeInvariant *)
-(* together with the simple observation that an Allocate(c, S) action      *)
-(* takes S from the `available` resources, so S is disjoint from every     *)
-(* alloc[c'] for c' # c.                                                  *)
-(***************************************************************************)
-EXTENDS SimpleAllocator, TLAPS
-
-(***************************************************************************)
-(*                       SimpleAllocator => []TypeInvariant                *)
-(***************************************************************************)
-
+---- MODULE SimpleAllocator_proof_TypeCorrect ----
+EXTENDS SimpleAllocator_proof_TypeCorrectScaffold
 THEOREM TypeCorrect == SimpleAllocator => []TypeInvariant
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-(***************************************************************************)
-(*                       SimpleAllocator => []ResourceMutex                *)
-(***************************************************************************)
-
-(***************************************************************************)
-(* The combined inductive invariant.  We need TypeInvariant in scope to   *)
-(* type-check alloc[c]; ResourceMutex on its own is preserved given       *)
-(* TypeInvariant.                                                         *)
-(***************************************************************************)
-Inv == TypeInvariant /\ ResourceMutex
-
-============================================================================
+\* END AGENT PROOF
+====

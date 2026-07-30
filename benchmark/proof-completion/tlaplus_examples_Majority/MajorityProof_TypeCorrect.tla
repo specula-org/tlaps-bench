@@ -1,18 +1,7 @@
--------------------------- MODULE MajorityProof_TypeCorrect ------------------------------
-EXTENDS Majority, FiniteSetTheorems, TLAPS
-
-(***************************************************************************)
-(* Proving type correctness is easy.                                       *)
-(***************************************************************************)
+---- MODULE MajorityProof_TypeCorrect ----
+EXTENDS MajorityProof_TypeCorrectScaffold
 LEMMA TypeCorrect == Spec => []TypeOK
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-(***************************************************************************)
-(* Auxiliary lemmas about positions and occurrences.                       *)
-(***************************************************************************)
-
-(***************************************************************************)
-(* We prove correctness based on the inductive invariant.                  *)
-(***************************************************************************)
-
-==============================================================================
+\* END AGENT PROOF
+====

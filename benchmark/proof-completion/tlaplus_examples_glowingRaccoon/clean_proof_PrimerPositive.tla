@@ -1,29 +1,7 @@
---------------------------- MODULE clean_proof_PrimerPositive --------------------------------
-(***************************************************************************)
-(* TLAPS proof of the safety invariants of clean.tla:                      *)
-(*                                                                         *)
-(*   Spec => []TypeOK                                                      *)
-(*   Spec => []primerPositive                                              *)
-(*   Spec => []preservationInvariant                                       *)
-(***************************************************************************)
-EXTENDS clean, TLAPS
-
-(***************************************************************************)
-(* The CONSTANTS DNA, PRIMER are unconstrained in the spec; for the        *)
-(* arithmetic preservation argument we need them in Nat.  Restate as a     *)
-(* named ASSUME in the proof file.                                         *)
-(***************************************************************************)
-ASSUME ConstantsAreNat == DNA \in Nat /\ PRIMER \in Nat
-
-LEMMA NatMinNat ==
-  ASSUME NEW i \in Nat, NEW j \in Nat
-  PROVE  natMin(i, j) \in Nat
-PROOF OMITTED
-
-THEOREM TypeCorrect == Spec => []TypeOK
-PROOF OMITTED
-
+---- MODULE clean_proof_PrimerPositive ----
+EXTENDS clean_proof_PrimerPositiveScaffold
 THEOREM PrimerPositive == Spec => []primerPositive
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-============================================================================
+\* END AGENT PROOF
+====

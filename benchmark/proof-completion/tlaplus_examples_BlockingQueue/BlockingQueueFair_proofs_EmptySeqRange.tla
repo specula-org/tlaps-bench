@@ -1,20 +1,8 @@
----------------------- MODULE BlockingQueueFair_proofs_EmptySeqRange ----------------------
-EXTENDS BlockingQueueFair, SequenceTheorems, TLAPS
-
-(* Prove TypeInv inductive. *)
-THEOREM ITypeInv == Spec => []TypeInv
-PROOF OMITTED
-
+---- MODULE BlockingQueueFair_proofs_EmptySeqRange ----
+EXTENDS BlockingQueueFair_proofs_EmptySeqRangeScaffold
 LEMMA EmptySeqRange == ASSUME NEW S, NEW seq \in Seq(S)
                        PROVE seq = <<>> <=> Range(seq) = {}
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-\* BY Z3 DEF Range, IsInjective \* Proof goes through with Tail
-                                \* re-defined with the CASE
-                                \* statement omitted, which is
-                                \* equivalent here due to
-                                \* 'ws # <<>>' assumption.
-
-(* Prove BlockingQueueFair implements BlockingQueueSplit *)
-
-=============================================================================
+\* END AGENT PROOF
+====

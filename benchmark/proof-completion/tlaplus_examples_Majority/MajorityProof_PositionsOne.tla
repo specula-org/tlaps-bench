@@ -1,20 +1,7 @@
--------------------------- MODULE MajorityProof_PositionsOne ------------------------------
-EXTENDS Majority, FiniteSetTheorems, TLAPS
-
-(***************************************************************************)
-(* Proving type correctness is easy.                                       *)
-(***************************************************************************)
-LEMMA TypeCorrect == Spec => []TypeOK
-PROOF OMITTED
-
-(***************************************************************************)
-(* Auxiliary lemmas about positions and occurrences.                       *)
-(***************************************************************************)
+---- MODULE MajorityProof_PositionsOne ----
+EXTENDS MajorityProof_PositionsOneScaffold
 LEMMA PositionsOne == \A v : PositionsBefore(v,1) = {}
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-(***************************************************************************)
-(* We prove correctness based on the inductive invariant.                  *)
-(***************************************************************************)
-
-==============================================================================
+\* END AGENT PROOF
+====
