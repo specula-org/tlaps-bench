@@ -12,6 +12,7 @@ generate a standalone .tla file where:
 """
 
 import glob
+import json
 import os
 import re
 
@@ -26,44 +27,7 @@ STDLIB_MODULES = _tla_modules.STDLIB_MODULES
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
 BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "proof-completion")
-
-# Exact-byte duplicate targets from source modules intentionally copied across
-# upstream directories.  The canonical directory is kept; copies are dropped.
-_DUPLICATE_TASK_FAMILIES = (
-    ("Sets_", "Data", frozenset({"Consensus"})),
-    (
-        "Channel_proof_",
-        "tlaplus_examples_SpecifyingSystems_AsynchronousInterface",
-        frozenset(
-            {
-                "tlaplus_examples_SpecifyingSystems_Composing",
-                "tlaplus_examples_SpecifyingSystems_FIFO",
-            }
-        ),
-    ),
-    (
-        "HourClock_proof_",
-        "tlaplus_examples_SpecifyingSystems_HourClock",
-        frozenset(
-            {
-                "tlaplus_examples_SpecifyingSystems_Composing",
-                "tlaplus_examples_SpecifyingSystems_Liveness",
-                "tlaplus_examples_SpecifyingSystems_RealTime",
-            }
-        ),
-    ),
-    (
-        "InternalMemory_proof_",
-        "tlaplus_examples_SpecifyingSystems_CachingMemory",
-        frozenset(
-            {
-                "tlaplus_examples_SpecifyingSystems_Composing",
-                "tlaplus_examples_SpecifyingSystems_Liveness",
-                "tlaplus_examples_SpecifyingSystems_RealTime",
-            }
-        ),
-    ),
-)
+_DUPLICATE_TASK_FAMILIES_PATH = os.path.join(os.path.dirname(__file__), "duplicate_task_families.json")
 
 
 def find_source_dirs():
@@ -1164,6 +1128,9 @@ def _run_duplicate_gate(directory):
 
     from dataset.sany_audit import is_task_file
 
+    with open(_DUPLICATE_TASK_FAMILIES_PATH, encoding="utf-8") as f:
+        duplicate_families = json.load(f)
+
     tasks = sorted(glob.glob(os.path.join(directory, "**", "*.tla"), recursive=True))
     tasks = [path for path in tasks if is_task_file(path)]
     by_hash = {}
@@ -1180,7 +1147,10 @@ def _run_duplicate_gate(directory):
         keeper = None
         if len(basenames) == 1:
             basename = next(iter(basenames))
-            for prefix, canonical, copies in _DUPLICATE_TASK_FAMILIES:
+            for family in duplicate_families:
+                prefix = family["target_prefix"]
+                canonical = family["canonical"]
+                copies = set(family["copies"])
                 keepers = [path for path in group if os.path.relpath(path, directory).split(os.sep, 1)[0] == canonical]
                 if basename.startswith(prefix) and len(keepers) == 1 and source_dirs <= copies | {canonical}:
                     keeper = keepers[0]
