@@ -2090,7 +2090,7 @@ def main():
         "--timeout",
         type=int,
         default=28800,
-        help="Agent timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)",
+        help="Backend timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)",
     )
     parser.add_argument(
         "--check-timeout", type=int, default=600, help="Checker timeout per benchmark in seconds (default: 600)"
