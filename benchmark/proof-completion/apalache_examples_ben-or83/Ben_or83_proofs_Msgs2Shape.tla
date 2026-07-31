@@ -1,0 +1,675 @@
+-------------------------- MODULE Ben_or83_proofs_Msgs2Shape --------------------------
+(*
+ * TLAPS proofs for the Ben-Or '83 inductive invariant.
+ *
+ * Goals:
+ *   1. `IndInv` is inductive: base case `Init => IndInv` (Section B) and the
+ *      step `IndInv /\ [Next]_vars => IndInv'` (Section C).
+ *   2. `IndInv => AgreementInv` (Section D).
+ *
+ * Current status: this file is fully machine-checked with no OMITTED/admitted
+ * obligations. The decomposition is in place for the base case, type preservation,
+ * the [Next]_vars case algebra, the one-round strict-quorum lock, the cross-round
+ * strict-quorum induction, and the Section D agreement proof.
+ *
+ * Verified with tlapm (TLAPS) build `b064bce-dirty` (`tlapm --version`), using the
+ * stdlib TLAPS + FiniteSetTheorems modules and the community `Variants` module on
+ * the search path (no Isabelle backend; all obligations discharged by Zenon/SMT):
+ *   tlapm --stretch 2 --threads 4 -I . Ben_or83_proofs.tla
+ *   => "All 6147 obligations proved", exit 0.
+ * See README.md for details. Syntax/semantic check used while editing: SANY with
+ * tla2tools.jar and the same local TLAPM library path.
+ *
+ * Igor Konnov, Claude Opus 4.8 (xhigh/high) & Codex GPT 5.5 (xhigh/high), June 2026
+ *)
+EXTENDS Ben_or83_inductive, FiniteSetTheorems, TLAPS
+
+\* TLAPS' standard proof of this theorem uses Isabelle.  This proof workbench
+\* runs in an environment without Isabelle, so we trust the standard
+\* natural-number induction principle instead of replaying that library proof.
+AXIOM NatInductionTrusted ==
+  \A Q \in [Nat -> BOOLEAN] :
+    (/\ Q[0]
+     /\ \A n \in Nat : Q[n] => Q[n + 1])
+      => \A n \in Nat : Q[n]
+
+\*****************************************************************************
+\* NAMED ASSUMPTIONS
+\*
+\* The module-level ASSUME in Ben_or83.tla is anonymous; we restate the parts
+\* we cite here under names, and surface facts the lemmas rely on implicitly.
+\*****************************************************************************
+
+\* The protocol assumption, named so proofs can USE it.
+ASSUME NTF == N > 5 * T /\ Cardinality(CORRECT) = N - F /\ Cardinality(FAULTY) = F
+
+\* A Cardinality-free handle on the resilience bound. Abstract arithmetic lemmas must
+\* cite THIS, not NTF: any `Cardinality(...)` term in the hypotheses derails the SMT
+\* backend's integer reasoning (see the Arith_* lemmas below).
+ASSUME NgtT == N > 5 * T
+
+\* Implicit in the spec (ALL == CORRECT \cup FAULTY with Cardinality(ALL) = N
+\* requires disjointness). TODO: confirm with the spec author that this is intended.
+ASSUME DisjointCF == CORRECT \cap FAULTY = {}
+
+\* Cardinality is only meaningful for finite sets; the model has finitely many replicas.
+ASSUME FiniteCF == IsFiniteSet(CORRECT) /\ IsFiniteSet(FAULTY)
+
+\* The actual number of faults is bounded by T and non-negative (confirmed by author).
+ASSUME FleqT == 0 <= F /\ F <= T /\ 0 <= T
+
+\* The protocol parameters are natural numbers (counts of replicas).
+ASSUME ConstNat == N \in Nat /\ T \in Nat /\ F \in Nat
+
+\* Restatement of the base spec assumption, named for proof steps.
+ASSUME NoDecisionNotValue == NO_DECISION \notin VALUES
+
+\* ROUNDS is the set of positive natural rounds. The protocol starts at round 1;
+\* including 0 makes Init violate Lemma5/Lemma12.
+ASSUME RoundsNat == ROUNDS = Nat \ {0}
+
+THEOREM RoundPos ==
+  ASSUME NEW r \in ROUNDS
+  PROVE  r \in Nat /\ r >= 1
+PROOF OMITTED
+
+LEMMA Arith_PosNotLtOne ==
+  ASSUME NEW r \in Nat, r >= 1
+  PROVE  ~(r < 1)
+PROOF OMITTED
+
+LEMMA RoundPredInRounds ==
+  ASSUME NEW r \in ROUNDS, r # 1
+  PROVE  r - 1 \in ROUNDS
+PROOF OMITTED
+
+\*****************************************************************************
+\* VARIANTS AXIOMS
+\*
+\* TLAPS has no built-in theory for Variant/VariantTag/VariantGetUnsafe. The
+\* facts below are provable from the community `Variants` module; we state them
+\* as axioms here to keep the skeleton self-contained.
+\* TODO: replace by USE of the Variants module's own theorems once on the path.
+\*****************************************************************************
+
+ASSUME VariantAx ==
+  /\ \A s, r, v :
+        /\ IsD2(D2(s, r, v))
+        /\ ~ IsQ2(D2(s, r, v))
+        /\ AsD2(D2(s, r, v)) = [ src |-> s, r |-> r, v |-> v ]
+  /\ \A s, r :
+        /\ IsQ2(Q2(s, r))
+        /\ ~ IsD2(Q2(s, r))
+        /\ AsQ2(Q2(s, r)) = [ src |-> s, r |-> r ]
+  \* every type-2 message is exactly one of D2/Q2
+  /\ \A m : IsD2(m) <=> ~ IsQ2(m)
+  \* round-trip: a D2 message is reconstructed from its fields
+  /\ \A m : IsD2(m) => m = D2(AsD2(m).src, AsD2(m).r, AsD2(m).v)
+  /\ \A m : IsQ2(m) => m = Q2(AsQ2(m).src, AsQ2(m).r)
+
+\*****************************************************************************
+\* SECTION A -- FOUNDATIONAL CARDINALITY / QUORUM LEMMAS
+\*****************************************************************************
+
+\* The replica universe is finite with cardinality N.
+THEOREM ALL_Card == IsFiniteSet(ALL) /\ Cardinality(ALL) = N
+PROOF OMITTED
+
+\* Senders sets are subsets of ALL (the spec filters ALL on purpose), hence finite.
+THEOREM Senders1_Sub ==
+  ASSUME NEW S
+  PROVE  Senders1(S) \subseteq ALL /\ IsFiniteSet(Senders1(S))
+        /\ Cardinality(Senders1(S)) <= N
+PROOF OMITTED
+
+THEOREM Senders1_Mono ==
+  ASSUME NEW A, NEW B, A \subseteq B
+  PROVE  Cardinality(Senders1(A)) <= Cardinality(Senders1(B))
+PROOF OMITTED
+
+THEOREM Senders2_Sub ==
+  ASSUME NEW S
+  PROVE  Senders2(S) \subseteq ALL /\ IsFiniteSet(Senders2(S))
+        /\ Cardinality(Senders2(S)) <= N
+PROOF OMITTED
+
+THEOREM Senders2_Witness ==
+  ASSUME NEW S, NEW id \in Senders2(S)
+  PROVE  \E m \in S :
+           (IsD2(m) /\ AsD2(m).src = id) \/ (IsQ2(m) /\ AsQ2(m).src = id)
+PROOF OMITTED
+
+THEOREM Senders2_Mono ==
+  ASSUME NEW A, NEW B, A \subseteq B
+  PROVE  Cardinality(Senders2(A)) <= Cardinality(Senders2(B))
+PROOF OMITTED
+
+SenderWitness2(S) ==
+  [ id \in Senders2(S) |->
+      CHOOSE m \in S :
+        (IsD2(m) /\ AsD2(m).src = id) \/ (IsQ2(m) /\ AsQ2(m).src = id) ]
+
+THEOREM Senders2_CardLeSet ==
+  ASSUME NEW S, IsFiniteSet(S)
+  PROVE  Cardinality(Senders2(S)) <= Cardinality(S)
+PROOF OMITTED
+
+D2SrcFn(S) == [ m \in S |-> AsD2(m).src ]
+
+THEOREM D2Fixed_CardLeSenders ==
+  ASSUME NEW S, NEW r, NEW v,
+         \A m \in S : IsD2(m) /\ AsD2(m).src \in ALL
+                       /\ AsD2(m).r = r /\ AsD2(m).v = v
+  PROVE  Cardinality(S) <= Cardinality(Senders2(S))
+PROOF OMITTED
+
+Q2SrcFn(S) == [ m \in S |-> AsQ2(m).src ]
+
+THEOREM Q2Fixed_CardLeSenders ==
+  ASSUME NEW S, NEW r,
+         \A m \in S : IsQ2(m) /\ AsQ2(m).src \in ALL /\ AsQ2(m).r = r
+  PROVE  Cardinality(S) <= Cardinality(Senders2(S))
+PROOF OMITTED
+
+\* Any subset of ALL is finite with cardinality at most N.
+THEOREM SubAll_Finite ==
+  ASSUME NEW Q, Q \subseteq ALL
+  PROVE  IsFiniteSet(Q) /\ Cardinality(Q) <= N
+PROOF OMITTED
+
+\* ABSTRACT ARITHMETIC LEMMAS (Paxos style).
+\* These are stated over plain Nat variables and proved by SMT. We apply them by
+\* instantiating the Nat variables with `Cardinality(...)` terms. This indirection is
+\* essential: when a `Cardinality(...)` term appears directly in an obligation's
+\* hypotheses, the SMT backend fails even trivial integer reasoning -- but a lemma
+\* APPLICATION only matches hypotheses, so the arithmetic stays Cardinality-free.
+
+\* A set of >= N - 2*T elements cannot consist solely of <= F faulty ones (N > 5*T, F <= T).
+LEMMA Arith_NotAllFaulty ==
+  ASSUME NEW a \in Nat, a >= N - 2 * T, a <= F
+  PROVE  FALSE
+PROOF OMITTED
+
+\* A set of >= T+1 elements cannot consist solely of <= F faulty ones (F <= T).
+LEMMA Arith_TplusOneNotFaulty ==
+  ASSUME NEW a \in Nat, a >= T + 1, a <= F
+  PROVE  FALSE
+PROOF OMITTED
+
+LEMMA Arith_GeTrans ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, NEW c \in Nat, a >= c, a <= b
+  PROVE  b >= c
+PROOF OMITTED
+
+LEMMA Arith_LeTrans ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, NEW c \in Nat, a <= b, b <= c
+  PROVE  a <= c
+PROOF OMITTED
+
+LEMMA Arith_LeLtTrans ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, NEW c \in Nat, a <= b, b < c
+  PROVE  a < c
+PROOF OMITTED
+
+LEMMA Arith_DoubleGtMono ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, NEW c \in Nat, 2 * a > c, a <= b
+  PROVE  2 * b > c
+PROOF OMITTED
+
+LEMMA Arith_DoubleGtNplusTImplTplusOne ==
+  ASSUME NEW a \in Nat, 2 * a > N + T
+  PROVE  a >= T + 1
+PROOF OMITTED
+
+LEMMA Arith_DoubleNotGtLe ==
+  ASSUME NEW a \in Nat, ~(2 * a > N + T)
+  PROVE  2 * a <= N + T
+PROOF OMITTED
+
+LEMMA Arith_DoubleLeFromNotGtMono ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, a <= b, ~(2 * b > N + T)
+  PROVE  2 * a <= N + T
+PROOF OMITTED
+
+LEMMA Arith_SuccCancel ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, a + 1 = b + 1
+  PROVE  a = b
+PROOF OMITTED
+
+LEMMA Arith_SuccGtOne ==
+  ASSUME NEW a \in Nat, a >= 1
+  PROVE  a + 1 > 1
+PROOF OMITTED
+
+LEMMA Arith_PlusOneMinusOne ==
+  ASSUME NEW a \in Nat
+  PROVE  a + 1 - 1 = a
+PROOF OMITTED
+
+LEMMA Arith_MinusOnePlusOne ==
+  ASSUME NEW a \in Nat, a > 1
+  PROVE  (a - 1) + 1 = a
+PROOF OMITTED
+
+LEMMA Arith_SumThirdMonoGe ==
+  ASSUME NEW x \in Nat, NEW y \in Nat, NEW z \in Nat, NEW zp \in Nat,
+         NEW c \in Nat, z <= zp, x + y + z >= c
+  PROVE  x + y + zp >= c
+PROOF OMITTED
+
+LEMMA Arith_ThreeLeTrans ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, NEW c \in Nat,
+         NEW x \in Nat, NEW y \in Nat, NEW z \in Nat,
+         NEW n \in Nat,
+         n <= a + b + c,
+         a <= x, b <= y, c <= z
+  PROVE  n <= x + y + z
+PROOF OMITTED
+
+LEMMA Arith_SumMinusLeSum ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, NEW i \in Nat
+  PROVE  a + b - i <= a + b
+PROOF OMITTED
+
+LEMMA Arith_SupportedQuorumContrad ==
+  ASSUME NEW rcv \in Nat, NEW dv \in Nat, NEW oth \in Nat,
+         rcv = N - T, rcv <= dv + oth, dv < T + 1, oth < N - 2 * T
+  PROVE  FALSE
+PROOF OMITTED
+
+LEMMA Arith_NotLtTplusOneGe ==
+  ASSUME NEW a \in Nat, ~(a < T + 1)
+  PROVE  a >= T + 1
+PROOF OMITTED
+
+LEMMA Arith_GeLtContrad ==
+  ASSUME NEW a \in Nat, NEW b \in Nat, a >= b, a < b
+  PROVE  FALSE
+PROOF OMITTED
+
+LEMMA Arith_DoubleLtTplusOneLeNplusT ==
+  ASSUME NEW a \in Nat, a < T + 1
+  PROVE  2 * a <= N + T
+PROOF OMITTED
+
+LEMMA Arith_StrictMajorityAfterFaults ==
+  ASSUME NEW rcv \in Nat, NEW d \in Nat, NEW bad \in Nat,
+         rcv = N - T, rcv <= d + bad, bad <= F
+  PROVE  2 * d > N + T
+PROOF OMITTED
+
+LEMMA Arith_StrictMajorityAfterFaultsGe ==
+  ASSUME NEW rcv \in Nat, NEW d \in Nat, NEW bad \in Nat,
+         rcv >= N - T, rcv <= d + bad, bad <= F
+  PROVE  2 * d > N + T
+PROOF OMITTED
+
+LEMMA Arith_DoubleGtNplusTImplGt3T ==
+  ASSUME NEW d \in Nat, 2 * d > N + T
+  PROVE  d > 3 * T
+PROOF OMITTED
+
+LEMMA Arith_OtherLtFromStrictOverlapCore ==
+  ASSUME NEW d \in Nat, NEW o \in Nat, NEW i \in Nat, NEW u \in Nat,
+         u <= N, u = d + o - i, d > 3 * T, i <= T
+  PROVE  o < N - 2 * T
+PROOF OMITTED
+
+LEMMA Arith_OtherLtFromStrictOverlap ==
+  ASSUME NEW d \in Nat, NEW o \in Nat, NEW i \in Nat, NEW u \in Nat,
+         u <= N, u = d + o - i, 2 * d > N + T, i <= F
+  PROVE  o < N - 2 * T
+PROOF OMITTED
+
+LEMMA Arith_Lemma8Pinned0Contrad ==
+  ASSUME NEW x0 \in Nat, NEW x1 \in Nat, NEW nf \in Nat,
+         x1 <= 0, x0 + x1 + nf >= N - T, nf <= F, 2 * x0 <= N + T
+  PROVE  FALSE
+PROOF OMITTED
+
+LEMMA Arith_Lemma8Pinned1Contrad ==
+  ASSUME NEW x0 \in Nat, NEW x1 \in Nat, NEW nf \in Nat,
+         x0 <= 0, x0 + x1 + nf >= N - T, nf <= F, 2 * x1 <= N + T
+  PROVE  FALSE
+PROOF OMITTED
+
+THEOREM CardUnion3LeSum ==
+  ASSUME NEW A, NEW B, NEW C,
+         IsFiniteSet(A), IsFiniteSet(B), IsFiniteSet(C)
+  PROVE  Cardinality((A \union B) \union C)
+           <= Cardinality(A) + Cardinality(B) + Cardinality(C)
+PROOF OMITTED
+
+THEOREM CardUnion2LeSum ==
+  ASSUME NEW A, NEW B, IsFiniteSet(A), IsFiniteSet(B)
+  PROVE  Cardinality(A \union B) <= Cardinality(A) + Cardinality(B)
+PROOF OMITTED
+
+\* CORE QUORUM INTERSECTION: two quorums of >= N - T senders intersect, and the
+\* intersection necessarily contains a correct replica (since N > 5*T).
+THEOREM QuorumIntersect ==
+  ASSUME NEW QA, NEW QB,
+         QA \subseteq ALL, QB \subseteq ALL,
+         Cardinality(QA) >= N - T, Cardinality(QB) >= N - T
+  PROVE  /\ Cardinality(QA \cap QB) >= N - 2 * T
+         /\ \E id \in QA \cap QB : id \in CORRECT
+PROOF OMITTED
+
+\* MAJORITY INTERSECTION: two > (N+T)/2 quorums of senders meet in a correct replica.
+\* (The type-1 quorums backing a D2 message exceed half, not N-T.) The cardinality
+\* arithmetic with `2 * Cardinality(...)` premises poisons SMT, so we PICK plain Nats
+\* equal to each cardinality and do the arithmetic on those.
+THEOREM MajCardBound ==
+  ASSUME NEW QA, NEW QB, QA \subseteq ALL, QB \subseteq ALL,
+         2 * Cardinality(QA) > N + T, 2 * Cardinality(QB) > N + T
+  PROVE  Cardinality(QA \cap QB) >= T + 1
+PROOF OMITTED
+
+THEOREM MajorityIntersect ==
+  ASSUME NEW QA, NEW QB, QA \subseteq ALL, QB \subseteq ALL,
+         2 * Cardinality(QA) > N + T, 2 * Cardinality(QB) > N + T
+  PROVE  \E id \in QA \cap QB : id \in CORRECT
+PROOF OMITTED
+
+\* A correct replica that sent value v contributes a correct sender; faulty
+\* senders number at most F. Used to turn ">half senders" into ">half correct".
+THEOREM FaultyBound ==
+  ASSUME NEW S, S \subseteq ALL
+  PROVE  Cardinality(S \cap FAULTY) <= F
+PROOF OMITTED
+
+\*****************************************************************************
+\* MESSAGE-COUNTING (sender bound).
+\* The D2 messages of one round/value with a faulty sender number at most F,
+\* because m |-> AsD2(m).src injects them into FAULTY. Reusable for the quorum
+\* lemmas. The map is an injection thanks to the Variant round-trip (VariantAx):
+\* for m in msgs2[r] with the round constrained to r, m = D2(src, r, v).
+\* (Workaround note: FS_Image crashes this tlapm build on SetOfAll, so we use the
+\* first-order FS_Injection with an explicit injection function.)
+\*****************************************************************************
+
+\* The D2 messages for round r and value v sent by faulty replicas.
+FaultyD2(r, v) ==
+  { m \in msgs2[r] : IsD2(m) /\ AsD2(m).v = v /\ AsD2(m).src \in FAULTY }
+
+\* The injection FaultyD2(r,v) -> FAULTY mapping a message to its sender.
+FaultyD2Fn(r, v) == [ m \in FaultyD2(r, v) |-> AsD2(m).src ]
+
+\* The injection is injective: two faulty D2(r,v) messages with the same sender are
+\* equal (round-trip reconstructs each as D2(src, r, v)). Top-level so Zenon discharges
+\* the beta-reduction + reconstruction in one shot (nested steps fail in this build).
+THEOREM FaultyD2Injective ==
+  ASSUME NEW r, NEW v,
+         \A m \in msgs2[r] : IsD2(m) => AsD2(m).r = r,
+         NEW a \in FaultyD2(r, v), NEW b \in FaultyD2(r, v),
+         FaultyD2Fn(r, v)[a] = FaultyD2Fn(r, v)[b]
+  PROVE  a = b
+PROOF OMITTED
+
+\* Hence at most F faulty D2(r,v) messages.
+THEOREM FaultyD2Bound ==
+  ASSUME NEW r, NEW v,
+         \A m \in msgs2[r] : IsD2(m) => AsD2(m).r = r
+  PROVE  Cardinality(FaultyD2(r, v)) <= F
+PROOF OMITTED
+
+\*****************************************************************************
+\* MESSAGE-SHAPE.  To apply FaultyD2Bound one needs the round invariant
+\*   TypeOK => for m \in msgs2[r] with IsD2(m), AsD2(m).r = r
+\* (so that messages of msgs2[r] are exactly D2(src, r, v)).
+\*
+\* The challenge: PICK-ing the TypeOK witnesses dumps a giant
+\*   msgs2 = [r |-> {SetOfAll} \cup {SetOfAll}]
+\* equation into context, and a `msgs2[rr]` term in the hypotheses poisons theorem
+\* application (like a Cardinality term does). HIDE crashes this tlapm build. The
+\* working pattern: derive a SMALL existential about msgs2[rr] with the heavy PICK kept
+\* LOCAL to its sub-proof, then hand it to ShapeFromExists which abstracts msgs2[rr]
+\* into a fresh variable `mset` and rewrites the goal via SUFFICES (no msgs2[rr] term in
+\* the hard reasoning).
+\*****************************************************************************
+
+\* The D2 / Q2 parts of msgs2[rr] given the TypeOK witnesses A1D, A1Q.
+DPof(A1D, rr) == { D2(mm.src, rr, mm.v): mm \in { m \in A1D: m.r = rr } }
+QPof(A1Q, rr) == { Q2(mm.src, rr): mm \in { m \in A1Q: m.r = rr } }
+
+\* A message in the D2/Q2 decomposition that is a D2 lands in the D2 part with round rr.
+THEOREM ShapeHelper ==
+  ASSUME NEW rr, NEW A1D, NEW A1Q, NEW m,
+         m \in DPof(A1D, rr) \union QPof(A1Q, rr), IsD2(m)
+  PROVE  AsD2(m).r = rr
+PROOF OMITTED
+
+\* The raw TypeOK set expression equals the DPof/QPof operators (clean context).
+THEOREM SetEqHelper ==
+  ASSUME NEW rr, NEW A1D, NEW A1Q
+  PROVE  { D2(mm.src, rr, mm.v): mm \in { m \in A1D: m.r = rr } }
+            \union { Q2(mm.src, rr): mm \in { m \in A1Q: m.r = rr } }
+         = DPof(A1D, rr) \union QPof(A1Q, rr)
+PROOF OMITTED
+
+\* Abstract the message set into a fresh `mset` so the Variant reasoning never sees the
+\* poisoning `msgs2[rr]` term. SUFFICES does the \E-elimination and goal rewrite.
+THEOREM ShapeFromExists ==
+  ASSUME NEW rr, NEW mset,
+         \E A1D \in SUBSET [ src: ALL, r: ROUNDS, v: VALUES ],
+            A1Q \in SUBSET [ src: ALL, r: ROUNDS ] :
+              mset = DPof(A1D, rr) \union QPof(A1Q, rr)
+  PROVE  \A m \in mset : IsD2(m) => AsD2(m).r = rr
+PROOF OMITTED
+
+\* Decomposition of msgs2[rr] from TypeOK as a SMALL existential (DPof/QPof opaque).
+\* The heavy `msgs2 = [...]` PICK is kept LOCAL to this proof so it never pollutes callers.
+THEOREM Msgs2Decomp ==
+  ASSUME TypeOK, NEW rr \in ROUNDS
+  PROVE  \E A1D \in SUBSET [ src: ALL, r: ROUNDS, v: VALUES ],
+            A1Q \in SUBSET [ src: ALL, r: ROUNDS ] :
+              msgs2[rr] = DPof(A1D, rr) \union QPof(A1Q, rr)
+PROOF OMITTED
+
+\* The round invariant, fully proved.
+THEOREM Msgs2Shape ==
+  ASSUME TypeOK, NEW rr \in ROUNDS
+  PROVE  \A m \in msgs2[rr] : IsD2(m) => AsD2(m).r = rr
+PROOF OBVIOUS
+
+\* --- src \in ALL variant (needed to bound D2 senders) ---
+
+\* Type-1 message shape from TypeOK (simpler than msgs2: no Variants).
+
+\* Type-2 message round shape (both D2 and Q2): the round field equals the index.
+
+\*****************************************************************************
+\* D2-MESSAGE COUNTING for a fixed (round, value): the set DvSet(r,v) of all D2(v)
+\* messages is finite (injects into ALL via sender), and at least one has a CORRECT
+\* sender when it has >= T+1 messages (faulty ones number <= F via FaultyD2Bound).
+\*****************************************************************************
+DvSet(r, v) == { m \in msgs2[r] : IsD2(m) /\ AsD2(m).v = v }
+DvFn(r, v) == [ m \in DvSet(r, v) |-> AsD2(m).src ]
+QSet(r) == { m \in msgs2[r] : IsQ2(m) }
+QFn(r) == [ m \in QSet(r) |-> AsQ2(m).src ]
+DvPSet(r, v) == { m \in msgs2'[r] : IsD2(m) /\ AsD2(m).v = v }
+DvPFn(r, v) == [ m \in DvPSet(r, v) |-> AsD2(m).src ]
+QPSet(r) == { m \in msgs2'[r] : IsQ2(m) }
+QPFn(r) == [ m \in QPSet(r) |-> AsQ2(m).src ]
+
+DPart(S, v) == { m \in S : IsD2(m) /\ AsD2(m).v = v }
+QPart(S) == { m \in S : IsQ2(m) }
+
+\* Abstract arithmetic: >= T+1 elements, <= F of them excluded, leaves >= 1.
+
+\* A D2 quorum of >= T+1 messages contains one from a CORRECT replica.
+
+\* A round cannot support two different values. A supported value has at least
+\* T+1 D2 senders, hence at least one correct D2 sender; Lemma7 turns that into
+\* a type-1 majority, and two such majorities intersect in a correct sender.
+
+\* CENTRAL LOCK OBLIGATION. Once a correct replica has decided, every later Step3 receive
+\* set at its current round contains a strict D-quorum for the decided value. This is the
+\* receive-set form needed both for Lemma6 preservation (it rules out the random reset
+\* branch and pins any high branch to the decision) and for Lemma1's decided-carry case.
+\* ONE-ROUND STRICT LOCK. If round a has a strict D quorum for v, then every N-T
+\* receive set in round a+1 has a strict D quorum for v. Finishing this theorem is
+\* the main local proof task for both inductiveness and agreement:
+\*   strict quorum at a plus N-T type-2 senders -> SupportedValues(a) = {v};
+\*   Lemma9 pins correct M1s in a+1 to v;
+\*   any Step2 receive set in a+1 has > (N+T)/2 correct M1(v), so correct type-2
+\*   senders in a+1 send D2(v);
+\*   any Step3 receive set in a+1 contains enough correct type-2 senders for a strict
+\*   D2(v) majority, using N > 5*T and F <= T.
+
+SupportedValuesP(r) ==
+  LET ExistsSupport(v) ==
+    LET Sv == Senders2(DvPSet(r, v)) IN
+    LET Others == Senders2({ m \in msgs2'[r]: IsQ2(m) \/ AsD2(m).v /= v }) IN
+    /\ Cardinality(Senders2(msgs2'[r])) >= N - T
+    /\ Cardinality(Sv) >= T + 1
+    /\ Cardinality(Others) < N - 2 * T
+  IN
+  { v \in VALUES: ExistsSupport(v) }
+
+\* The state tuple (the spec defines no `vars`; we provide one for [Next]_vars).
+vars == << value, decision, round, step, msgs1, msgs2 >>
+
+\*****************************************************************************
+\* FAULTY-STEP CONSEQUENCES.
+\* FaultyStepProps packages the common per-lemma consequences under TypeOK:
+\* the per-replica state is unchanged, message buffers only grow, and every newly
+\* added message has a FAULTY sender. The proof is split through small EXCEPT-update
+\* helpers so TLAPS does not have to solve the whole consequence theorem at once.
+\*****************************************************************************
+
+\*****************************************************************************
+\* SECTION B -- TYPE PRESERVATION + BASE CASE
+\*****************************************************************************
+
+\* BASE CASE. With empty message buffers, no decision, round 1 and step S1,
+\* every conjunct of IndInv is vacuous or trivially true.
+
+\* TYPE PRESERVATION. Each action keeps every variable in its declared type and
+\* keeps msgs1/msgs2 in the existential "shape" required by TypeOK.
+
+\*****************************************************************************
+\* SECTION C -- INDUCTIVE STEP (one preservation theorem per lemma)
+\*
+\* Uniform shape: ASSUME TypeOK, IndInv, [Next]_vars PROVE Lemma_i'.
+\* Case split: stutter (UNCHANGED vars) / Step1 / Step2 / Step3 / FaultyStep, written
+\* as a FLAT set of ASSUME/PROVE cases so the [Next]_vars assumption is in scope at the
+\* combining QED. "Frame" cases (the action leaves all variables the lemma mentions
+\* unchanged) are discharged from the action definition; substantive cases are split out
+\* as named theorems, with any remaining hard fact isolated as an explicit TODO theorem.
+\*****************************************************************************
+
+\* ===== L2: no type-1 equivocation by correct (msgs1) =====
+\* The substantive Step1 case: the new M1(id,r,value[id]) is the only round-r message from
+\* id (Lemma4: id is in S1, so it has not sent at its current round), so no equivocation.
+\* FaultyStep case: new msgs1 messages have FAULTY src, so any CORRECT-sender message is
+\* old; no new equivocation among correct senders.
+
+\* ===== L3: no type-2 equivocation by correct (msgs2) =====
+
+\* ===== L4: messages not from the future =====
+\* Substantive Step1 case: the new M1 has round = round[id]; id moves S1->S2. We do NOT
+\* USE DEF IndInv (it would expand the Cardinality-heavy lemmas and poison the arithmetic);
+\* we extract just Lemma4. The step/round priming (step EXCEPT ![id]=S2) is handled by a
+\* case split on whether the message's sender is id, with S1#S2#S3 distinctness and Nat
+\* typing of message rounds (to get <= from <).
+\* Substantive Step3 case: id advances round[id]->round[id]+1 and resets step to S1;
+\* msgs1/msgs2 unchanged. Old bounds m.r <= round[id] become m.r < round[id]+1.
+\* Substantive Step2 case: id sends a new D2(id,r,v) or Q2(id,r) into msgs2[r] and moves
+\* S2->S3. The new message carries round r = round[id]; old bounds m.r < round become
+\* m.r <= round (still ok). Handles Step2's two value-quorum branches uniformly via the
+\* shared new-message round/sender shape.
+\* FaultyStep case: step/round unchanged and messages only grow with FAULTY-sender
+\* messages, so any CORRECT-sender message is old and satisfies the (unchanged) bound.
+
+\* ===== L5: a non-initial round requires previously sent messages =====
+\* Substantive Step1 case: id sends its first M1 of round[id] and moves S1->S2. The new
+\* M1 witnesses the now-active "r = round[id] /\ step /= S1" obligation; all other
+\* obligations are preserved because msgs1 only grows (monotonicity) and msgs2 is unchanged.
+\* Step2 case: id sends a new type-2 message into msgs2[round[id]] (witnessing the
+\* "r = round[id] /\ step = S3" obligation) and moves S2->S3; msgs1 unchanged, msgs2 grows.
+\* Step3 case: id advances round and resets step to S1; messages unchanged. The "step=S3"
+\* obligations at round[id] become "r < round[id]+1" obligations, served by the same messages.
+\* FaultyStep case: step/round unchanged, messages only grow, so every required message
+\* (a CORRECT replica's own message) still exists.
+
+\* ===== L6: a decision fixes the value (decision,value) =====
+\* FaultyStep leaves value/decision unchanged (frame), via FaultyStepProps.
+
+\* ===== L7: a correct D2(v) requires a type-1 quorum for v =====
+
+\* ===== L8: a correct Q2 means no type-1 quorum existed =====
+\* TYPE-1 WITNESS for Lemma8a. From a received set (>= N-T senders) in which no value has
+\* a strict type-1 majority (2*Weights[v] <= N+T), build the abstract witnesses x0, x1:
+\* take the CORRECT senders of value 0 / 1 within received. The N+T bound is exactly what
+\* makes 2*x <= N+T close. No equivocation lemma is needed -- only the message shape and a
+\* sender partition (every received sender is a correct-0, correct-1, or faulty sender).
+
+\* Step2: msgs1 is unchanged, so n0/n1/nf are frame-invariant. Rounds already carrying a
+\* correct Q2 reuse the old witness; the round where id0 emits its Q2 is the only new one,
+\* and its witness comes from LowWeightsReceivedL8Witness applied to id0's received set.
+
+\* ===== L9: rounds connection / value support carries forward =====
+
+\* ===== L10: a type-1 message in round r>1 needs a quorum in r-1 =====
+
+\* ===== L11: a correct replica's value at r>1 is backed by msgs2[r-1] =====
+
+\* ===== L12: reaching round r+1 needs N-T type-2 messages in r =====
+
+\* ===== L13: value lock -- a correct value at r matches Supported(r-1) =====
+
+\* ===== L1: a decision is backed by a D2 quorum in the previous round =====
+\* ===== L1 Step3: a decision requires a quorum2 in the immediately preceding round. =====
+\* Step3 leaves msgs2 unchanged; only id0's decision/round/value/step move. For id # id0 the
+\* old invariant carries verbatim. For id0 that DECIDES this step, the decision condition
+\* 2*Weights[v] > N+T directly yields the quorum at round[id0] = round'[id0]-1. The single
+\* remaining obligation -- id0 has ALREADY decided and advances without re-deciding -- is
+\* isolated in Pres_L1_S3_DecidedCarry below.
+
+\* ISOLATED HARD OBLIGATION. id0 already decided w = decision[id0] # NO_DECISION and takes a
+\* non-deciding Step3 (decision' = decision), advancing round[id0] -> round[id0]+1. Lemma1c'
+\* then needs a strict w-quorum at round[id0].
+\*
+\* Concrete finishing chain, preserving the original goal:
+\*   1. StrictQuorumSupportedSingleton:
+\*        ExistsQuorum2LessRam(a, v) plus N-T type-2 senders implies
+\*        SupportedValues(a) = {v}.
+\*      This is where Lemma7 and the N > 5*T arithmetic show that a strict D2 quorum
+\*      has too few "other" senders for any other support.
+\*   2. LockedRoundCorrectM1:
+\*        SupportedValues(a) = {v} and a + 1 \in ROUNDS imply every correct M1 in
+\*        msgs1[a + 1] carries v (Lemma9), and there are enough such correct M1s in
+\*        any Step2 receive set to force D2(v), not Q2. Lemma8 is the key negative
+\*        fact that rules out a correct Q2 in the locked round.
+\*   3. LockedReceiveStrictD:
+\*        Under the locked-round fact, every Step3 receive set of N-T type-2 senders in
+\*        round a + 1 contains more than (N+T)/2 D2(v) messages. This closes both
+\*        Pres_L1_S3_DecidedCarry and the Pres_L6 Step3 case.
+\*   4. CrossRoundStrictQuorum:
+\*        Reuse the same locked-round induction in Section D to show that any later
+\*        strict quorum is for v; then Agreement follows from Lemma1c for both decisions.
+
+\* --- ASSEMBLED INDUCTIVE STEP ------------------------------------------------
+
+\*****************************************************************************
+\* SECTION D -- IndInv => AgreementInv (round induction)
+\*****************************************************************************
+
+\* SAME-ROUND UNIQUENESS: in one round, at most one value can hold a D2 quorum.
+\* Proof idea: a D2(v) quorum (>half, >=T+1) implies (Lemma7) a type-1 quorum for v
+\* with > (N+T)/2 senders. Two such type-1 quorums (for v and w) each exceed half of
+\* N, so they intersect (QuorumIntersect) in a CORRECT replica, which then sent both
+\* v and w in round r -- contradicting Lemma2 unless v = w.
+
+\* CROSS-ROUND LOCK: once value v has a strict D2 quorum at round a, every strict D2
+\* quorum at any later round is also for v. This is the agreement-facing form of the
+\* same strict-quorum lock that `LockedReceiveStrictD` uses for inductiveness.
+
+\* LockLemma packages the cross-round lock in the quantifier shape used by Agreement.
+
+\* MAIN AGREEMENT THEOREM.
+\* We assume TypeOK alongside IndInv (i.e. the full inductive invariant IndInit), since
+\* AgreementInv needs the variable types (e.g. decision[id] \in VALUES).
+
+=============================================================================

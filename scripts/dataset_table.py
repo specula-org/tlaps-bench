@@ -40,6 +40,8 @@ def source_label(group):
         return "tlaplus/Examples"
     if group.startswith("ivy_examples_"):
         return "Ivy liveness"
+    if group.startswith("apalache_examples_"):
+        return "apalache-examples (Konnov)"
     if group.startswith("ZooKeeper"):
         return "ZooKeeper (Remix)"
     if group == "etcd_raft":
@@ -57,6 +59,7 @@ SOURCE_URL = {
     "TLAPS distribution examples": "https://github.com/tlaplus/tlapm",
     "ZooKeeper (Remix)": "https://arxiv.org/abs/2409.14301",
     "Ivy liveness": "https://github.com/kenmcmil/ivy",
+    "apalache-examples (Konnov)": "https://github.com/konnov/apalache-examples",
     "etcd (Specula)": "https://github.com/specula-org",
     "OpenAddressing": "https://github.com/lemmy/Examples",
     "two_thread_mutex (Anvil)": "https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs",
@@ -74,6 +77,7 @@ def linked(label):
 # upstream location unknown or nonexistent — is listed in docs/DATASET.md.
 _EX = "https://github.com/tlaplus/Examples/tree/master/specifications"
 _TLAPM = "https://github.com/tlaplus/tlapm"
+_APALACHE = "https://github.com/konnov/apalache-examples/tree/af360379b7cbcd1e16c1a801ff8ac64eb9aca038"
 # TLAPS-distribution groups that are a single file / directory in the current
 # tlapm tree. Multi-module groups whose exact public location differs are listed
 # explicitly in _GROUP_URL below.
@@ -113,6 +117,8 @@ def group_url(group):
     if group.startswith("ivy_examples_"):
         name = group[len("ivy_examples_") :]
         return f"https://github.com/kenmcmil/ivy/blob/master/examples/liveness/{name}.ivy"
+    if group.startswith("apalache_examples_"):
+        return f"{_APALACHE}/{group[len('apalache_examples_') :]}"
     if group.startswith("tlaplus_examples_"):
         x = group[len("tlaplus_examples_") :]
         if x.startswith("SpecifyingSystems_"):
@@ -128,7 +134,7 @@ def group_url(group):
 
 def display_name(group):
     """Strip the corpus prefix for a readable example name."""
-    for pre in ("tlaplus_examples_", "ivy_examples_"):
+    for pre in ("tlaplus_examples_", "ivy_examples_", "apalache_examples_"):
         if group.startswith(pre):
             return group[len(pre) :]
     return group
