@@ -1122,6 +1122,61 @@ def _run_sany_gate(directory):
     return _run_triviality_gate(directory)
 
 
+def _prune_unreferenced_dependencies(directory):
+    """Remove generated dependency modules no surviving task can reach.
+
+    Proof-completion dependencies are resolved among sibling files. Walk the
+    EXTENDS/INSTANCE closure from every task in each output directory, keep that
+    closure, and delete only well-formed non-task modules outside it.
+    """
+    from dataset.sany_audit import is_task_file
+
+    unused = []
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [name for name in dirs if not name.startswith(".")]
+        paths = sorted(os.path.join(root, name) for name in files if name.endswith(".tla"))
+        if not paths:
+            continue
+
+        contents = {}
+        modules = {}
+        tasks = []
+        for path in paths:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            contents[path] = content
+            module = os.path.splitext(os.path.basename(path))[0]
+            modules.setdefault(module, []).append(path)
+            if is_task_file(path):
+                tasks.append(path)
+
+        reachable = set(tasks)
+        stack = list(tasks)
+        while stack:
+            path = stack.pop()
+            for module in _tla_modules.referenced_modules(contents[path]):
+                for dependency in modules.get(module, ()):
+                    if dependency not in reachable:
+                        reachable.add(dependency)
+                        stack.append(dependency)
+
+        unused.extend(path for path in paths if path not in reachable)
+
+    removed = []
+    for path in sorted(unused):
+        os.remove(path)
+        removed.append(path)
+        print(f"  [dependency-prune-l1] removed {os.path.relpath(path, directory)} (unreferenced)")
+
+    for root, _dirs, _files in os.walk(directory, topdown=False):
+        if root != directory and not os.listdir(root):
+            os.rmdir(root)
+
+    if removed:
+        print(f"[dependency-prune-l1] removed {len(removed)} unreferenced dependency module(s)")
+    return removed
+
+
 def _run_duplicate_gate(directory):
     """Drop approved exact-byte duplicate targets; reject unknown groups."""
     import hashlib
@@ -1178,6 +1233,7 @@ def _run_duplicate_gate(directory):
                 f"(same target as {os.path.relpath(keeper, directory)})"
             )
     print(f"[duplicate-gate-l1] checked {len(tasks)} task(s), removed {len(removed)} approved duplicate(s)")
+    _prune_unreferenced_dependencies(directory)
     return removed
 
 
@@ -1190,6 +1246,12 @@ def _run_triviality_gate(directory):
     from dataset.triviality_audit import gate
 
     return len(gate(directory, label="triviality-gate-l1", drop=True))
+
+
+def _drop_detail(total, duplicate_count, dropped):
+    if not duplicate_count and not dropped:
+        return ""
+    return f" ({total} generated, {duplicate_count} duplicates and {dropped} degenerate tasks dropped)"
 
 
 def main():
@@ -1209,7 +1271,8 @@ def main():
         total = generate_shared_model_l1(output_root=args.output_dir)
         duplicates = _run_duplicate_gate(args.output_dir or BENCHMARK_DIR)
         dropped = _run_sany_gate(args.output_dir or BENCHMARK_DIR)
-        detail = f" ({total} generated, {len(duplicates)} duplicates and {dropped} degenerate tasks dropped)"
+        _prune_unreferenced_dependencies(args.output_dir or BENCHMARK_DIR)
+        detail = _drop_detail(total, len(duplicates), dropped)
         print(f"Total proof-completion benchmarks (shared-model): {total - len(duplicates) - dropped}{detail}")
         return
 
@@ -1232,7 +1295,8 @@ def main():
 
     duplicates = _run_duplicate_gate(BENCHMARK_DIR)
     dropped = _run_sany_gate(BENCHMARK_DIR)
-    detail = f" ({total} generated, {len(duplicates)} duplicates and {dropped} degenerate tasks dropped)"
+    _prune_unreferenced_dependencies(BENCHMARK_DIR)
+    detail = _drop_detail(total, len(duplicates), dropped)
     print(f"\nTotal benchmarks generated: {total - len(duplicates) - dropped}{detail}")
 
 
