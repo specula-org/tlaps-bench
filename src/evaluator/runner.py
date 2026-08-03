@@ -46,6 +46,7 @@ from common.task_contract import TaskContractError
 from evaluator import quota
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import Backend, SubmissionDisposition
+from evaluator.cost import calculate_equivalent_cost_usd, public_price_error
 from evaluator.modes import get_mode, list_modes
 from evaluator.modes.base import Mode
 from evaluator.score import (
@@ -60,7 +61,7 @@ from evaluator.score import (
     weighted_score,
 )
 from evaluator.termination import TerminationContext, TerminationReason, classify, startup_error_snippet
-from evaluator.usage import UsageSummary
+from evaluator.usage import UsageSummary, nonnegative_float
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
@@ -89,7 +90,120 @@ _USAGE_TOKEN_FIELDS = (
     "cache_write_input_tokens",
     "reasoning_output_tokens",
 )
-_RUNNER_OWNED_ACCOUNTING_KEYS = frozenset({"usage", "input_tokens", "output_tokens", "time_secs"})
+_COST_TIME_BACKENDS = frozenset(
+    {"codex", "claude_code", "copilot", "copilot_oneshot", "cursor", "litellm", "litellm_oneshot", "pi"}
+)
+_RUNNER_OWNED_ACCOUNTING_KEYS = frozenset(
+    {"usage", "input_tokens", "output_tokens", "time_secs", "equivalent_cost_usd"}
+)
+
+
+def _supports_cost_time(backend: Backend) -> bool:
+    return backend.name in _COST_TIME_BACKENDS
+
+
+def _pricing_provider(backend: Backend) -> str | None:
+    """Return only provider hints that the public price library understands."""
+
+    if backend.name.startswith("copilot"):
+        return None
+    if backend.name.startswith("litellm"):
+        return "litellm"
+    if backend.name == "codex":
+        uses_bedrock = getattr(backend, "_uses_bedrock", None)
+        if callable(uses_bedrock) and uses_bedrock():
+            return "amazon-bedrock"
+    return backend.provider
+
+
+def _confirm_public_pricing(
+    backend: Backend,
+    *,
+    allow_unpriced_model: bool,
+    use_container: bool = False,
+) -> bool:
+    """Fail before an expensive run unless the user accepts a blank cost."""
+
+    if not backend.requires_public_pricing:
+        return True
+    model = getattr(backend, "model", None)
+    configuration_error = None
+    configuration_check = getattr(backend, "public_pricing_configuration_error", None)
+    if not use_container and callable(configuration_check):
+        configuration_error = configuration_check()
+    error = configuration_error or public_price_error(model, _pricing_provider(backend))
+    if error is None:
+        return True
+
+    print(f"ERROR: no reliable public API price for model {model!r}: {error}")
+    proceed = allow_unpriced_model
+    if not proceed and sys.stdin.isatty():
+        answer = input("Continue with equivalent_cost_usd left blank? [y/N] ").strip().lower()
+        proceed = answer in {"y", "yes"}
+    if not proceed:
+        print("Aborting before the run. Re-run with --allow-unpriced-model to continue with blank cost.")
+        return False
+
+    backend._equivalent_cost_disabled = True
+    print("WARNING: continuing without reliable pricing; equivalent_cost_usd will be blank.")
+    return True
+
+
+def _attach_equivalent_cost(
+    result: dict,
+    usage: UsageSummary,
+    backend: Backend,
+) -> UsageSummary:
+    """Calculate one execution lifecycle's complete equivalent USD cost."""
+
+    if not _supports_cost_time(backend):
+        result["usage"] = usage.to_dict()
+        return usage
+    if getattr(backend, "_equivalent_cost_disabled", False):
+        warning = "equivalent cost unavailable: public pricing was unavailable before the run"
+        usage = replace(usage, warnings=tuple(dict.fromkeys((*usage.warnings, warning))))
+        result["equivalent_cost_usd"] = None
+        result["usage"] = usage.to_dict()
+        return usage
+
+    amount, warning = calculate_equivalent_cost_usd(
+        usage,
+        getattr(backend, "model", None),
+        _pricing_provider(backend),
+    )
+    if warning is not None:
+        prefix = "equivalent cost unavailable" if amount is None else "equivalent cost warning"
+        warning = f"{prefix}: {warning}"
+        usage = replace(usage, warnings=tuple(dict.fromkeys((*usage.warnings, warning))))
+    result["equivalent_cost_usd"] = amount
+    result["usage"] = usage.to_dict()
+    return usage
+
+
+def _write_attempt_accounting(
+    directory: str,
+    *,
+    time_secs: float | None,
+    usage: UsageSummary,
+    backend: Backend,
+) -> None:
+    """Store non-experiment accounting beside an infra/quota attempt."""
+
+    if not _supports_cost_time(backend):
+        return
+    os.makedirs(directory, exist_ok=True)
+    diagnostic: dict[str, object] = {"time_secs": time_secs}
+    _attach_equivalent_cost(diagnostic, usage, backend)
+    with open(os.path.join(directory, "accounting.json"), "w") as stream:
+        json.dump(diagnostic, stream, indent=2)
+
+
+def _sum_accounting_values(left: object, right: object) -> float | None:
+    left_value = nonnegative_float(left)
+    right_value = nonnegative_float(right)
+    if left_value is None or right_value is None:
+        return None
+    return left_value + right_value
 
 
 def _retry_may_duplicate_model_work(
@@ -510,10 +624,11 @@ def _run_backend_with_retries(
     Fills result's time_secs / usage / input_tokens / output_tokens / agent_exit /
     error / termination_reason (plus infra_retries / infra_retry_reasons after
     any retries); the caller owns quota/infra exhaustion verdicts and messages.
-    time_secs counts only active agent time — quota-retry sleeps (which can be
-    hours) and the infra backoff are excluded. Returns the final attempt's
-    workspace + canonical snapshot, which the caller must clean up (earlier
-    attempts' dirs are cleaned here, including when an attempt raises).
+    time_secs records only the final experiment attempt. Infra/quota launches
+    are saved separately beside their raw artifacts and never enter the formal
+    result. Returns the final attempt's workspace + canonical snapshot, which
+    the caller must clean up (earlier attempts' dirs are cleaned here, including
+    when an attempt raises).
     """
     backend = item.backend
     mode = item.mode
@@ -521,11 +636,13 @@ def _run_backend_with_retries(
     workspace = fixed_workspace
     canonical_dir = None
     active_secs = 0.0
+    attempt_secs: float | None = None
     quota_exhausted = False
     quota_retry_suppressed = False
     infra_retriable = False
     infra_reasons: list[str] = []
     transcript = ""
+    attempt_usage = UsageSummary(available=False, warnings=("backend did not produce usage data",))
     aggregate_usage: UsageSummary | None = None
     result_baseline = result.copy()
     parsed_metadata_keys: set[str] = set()
@@ -551,7 +668,7 @@ def _run_backend_with_retries(
 
             # Defaults keep the closure bound to this attempt.
             def _run_once(workspace=workspace, canonical_dir=canonical_dir):
-                nonlocal active_secs
+                nonlocal active_secs, attempt_secs
                 result["error"] = ""
                 # Establish a valid empty-stream marker before process/container
                 # startup. A launch exception is then distinguishable from a
@@ -560,9 +677,9 @@ def _run_backend_with_retries(
                     pass
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(agent_stderr)
-                t0 = time.time()
+                t0 = time.monotonic()
                 if item.use_container:
-                    _run_backend_container(
+                    container_agent_secs = _run_backend_container(
                         item,
                         backend,
                         workspace,
@@ -578,6 +695,7 @@ def _run_backend_with_retries(
                         ),
                     )
                 else:
+                    container_agent_secs = None
                     _run_backend_local(
                         item,
                         backend,
@@ -590,13 +708,24 @@ def _run_backend_with_retries(
                         checker_bin,
                         canonical_dir,
                     )
-                elapsed = time.time() - t0
+                elapsed = (
+                    container_agent_secs
+                    if item.use_container and _supports_cost_time(backend)
+                    else time.monotonic() - t0
+                )
                 # Cooperative backends may spend a bounded grace period flushing
                 # audit events after the logical deadline. That is not extra model
                 # time and must not inflate the benchmark runtime metric.
-                if item.timeout > 0 and result.get("agent_exit") == -1 and "timeout after" in result.get("error", ""):
+                if (
+                    elapsed is not None
+                    and item.timeout > 0
+                    and result.get("agent_exit") == -1
+                    and "timeout after" in result.get("error", "")
+                ):
                     elapsed = min(elapsed, item.timeout)
-                active_secs += elapsed
+                attempt_secs = elapsed
+                if elapsed is not None:
+                    active_secs += elapsed
 
             def _prepare_quota_retry(quota_attempt: int, infra_attempt: int = attempt) -> bool:
                 nonlocal aggregate_usage, quota_retry_suppressed
@@ -611,8 +740,16 @@ def _run_backend_with_retries(
                     # the run and would destroy the only native evidence.
                     quota_retry_suppressed = True
                     return False
-                aggregate_usage = quota_usage if aggregate_usage is None else aggregate_usage.merge(quota_usage)
-                _stash_quota_attempt(agent_dir, infra_attempt, quota_attempt, backend)
+                if not _supports_cost_time(backend):
+                    aggregate_usage = quota_usage if aggregate_usage is None else aggregate_usage.merge(quota_usage)
+                _stash_quota_attempt(
+                    agent_dir,
+                    infra_attempt,
+                    quota_attempt,
+                    backend,
+                    time_secs=attempt_secs,
+                    usage=quota_usage,
+                )
                 return True
 
             quota_exhausted = not quota.run_with_quota_retry(
@@ -621,7 +758,7 @@ def _run_backend_with_retries(
                 log_prefix=f"[{name_no_ext}] ",
                 prepare_retry=_prepare_quota_retry,
             )
-            result["time_secs"] = active_secs
+            result["time_secs"] = attempt_secs if _supports_cost_time(backend) else active_secs
 
             # Parse agent output on every path — including quota exhaustion — so
             # the result records any tokens the agent did emit (rather than
@@ -639,10 +776,17 @@ def _run_backend_with_retries(
                 result.update(parsed_metadata)
                 if runner_error:
                     result["error"] = runner_error
-            aggregate_usage = attempt_usage if aggregate_usage is None else aggregate_usage.merge(attempt_usage)
-            result["usage"] = aggregate_usage.to_dict()
-            result["input_tokens"] = aggregate_usage.legacy_input_tokens
-            result["output_tokens"] = aggregate_usage.legacy_output_tokens
+            published_usage = attempt_usage
+            if not _supports_cost_time(backend):
+                aggregate_usage = attempt_usage if aggregate_usage is None else aggregate_usage.merge(attempt_usage)
+                published_usage = aggregate_usage
+            result["input_tokens"] = published_usage.legacy_input_tokens
+            result["output_tokens"] = published_usage.legacy_output_tokens
+            published_usage = _attach_equivalent_cost(result, published_usage, backend)
+            if _supports_cost_time(backend):
+                attempt_usage = published_usage
+            else:
+                aggregate_usage = published_usage
 
             if quota_exhausted:
                 # The final budgeted quota attempt has no following retry, so
@@ -672,9 +816,8 @@ def _run_backend_with_retries(
             )
             result["termination_reason"] = classify(ctx)
 
-            # A genuine attempt is never re-run. Require both backend approval
-            # for the failure shape and the absence of any structured or native
-            # evidence that model work may already have occurred.
+            # Preserve the existing replay decision: only an approved infra
+            # shape with no evidence of model work is retried.
             infra_retriable = (
                 result["termination_reason"] == TerminationReason.INFRA_ERROR
                 and backend.is_infra_retryable(ctx)
@@ -686,7 +829,13 @@ def _run_backend_with_retries(
             if attempt >= item.infra_retries:
                 break  # out of retries — the caller records the exhaustion
 
-            _stash_failed_attempt(agent_dir, attempt, backend)
+            _stash_failed_attempt(
+                agent_dir,
+                attempt,
+                backend,
+                time_secs=attempt_secs,
+                usage=attempt_usage,
+            )
             if fixed_workspace is None:
                 shutil.rmtree(workspace, ignore_errors=True)
                 workspace = None
@@ -712,8 +861,28 @@ def _run_backend_with_retries(
     if infra_reasons:
         result["infra_retries"] = attempt  # retries performed (0-based final attempt index)
         result["infra_retry_reasons"] = infra_reasons
-    if aggregate_usage is None:
-        aggregate_usage = UsageSummary(available=False, warnings=("backend did not produce usage data",))
+    non_experiment_attempt = _supports_cost_time(backend) and (
+        quota_exhausted or result.get("termination_reason") == TerminationReason.INFRA_ERROR
+    )
+    if non_experiment_attempt:
+        category = "quota-attempts" if quota_exhausted else "attempts"
+        _write_attempt_accounting(
+            os.path.join(agent_dir, category, f"attempt-{attempt}"),
+            time_secs=attempt_secs,
+            usage=attempt_usage,
+            backend=backend,
+        )
+        attempt_usage = UsageSummary(
+            sources=("runner.non_experiment_attempt",),
+            available=False,
+            warnings=("infra/quota accounting is stored separately under agent artifacts",),
+        )
+        result["time_secs"] = None
+        result["equivalent_cost_usd"] = None
+        result["usage"] = attempt_usage.to_dict()
+        result["input_tokens"] = 0
+        result["output_tokens"] = 0
+    outcome_usage = attempt_usage if _supports_cost_time(backend) else (aggregate_usage or attempt_usage)
     return ExecutionOutcome(
         workspace,
         canonical_dir,
@@ -722,7 +891,7 @@ def _run_backend_with_retries(
         quota_retry_suppressed,
         infra_retriable,
         infra_reasons,
-        aggregate_usage,
+        outcome_usage,
     )
 
 
@@ -732,11 +901,7 @@ def _resume_should_skip(result: dict) -> bool:
 
 
 def _record_result(results: list[dict], new_result: dict) -> None:
-    """Record a benchmark's latest result, replacing previous attempts.
-
-    Resume reruns a benchmark in the same output directory. Its new result
-    replaces the previous attempt instead of becoming a second scored task.
-    """
+    """Record the latest formal result, replacing a previous resume attempt."""
     benchmark = new_result["benchmark"]
     results[:] = [result for result in results if result.get("benchmark") != benchmark]
     results.append(new_result)
@@ -766,9 +931,53 @@ def _continuation_note(result: dict) -> str:
     return f"no PASS after {len(rounds)} continuation(s)"
 
 
+def _sum_required_metric(results: list[dict], field: str) -> float | None:
+    if not results:
+        return None
+    values = [nonnegative_float(result.get(field)) for result in results]
+    return sum(value for value in values if value is not None) if all(value is not None for value in values) else None
+
+
+def _formal_results(results: list[dict]) -> list[dict]:
+    """Results whose accounting belongs to the benchmark experiment."""
+
+    return [result for result in results if not is_skipped(result) and not is_non_genuine(result)]
+
+
+def _equivalent_cost_warnings(results: list[dict]) -> list[tuple[str, str]]:
+    warnings: list[tuple[str, str]] = []
+    for result in _formal_results(results):
+        usage = result.get("usage")
+        raw_warnings = usage.get("warnings") if isinstance(usage, dict) else None
+        if not isinstance(raw_warnings, list):
+            continue
+        benchmark = str(result.get("benchmark", "?"))
+        warnings.extend(
+            (benchmark, warning)
+            for warning in raw_warnings
+            if isinstance(warning, str) and warning.startswith("equivalent cost ")
+        )
+    return warnings
+
+
+def _format_task_time(value: object) -> str:
+    parsed = nonnegative_float(value)
+    return "unavailable" if parsed is None else f"{parsed:,.1f}s"
+
+
+def _format_equivalent_cost(value: object) -> str:
+    parsed = nonnegative_float(value)
+    if parsed is None:
+        return "unavailable"
+    if parsed == 0 or parsed >= 0.000001:
+        return f"${parsed:,.6f}"
+    return f"${parsed:.6g}"
+
+
 def update_summary(results, output_dir, total_benchmarks, backend_name, mode_name):
     """Incrementally update summary.md + results.json with current results."""
     with _summary_lock:
+        supports_cost_time = backend_name in _COST_TIME_BACKENDS
         total = len(results)
         verdicts = {}
         for r in results:
@@ -777,6 +986,11 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
 
         total_input = sum(r.get("input_tokens", 0) for r in results)
         total_output = sum(r.get("output_tokens", 0) for r in results)
+        formal_results = _formal_results(results) if supports_cost_time else []
+        total_task_time = _sum_required_metric(formal_results, "time_secs") if supports_cost_time else None
+        total_equivalent_cost = (
+            _sum_required_metric(formal_results, "equivalent_cost_usd") if supports_cost_time else None
+        )
 
         lines = []
         lines.append(f"# {backend_name} on {mode_name}\n")
@@ -797,7 +1011,12 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
         cont_line = continuation_rate_line(results, SCORERS["equal"], n_pass)
         if cont_line:
             lines.append(cont_line)
-        lines.append(f"**Total tokens**: {total_input:,} input / {total_output:,} output\n")
+        lines.append(
+            f"**Total tokens**: {total_input:,} input / {total_output:,} output" + ("" if supports_cost_time else "\n")
+        )
+        if supports_cost_time:
+            lines.append(f"**Total task time**: {_format_task_time(total_task_time)}")
+            lines.append(f"**Equivalent cost**: {_format_equivalent_cost(total_equivalent_cost)}\n")
 
         lines.append("## Summary\n")
         lines.append("| Verdict | Count |")
@@ -810,8 +1029,12 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
         lines.append("")
 
         lines.append("## Details\n")
-        lines.append("| Benchmark | Verdict | Time | Obligations | Tokens (in/out) | Notes |")
-        lines.append("|-----------|---------|------|-------------|-----------------|-------|")
+        if supports_cost_time:
+            lines.append("| Benchmark | Verdict | Time | Equivalent cost | Obligations | Tokens (in/out) | Notes |")
+            lines.append("|-----------|---------|------|----------------:|-------------|-----------------|-------|")
+        else:
+            lines.append("| Benchmark | Verdict | Time | Obligations | Tokens (in/out) | Notes |")
+            lines.append("|-----------|---------|------|-------------|-----------------|-------|")
         for r in sorted(results, key=lambda x: x["benchmark"]):
             icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             notes = r.get("error", "")
@@ -836,10 +1059,23 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
                 obs = f"{r['obligations_failed']}/{r['obligations_total']} failed"
             else:
                 obs = ""
-            lines.append(
-                f"| `{r['benchmark']}` | {icon} {r['check_verdict']} | {r['time_secs']:.0f}s | {obs} | {tokens} | {notes} |"
-            )
+            if supports_cost_time:
+                lines.append(
+                    f"| `{r['benchmark']}` | {icon} {r['check_verdict']} | "
+                    f"{_format_task_time(r.get('time_secs'))} | "
+                    f"{_format_equivalent_cost(r.get('equivalent_cost_usd'))} | {obs} | {tokens} | {notes} |"
+                )
+            else:
+                lines.append(
+                    f"| `{r['benchmark']}` | {icon} {r['check_verdict']} | "
+                    f"{r['time_secs']:.0f}s | {obs} | {tokens} | {notes} |"
+                )
         lines.append("")
+        cost_warnings = _equivalent_cost_warnings(results) if supports_cost_time else []
+        if cost_warnings:
+            lines.append("## Cost warnings\n")
+            lines.extend(f"- `{benchmark}`: {warning}" for benchmark, warning in cost_warnings)
+            lines.append("")
 
         report = "\n".join(lines)
         report_path = os.path.join(output_dir, "summary.md")
@@ -881,7 +1117,7 @@ def run_single_benchmark(item: WorkItem):
         "mode": mode.name,
         "agent_exit": -1,
         "check_verdict": "ERROR",
-        "time_secs": 0,
+        "time_secs": None if _supports_cost_time(backend) else 0,
         "error": "",
         # How the agent run ended; reclassified after the run (see termination.py).
         # INFRA_ERROR marks a result that was cut short by infrastructure rather
@@ -889,6 +1125,8 @@ def run_single_benchmark(item: WorkItem):
         "termination_reason": TerminationReason.OK,
         **backend.initial_result_metadata(),
     }
+    if _supports_cost_time(backend):
+        result["equivalent_cost_usd"] = None
     # Usage is runner-owned structured evidence; backend metadata must not
     # accidentally replace it with a similarly named custom field.
     result["usage"] = UsageSummary(
@@ -980,7 +1218,11 @@ def run_single_benchmark(item: WorkItem):
 
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
-            f.write(f"Time: {result['time_secs']:.0f}s\n")
+            if _supports_cost_time(backend):
+                f.write(f"Time: {_format_task_time(result.get('time_secs'))}\n")
+                f.write(f"Equivalent cost: {_format_equivalent_cost(result.get('equivalent_cost_usd'))}\n")
+            else:
+                f.write(f"Time: {result['time_secs']:.0f}s\n")
             f.write(f"Tokens: {result['input_tokens']:,} input / {result['output_tokens']:,} output\n")
             f.write("=" * 60 + "\n\n")
             f.write(run.transcript)
@@ -1119,7 +1361,14 @@ def _reset_benchmark_artifacts(output_dir: str, result_dir: str) -> None:
             os.remove(path)
 
 
-def _stash_failed_attempt(agent_dir: str, attempt: int, backend: Backend) -> None:
+def _stash_failed_attempt(
+    agent_dir: str,
+    attempt: int,
+    backend: Backend,
+    *,
+    time_secs: float | None,
+    usage: UsageSummary,
+) -> None:
     """Move a failed attempt's raw outputs to agent/attempts/attempt-N/: the
     retry starts clean (no stale stderr.txt) and the evidence stays debuggable."""
     dest = os.path.join(agent_dir, "attempts", f"attempt-{attempt}")
@@ -1128,9 +1377,18 @@ def _stash_failed_attempt(agent_dir: str, attempt: int, backend: Backend) -> Non
         src = os.path.join(agent_dir, fname)
         if os.path.isfile(src):
             shutil.move(src, os.path.join(dest, fname))
+    _write_attempt_accounting(dest, time_secs=time_secs, usage=usage, backend=backend)
 
 
-def _stash_quota_attempt(agent_dir: str, infra_attempt: int, quota_attempt: int, backend: Backend) -> None:
+def _stash_quota_attempt(
+    agent_dir: str,
+    infra_attempt: int,
+    quota_attempt: int,
+    backend: Backend,
+    *,
+    time_secs: float | None,
+    usage: UsageSummary,
+) -> None:
     """Preserve a no-model-work hard-cap launch before the next launch replaces it."""
 
     dest = os.path.join(
@@ -1143,6 +1401,7 @@ def _stash_quota_attempt(agent_dir: str, infra_attempt: int, quota_attempt: int,
         src = os.path.join(agent_dir, fname)
         if os.path.isfile(src):
             shutil.move(src, os.path.join(dest, fname))
+    _write_attempt_accounting(dest, time_secs=time_secs, usage=usage, backend=backend)
 
 
 def _run_continuations(
@@ -1222,11 +1481,6 @@ def _run_continuations(
             round_result["usage"] = round_usage.to_dict()
             round_result["input_tokens"] = round_usage.legacy_input_tokens
             round_result["output_tokens"] = round_usage.legacy_output_tokens
-            aggregate_usage = UsageSummary.from_dict(result.get("usage")).merge(round_usage)
-            result["usage"] = aggregate_usage.to_dict()
-            result["time_secs"] += round_result["time_secs"]
-            result["input_tokens"] = aggregate_usage.legacy_input_tokens
-            result["output_tokens"] = aggregate_usage.legacy_output_tokens
             if run.quota_exhausted:
                 round_result["agent_exit"] = -3
                 round_result["error"] = (
@@ -1237,6 +1491,22 @@ def _run_continuations(
                 round_result["termination_reason"] = TerminationReason.QUOTA_EXHAUSTED
             elif run.infra_retriable:
                 round_result["error"] = f"startup/infra failure ({run.infra_reasons[-1]}); exhausted infra retries"
+
+            formal_round = not is_non_genuine(round_result)
+            if formal_round or not _supports_cost_time(item.backend):
+                aggregate_usage = UsageSummary.from_dict(result.get("usage")).merge(round_usage)
+                result["usage"] = aggregate_usage.to_dict()
+                result["time_secs"] = _sum_accounting_values(
+                    result.get("time_secs"),
+                    round_result.get("time_secs"),
+                )
+                if _supports_cost_time(item.backend):
+                    result["equivalent_cost_usd"] = _sum_accounting_values(
+                        result.get("equivalent_cost_usd"),
+                        round_result.get("equivalent_cost_usd"),
+                    )
+                result["input_tokens"] = aggregate_usage.legacy_input_tokens
+                result["output_tokens"] = aggregate_usage.legacy_output_tokens
 
             with open(os.path.join(round_dir, "transcript.txt"), "w") as f:
                 f.write(run.transcript)
@@ -1320,7 +1590,7 @@ def _run_backend_container(
     result: dict,
     canonical_dir: str | None = None,
     read_only_files: list[str] | None = None,
-) -> None:
+) -> float | None:
     """Run a backend inside Docker with live output and timeout draining."""
     runner = ContainerRunner()
     timeout = item.timeout if item.timeout and item.timeout > 0 else None
@@ -1344,6 +1614,7 @@ def _run_backend_container(
         install_script=backend.install_script,
         credential_mounts=backend.get_credential_mounts(),
         keep_container=item.keep_container,
+        agent_start_marker=(f"__TLAPS_BENCH_AGENT_START_{uuid.uuid4().hex}__" if _supports_cost_time(backend) else ""),
     )
     name_no_ext = os.path.splitext(os.path.basename(item.benchmark_path))[0]
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name_no_ext)
@@ -1372,6 +1643,8 @@ def _run_backend_container(
     config.env["TLAPS_CHECK_TIMEOUT"] = str(item.check_timeout)
 
     container_run = None
+    agent_started_at: float | None = None
+    agent_ended_at: float | None = None
     try:
         container_run = runner.run(config, cmd, stdin_data=stdin_data)
         if item.keep_container:
@@ -1407,7 +1680,8 @@ def _run_backend_container(
                     runner.kill(container_run)
                     result["agent_exit"] = -1
                     result["error"] = f"{backend.name} timeout after {item.timeout}s"
-                    return
+                    agent_ended_at = time.monotonic()
+                    return agent_ended_at - agent_started_at if agent_started_at is not None else None
 
                 boundary = hard_deadline if timed_out else logical_deadline
                 poll_timeout = min(5.0, max(boundary - now, 0.0)) if boundary is not None else 5.0
@@ -1427,16 +1701,28 @@ def _run_backend_container(
                 if ready:
                     line = proc.stdout.readline()
                     if not line and proc.poll() is not None:
+                        if agent_ended_at is None:
+                            agent_ended_at = time.monotonic()
                         break
                     if line:
-                        jsonl_f.write(line)
-                        jsonl_f.flush()
-                        if STREAM_AGENT_OUTPUT:
-                            sys.stdout.write(line)
-                            sys.stdout.flush()
+                        if config.agent_start_marker and line.rstrip("\r\n") == config.agent_start_marker:
+                            if agent_started_at is None:
+                                agent_started_at = time.monotonic()
+                        else:
+                            jsonl_f.write(line)
+                            jsonl_f.flush()
+                            if STREAM_AGENT_OUTPUT:
+                                sys.stdout.write(line)
+                                sys.stdout.flush()
+                    if proc.poll() is not None and agent_ended_at is None:
+                        agent_ended_at = time.monotonic()
                 elif proc.poll() is not None:
+                    if agent_ended_at is None:
+                        agent_ended_at = time.monotonic()
                     break
 
+        if agent_started_at is not None and agent_ended_at is None:
+            agent_ended_at = time.monotonic()
         if logical_deadline is not None and time.time() >= logical_deadline:
             timed_out = True
         result["agent_exit"] = -1 if timed_out else proc.returncode
@@ -1461,11 +1747,16 @@ def _run_backend_container(
         result["error"] = str(e)
         if container_run:
             runner.kill(container_run)
+        if agent_started_at is not None:
+            agent_ended_at = time.monotonic()
     finally:
         # A retained container keeps its credential mount sources so a
         # `docker start` can still authenticate.
         if not item.keep_container:
             runner.cleanup_credential_tmps()
+    if agent_started_at is None or agent_ended_at is None:
+        return None
+    return agent_ended_at - agent_started_at
 
 
 def _run_backend_local(
@@ -1799,7 +2090,7 @@ def main():
         "--timeout",
         type=int,
         default=28800,
-        help="Agent timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)",
+        help="Backend timeout per benchmark in seconds (default: 28800 = 8h; 0 = no limit)",
     )
     parser.add_argument(
         "--check-timeout", type=int, default=600, help="Checker timeout per benchmark in seconds (default: 600)"
@@ -1896,6 +2187,11 @@ def main():
         help="Skip the container preflight check (validate install + auth + model + firewall "
         "on a trivial prompt before the run). Container mode only.",
     )
+    parser.add_argument(
+        "--allow-unpriced-model",
+        action="store_true",
+        help="Continue when public API pricing is unavailable; equivalent_cost_usd will be blank",
+    )
     args = parser.parse_args()
 
     backend = get_backend(args.backend, model=args.model)
@@ -1948,6 +2244,13 @@ def main():
         args.infra_retries = backend.validate_options(args.infra_retries, args.max_continuations)
     except ValueError as exc:
         parser.error(str(exc))
+
+    if not _confirm_public_pricing(
+        backend,
+        allow_unpriced_model=args.allow_unpriced_model,
+        use_container=use_container,
+    ):
+        sys.exit(1)
 
     auth_err = backend.check_auth()
     if auth_err:
@@ -2107,7 +2410,7 @@ def main():
             )
         )
 
-    start_time = time.time()
+    start_time = time.monotonic()
     # A filtered resume keeps results from the rest of the original run, so
     # the cumulative report's denominator must cover both sets of benchmarks.
     total_benchmarks = _total_benchmark_count(results, selected_benchmarks)
@@ -2122,8 +2425,14 @@ def main():
             icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
             cont = _continuation_note(r)
+            metrics = (
+                f"{_format_task_time(r.get('time_secs'))}, {tokens} tok, "
+                f"{_format_equivalent_cost(r.get('equivalent_cost_usd'))}"
+                if _supports_cost_time(backend)
+                else f"{r['time_secs']:.0f}s, {tokens} tok"
+            )
             print(
-                f"[{prior_done + i + 1}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
+                f"[{prior_done + i + 1}/{total_benchmarks}] {icon} {r['benchmark']} ({metrics})"
                 + (f" — {cont}" if cont else "")
             )
             update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
@@ -2136,19 +2445,28 @@ def main():
                 icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
                 tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
                 cont = _continuation_note(r)
+                metrics = (
+                    f"{_format_task_time(r.get('time_secs'))}, {tokens} tok, "
+                    f"{_format_equivalent_cost(r.get('equivalent_cost_usd'))}"
+                    if _supports_cost_time(backend)
+                    else f"{r['time_secs']:.0f}s, {tokens} tok"
+                )
                 print(
-                    f"[{prior_done + done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({r['time_secs']:.0f}s, {tokens} tok)"
+                    f"[{prior_done + done_count}/{total_benchmarks}] {icon} {r['benchmark']} ({metrics})"
                     + (f" — {cont}" if cont else "")
                 )
                 update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
 
-    total_time = time.time() - start_time
+    total_time = time.monotonic() - start_time
 
     update_summary(results, output_dir, total_benchmarks, backend.name, mode.name)
     report_path = os.path.join(output_dir, "summary.md")
 
     print(f"\n{'=' * 60}")
-    print(f"Completed in {total_time:.0f}s")
+    if _supports_cost_time(backend):
+        print(f"Run wall time: {total_time:.0f}s")
+    else:
+        print(f"Completed in {total_time:.0f}s")
     print(f"Report: {report_path}")
 
     verdicts = {}
@@ -2161,6 +2479,14 @@ def main():
     total_in = sum(r.get("input_tokens", 0) for r in results)
     total_out = sum(r.get("output_tokens", 0) for r in results)
     print(f"  Total tokens: {total_in:,} input / {total_out:,} output")
+    if _supports_cost_time(backend):
+        formal_results = _formal_results(results)
+        print(f"  Total task time: {_format_task_time(_sum_required_metric(formal_results, 'time_secs'))}")
+        print(
+            f"  Equivalent cost: {_format_equivalent_cost(_sum_required_metric(formal_results, 'equivalent_cost_usd'))}"
+        )
+        for benchmark, warning in _equivalent_cost_warnings(results):
+            print(f"  WARNING [{benchmark}]: {warning}")
 
 
 if __name__ == "__main__":

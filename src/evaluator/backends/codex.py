@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluator import quota
-from evaluator.usage import UsageSummary
+from evaluator.usage import RequestUsage, UsageSummary
 
 from .agentic import AgenticBackend
 from .base import (
@@ -64,6 +64,7 @@ class _CodexTerminalUsage:
     input_tokens: int
     output_tokens: int
     cache_read_input_tokens: int | None
+    cache_write_input_tokens: int | None
     reasoning_output_tokens: int | None
     incomplete: bool
     warnings: tuple[str, ...]
@@ -76,7 +77,9 @@ class _CodexChildUsageAudit:
     input_tokens: int
     output_tokens: int
     cache_read_input_tokens: int
+    cache_write_input_tokens: int
     reasoning_output_tokens: int
+    requests: tuple[RequestUsage, ...]
     complete: bool
     warnings: tuple[str, ...]
 
@@ -129,10 +132,24 @@ def _parse_terminal_usage(event: dict[str, Any]) -> tuple[_CodexTerminalUsage | 
         return value
 
     cached_input_tokens = optional_subset("cached_input_tokens")
+    cache_write_input_tokens = optional_subset("cache_write_input_tokens")
     reasoning_output_tokens = optional_subset("reasoning_output_tokens")
-    if cached_input_tokens is not None and cached_input_tokens > input_tokens:
+    if (
+        cached_input_tokens is not None
+        and cache_write_input_tokens is not None
+        and cached_input_tokens + cache_write_input_tokens > input_tokens
+    ):
+        warnings.append("Codex cache read and write input tokens exceed total input tokens")
+        cached_input_tokens = None
+        cache_write_input_tokens = None
+        incomplete = True
+    elif cached_input_tokens is not None and cached_input_tokens > input_tokens:
         warnings.append("Codex cached input tokens exceed total input tokens")
         cached_input_tokens = None
+        incomplete = True
+    elif cache_write_input_tokens is not None and cache_write_input_tokens > input_tokens:
+        warnings.append("Codex cache-write input tokens exceed total input tokens")
+        cache_write_input_tokens = None
         incomplete = True
     if reasoning_output_tokens is not None and reasoning_output_tokens > output_tokens:
         warnings.append("Codex reasoning output tokens exceed total output tokens")
@@ -144,6 +161,7 @@ def _parse_terminal_usage(event: dict[str, Any]) -> tuple[_CodexTerminalUsage | 
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_input_tokens=cached_input_tokens,
+            cache_write_input_tokens=cache_write_input_tokens,
             reasoning_output_tokens=reasoning_output_tokens,
             incomplete=incomplete,
             warnings=tuple(warnings),
@@ -177,24 +195,74 @@ def _parse_child_usage_audit(
     cached_input_tokens = _strict_token(event.get("cached_input_tokens"))
     output_tokens = _strict_token(event.get("output_tokens"))
     reasoning_output_tokens = _strict_token(event.get("reasoning_output_tokens"))
+    cache_write_input_tokens = _strict_token(event.get("cache_write_input_tokens"))
     if (
         child_count is None
         or input_tokens is None
         or cached_input_tokens is None
         or output_tokens is None
         or reasoning_output_tokens is None
-        or cached_input_tokens > input_tokens
+        or cache_write_input_tokens is None
+        or cached_input_tokens + cache_write_input_tokens > input_tokens
         or reasoning_output_tokens > output_tokens
         or (child_count == 0 and (input_tokens > 0 or output_tokens > 0))
     ):
         return None, ("Codex child-usage audit has invalid aggregate usage",)
 
     warning_codes = tuple(dict.fromkeys(raw_warning_codes))
-    warnings = (
-        (f"Codex child-usage audit is incomplete ({', '.join(warning_codes)})",)
-        if warning_codes
-        else (() if raw_complete else ("Codex child-usage audit is incomplete",))
-    )
+    warnings: tuple[str, ...] = ()
+    if warning_codes:
+        warnings += (f"Codex child-usage audit is incomplete ({', '.join(warning_codes)})",)
+    elif not raw_complete:
+        warnings += ("Codex child-usage audit is incomplete",)
+    requests: tuple[RequestUsage, ...]
+    requests_valid = True
+    raw_requests = event.get("requests")
+    parsed_requests: list[RequestUsage] = []
+    if not isinstance(raw_requests, list):
+        requests_valid = False
+    else:
+        for raw_request in raw_requests:
+            if not isinstance(raw_request, dict):
+                requests_valid = False
+                continue
+            request_input = _strict_token(raw_request.get("input_tokens"))
+            request_cache_read = _strict_token(raw_request.get("cached_input_tokens"))
+            request_cache_write = _strict_token(raw_request.get("cache_write_input_tokens"))
+            request_output = _strict_token(raw_request.get("output_tokens"))
+            request_reasoning = _strict_token(raw_request.get("reasoning_output_tokens"))
+            model = raw_request.get("model")
+            provider = raw_request.get("provider")
+            if (
+                request_input is None
+                or request_cache_read is None
+                or request_cache_write is None
+                or request_output is None
+                or request_reasoning is None
+                or request_cache_read + request_cache_write > request_input
+                or request_reasoning > request_output
+                or not isinstance(model, str)
+                or not model.strip()
+                or not isinstance(provider, str)
+                or not provider.strip()
+            ):
+                requests_valid = False
+                continue
+            parsed_requests.append(
+                RequestUsage(
+                    input_tokens=request_input,
+                    output_tokens=request_output,
+                    cache_read_input_tokens=request_cache_read,
+                    cache_write_input_tokens=request_cache_write,
+                    reasoning_output_tokens=request_reasoning,
+                    resolved_model=model,
+                    provider=provider,
+                )
+            )
+    requests = tuple(parsed_requests)
+    if not requests_valid:
+        warnings += ("Codex child-usage audit has invalid per-request usage",)
+
     return (
         _CodexChildUsageAudit(
             root_thread_id=root_thread_id,
@@ -202,11 +270,23 @@ def _parse_child_usage_audit(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_input_tokens=cached_input_tokens,
+            cache_write_input_tokens=cache_write_input_tokens,
             reasoning_output_tokens=reasoning_output_tokens,
-            complete=raw_complete and not warning_codes,
+            requests=requests,
+            complete=raw_complete and not warning_codes and requests_valid,
             warnings=warnings,
         ),
         (),
+    )
+
+
+def _request_token_totals(requests: tuple[RequestUsage, ...]) -> tuple[int, int, int, int, int]:
+    return (
+        sum(request.input_tokens or 0 for request in requests),
+        sum(request.cache_read_input_tokens or 0 for request in requests),
+        sum(request.cache_write_input_tokens or 0 for request in requests),
+        sum(request.output_tokens or 0 for request in requests),
+        sum(request.reasoning_output_tokens or 0 for request in requests),
     )
 
 
@@ -271,6 +351,7 @@ def _retry_may_duplicate_model_work(jsonl_path: str) -> bool:
                         audit is None
                         or audit_warnings
                         or not audit.complete
+                        or bool(audit.requests)
                         or audit.input_tokens > 0
                         or audit.output_tokens > 0
                     ):
@@ -342,6 +423,7 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
     failed_turns = 0
     saw_multi_agent_activity = False
     saw_stream_lag = False
+    saw_model_reroute = False
 
     try:
         with open(jsonl_path) as f:
@@ -378,8 +460,11 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
                         saw_multi_agent_activity = True
                     elif item_type == "error":
                         message = item.get("message")
-                        if isinstance(message, str) and _STREAM_LAG_RE.search(message):
-                            saw_stream_lag = True
+                        if isinstance(message, str):
+                            if _STREAM_LAG_RE.search(message):
+                                saw_stream_lag = True
+                            if message.startswith("model rerouted: "):
+                                saw_model_reroute = True
                 if event_type == "turn.completed":
                     terminal_events.append(event)
                     terminal_usage, terminal_warnings = _parse_terminal_usage(event)
@@ -428,7 +513,7 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
                     input_tokens=child_audit.input_tokens,
                     output_tokens=child_audit.output_tokens,
                     cache_read_input_tokens=child_audit.cache_read_input_tokens,
-                    cache_write_input_tokens=None,
+                    cache_write_input_tokens=child_audit.cache_write_input_tokens,
                     reasoning_output_tokens=child_audit.reasoning_output_tokens,
                     model_requests=None,
                     model_time_secs=None,
@@ -463,6 +548,9 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
     if failed_turns:
         warnings.append("Codex JSONL contains both failed and completed turn events")
         lower_bound = True
+    if saw_model_reroute:
+        warnings.append("Codex used a rerouted model; requested-model pricing is unsafe")
+        lower_bound = True
     if child_audit is not None:
         warnings.extend(child_audit.warnings)
         if not child_audit_matches_root:
@@ -489,12 +577,40 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
     child_input_tokens = usable_child_audit.input_tokens if usable_child_audit is not None else 0
     child_output_tokens = usable_child_audit.output_tokens if usable_child_audit is not None else 0
     cache_read_input_tokens = selected.cache_read_input_tokens
+    cache_write_input_tokens = selected.cache_write_input_tokens
     reasoning_output_tokens = selected.reasoning_output_tokens
     if usable_child_audit is not None:
         if cache_read_input_tokens is not None:
             cache_read_input_tokens += usable_child_audit.cache_read_input_tokens
+        if cache_write_input_tokens is not None:
+            cache_write_input_tokens += usable_child_audit.cache_write_input_tokens
         if reasoning_output_tokens is not None:
             reasoning_output_tokens += usable_child_audit.reasoning_output_tokens
+
+    requests: tuple[RequestUsage, ...] = ()
+    model_requests: int | None = None
+    if (
+        usable_child_audit is not None
+        and usable_child_audit.complete
+        and not selected.incomplete
+        and cache_read_input_tokens is not None
+        and cache_write_input_tokens is not None
+        and reasoning_output_tokens is not None
+    ):
+        expected_request_totals = (
+            selected.input_tokens + child_input_tokens,
+            cache_read_input_tokens,
+            cache_write_input_tokens,
+            selected.output_tokens + child_output_tokens,
+            reasoning_output_tokens,
+        )
+        if _request_token_totals(usable_child_audit.requests) != expected_request_totals:
+            warnings.append("Codex v3 per-request usage does not match terminal and child aggregate totals")
+            lower_bound = True
+        elif not lower_bound:
+            requests = usable_child_audit.requests
+            model_requests = len(requests)
+
     sources = [_CODEX_USAGE_SOURCE]
     if usable_child_audit is not None and usable_child_audit.child_count:
         sources.append(_CODEX_CHILD_USAGE_SOURCE)
@@ -505,12 +621,12 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
             input_tokens=selected.input_tokens + child_input_tokens,
             output_tokens=selected.output_tokens + child_output_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
-            cache_write_input_tokens=None,
+            cache_write_input_tokens=cache_write_input_tokens,
             reasoning_output_tokens=reasoning_output_tokens,
-            model_requests=None,
+            model_requests=model_requests,
             model_time_secs=None,
             costs=(),
-            requests=(),
+            requests=requests,
             sources=tuple(sources),
             available=True,
             complete=not lower_bound and not selected.incomplete,
@@ -522,6 +638,7 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
 
 class CodexBackend(AgenticBackend):
     name = "codex"
+    requires_public_pricing = True
     install_script = "install-codex.sh"
     session_state_dir = "/root/.codex"
     env_keys = [
@@ -610,6 +727,20 @@ class CodexBackend(AgenticBackend):
         aws = provider.get("aws", {}) if isinstance(provider, dict) else {}
         region = aws.get("region") if isinstance(aws, dict) else None
         return isinstance(region, str) and bool(region)
+
+    @staticmethod
+    def public_pricing_configuration_error() -> str | None:
+        """Reject host-side Codex service tiers the price library cannot value."""
+
+        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+        try:
+            with open(codex_home / "config.toml", "rb") as f:
+                service_tier = tomllib.load(f).get("service_tier", "default")
+        except (FileNotFoundError, OSError, tomllib.TOMLDecodeError):
+            return None
+        if service_tier in {"default", "standard"}:
+            return None
+        return f"Codex service tier {service_tier!r} has no reliable public price"
 
     def check_auth(self) -> str | None:
         if self._uses_bedrock():

@@ -10,6 +10,7 @@ from .oneshot import OneShotBackend
 class LiteLLMOneShotBackend(OneShotBackend):
     name = "litellm_oneshot"
     provider = "litellm"
+    requires_public_pricing = True
     install_script = "install-litellm-oneshot.sh"
     env_keys = ENV_KEYS
     reasoning_effort_values = REASONING_EFFORT_VALUES

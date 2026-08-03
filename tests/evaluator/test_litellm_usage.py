@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from evaluator.backends.litellm import LiteLLMBackend
+from evaluator.cost import calculate_equivalent_cost_usd
 
 
 def _request_usage(
@@ -80,6 +81,7 @@ def test_per_request_usage_and_native_cost_are_aggregated(tmp_path):
     assert [cost.to_dict() for cost in usage.costs] == [
         {"amount": 0.003, "unit": "usd", "source": "litellm.response_cost"}
     ]
+    assert calculate_equivalent_cost_usd(usage, "claude-sonnet-4-6", "litellm") == (0.003, None)
 
 
 def test_cache_and_reasoning_tokens_are_classifications(tmp_path):
@@ -354,7 +356,7 @@ def test_truncated_run_without_aggregate_is_a_lower_bound(tmp_path):
     assert any("aggregate usage event missing" in warning for warning in usage.warnings)
 
 
-def test_malformed_lines_are_ignored(tmp_path):
+def test_malformed_lines_make_usage_a_lower_bound(tmp_path):
     path = tmp_path / "output.jsonl"
     path.write_text(
         "not json\n"
@@ -368,3 +370,5 @@ def test_malformed_lines_are_ignored(tmp_path):
 
     assert usage.input_tokens == 10
     assert usage.model_requests == 1
+    assert usage.status == "lower_bound"
+    assert "LiteLLM JSONL contains 1 malformed nonempty line(s)" in usage.warnings

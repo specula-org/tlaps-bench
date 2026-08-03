@@ -311,6 +311,8 @@ def parse_copilot_otel(path: str) -> UsageSummary | None:
     if parse_warnings:
         usage = replace(
             usage,
+            complete=False,
+            is_lower_bound=True,
             warnings=tuple(dict.fromkeys((*usage.warnings, *parse_warnings))),
         )
     return usage
@@ -318,6 +320,7 @@ def parse_copilot_otel(path: str) -> UsageSummary | None:
 
 class CopilotBackend(AgenticBackend):
     name = "copilot"
+    requires_public_pricing = True
     install_script = "install-copilot.sh"
     session_state_dir = "/root/.copilot"
     env_keys = [
@@ -528,6 +531,8 @@ class CopilotBackend(AgenticBackend):
             if usage.output_tokens is not None and output_tokens and usage.output_tokens != output_tokens:
                 usage = replace(
                     usage,
+                    complete=False,
+                    is_lower_bound=True,
                     warnings=tuple(
                         dict.fromkeys(
                             (

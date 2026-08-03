@@ -12,6 +12,7 @@ from evaluator.backends.copilot import (
     CopilotBackend,
     parse_copilot_otel,
 )
+from evaluator.cost import calculate_equivalent_cost_usd
 
 
 def _span(
@@ -180,6 +181,10 @@ def test_all_chat_spans_include_nested_subagent_usage_without_root_double_counti
     ]
     assert usage.requests[0].resolved_model == "claude-opus-4-8-20260701"
     assert usage.requests[0].interaction_id == "interaction-chat-1"
+    equivalent_cost, warning = calculate_equivalent_cost_usd(usage, "claude-opus-4.8")
+    assert equivalent_cost is not None
+    assert equivalent_cost > 0
+    assert warning is None
 
 
 def test_root_chat_mismatch_marks_observed_usage_as_a_lower_bound(tmp_path):
@@ -216,6 +221,46 @@ def test_root_chat_mismatch_marks_observed_usage_as_a_lower_bound(tmp_path):
     assert (usage.input_tokens, usage.output_tokens, usage.model_requests) == (100, 10, 1)
     assert any("input_tokens invoke_agent total 300" in warning for warning in usage.warnings)
     assert any("model_requests invoke_agent total 2" in warning for warning in usage.warnings)
+
+
+def test_malformed_otel_downgrades_otherwise_complete_usage(tmp_path):
+    path = tmp_path / COPILOT_OTEL_FILENAME
+    root = _span(
+        "trace-malformed",
+        "root",
+        "invoke_agent",
+        {
+            "gen_ai.usage.input_tokens": 100,
+            "gen_ai.usage.output_tokens": 10,
+            "gen_ai.usage.cache_read.input_tokens": 20,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+            "gen_ai.usage.reasoning.output_tokens": 2,
+            "github.copilot.turn_count": 1,
+            "github.copilot.cost": 0.1,
+            "github.copilot.aiu": 10,
+        },
+    )
+    chat = _chat(
+        "trace-malformed",
+        "chat",
+        "root",
+        input_tokens=100,
+        output_tokens=10,
+        cache_read=20,
+        cache_write=0,
+        reasoning=2,
+        cost=0.1,
+        aiu=10,
+    )
+    _write_jsonl(path, chat, root, malformed_tail=True)
+
+    usage = parse_copilot_otel(str(path))
+
+    assert usage is not None
+    assert usage.status == "lower_bound"
+    assert usage.complete is False
+    assert usage.is_lower_bound is True
+    assert "ignored malformed OTel line 3" in usage.warnings
 
 
 def test_native_nano_aiu_and_missing_subagent_cost_are_reported_as_a_lower_bound(tmp_path):
@@ -446,6 +491,46 @@ def test_backend_marks_missing_telemetry_without_activity_unavailable(tmp_path):
     assert usage.output_tokens is None
 
 
+def test_cli_otel_output_mismatch_downgrades_usage(tmp_path):
+    output = tmp_path / "output.jsonl"
+    output.write_text("")
+    root = _span(
+        "trace-mismatch",
+        "root",
+        "invoke_agent",
+        {
+            "gen_ai.usage.input_tokens": 100,
+            "gen_ai.usage.output_tokens": 10,
+            "gen_ai.usage.cache_read.input_tokens": 20,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+            "gen_ai.usage.reasoning.output_tokens": 2,
+            "github.copilot.turn_count": 1,
+            "github.copilot.cost": 0.1,
+            "github.copilot.aiu": 10,
+        },
+    )
+    chat = _chat(
+        "trace-mismatch",
+        "chat",
+        "root",
+        input_tokens=100,
+        output_tokens=10,
+        cache_read=20,
+        cache_write=0,
+        reasoning=2,
+        cost=0.1,
+        aiu=10,
+    )
+    _write_jsonl(tmp_path / COPILOT_OTEL_FILENAME, chat, root)
+
+    usage = CopilotBackend().parse_usage(str(output), input_tokens=0, output_tokens=11)
+
+    assert usage.status == "lower_bound"
+    assert usage.complete is False
+    assert usage.is_lower_bound is True
+    assert "Copilot OTel output total differs from the CLI event stream" in usage.warnings
+
+
 def test_each_execution_gets_an_isolated_official_otel_file(tmp_path):
     backend = CopilotBackend()
     first = backend.execution_environment(str(tmp_path / "task-a"))
@@ -486,7 +571,7 @@ def test_copilot_uses_documented_prompt_flag_without_stdin(tmp_path):
     assert stdin_data is None
 
 
-def test_copilot_cli_install_is_pinned_to_verified_otel_version():
+def test_copilot_cli_install_uses_latest_release():
     script = Path("docker/install-scripts/install-copilot.sh").read_text()
 
-    assert "@github/copilot@1.0.71" in script
+    assert "npm install -g @github/copilot --cache" in script

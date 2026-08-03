@@ -72,6 +72,100 @@ def test_scorecard_module_breakdown_and_no_cheating_row():
     assert "**Pass rate**: 2/3 (66.7%)" in md
 
 
+def test_scorecard_separates_tokens_time_and_equivalent_cost():
+    results = [
+        _r("PASS", input_tokens=1, output_tokens=2, time_secs=1.25, equivalent_cost_usd=0.125),
+        _r("FAIL", input_tokens=4, output_tokens=5, time_secs=2.75, equivalent_cost_usd=0.25),
+    ]
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
+
+    md = scorecard_md(run, EQUAL, "equal")
+
+    assert "**Cost**:" not in md
+    assert "**Tokens**: 5 in / 7 out" in md
+    assert "**Total task time**: 4.0s" in md
+    assert "**Equivalent cost**: $0.375000" in md
+
+
+def test_scorecard_preserves_legacy_format_without_equivalent_cost():
+    results = [_r("PASS", input_tokens=1, output_tokens=2, time_secs=1.25)]
+    run = {"path": "x/results.json", "id": "x", "backend": "cursor", "mode": "proof-completion", "results": results}
+
+    md = scorecard_md(run, EQUAL, "equal")
+
+    assert "**Cost**: 1 in / 2 out tokens · 1s total" in md
+    assert "**Equivalent cost**:" not in md
+
+
+def test_scorecard_does_not_turn_missing_metrics_into_zero():
+    results = [_r("PASS", time_secs=1.0, equivalent_cost_usd=0.1), _r("FAIL")]
+    results[1].pop("time_secs")
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
+
+    md = scorecard_md(run, EQUAL, "equal")
+
+    assert "**Total task time**: unavailable" in md
+    assert "**Equivalent cost**: unavailable" in md
+
+
+def test_scorecard_preserves_known_exact_zero_metrics():
+    results = [_r("PASS", time_secs=0, equivalent_cost_usd=0)]
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
+
+    md = scorecard_md(run, EQUAL, "equal")
+
+    assert "**Total task time**: 0.0s" in md
+    assert "**Equivalent cost**: $0.000000" in md
+
+
+def test_tiny_positive_cost_is_not_rendered_as_zero():
+    results = [_r("PASS", time_secs=1, equivalent_cost_usd=0.0000005)]
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
+
+    assert "**Equivalent cost**: $5e-07" in scorecard_md(run, EQUAL, "equal")
+
+
+def test_scorecard_excludes_non_genuine_time_and_cost_and_reports_cost_warning():
+    results = [
+        _r(
+            "PASS",
+            input_tokens=10,
+            output_tokens=2,
+            time_secs=1.5,
+            equivalent_cost_usd=0.15,
+            benchmark="formal.tla",
+            usage={"warnings": ["equivalent cost warning: values differ"]},
+        ),
+        _r(
+            "ERROR",
+            input_tokens=999,
+            output_tokens=999,
+            time_secs=100,
+            equivalent_cost_usd=10,
+            benchmark="infra.tla",
+            termination_reason="INFRA_ERROR",
+        ),
+        _r(
+            "SKIP",
+            input_tokens=999,
+            output_tokens=999,
+            time_secs=100,
+            equivalent_cost_usd=10,
+            benchmark="skipped.tla",
+        ),
+    ]
+    run = {"path": "x/results.json", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
+
+    md = scorecard_md(run, EQUAL, "equal")
+
+    # Preserve the legacy token summary; only time and cost use formal rows.
+    assert "**Tokens**: 2,008 in / 2,000 out" in md
+    assert "**Total task time**: 1.5s" in md
+    assert "**Equivalent cost**: $0.150000" in md
+    assert "## Cost warnings" in md
+    assert "`formal.tla`: equivalent cost warning: values differ" in md
+
+
 def test_comparison_row_per_run():
     runs = [
         {"id": "r1", "backend": "codex", "mode": "proof-completion", "results": [_r("PASS"), _r("FAIL")]},
@@ -81,6 +175,71 @@ def test_comparison_row_per_run():
     assert "Comparison — 2 runs" in md
     assert "| r1 | codex | proof-completion | 50.0% | 1/2 |" in md
     assert "| r2 | claude_code | proof-completion | 100.0% | 2/2 |" in md
+
+
+def test_comparison_reports_equivalent_cost_and_missing_metrics():
+    runs = [
+        {
+            "id": "priced",
+            "backend": "codex",
+            "mode": "proof-completion",
+            "results": [_r("PASS", time_secs=1.25, equivalent_cost_usd=0.125)],
+        },
+        {
+            "id": "legacy",
+            "backend": "claude_code",
+            "mode": "proof-completion",
+            "results": [_r("PASS")],
+        },
+    ]
+    runs[1]["results"][0].pop("time_secs")
+
+    md = comparison_md(runs, EQUAL, "equal")
+
+    assert "| Time | Equivalent cost |" in md
+    assert "| priced | codex | proof-completion | 100.0% | 1/1 | 0/0 | 1.2s | $0.125000 |" in md
+    assert "| legacy | claude_code | proof-completion | 100.0% | 1/1 | 0/0 | unavailable | unavailable |" in md
+
+
+def test_comparison_preserves_legacy_columns_without_equivalent_cost():
+    runs = [
+        {
+            "id": "legacy",
+            "backend": "cursor",
+            "mode": "proof-completion",
+            "results": [_r("PASS", time_secs=1.25)],
+        }
+    ]
+
+    md = comparison_md(runs, EQUAL, "equal")
+
+    assert "| Time |" in md
+    assert "Equivalent cost" not in md
+    assert "| legacy | cursor | proof-completion | 100.0% | 1/1 | 0/0 | 1s |" in md
+
+
+def test_mixed_comparison_excludes_cursor_infra_accounting():
+    runs = [
+        {
+            "id": "priced",
+            "backend": "codex",
+            "mode": "proof-completion",
+            "results": [_r("PASS", time_secs=1, equivalent_cost_usd=0.1)],
+        },
+        {
+            "id": "deferred",
+            "backend": "cursor",
+            "mode": "proof-completion",
+            "results": [
+                _r("PASS", time_secs=2),
+                _r("ERROR", time_secs=100, termination_reason="INFRA_ERROR"),
+            ],
+        },
+    ]
+
+    md = comparison_md(runs, EQUAL, "equal")
+
+    assert "| deferred | cursor | proof-completion | 100.0% | 1/1 (+1 infra-cut) | 0/0 | 2.0s | unavailable |" in md
 
 
 def test_load_run_from_dir(tmp_path):
@@ -151,6 +310,23 @@ def test_scorecard_reports_non_genuine_count():
     card = scorecard_md(run, EQUAL, "equal")
     assert "**Pass rate**: 1/1 (100.0%)" in card
     assert "1 infra/quota-cut (excluded — re-run)" in card
+
+
+def test_scorecard_with_no_formal_results_reports_accounting_unavailable():
+    results = [
+        _r(
+            "ERROR",
+            termination_reason="INFRA_ERROR",
+            time_secs=100,
+            equivalent_cost_usd=10,
+        )
+    ]
+    run = {"path": "x", "id": "r", "backend": "copilot", "mode": "proof-completion", "results": results}
+
+    card = scorecard_md(run, EQUAL, "equal")
+
+    assert "**Total task time**: unavailable" in card
+    assert "**Equivalent cost**: unavailable" in card
 
 
 def test_scorecard_excludes_skip_and_reports_it():

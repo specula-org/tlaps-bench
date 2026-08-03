@@ -9,6 +9,8 @@ import subprocess
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
+from evaluator.usage import UsageSummary
+
 from .agentic import AgenticBackend
 
 DEFAULT_MODEL = "sonnet-4.5"
@@ -22,10 +24,39 @@ DEFAULT_RUNTIME_HOSTS = [
     "repo42.cursor.sh",
 ]
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_USAGE_SOURCE = "cursor_cli_result"
+
+
+def _strict_token(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _result_usage(event: dict[str, object]) -> UsageSummary | None:
+    raw_usage = event.get("usage")
+    if not isinstance(raw_usage, dict):
+        return None
+
+    input_tokens = _strict_token(raw_usage.get("inputTokens"))
+    output_tokens = _strict_token(raw_usage.get("outputTokens"))
+    cache_read_tokens = _strict_token(raw_usage.get("cacheReadTokens"))
+    cache_write_tokens = _strict_token(raw_usage.get("cacheWriteTokens"))
+    if None in (input_tokens, output_tokens, cache_read_tokens, cache_write_tokens):
+        return None
+
+    return UsageSummary(
+        input_tokens=input_tokens + cache_read_tokens + cache_write_tokens,
+        output_tokens=output_tokens,
+        cache_read_input_tokens=cache_read_tokens,
+        cache_write_input_tokens=cache_write_tokens,
+        sources=(_USAGE_SOURCE,),
+        available=True,
+        complete=True,
+    )
 
 
 class CursorBackend(AgenticBackend):
     name = "cursor"
+    requires_public_pricing = True
     install_script = "install-cursor.sh"
     session_state_dir = None
     # CURSOR_API_KEY / endpoint let users route via an API key instead of the
@@ -151,6 +182,8 @@ class CursorBackend(AgenticBackend):
                         event = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
+                    if not isinstance(event, dict):
+                        continue
 
                     etype = event.get("type", "")
 
@@ -190,14 +223,9 @@ class CursorBackend(AgenticBackend):
                         if result_text:
                             lines.append(f"[RESULT/{subtype}] {result_text}")
                             lines.append("")
-                        usage = event.get("usage", {})
-                        if isinstance(usage, dict):
-                            in_tok = (
-                                usage.get("inputTokens", 0)
-                                + usage.get("cacheReadTokens", 0)
-                                + usage.get("cacheWriteTokens", 0)
-                            )
-                            out_tok = usage.get("outputTokens", 0)
+                        usage = _result_usage(event)
+                        in_tok = usage.legacy_input_tokens if usage is not None else 0
+                        out_tok = usage.legacy_output_tokens if usage is not None else 0
 
                     elif etype == "error":
                         lines.append(f"[ERROR] {event.get('message', '')}")
@@ -206,6 +234,34 @@ class CursorBackend(AgenticBackend):
             pass
 
         return "\n".join(lines), in_tok, out_tok
+
+    def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
+        del input_tokens, output_tokens
+        terminal_result: dict[str, object] | None = None
+        try:
+            with open(jsonl_path) as f:
+                for raw in f:
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "result":
+                        terminal_result = event
+        except (OSError, UnicodeError) as exc:
+            return UsageSummary(
+                sources=(_USAGE_SOURCE,),
+                available=False,
+                warnings=(f"Cursor JSONL output unavailable: {type(exc).__name__}",),
+            )
+
+        usage = _result_usage(terminal_result) if terminal_result is not None else None
+        if usage is not None:
+            return usage
+        return UsageSummary(
+            sources=(_USAGE_SOURCE,),
+            available=False,
+            warnings=("Cursor terminal result usage is unavailable or invalid",),
+        )
 
     @staticmethod
     def _summarize_args(kind: str, args: dict) -> str:

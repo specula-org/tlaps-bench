@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from evaluator.backends.codex import CodexBackend
+from evaluator.backends.codex_usage_wrapper import CODEX_CHILD_USAGE_VERSION
+from evaluator.cost import calculate_equivalent_cost_usd
 
 
 def _write_jsonl(path: Path, *records: object) -> None:
@@ -21,11 +23,33 @@ def _completed_usage(**overrides: object) -> dict[str, object]:
     usage: dict[str, object] = {
         "input_tokens": 240,
         "cached_input_tokens": 180,
+        "cache_write_input_tokens": 20,
         "output_tokens": 60,
         "reasoning_output_tokens": 25,
     }
     usage.update(overrides)
     return {"type": "turn.completed", "usage": usage}
+
+
+def _audit_request(
+    *,
+    input_tokens: int,
+    cached_input_tokens: int,
+    cache_write_input_tokens: int,
+    output_tokens: int,
+    reasoning_output_tokens: int,
+    model: object = "gpt-5.6-sol",
+    provider: object = "openai",
+) -> dict[str, object]:
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "cache_write_input_tokens": cache_write_input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": reasoning_output_tokens,
+        "model": model,
+        "provider": provider,
+    }
 
 
 def _child_audit(
@@ -34,24 +58,53 @@ def _child_audit(
     child_count: int = 1,
     complete: bool = True,
     warning_codes: list[str] | None = None,
+    requests: list[dict[str, object]] | None = None,
     **usage_overrides: object,
 ) -> dict[str, object]:
     usage: dict[str, object] = {
         "input_tokens": 40 if child_count else 0,
         "cached_input_tokens": 20 if child_count else 0,
+        "cache_write_input_tokens": 5 if child_count else 0,
         "output_tokens": 10 if child_count else 0,
         "reasoning_output_tokens": 4 if child_count else 0,
     }
     usage.update(usage_overrides)
-    return {
+    event = {
         "type": "tlaps.codex_child_usage",
-        "version": 1,
+        "version": CODEX_CHILD_USAGE_VERSION,
         "root_thread_id": root_thread_id,
         "child_count": child_count,
         **usage,
         "complete": complete,
         "warning_codes": warning_codes or [],
     }
+    event["requests"] = (
+        requests
+        if requests is not None
+        else [
+            _audit_request(
+                input_tokens=240,
+                cached_input_tokens=180,
+                cache_write_input_tokens=20,
+                output_tokens=60,
+                reasoning_output_tokens=25,
+            ),
+            *(
+                [
+                    _audit_request(
+                        input_tokens=40,
+                        cached_input_tokens=20,
+                        cache_write_input_tokens=5,
+                        output_tokens=10,
+                        reasoning_output_tokens=4,
+                    )
+                ]
+                if child_count
+                else []
+            ),
+        ]
+    )
+    return event
 
 
 def test_complete_terminal_aggregate_maps_without_fabricating_request_or_cost(tmp_path):
@@ -67,7 +120,7 @@ def test_complete_terminal_aggregate_maps_without_fabricating_request_or_cost(tm
         },
         _completed_usage(),
     )
-    backend = CodexBackend(model="gpt-test")
+    backend = CodexBackend(model="gpt-5.6-sol")
 
     transcript, input_tokens, output_tokens = backend.parse_output(str(output))
     usage = backend.parse_usage(str(output), input_tokens=input_tokens, output_tokens=output_tokens)
@@ -77,7 +130,7 @@ def test_complete_terminal_aggregate_maps_without_fabricating_request_or_cost(tm
     assert usage.status == "complete"
     assert usage.input_tokens == 240
     assert usage.cache_read_input_tokens == 180
-    assert usage.cache_write_input_tokens is None
+    assert usage.cache_write_input_tokens == 20
     assert usage.output_tokens == 60
     assert usage.reasoning_output_tokens == 25
     assert usage.model_requests is None
@@ -85,6 +138,9 @@ def test_complete_terminal_aggregate_maps_without_fabricating_request_or_cost(tm
     assert usage.requests == ()
     assert usage.costs == ()
     assert usage.sources == ("codex_cli_turn_completed",)
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost == pytest.approx(0.002215)
+    assert warning is None
 
 
 def test_unknown_well_formed_events_do_not_downgrade_complete_usage(tmp_path):
@@ -95,6 +151,48 @@ def test_unknown_well_formed_events_do_not_downgrade_complete_usage(tmp_path):
 
     assert usage.status == "complete"
     assert usage.warnings == ()
+
+
+def test_recovered_top_level_error_trusts_official_completed_usage(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "error", "message": "Reconnecting... 1/5"},
+        _completed_usage(),
+    )
+    backend = CodexBackend(model="gpt-5.6-sol")
+
+    usage = backend.parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "complete"
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+    assert cost == pytest.approx(0.002215)
+    assert warning is None
+
+
+def test_model_reroute_fails_closed_instead_of_pricing_requested_model(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "error",
+                "message": "model rerouted: gpt-5.6-sol -> gpt-5.2 (HighRiskCyberActivity)",
+            },
+        },
+        _completed_usage(),
+    )
+    backend = CodexBackend(model="gpt-5.6-sol")
+
+    usage = backend.parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "lower_bound"
+    assert any("rerouted model" in warning for warning in usage.warnings)
+    assert calculate_equivalent_cost_usd(usage, backend.model) == (
+        None,
+        "aggregate token usage is incomplete",
+    )
 
 
 @pytest.mark.parametrize(
@@ -206,14 +304,127 @@ def test_complete_child_audit_aggregates_parent_and_child_native_usage(tmp_path)
     assert usage.status == "complete"
     assert usage.input_tokens == 280
     assert usage.cache_read_input_tokens == 200
+    assert usage.cache_write_input_tokens == 25
     assert usage.output_tokens == 70
     assert usage.reasoning_output_tokens == 29
-    assert usage.model_requests is None
+    assert usage.model_requests == 2
+    assert len(usage.requests) == 2
+    assert [request.resolved_model for request in usage.requests] == ["gpt-5.6-sol", "gpt-5.6-sol"]
+    assert [request.provider for request in usage.requests] == ["openai", "openai"]
     assert usage.sources == (
         "codex_cli_turn_completed",
         "codex_rollout_child_token_count",
     )
     assert usage.warnings == ()
+
+
+def test_v3_prices_two_large_requests_individually_instead_of_one_aggregate_tier(tmp_path):
+    output = tmp_path / "output.jsonl"
+    requests = [
+        _audit_request(
+            input_tokens=200_000,
+            cached_input_tokens=0,
+            cache_write_input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=0,
+        ),
+        _audit_request(
+            input_tokens=200_000,
+            cached_input_tokens=0,
+            cache_write_input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=0,
+        ),
+    ]
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(
+            input_tokens=400_000,
+            cached_input_tokens=0,
+            cache_write_input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=0,
+        ),
+        _child_audit(child_count=0, requests=requests),
+    )
+    backend = CodexBackend(model="gpt-5.6-sol")
+
+    usage = backend.parse_usage(str(output), input_tokens=400_000, output_tokens=0)
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+
+    assert usage.status == "complete"
+    assert usage.model_requests == 2
+    assert [request.input_tokens for request in usage.requests] == [200_000, 200_000]
+    assert cost == pytest.approx(2.0)
+    assert warning is None
+
+
+def test_v3_request_total_mismatch_discards_per_request_accounting(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(
+            input_tokens=400_000,
+            cached_input_tokens=0,
+            cache_write_input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=0,
+        ),
+        _child_audit(
+            child_count=0,
+            requests=[
+                _audit_request(
+                    input_tokens=399_999,
+                    cached_input_tokens=0,
+                    cache_write_input_tokens=0,
+                    output_tokens=0,
+                    reasoning_output_tokens=0,
+                )
+            ],
+        ),
+    )
+    backend = CodexBackend(model="gpt-5.6-sol")
+
+    usage = backend.parse_usage(str(output), input_tokens=400_000, output_tokens=0)
+    cost, warning = calculate_equivalent_cost_usd(usage, backend.model)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests is None
+    assert usage.requests == ()
+    assert any("does not match terminal and child aggregate totals" in item for item in usage.warnings)
+    assert cost is None
+    assert warning == "aggregate token usage is incomplete"
+
+
+def test_v3_invalid_request_metadata_fails_closed(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        _child_audit(
+            child_count=0,
+            requests=[
+                _audit_request(
+                    input_tokens=240,
+                    cached_input_tokens=180,
+                    cache_write_input_tokens=20,
+                    output_tokens=60,
+                    reasoning_output_tokens=25,
+                    model=None,
+                )
+            ],
+        ),
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=240, output_tokens=60)
+
+    assert usage.status == "lower_bound"
+    assert usage.model_requests is None
+    assert usage.requests == ()
+    assert any("invalid per-request usage" in warning for warning in usage.warnings)
 
 
 def test_incomplete_child_audit_retains_known_child_delta_as_lower_bound(tmp_path):
@@ -233,8 +444,33 @@ def test_incomplete_child_audit_retains_known_child_delta_as_lower_bound(tmp_pat
     assert usage.status == "lower_bound"
     assert (usage.input_tokens, usage.output_tokens) == (280, 70)
     assert usage.cache_read_input_tokens == 200
+    assert usage.cache_write_input_tokens == 25
     assert usage.reasoning_output_tokens == 29
+    assert usage.model_requests is None
+    assert usage.requests == ()
     assert any("child_lifecycle_invalid" in warning for warning in usage.warnings)
+
+
+def test_unsupported_service_tier_never_uses_standard_public_price(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        _child_audit(
+            complete=False,
+            warning_codes=["unsupported_service_tier"],
+        ),
+    )
+    backend = CodexBackend(model="gpt-5.6-sol")
+
+    usage = backend.parse_usage(str(output), input_tokens=280, output_tokens=70)
+
+    assert usage.status == "lower_bound"
+    assert calculate_equivalent_cost_usd(usage, backend.model) == (
+        None,
+        "aggregate token usage is incomplete",
+    )
 
 
 def test_invalid_child_audit_usage_never_changes_parent_totals(tmp_path):
@@ -298,7 +534,7 @@ def test_started_but_missing_child_audit_is_a_lower_bound_even_without_visible_c
     output = tmp_path / "output.jsonl"
     _write_jsonl(
         output,
-        {"type": "tlaps.codex_child_usage.started", "version": 1},
+        {"type": "tlaps.codex_child_usage.started", "version": CODEX_CHILD_USAGE_VERSION},
         {"type": "thread.started", "thread_id": "parent"},
         _completed_usage(),
     )
@@ -326,6 +562,7 @@ def test_child_native_usage_makes_failed_launch_unsafe_to_retry(tmp_path):
     assert usage.status == "lower_bound"
     assert (usage.input_tokens, usage.output_tokens) == (40, 10)
     assert usage.cache_read_input_tokens == 20
+    assert usage.cache_write_input_tokens == 5
     assert usage.reasoning_output_tokens == 4
     assert usage.sources == ("codex_rollout_child_token_count",)
     assert any("primary-thread usage is unavailable" in warning for warning in usage.warnings)
@@ -406,6 +643,7 @@ def test_missing_optional_subsets_retain_core_totals_as_incomplete(tmp_path):
     output = tmp_path / "output.jsonl"
     terminal = _completed_usage()
     del terminal["usage"]["cached_input_tokens"]  # type: ignore[index]
+    del terminal["usage"]["cache_write_input_tokens"]  # type: ignore[index]
     del terminal["usage"]["reasoning_output_tokens"]  # type: ignore[index]
     _write_jsonl(output, terminal)
 
@@ -414,30 +652,46 @@ def test_missing_optional_subsets_retain_core_totals_as_incomplete(tmp_path):
     assert usage.status == "incomplete"
     assert (usage.input_tokens, usage.output_tokens) == (240, 60)
     assert usage.cache_read_input_tokens is None
+    assert usage.cache_write_input_tokens is None
     assert usage.reasoning_output_tokens is None
-    assert "missing cached_input_tokens" in usage.warnings[0]
-    assert "missing reasoning_output_tokens" in usage.warnings[1]
+    assert any("missing cached_input_tokens" in warning for warning in usage.warnings)
+    assert any("missing cache_write_input_tokens" in warning for warning in usage.warnings)
+    assert any("missing reasoning_output_tokens" in warning for warning in usage.warnings)
 
 
 def test_impossible_optional_subsets_are_dropped_and_flagged(tmp_path):
     output = tmp_path / "output.jsonl"
-    _write_jsonl(output, _completed_usage(cached_input_tokens=241, reasoning_output_tokens=61))
+    _write_jsonl(
+        output,
+        _completed_usage(
+            cached_input_tokens=200,
+            cache_write_input_tokens=41,
+            reasoning_output_tokens=61,
+        ),
+    )
 
     usage = CodexBackend().parse_usage(str(output), input_tokens=240, output_tokens=60)
 
     assert usage.status == "incomplete"
     assert (usage.input_tokens, usage.output_tokens) == (240, 60)
     assert usage.cache_read_input_tokens is None
+    assert usage.cache_write_input_tokens is None
     assert usage.reasoning_output_tokens is None
-    assert "cached input tokens exceed" in usage.warnings[0]
-    assert "reasoning output tokens exceed" in usage.warnings[1]
+    assert any("cache read and write input tokens exceed" in warning for warning in usage.warnings)
+    assert any("reasoning output tokens exceed" in warning for warning in usage.warnings)
 
 
 def test_all_zero_terminal_is_not_treated_as_explicit_free_usage(tmp_path):
     output = tmp_path / "output.jsonl"
     _write_jsonl(
         output,
-        _completed_usage(input_tokens=0, cached_input_tokens=0, output_tokens=0, reasoning_output_tokens=0),
+        _completed_usage(
+            input_tokens=0,
+            cached_input_tokens=0,
+            cache_write_input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=0,
+        ),
     )
 
     usage = CodexBackend().parse_usage(str(output), input_tokens=0, output_tokens=0)
@@ -523,10 +777,10 @@ def test_missing_jsonl_file_is_unavailable(tmp_path):
     assert any("JSONL output unavailable" in warning for warning in usage.warnings)
 
 
-def test_codex_cli_install_is_pinned_to_verified_jsonl_version():
+def test_codex_cli_install_uses_latest_release():
     script = Path("docker/install-scripts/install-codex.sh").read_text()
 
-    assert "@openai/codex@0.144.6" in script
+    assert "npm install -g @openai/codex --cache" in script
 
 
 def test_codex_command_wraps_native_multi_agent_execution_without_disabling_it():

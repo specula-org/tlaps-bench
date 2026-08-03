@@ -140,6 +140,9 @@ class ContainerConfig:
     # so agent session state survives container removal and host reboot.
     session_dir: str = ""
     session_container_path: str = ""
+    # Optional stdout marker emitted after install + firewall setup and
+    # immediately before the agent command starts.
+    agent_start_marker: str = ""
 
 
 @dataclass
@@ -395,6 +398,7 @@ class ContainerRunner:
         install_script: str | None = None,
         *,
         dynamic_firewall: bool = False,
+        agent_start_marker: str = "",
     ) -> str:
         """Build shell command: install script → firewall → agent command."""
         agent_cmd = " ".join(shlex.quote(c) for c in cmd)
@@ -402,6 +406,8 @@ class ContainerRunner:
         if install_script:
             parts.append(f"/opt/install-scripts/{install_script} >&2")
         parts.append("/opt/firewall.sh >&2")
+        if agent_start_marker:
+            parts.append(f"printf '%s\\n' {shlex.quote(agent_start_marker)}")
         if dynamic_firewall:
             drop_caps = ",".join(self._DYNAMIC_AGENT_DROP_CAPS)
             parts.append(f"exec capsh --drop={drop_caps} --caps=cap_dac_override+eip -- -c {shlex.quote(agent_cmd)}")
@@ -416,6 +422,7 @@ class ContainerRunner:
             cmd,
             config.install_script,
             dynamic_firewall=config.dynamic_firewall,
+            agent_start_marker=config.agent_start_marker,
         )
         full_cmd = docker_args + ["bash", "-c", composite]
 
@@ -446,6 +453,7 @@ class ContainerRunner:
             cmd,
             config.install_script,
             dynamic_firewall=config.dynamic_firewall,
+            agent_start_marker=config.agent_start_marker,
         )
         full_cmd = docker_args + ["bash", "-c", composite]
 
@@ -483,6 +491,7 @@ class ContainerRunner:
             cmd,
             config.install_script,
             dynamic_firewall=config.dynamic_firewall,
+            agent_start_marker=config.agent_start_marker,
         )
         full_cmd = docker_args + ["bash", "-c", composite]
         try:

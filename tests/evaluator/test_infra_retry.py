@@ -211,6 +211,140 @@ def test_summary_excludes_non_genuine_results_from_pass_rate(tmp_path):
     assert "INFRA_ERROR (excluded — re-run)" in summary
 
 
+def test_summary_reports_time_and_equivalent_cost_without_zero_filling(tmp_path):
+    results = [
+        _result("priced.tla", "PASS", time_secs=1.25, equivalent_cost_usd=0.125),
+        _result("legacy.tla", "FAIL", time_secs=2.75),
+    ]
+
+    runner.update_summary(
+        results,
+        str(tmp_path),
+        total_benchmarks=2,
+        backend_name="copilot",
+        mode_name="proof-completion",
+    )
+
+    summary = (tmp_path / "summary.md").read_text()
+    assert "**Total task time**: 4.0s" in summary
+    assert "**Equivalent cost**: unavailable" in summary
+    assert "`priced.tla` | ✅ PASS | 1.2s | $0.125000" in summary
+    assert "`legacy.tla` | ❌ FAIL | 2.8s | unavailable" in summary
+
+
+def test_cursor_summary_uses_cost_time_format(tmp_path):
+    results = [_result("cursor.tla", "PASS", time_secs=1.25)]
+
+    runner.update_summary(
+        results,
+        str(tmp_path),
+        total_benchmarks=1,
+        backend_name="cursor",
+        mode_name="proof-completion",
+    )
+
+    summary = (tmp_path / "summary.md").read_text()
+    assert "**Equivalent cost**: unavailable" in summary
+    assert "**Total task time**: 1.2s" in summary
+    assert "| Benchmark | Verdict | Time | Equivalent cost | Obligations |" in summary
+    assert "`cursor.tla` | ✅ PASS | 1.2s | unavailable |" in summary
+
+
+def test_summary_reports_cost_warning_and_excludes_infra_accounting(tmp_path):
+    results = [
+        _result(
+            "formal.tla",
+            "PASS",
+            time_secs=2.0,
+            equivalent_cost_usd=0.2,
+            usage={"warnings": ["equivalent cost warning: native and calculated costs differ"]},
+        ),
+        _result(
+            "infra.tla",
+            "ERROR",
+            termination_reason=TerminationReason.INFRA_ERROR,
+            time_secs=100.0,
+            equivalent_cost_usd=10.0,
+        ),
+    ]
+
+    runner.update_summary(
+        results,
+        str(tmp_path),
+        total_benchmarks=2,
+        backend_name="copilot",
+        mode_name="proof-completion",
+    )
+
+    summary = (tmp_path / "summary.md").read_text()
+    assert "**Total task time**: 2.0s" in summary
+    assert "**Equivalent cost**: $0.200000" in summary
+    assert "## Cost warnings" in summary
+    assert "`formal.tla`: equivalent cost warning:" in summary
+
+
+def test_public_price_preflight_requires_explicit_noninteractive_override(monkeypatch, capsys):
+    backend = _ScriptedBackend()
+    backend.model = "future-model"
+    backend.requires_public_pricing = True
+    monkeypatch.setattr(runner, "public_price_error", lambda _model, _provider: "model price is unavailable")
+    monkeypatch.setattr(runner.sys.stdin, "isatty", lambda: False)
+
+    assert not runner._confirm_public_pricing(backend, allow_unpriced_model=False)
+    assert runner._confirm_public_pricing(backend, allow_unpriced_model=True)
+    assert backend._equivalent_cost_disabled is True
+    assert "Aborting before the run" in capsys.readouterr().out
+
+
+def test_public_price_preflight_can_continue_after_interactive_confirmation(monkeypatch):
+    backend = _ScriptedBackend()
+    backend.model = "future-model"
+    backend.requires_public_pricing = True
+    monkeypatch.setattr(runner, "public_price_error", lambda _model, _provider: "model price is unavailable")
+    monkeypatch.setattr(runner.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+
+    assert runner._confirm_public_pricing(backend, allow_unpriced_model=False)
+    assert backend._equivalent_cost_disabled is True
+
+
+def test_codex_nonstandard_service_tier_uses_existing_ask_or_blank_flow(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('service_tier = "priority"\n')
+    backend = CodexBackend(model="gpt-5.6-sol")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(runner, "public_price_error", lambda _model, _provider: None)
+    monkeypatch.setattr(runner.sys.stdin, "isatty", lambda: False)
+
+    assert not runner._confirm_public_pricing(
+        backend,
+        allow_unpriced_model=False,
+        use_container=False,
+    )
+    assert runner._confirm_public_pricing(
+        backend,
+        allow_unpriced_model=True,
+        use_container=False,
+    )
+    assert backend._equivalent_cost_disabled is True
+
+
+def test_codex_container_pricing_ignores_unmounted_host_service_tier(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('service_tier = "priority"\n')
+    backend = CodexBackend(model="gpt-5.6-sol")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(runner, "public_price_error", lambda _model, _provider: None)
+
+    assert runner._confirm_public_pricing(
+        backend,
+        allow_unpriced_model=False,
+        use_container=True,
+    )
+
+
 def test_resume_does_not_skip_non_genuine_pass_results():
     results = [
         _result("genuine-pass.tla", "PASS"),
@@ -361,6 +495,56 @@ def test_startup_failure_retried_and_final_attempt_graded(tmp_path, monkeypatch)
     assert saved["infra_retries"] == 1
 
 
+def test_retry_time_keeps_only_formal_attempt_and_separates_infra_time(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    _install_agent(monkeypatch, backend, [STARTUP, GENUINE_FAIL])
+    _install_grader(monkeypatch, verdict="FAIL")
+    _no_sleep(monkeypatch)
+    clock = iter((10.0, 12.0, 20.0, 25.0))
+    monkeypatch.setattr(runner.time, "monotonic", lambda: next(clock))
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=1))
+
+    assert result["time_secs"] == 5.0
+    diagnostic = json.loads(
+        (tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text()
+    )
+    assert diagnostic["time_secs"] == 2.0
+
+
+def test_container_timeout_before_agent_marker_does_not_publish_setup_time(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    item = _work_item(tmp_path, backend, infra_retries=0)
+    item.use_container = True
+
+    def timeout_before_marker(
+        item,
+        backend,
+        workspace,
+        agent_dir,
+        agent_jsonl,
+        prompt,
+        result,
+        canonical_dir=None,
+        read_only_files=None,
+    ):
+        result["agent_exit"] = -1
+        result["error"] = f"{backend.name} timeout after {item.timeout}s"
+        return None
+
+    monkeypatch.setattr(runner, "_run_backend_container", timeout_before_marker)
+
+    def fake_grader(_item, _workspace, _basename, _grading_dir, _check_result_path, result, _canonical_dir=None):
+        result["check_verdict"] = "TIMEOUT"
+
+    monkeypatch.setattr(runner, "_run_grader_container", fake_grader)
+
+    result = runner.run_single_benchmark(item)
+
+    assert result["termination_reason"] == TerminationReason.TIMEOUT
+    assert result["time_secs"] is None
+
+
 def test_reasoning_output_prevents_infrastructure_retry(tmp_path, monkeypatch):
     backend = _ScriptedBackend()
     agent = _install_agent(
@@ -378,10 +562,16 @@ def test_reasoning_output_prevents_infrastructure_retry(tmp_path, monkeypatch):
     assert sleeps == []
     assert result["termination_reason"] == TerminationReason.INFRA_ERROR
     assert result["check_verdict"] == "FAIL"
-    assert result["usage"]["reasoning_output_tokens"] == 9
+    assert result["time_secs"] is None
+    assert result["equivalent_cost_usd"] is None
+    assert result["usage"]["status"] == "unavailable"
+    diagnostic = json.loads(
+        (tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text()
+    )
+    assert diagnostic["usage"]["reasoning_output_tokens"] == 9
 
 
-def test_retry_aggregates_usage_and_stashes_provider_telemetry(tmp_path, monkeypatch):
+def test_retry_keeps_only_formal_usage_and_stashes_provider_telemetry(tmp_path, monkeypatch):
     backend = _ScriptedBackend()
     startup_with_artifact = {
         **STARTUP,
@@ -412,8 +602,14 @@ def test_structured_input_and_cost_prevent_retry_when_legacy_output_is_zero(tmp_
     result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
 
     assert agent["n"] == 1 and grader["n"] == 1
-    assert (result["input_tokens"], result["output_tokens"]) == (20, 0)
-    assert result["usage"]["costs"] == [{"amount": 0.002, "unit": "provider_monetary", "source": "test.cost"}]
+    assert (result["input_tokens"], result["output_tokens"]) == (0, 0)
+    assert result["time_secs"] is None
+    assert result["equivalent_cost_usd"] is None
+    diagnostic = json.loads(
+        (tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text()
+    )
+    assert diagnostic["usage"]["input_tokens"] == 20
+    assert diagnostic["usage"]["costs"] == [{"amount": 0.002, "unit": "provider_monetary", "source": "test.cost"}]
     assert "infra_retries" not in result
     assert sleeps == []
 
@@ -534,7 +730,9 @@ def test_pi_true_pre_stream_failure_is_retried(tmp_path, monkeypatch):
     assert result["infra_retries"] == 1
     assert result["infra_retry_reasons"] == ["No API key found for openai."]
     assert (result["input_tokens"], result["output_tokens"]) == (30, 5)
+    assert result["usage"]["status"] == "complete"
     assert result["usage"]["costs"] == [{"amount": 0.0031, "unit": "usd", "source": "pi.usage.cost.total"}]
+    assert result["equivalent_cost_usd"] == 0.0031
     assert len(sleeps) == 1
 
 
@@ -594,8 +792,12 @@ def test_pi_provider_adapter_error_without_stream_start_is_not_retried(tmp_path,
     assert agent["n"] == 1
     assert grader["n"] == 1
     assert result["termination_reason"] == TerminationReason.INFRA_ERROR
-    assert result["usage"]["status"] == "lower_bound"
-    assert result["usage"]["model_requests"] == 1
+    assert result["usage"]["status"] == "unavailable"
+    diagnostic = json.loads(
+        (tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text()
+    )
+    assert diagnostic["usage"]["status"] == "lower_bound"
+    assert diagnostic["usage"]["model_requests"] == 1
     assert "infra_retries" not in result
     assert sleeps == []
 
@@ -632,7 +834,7 @@ def test_codex_quota_after_model_work_is_not_retried_or_overwritten(tmp_path, mo
     assert "partial paid work" in output.read_text()
 
 
-def test_codex_no_work_quota_retry_preserves_and_merges_attempt_evidence(tmp_path, monkeypatch):
+def test_codex_no_work_quota_retry_preserves_artifacts_without_merging_usage(tmp_path, monkeypatch):
     backend = CodexBackend(model="gpt-test")
     backend._reset_at_from_probe = lambda: None
     capped_before_work = {
@@ -676,7 +878,8 @@ def test_codex_no_work_quota_retry_preserves_and_merges_attempt_evidence(tmp_pat
     assert grader["n"] == 1
     assert len(sleeps) == 1
     assert (result["input_tokens"], result["output_tokens"]) == (100, 10)
-    assert result["usage"]["status"] == "lower_bound"
+    assert result["usage"]["status"] == "incomplete"
+    assert not any("part of the aggregate" in warning for warning in result["usage"]["warnings"])
     agent_dir = tmp_path / "out" / "Foo" / "Bar" / "agent"
     stashed = agent_dir / "quota-attempts" / "infra-0-quota-0"
     assert "usage limit" in (stashed / "output.jsonl").read_text()
@@ -809,6 +1012,7 @@ def test_submission_metadata_cannot_overwrite_runner_accounting(tmp_path, monkey
         "input_tokens": 9999,
         "output_tokens": 9999,
         "time_secs": 9999,
+        "equivalent_cost_usd": 9999,
         "backend_note": "retained",
     }
     _install_agent(monkeypatch, backend, [{**GENUINE_FAIL, "in_tokens": 100, "out_tokens": 50}])
@@ -820,7 +1024,10 @@ def test_submission_metadata_cannot_overwrite_runner_accounting(tmp_path, monkey
     assert result["time_secs"] != 9999
     assert result["backend_note"] == "retained"
     assert result["usage"]["input_tokens"] == 100
-    assert "ignored submission metadata for runner-owned fields" in result["usage"]["warnings"][0]
+    assert result["equivalent_cost_usd"] is None
+    assert any(
+        "ignored submission metadata for runner-owned fields" in warning for warning in result["usage"]["warnings"]
+    )
 
 
 def test_retry_exhaustion_is_error_not_fail(tmp_path, monkeypatch):
@@ -835,6 +1042,15 @@ def test_retry_exhaustion_is_error_not_fail(tmp_path, monkeypatch):
     assert result["termination_reason"] == TerminationReason.INFRA_ERROR
     assert result["infra_retries"] == 2
     assert result["infra_retry_reasons"] == ["Error: Failed to load models"] * 3
+    assert result["time_secs"] is None
+    assert result["usage"]["status"] == "unavailable"
+    assert result["equivalent_cost_usd"] is None
+    diagnostic = json.loads(
+        (tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-2" / "accounting.json").read_text()
+    )
+    assert diagnostic["usage"]["status"] == "complete"
+    assert diagnostic["usage"]["model_requests"] == 0
+    assert diagnostic["equivalent_cost_usd"] == 0
     assert "exhausted infra retries" in result["error"]
 
 
@@ -888,7 +1104,11 @@ def test_structured_output_usage_prevents_retry_when_jsonl_tokens_are_missing(tm
 
     assert agent["n"] == 1 and grader["n"] == 1
     assert result["termination_reason"] == TerminationReason.INFRA_ERROR
-    assert (result["input_tokens"], result["output_tokens"]) == (21, 8)
+    assert (result["input_tokens"], result["output_tokens"]) == (0, 0)
+    diagnostic = json.loads(
+        (tmp_path / "out" / "Foo" / "Bar" / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text()
+    )
+    assert (diagnostic["usage"]["input_tokens"], diagnostic["usage"]["output_tokens"]) == (21, 8)
     assert "infra_retries" not in result
     assert sleeps == []
 

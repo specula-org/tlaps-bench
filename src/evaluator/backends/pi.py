@@ -6,7 +6,7 @@ import json
 import math
 import os
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +23,18 @@ from .base import (
 DEFAULT_MODEL = "openai/gpt-5.5"
 
 _PI_USAGE_SOURCE = "pi_cli_message_end"
+_PI_COMPACTION_USAGE_SOURCE = "pi_cli_compaction_end"
 _PI_COST_SOURCE = "pi.usage.cost.total"
+_PI_SESSION_COST_SOURCE = "pi.session.usage.cost.total"
 _PI_STOP_REASONS = frozenset({"stop", "length", "toolUse", "error", "aborted"})
+_PI_SUMMARIZATION_RETRY_EVENTS = frozenset(
+    {
+        "summarization_retry_scheduled",
+        "summarization_retry_attempt_start",
+        "summarization_retry_finished",
+    }
+)
+_PI_AUTO_RETRY_EVENTS = frozenset({"auto_retry_start", "auto_retry_end"})
 _PI_NON_ASSISTANT_MESSAGE_ROLES = frozenset(
     {"user", "toolResult", "bashExecution", "custom", "branchSummary", "compactionSummary"}
 )
@@ -42,6 +52,8 @@ _PI_RUN_ACTIVITY_EVENTS = frozenset(
         "tool_execution_end",
         "compaction_start",
         "compaction_end",
+        *_PI_SUMMARIZATION_RETRY_EVENTS,
+        *_PI_AUTO_RETRY_EVENTS,
     }
 )
 
@@ -49,6 +61,19 @@ _PI_RUN_ACTIVITY_EVENTS = frozenset(
 @dataclass(frozen=True)
 class _ParsedPiRequest:
     request: RequestUsage | None
+    incomplete: bool
+    warnings: tuple[str, ...]
+    has_unverifiable_token_estimates: bool = False
+
+
+@dataclass(frozen=True)
+class _PiCompactionAggregate:
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_write_input_tokens: int
+    reasoning_output_tokens: int | None
+    cost: UsageCost | None
     incomplete: bool
     warnings: tuple[str, ...]
     has_unverifiable_token_estimates: bool = False
@@ -208,6 +233,112 @@ def _parse_assistant_request(message: dict[str, Any]) -> _ParsedPiRequest:
     )
 
 
+def _parse_compaction_aggregate(
+    event: dict[str, Any],
+    *,
+    configured_provider: str,
+) -> _PiCompactionAggregate | None:
+    """Parse Pi's native aggregate usage for one successful compaction."""
+
+    if event.get("aborted") is not False:
+        return None
+    if not isinstance(event.get("willRetry"), bool):
+        return None
+    if "errorMessage" in event:
+        return None
+    result = event.get("result")
+    if not isinstance(result, dict):
+        return None
+    raw_usage = result.get("usage")
+    if not isinstance(raw_usage, dict):
+        return None
+
+    token_names = ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
+    tokens = {name: _strict_token(raw_usage.get(name)) for name in token_names}
+    invalid_tokens = [name for name in token_names if tokens[name] is None]
+    if invalid_tokens:
+        return None
+
+    input_tokens = tokens["input"]
+    output_tokens = tokens["output"]
+    cache_read_tokens = tokens["cacheRead"]
+    cache_write_tokens = tokens["cacheWrite"]
+    total_tokens = tokens["totalTokens"]
+    assert input_tokens is not None
+    assert output_tokens is not None
+    assert cache_read_tokens is not None
+    assert cache_write_tokens is not None
+    assert total_tokens is not None
+    if input_tokens == output_tokens == cache_read_tokens == cache_write_tokens == 0:
+        return None
+
+    warnings: list[str] = []
+    incomplete = False
+    expected_total = input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+    if total_tokens != expected_total:
+        warnings.append(
+            f"Pi compaction totalTokens mismatch: reported {total_tokens}, "
+            f"expected {expected_total} from component fields"
+        )
+        incomplete = True
+
+    reasoning_tokens = None
+    if "reasoning" in raw_usage:
+        reasoning_tokens = _strict_token(raw_usage["reasoning"])
+        if reasoning_tokens is None:
+            warnings.append("Pi compaction usage has invalid reasoning tokens")
+            incomplete = True
+        elif reasoning_tokens > output_tokens:
+            warnings.append("Pi compaction reasoning output tokens exceed total output tokens")
+            reasoning_tokens = None
+            incomplete = True
+
+    raw_cost = raw_usage.get("cost")
+    cost_total = _strict_cost(raw_cost.get("total")) if isinstance(raw_cost, dict) else None
+    cost = None
+    if cost_total is None:
+        warnings.append("Pi compaction usage has missing or invalid cost.total")
+        incomplete = True
+    else:
+        cost = UsageCost(amount=cost_total, unit="usd", source=_PI_COST_SOURCE)
+        if total_tokens > 0 and cost_total == 0:
+            warnings.append(
+                "Pi compaction reported nonzero tokens with a zero USD estimate; "
+                "model pricing metadata may be zero or unavailable"
+            )
+            incomplete = True
+
+    provider = _text(configured_provider)
+    if provider is None:
+        warnings.append("Pi compaction audit provider is incomplete")
+        incomplete = True
+    has_unverifiable_token_estimates = provider == "kiro"
+    if has_unverifiable_token_estimates:
+        warnings.append(
+            "Pi's Kiro adapter may estimate token counts or retry provider requests without exposing per-attempt usage"
+        )
+
+    return _PiCompactionAggregate(
+        input_tokens=input_tokens + cache_read_tokens + cache_write_tokens,
+        output_tokens=output_tokens,
+        cache_read_input_tokens=cache_read_tokens,
+        cache_write_input_tokens=cache_write_tokens,
+        reasoning_output_tokens=reasoning_tokens,
+        cost=cost,
+        incomplete=incomplete,
+        warnings=tuple(warnings),
+        has_unverifiable_token_estimates=has_unverifiable_token_estimates,
+    )
+
+
+def _native_request_cost(request: RequestUsage) -> float | None:
+    costs = tuple(cost for cost in request.costs if cost.unit == "usd" and cost.source == _PI_COST_SOURCE)
+    if len(costs) != 1:
+        return None
+    has_tokens = bool((request.input_tokens or 0) + (request.output_tokens or 0))
+    return None if has_tokens and costs[0].amount == 0 else costs[0].amount
+
+
 def _append_transcript_event(lines: list[str], event: dict[str, Any]) -> None:
     if event.get("type") != "message_update":
         return
@@ -262,9 +393,13 @@ def _event_proves_model_activity(event: dict[str, Any]) -> bool:
         # therefore preserves paid-work evidence even if that assistant event
         # was the part of a damaged stream that went missing.
         return True
-    if event_type == "compaction_start":
-        # Compaction calls a summarizer model, but Pi does not include that
-        # request's usage in its JSON events or session totals.
+    if (
+        event_type in {"compaction_start", "compaction_end"}
+        or event_type in _PI_SUMMARIZATION_RETRY_EVENTS
+        or event_type in _PI_AUTO_RETRY_EVENTS
+    ):
+        # Compaction and retry events preserve evidence of model work even when
+        # their final accounting event is absent or damaged.
         return True
     if event_type == "message_update":
         # Pi emits message_update only for a streaming assistant response.
@@ -289,9 +424,14 @@ def _event_proves_model_activity(event: dict[str, Any]) -> bool:
     return not _is_pre_stream_exception_fallback(message)
 
 
-def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
+def _parse_pi_run(
+    jsonl_path: str,
+    *,
+    configured_provider: str,
+) -> _ParsedPiRun:
     transcript_parts: list[str] = []
     requests: list[RequestUsage] = []
+    compaction_aggregates: list[_PiCompactionAggregate] = []
     warnings: list[str] = []
     malformed_lines = 0
     invalid_event_types = 0
@@ -302,7 +442,15 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
     assistant_stream_open = False
     ambiguous_turn_open = False
     settled = False
-    compacted = False
+    compaction_activity = False
+    compaction_open = False
+    compaction_lifecycle_errors = 0
+    summarization_retry_seen = False
+    auto_retry_open = False
+    auto_retry_lifecycle_errors = 0
+    unaccounted_auto_retry_attempts = 0
+    pending_assistant_request_recorded = False
+    pending_error_attempt_accounted = False
     activity_after_settled = False
     model_activity = False
     read_error: Exception | None = None
@@ -340,7 +488,59 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                     # cannot prove whether that request crossed the wire.
                     ambiguous_turn_open = True
                 elif event_type == "compaction_start":
-                    compacted = True
+                    compaction_activity = True
+                    if compaction_open:
+                        compaction_lifecycle_errors += 1
+                        warnings.append("Pi JSONL contains overlapping compaction_start events")
+                    compaction_open = True
+                elif event_type == "compaction_end":
+                    compaction_activity = True
+                    if not compaction_open:
+                        compaction_lifecycle_errors += 1
+                        warnings.append("Pi JSONL contains compaction_end without a matching compaction_start")
+                    compaction_open = False
+                    aggregate = _parse_compaction_aggregate(
+                        event,
+                        configured_provider=configured_provider,
+                    )
+                    if aggregate is None:
+                        invalid_candidates += 1
+                        if event.get("aborted") is not False:
+                            warnings.append("Pi compaction_end is aborted or has invalid aborted metadata")
+                        elif not isinstance(event.get("willRetry"), bool):
+                            warnings.append("Pi compaction_end has invalid willRetry metadata")
+                        elif "errorMessage" in event:
+                            warnings.append("Pi compaction_end contains an errorMessage")
+                        elif not isinstance(event.get("result"), dict):
+                            warnings.append("Pi compaction_end has no successful result object")
+                        else:
+                            warnings.append("Pi compaction result has missing or invalid usage")
+                    else:
+                        compaction_aggregates.append(aggregate)
+                        warnings.extend(aggregate.warnings)
+                        if aggregate.incomplete:
+                            invalid_candidates += 1
+                        if aggregate.has_unverifiable_token_estimates:
+                            estimated_candidates += 1
+                elif event_type in _PI_SUMMARIZATION_RETRY_EVENTS:
+                    compaction_activity = True
+                    summarization_retry_seen = True
+                elif event_type == "auto_retry_start":
+                    if not pending_error_attempt_accounted:
+                        auto_retry_lifecycle_errors += 1
+                        warnings.append("Pi auto_retry_start has no preceding trustworthy error attempt usage")
+                        if not pending_assistant_request_recorded:
+                            unaccounted_auto_retry_attempts += 1
+                    pending_assistant_request_recorded = False
+                    pending_error_attempt_accounted = False
+                    auto_retry_open = True
+                elif event_type == "auto_retry_end":
+                    if not auto_retry_open:
+                        auto_retry_lifecycle_errors += 1
+                        warnings.append("Pi JSONL contains auto_retry_end without a matching auto_retry_start")
+                    auto_retry_open = False
+                    pending_assistant_request_recorded = False
+                    pending_error_attempt_accounted = False
                 elif event_type == "message_start":
                     message = event.get("message")
                     if isinstance(message, dict) and _is_pre_stream_exception_fallback(message):
@@ -357,6 +557,8 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                 elif event_type == "message_end":
                     message = event.get("message")
                     if not isinstance(message, dict):
+                        pending_assistant_request_recorded = False
+                        pending_error_attempt_accounted = False
                         invalid_candidates += 1
                         warnings.append("Pi message_end event has no message object")
                         continue
@@ -365,11 +567,17 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
                     role = message.get("role")
                     if role != "assistant":
                         if not isinstance(role, str) or role not in _PI_NON_ASSISTANT_MESSAGE_ROLES:
+                            pending_assistant_request_recorded = False
+                            pending_error_attempt_accounted = False
                             invalid_candidates += 1
                             warnings.append("Pi message_end event has missing or invalid message role")
                         continue
                     assistant_stream_open = False
                     parsed_request = _parse_assistant_request(message)
+                    pending_assistant_request_recorded = parsed_request.request is not None
+                    pending_error_attempt_accounted = bool(
+                        parsed_request.request is not None and parsed_request.request.finish_reasons == ("error",)
+                    )
                     warnings.extend(parsed_request.warnings)
                     if parsed_request.request is None:
                         invalid_candidates += 1
@@ -400,10 +608,19 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         model_activity = True
     if ambiguous_turn_open:
         model_activity = True
-    if compacted:
+    if compaction_open:
+        compaction_lifecycle_errors += 1
+        warnings.append("Pi JSONL ended with an unfinished compaction")
+    if auto_retry_open:
+        auto_retry_lifecycle_errors += 1
+        warnings.append("Pi JSONL ended with an unfinished auto retry")
+    if compaction_aggregates:
         warnings.append(
-            "Pi performed context compaction; summarizer model usage is not exposed by JSON mode, "
-            "so totals are a lower bound"
+            "Pi compaction usage may aggregate one or more summarizer calls; model_requests is a lower-bound floor"
+        )
+    if summarization_retry_seen:
+        warnings.append(
+            "Pi summarization retry events do not expose per-attempt usage; compaction cost may be incomplete"
         )
     if activity_after_settled:
         warnings.append("Pi JSONL contains run activity after agent_settled")
@@ -415,7 +632,12 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
     if assistant_stream_open:
         warnings.append("Pi JSONL ended with an unfinished assistant provider stream")
 
-    if not requests:
+    model_request_floor = max(
+        len(requests) + unaccounted_auto_retry_attempts,
+        assistant_provider_starts,
+    ) + len(compaction_aggregates)
+
+    if not requests and not compaction_aggregates:
         if settled:
             warnings.append("Pi agent settled without trustworthy assistant usage")
         else:
@@ -423,38 +645,84 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
         return _ParsedPiRun(
             transcript="".join(transcript_parts),
             usage=UsageSummary(
-                model_requests=assistant_provider_starts or None,
+                model_requests=model_request_floor or None,
                 sources=("pi_cli_jsonl",),
-                available=bool(assistant_provider_starts),
-                is_lower_bound=bool(assistant_provider_starts),
+                available=bool(model_request_floor),
+                is_lower_bound=bool(model_request_floor or compaction_activity or auto_retry_lifecycle_errors),
                 warnings=tuple(dict.fromkeys(warnings)),
             ),
             model_activity=model_activity,
         )
 
-    lower_bound = bool(
+    accounting_incomplete = bool(
         read_error
         or malformed_lines
         or invalid_event_types
         or invalid_candidates
-        or compacted
+        or compaction_lifecycle_errors
+        or summarization_retry_seen
+        or auto_retry_lifecycle_errors
         or activity_after_settled
         or overlapping_assistant_starts
         or assistant_stream_open
         or not settled
     )
+    lower_bound = accounting_incomplete or compaction_activity
     if not settled:
         warnings.append("Pi agent_settled was not observed; recorded usage may be partial")
-    model_request_floor = max(len(requests), assistant_provider_starts)
-    totals = {"model_requests": model_request_floor} if model_request_floor > len(requests) else None
+
+    totals: dict[str, object] | None = None
+    if compaction_aggregates:
+        token_records = [*requests, *compaction_aggregates]
+        totals = {
+            "input_tokens": sum(record.input_tokens or 0 for record in token_records),
+            "output_tokens": sum(record.output_tokens or 0 for record in token_records),
+            "cache_read_input_tokens": sum(record.cache_read_input_tokens or 0 for record in token_records),
+            "cache_write_input_tokens": sum(record.cache_write_input_tokens or 0 for record in token_records),
+            "model_requests": model_request_floor,
+        }
+        reasoning_values = [record.reasoning_output_tokens for record in token_records]
+        if all(value is not None for value in reasoning_values):
+            totals["reasoning_output_tokens"] = sum(value for value in reasoning_values if value is not None)
+
+        assistant_costs = [_native_request_cost(request) for request in requests]
+        session_cost_complete = bool(
+            not accounting_incomplete
+            and not estimated_candidates
+            and all(cost is not None for cost in assistant_costs)
+            and all(not aggregate.incomplete and aggregate.cost is not None for aggregate in compaction_aggregates)
+        )
+        if session_cost_complete:
+            totals["costs"] = (
+                UsageCost(
+                    amount=sum(cost for cost in assistant_costs if cost is not None)
+                    + sum(aggregate.cost.amount for aggregate in compaction_aggregates if aggregate.cost is not None),
+                    unit="usd",
+                    source=_PI_SESSION_COST_SOURCE,
+                ),
+            )
+    elif model_request_floor > len(requests):
+        totals = {"model_requests": model_request_floor}
+
     usage = UsageSummary.from_requests(
         requests,
-        source=_PI_USAGE_SOURCE,
+        source=_PI_USAGE_SOURCE if requests else _PI_COMPACTION_USAGE_SOURCE,
         complete=not lower_bound and not estimated_candidates,
         is_lower_bound=lower_bound,
         warnings=tuple(dict.fromkeys(warnings)),
         totals=totals,
     )
+    if compaction_aggregates:
+        sources = (_PI_USAGE_SOURCE, _PI_COMPACTION_USAGE_SOURCE) if requests else (_PI_COMPACTION_USAGE_SOURCE,)
+        usage = replace(
+            usage,
+            reasoning_output_tokens=(
+                usage.reasoning_output_tokens
+                if all(record.reasoning_output_tokens is not None for record in token_records)
+                else None
+            ),
+            sources=sources,
+        )
     return _ParsedPiRun(
         transcript="".join(transcript_parts),
         usage=usage,
@@ -464,6 +732,7 @@ def _parse_pi_run(jsonl_path: str) -> _ParsedPiRun:
 
 class PiBackend(AgenticBackend):
     name = "pi"
+    requires_public_pricing = True
     install_script = "install-pi.sh"
     session_state_dir = "/root/.pi"
     env_keys = [
@@ -496,6 +765,7 @@ class PiBackend(AgenticBackend):
 
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
+        self.provider, _ = self._provider_model()
 
     def get_credential_mounts(self) -> list[str]:
         provider, _ = self._provider_model()
@@ -546,20 +816,20 @@ class PiBackend(AgenticBackend):
         return detect_firewall_hosts(self.model)
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
-        parsed = _parse_pi_run(jsonl_path)
+        parsed = _parse_pi_run(jsonl_path, configured_provider=self.provider)
         return parsed.transcript, parsed.usage.legacy_input_tokens, parsed.usage.legacy_output_tokens
 
     def parse_usage(self, jsonl_path: str, *, input_tokens: int, output_tokens: int) -> UsageSummary:
         # Legacy totals come from this same native event interpretation, so the
         # compatibility fields cannot omit cache writes or diverge from usage.
         del input_tokens, output_tokens
-        return _parse_pi_run(jsonl_path).usage
+        return _parse_pi_run(jsonl_path, configured_provider=self.provider).usage
 
     def retry_may_duplicate_model_work(self, jsonl_path: str) -> bool:
         # Pi emits final usage only at message_end. Native assistant-stream or
         # compaction activity proves a model call may already have happened even
         # when a failed/truncated launch never reached that accounting event.
-        return _parse_pi_run(jsonl_path).model_activity
+        return _parse_pi_run(jsonl_path, configured_provider=self.provider).model_activity
 
     def _provider_model(self) -> tuple[str, str]:
         if "/" not in self.model:

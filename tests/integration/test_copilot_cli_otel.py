@@ -1,4 +1,4 @@
-"""Exercise the pinned Copilot CLI against a local OpenAI-compatible endpoint."""
+"""Exercise the installed Copilot CLI against a local OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -14,28 +14,28 @@ import pytest
 
 from evaluator.backends.copilot import COPILOT_OTEL_FILENAME, CopilotBackend, parse_copilot_otel
 
-PINNED_COPILOT_VERSION = "1.0.71"
 REQUIRE_COPILOT_CLI = os.environ.get("TLAPS_BENCH_REQUIRE_COPILOT_CLI") == "1"
 
 
-def _pinned_copilot() -> str | None:
+def _installed_copilot() -> str | None:
     binary = shutil.which("copilot")
     if binary is None:
         return None
     try:
         result = subprocess.run(
-            [binary, "--version"],
+            [binary, "--help"],
             capture_output=True,
             text=True,
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    version_output = f"{result.stdout}\n{result.stderr}"
-    return binary if result.returncode == 0 and PINNED_COPILOT_VERSION in version_output else None
+    help_text = f"{result.stdout}\n{result.stderr}"
+    required_flags = ("--output-format", "--effort", "--no-auto-update")
+    return binary if result.returncode == 0 and all(flag in help_text for flag in required_flags) else None
 
 
-COPILOT_BINARY = _pinned_copilot()
+COPILOT_BINARY = _installed_copilot()
 
 
 @contextmanager
@@ -107,11 +107,11 @@ def _fake_openai_server():
 
 @pytest.mark.skipif(
     COPILOT_BINARY is None and not REQUIRE_COPILOT_CLI,
-    reason="pinned Copilot CLI is not installed",
+    reason="installed Copilot CLI lacks the current benchmark interface",
 )
 def test_real_copilot_cli_writes_isolated_otel_with_prompt_flag(tmp_path):
     binary = COPILOT_BINARY
-    assert binary is not None, f"Copilot CLI {PINNED_COPILOT_VERSION} is required"
+    assert binary is not None, "Copilot CLI is required"
     workspace = tmp_path / "workspace"
     result_dir = tmp_path / "results"
     copilot_home = tmp_path / "copilot-home"

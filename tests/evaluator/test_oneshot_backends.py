@@ -804,7 +804,14 @@ def test_second_request_violation_is_error_even_after_model_output(tmp_path, mon
     assert result["check_verdict"] == "ERROR"
     assert result["error"] == "one-shot request contract violation"
     assert result["model_requests"] == 2
-    assert result["output_tokens"] == 20
+    assert (result["input_tokens"], result["output_tokens"]) == (0, 0)
+    assert result["time_secs"] is None
+    assert result["equivalent_cost_usd"] is None
+    assert result["usage"]["status"] == "unavailable"
+    accounting = json.loads(
+        (output_dir / "Suite" / "Example" / "agent" / "attempts" / "attempt-0" / "accounting.json").read_text()
+    )
+    assert (accounting["usage"]["input_tokens"], accounting["usage"]["output_tokens"]) == (40, 20)
     assert "materialized" not in result
     assert materialize_calls == []
     assert grader_calls == []

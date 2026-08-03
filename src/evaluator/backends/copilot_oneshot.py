@@ -14,6 +14,7 @@ from .oneshot_runner import COPILOT_MAX_INFERENCE_ATTEMPTS
 class CopilotOneShotBackend(OneShotBackend):
     name = "copilot_oneshot"
     provider = "copilot"
+    requires_public_pricing = True
     install_script = "install-copilot-sdk.sh"
     session_state_dir = None
     env_keys = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]

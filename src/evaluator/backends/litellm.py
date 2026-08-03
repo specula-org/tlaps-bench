@@ -20,6 +20,7 @@ from .litellm_common import (
 
 class LiteLLMBackend(AgenticBackend):
     name = "litellm"
+    requires_public_pricing = True
     install_script = "install-litellm.sh"
     env_keys = ENV_KEYS
     reasoning_effort_values = REASONING_EFFORT_VALUES
@@ -93,6 +94,7 @@ class LiteLLMBackend(AgenticBackend):
         aggregate_output_tokens: int | None = None
         saw_aggregate = False
         saw_error = False
+        malformed_lines = 0
 
         try:
             with open(jsonl_path) as stream:
@@ -103,8 +105,10 @@ class LiteLLMBackend(AgenticBackend):
                     try:
                         event = json.loads(raw)
                     except json.JSONDecodeError:
+                        malformed_lines += 1
                         continue
                     if not isinstance(event, dict):
+                        malformed_lines += 1
                         continue
                     etype = event.get("type", "")
 
@@ -147,11 +151,14 @@ class LiteLLMBackend(AgenticBackend):
         except FileNotFoundError:
             pass
 
+        if malformed_lines:
+            warnings.append(f"LiteLLM JSONL contains {malformed_lines} malformed nonempty line(s)")
+
         if not requests:
             # Only the legacy aggregate is present (older agent, or a run that
             # died before its first response).
             if input_tokens or output_tokens:
-                legacy_warnings = ["per-request LiteLLM usage unavailable"]
+                legacy_warnings = [*warnings, "per-request LiteLLM usage unavailable"]
                 if saw_error:
                     legacy_warnings.append("LiteLLM stopped on a completion error; usage is a lower bound")
                 return UsageSummary(
@@ -171,11 +178,11 @@ class LiteLLMBackend(AgenticBackend):
                     available=saw_aggregate,
                     complete=False,
                     is_lower_bound=True,
-                    warnings=("LiteLLM stopped on a completion error; request usage is unavailable",),
+                    warnings=tuple((*warnings, "LiteLLM stopped on a completion error; request usage is unavailable")),
                 )
             if saw_aggregate and aggregate_requests == 0:
                 if aggregate_input_tokens != 0 or aggregate_output_tokens != 0:
-                    aggregate_warnings: list[str] = []
+                    aggregate_warnings = list(warnings)
                     for field, value in (
                         ("input_tokens", aggregate_input_tokens),
                         ("output_tokens", aggregate_output_tokens),
@@ -200,13 +207,16 @@ class LiteLLMBackend(AgenticBackend):
                     model_requests=0,
                     sources=("litellm_agent_event",),
                     available=True,
-                    complete=True,
+                    complete=not warnings,
+                    is_lower_bound=bool(warnings),
+                    warnings=tuple(warnings),
                 )
             return UsageSummary(
                 sources=("litellm_agent_event",),
                 available=False,
                 complete=False,
-                warnings=("LiteLLM usage events unavailable",),
+                is_lower_bound=bool(warnings),
+                warnings=tuple((*warnings, "LiteLLM usage events unavailable")),
             )
 
         if aggregate_requests is not None and aggregate_requests != len(requests):

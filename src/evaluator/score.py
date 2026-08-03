@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from collections import defaultdict
@@ -56,6 +57,16 @@ from collections.abc import Callable
 PASS_VERDICT = "PASS"
 SKIP_VERDICT = "SKIP"
 NON_GENUINE_TERMINATIONS = {"INFRA_ERROR", "QUOTA_EXHAUSTED"}
+COST_TIME_BACKENDS = {
+    "codex",
+    "claude_code",
+    "copilot",
+    "copilot_oneshot",
+    "cursor",
+    "litellm",
+    "litellm_oneshot",
+    "pi",
+}
 
 
 def is_pass(result: dict) -> bool:
@@ -188,11 +199,69 @@ def load_run(path: str) -> dict:
     }
 
 
-def _cost(results: list[dict]) -> tuple[int, int, float]:
+def _sum_metric(results: list[dict], field: str) -> float | None:
+    """Sum a required non-negative metric without turning missing data into zero."""
+
+    if not results:
+        return None
+    values: list[float] = []
+    for result in results:
+        value = result.get(field)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        try:
+            parsed = float(value)
+        except (OverflowError, ValueError):
+            return None
+        if parsed < 0 or not math.isfinite(parsed):
+            return None
+        values.append(parsed)
+    return sum(values)
+
+
+def _has_equivalent_cost(results: list[dict]) -> bool:
+    return any("equivalent_cost_usd" in result for result in results)
+
+
+def _totals(results: list[dict]) -> tuple[int, int, float | None, float | None]:
     in_tok = sum(r.get("input_tokens", 0) for r in results)
     out_tok = sum(r.get("output_tokens", 0) for r in results)
-    secs = sum(r.get("time_secs", 0) for r in results)
-    return in_tok, out_tok, secs
+    if not _has_equivalent_cost(results):
+        return in_tok, out_tok, sum(r.get("time_secs", 0) for r in results), None
+    formal = [result for result in results if not is_skipped(result) and not is_non_genuine(result)]
+    secs = _sum_metric(formal, "time_secs")
+    equivalent_cost_usd = _sum_metric(formal, "equivalent_cost_usd")
+    return in_tok, out_tok, secs, equivalent_cost_usd
+
+
+def _cost_warnings(results: list[dict]) -> list[tuple[str, str]]:
+    warnings: list[tuple[str, str]] = []
+    for result in results:
+        if is_skipped(result) or is_non_genuine(result):
+            continue
+        usage = result.get("usage")
+        raw_warnings = usage.get("warnings") if isinstance(usage, dict) else None
+        if not isinstance(raw_warnings, list):
+            continue
+        benchmark = str(result.get("benchmark", "?"))
+        warnings.extend(
+            (benchmark, warning)
+            for warning in raw_warnings
+            if isinstance(warning, str) and warning.startswith("equivalent cost ")
+        )
+    return warnings
+
+
+def _format_time(secs: float | None) -> str:
+    return "unavailable" if secs is None else f"{secs:,.1f}s"
+
+
+def _format_cost(cost_usd: float | None) -> str:
+    if cost_usd is None:
+        return "unavailable"
+    if cost_usd == 0 or cost_usd >= 0.000001:
+        return f"${cost_usd:,.6f}"
+    return f"${cost_usd:.6g}"
 
 
 def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) -> str:
@@ -201,7 +270,8 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
     pct, n_pass, n_total = weighted_score(results, weight)
     skipped = n_skipped(results)
     non_genuine = n_non_genuine(results)
-    in_tok, out_tok, secs = _cost(results)
+    in_tok, out_tok, secs, equivalent_cost_usd = _totals(results)
+    has_equivalent_cost = _has_equivalent_cost(results)
 
     pass_line = f"**Pass rate**: {n_pass}/{n_total} ({pct:.1f}%)"
     if skipped:
@@ -218,7 +288,12 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
     cont_line = continuation_rate_line(results, weight, n_pass)
     if cont_line:
         lines.append(cont_line)
-    lines.append(f"**Cost**: {in_tok:,} in / {out_tok:,} out tokens · {secs:,.0f}s total")
+    if has_equivalent_cost:
+        lines.append(f"**Tokens**: {in_tok:,} in / {out_tok:,} out")
+        lines.append(f"**Total task time**: {_format_time(secs)}")
+        lines.append(f"**Equivalent cost**: {_format_cost(equivalent_cost_usd)}")
+    else:
+        lines.append(f"**Cost**: {in_tok:,} in / {out_tok:,} out tokens · {secs:,.0f}s total")
     if scoring_name != "equal":
         lines.append(f"**Scoring**: {scoring_name} (weighted)")
     lines += [
@@ -238,6 +313,11 @@ def scorecard_md(run: dict, weight: Callable[[dict], float], scoring_name: str) 
         lines.append(f"| {module} | {mp} | {mt} | {mpct:.1f}% |")
     lines.append(f"| **Total** | **{n_pass}** | **{n_total}** | **{pct:.1f}%** |")
     lines.append("")
+    cost_warnings = _cost_warnings(results) if has_equivalent_cost else []
+    if cost_warnings:
+        lines += ["## Cost warnings", ""]
+        lines.extend(f"- `{benchmark}`: {warning}" for benchmark, warning in cost_warnings)
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -246,13 +326,24 @@ def comparison_md(runs: list[dict], weight: Callable[[dict], float], scoring_nam
     lines = [f"# Comparison — {len(runs)} runs", ""]
     if scoring_name != "equal":
         lines += [f"**Scoring**: {scoring_name} (weighted)", ""]
-    lines += [
-        "| Run | Backend | Mode | Pass % | Passed/Total | Tokens (in/out) | Time |",
-        "|-----|---------|------|-------:|-------------:|-----------------|-----:|",
-    ]
+    show_equivalent_cost = any(_has_equivalent_cost(run["results"]) for run in runs)
+    if show_equivalent_cost:
+        lines += [
+            "| Run | Backend | Mode | Pass % | Passed/Total | Tokens (in/out) | Time | Equivalent cost |",
+            "|-----|---------|------|-------:|-------------:|-----------------|-----:|----------------:|",
+        ]
+    else:
+        lines += [
+            "| Run | Backend | Mode | Pass % | Passed/Total | Tokens (in/out) | Time |",
+            "|-----|---------|------|-------:|-------------:|-----------------|-----:|",
+        ]
     for run in runs:
         pct, n_pass, n_total = weighted_score(run["results"], weight)
-        in_tok, out_tok, secs = _cost(run["results"])
+        in_tok, out_tok, secs, equivalent_cost_usd = _totals(run["results"])
+        run_has_equivalent_cost = _has_equivalent_cost(run["results"])
+        if show_equivalent_cost and not run_has_equivalent_cost and run["backend"] in COST_TIME_BACKENDS:
+            formal = [result for result in run["results"] if not is_skipped(result) and not is_non_genuine(result)]
+            secs = _sum_metric(formal, "time_secs")
         passed_total = f"{n_pass}/{n_total}"
         skipped = n_skipped(run["results"])
         if skipped:
@@ -272,11 +363,28 @@ def comparison_md(runs: list[dict], weight: Callable[[dict], float], scoring_nam
             n_cut = sum(1 for r in run["results"] if continuation_interrupted(r))
             if n_cut:
                 passed_total += f" (+{n_cut} chain(s) cut)"
-        lines.append(
+        row = (
             f"| {run['id']} | {run['backend']} | {run['mode']} | {pct:.1f}% | "
-            f"{passed_total} | {in_tok:,}/{out_tok:,} | {secs:,.0f}s |"
+            f"{passed_total} | {in_tok:,}/{out_tok:,} | "
         )
+        if show_equivalent_cost:
+            time_text = (
+                _format_time(secs)
+                if run_has_equivalent_cost or run["backend"] in COST_TIME_BACKENDS
+                else f"{secs:,.0f}s"
+            )
+            row += f"{time_text} | {_format_cost(equivalent_cost_usd)} |"
+        else:
+            row += f"{secs:,.0f}s |"
+        lines.append(row)
     lines.append("")
+    warnings = [
+        (run["id"], benchmark, warning) for run in runs for benchmark, warning in _cost_warnings(run["results"])
+    ]
+    if warnings:
+        lines += ["## Cost warnings", ""]
+        lines.extend(f"- `{run_id}` / `{benchmark}`: {warning}" for run_id, benchmark, warning in warnings)
+        lines.append("")
     return "\n".join(lines)
 
 
