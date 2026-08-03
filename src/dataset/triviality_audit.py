@@ -50,7 +50,6 @@ from common.check_proof import (
     run_killgroup,
 )
 
-
 # A timeout is not a verdict: the placeholder may still verify given more budget.
 # `check_task` reports it as non-degenerate (a lower bound, so a hand audit never
 # deletes a genuine task) and tags the detail with this exact string, so a caller
