@@ -1763,17 +1763,39 @@ def layered_sany_gate(output_root, manifest, audit_writer, jobs=16):
     return sorted(failures)
 
 
-def layered_triviality_gate(output_root, manifest, audit_writer, jobs=16, timeout=120):
+def layered_triviality_gate(output_root, manifest, audit_writer, jobs=16, timeout=120, retry_timeout=None):
     """Drop tasks whose `PROOF OBVIOUS` placeholder already verifies.
 
     Such a task is worthless: an empty submission PASSes grading. Checked with
     the task's exact context so the verdict matches what the grader will do.
-    Returns the dropped task keys; the caller sweeps orphaned context files.
+
+    A timeout is NOT "the task is fine". `check_task` reports it as
+    non-degenerate so a hand audit never deletes a genuine task, but reading
+    that as a verdict here SHIPS a degenerate one — how
+    Data/SequencesTheorems_AppendDef, whose placeholder verifies unchanged in
+    24s, survived the gate that exists to drop it.
+
+    So every timeout is re-checked on the grader's own budget, which removes the
+    confounder: 16 tlapm run at once here, each able to start a multi-GB
+    Isabelle, and 120s under that load says nothing about a task that verifies
+    in 24s on a quiet machine. Measured on the shipped suite, one pass timed out
+    on 128 of 451 tasks while another timed out on none — so the re-check is
+    deliberately parallel too. Re-checking such a set one-at-a-time would cost
+    ~21 hours and put regeneration out of reach, and the budget, not the
+    concurrency, is what a false "not degenerate" turns on.
+
+    A task that still does not verify is KEPT, with the reason recorded: it
+    could not be discharged within the budget grading allows, so a no-op
+    submission cannot PASS grading either.
+
+    Returns `(dropped, slow)`: the task keys deleted as degenerate, and those
+    kept only because the re-check ran out of budget.
     """
     import tempfile
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from dataset.triviality_audit import check_task, find_tlapm, find_tlapm_lib
+    from common.check_proof import resolve_timeout
+    from dataset.triviality_audit import check_task, find_tlapm, find_tlapm_lib, is_indeterminate
 
     # A degenerate task PASSes with an empty submission, so skipping this check
     # silently would ship one. `--skip-gates` is the deliberate opt-out.
@@ -1784,21 +1806,55 @@ def layered_triviality_gate(output_root, manifest, audit_writer, jobs=16, timeou
     if not tlapm_lib:
         raise RuntimeError("tlapm lib not found — cannot run the layered triviality gate (pass --skip-gates to bypass)")
 
+    # The grader's deadline is what makes a re-check authoritative: "the
+    # placeholder does not verify within the budget grading allows" is exactly
+    # "a no-op submission cannot PASS". A shorter retry would prove nothing.
+    retry_timeout = retry_timeout or max(timeout, resolve_timeout(None))
+
     def check(item):
         task_key, entry = item
         with tempfile.TemporaryDirectory(prefix="layered_triv_") as tmp:
             path = _materialize_task(output_root, task_key, entry["context"], tmp)
-            degenerate, detail = check_task(path, tlapm_path, tlapm_lib, timeout)
-            return task_key, degenerate, detail
+            return task_key, check_task(path, tlapm_path, tlapm_lib, timeout)
 
-    flagged = []
+    flagged, timed_out = [], []
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         futs = [ex.submit(check, it) for it in manifest.items()]
         for fut in as_completed(futs):
-            task_key, degenerate, detail = fut.result()
+            task_key, (degenerate, detail) = fut.result()
             if degenerate:
                 flagged.append(task_key)
                 audit_writer.write(f"[audit] {task_key}: degenerate (placeholder verifies) — dropped — {detail}\n")
+            elif is_indeterminate(detail):
+                timed_out.append(task_key)
+
+    slow = []
+    if timed_out:
+        print(
+            f"[layered-triviality-gate] re-checking {len(timed_out)} timed-out task(s) "
+            f"on the grader's {retry_timeout}s budget"
+        )
+
+        def recheck(task_key):
+            with tempfile.TemporaryDirectory(prefix="layered_triv_retry_") as tmp:
+                path = _materialize_task(output_root, task_key, manifest[task_key]["context"], tmp)
+                return task_key, check_task(path, tlapm_path, tlapm_lib, retry_timeout)
+
+        with ThreadPoolExecutor(max_workers=jobs) as ex:
+            futs = [ex.submit(recheck, key) for key in sorted(timed_out)]
+            for fut in as_completed(futs):
+                task_key, (degenerate, detail) = fut.result()
+                if degenerate:
+                    flagged.append(task_key)
+                    audit_writer.write(
+                        f"[audit] {task_key}: degenerate (placeholder verifies on the re-check) — dropped — {detail}\n"
+                    )
+                else:
+                    slow.append(task_key)
+                    audit_writer.write(
+                        f"[audit] {task_key}: kept — the placeholder did not verify within the grader's "
+                        f"{retry_timeout}s budget, so a no-op submission cannot PASS grading either\n"
+                    )
 
     for task_key in flagged:
         del manifest[task_key]
@@ -1807,7 +1863,9 @@ def layered_triviality_gate(output_root, manifest, audit_writer, jobs=16, timeou
             os.remove(path)
     if flagged:
         print(f"⚠️  [layered-triviality-gate] dropped {len(flagged)} degenerate task(s)")
-    return sorted(flagged)
+    if slow:
+        print(f"[layered-triviality-gate] kept {len(slow)} task(s) that exceed the grader's budget unproved")
+    return sorted(flagged), sorted(slow)
 
 
 def sweep_unreferenced_context(output_root, manifest, audit_writer):
@@ -1991,7 +2049,7 @@ def _finalize_layered(
     dropped = []
     if run_gates:
         layered_sany_gate(output_root, manifest, audit_writer)
-        dropped = layered_triviality_gate(output_root, manifest, audit_writer)
+        dropped, _unresolved = layered_triviality_gate(output_root, manifest, audit_writer)
 
     for key in sorted(superseded - set(manifest)):
         audit_writer.write(f"[audit] {key}: no longer generated by its source — removed from the manifest\n")

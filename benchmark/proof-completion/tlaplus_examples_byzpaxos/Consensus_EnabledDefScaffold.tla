@@ -4,7 +4,7 @@
 (* value.  This module specifies the problem by specifying exactly what    *)
 (* the requirements are for choosing a value.                              *)
 (***************************************************************************)
-EXTENDS ConsensusModel
+EXTENDS ConsensusModel_2
 
 (***************************************************************************)
 (* We let the constant parameter Value be the set of all values that can   *)

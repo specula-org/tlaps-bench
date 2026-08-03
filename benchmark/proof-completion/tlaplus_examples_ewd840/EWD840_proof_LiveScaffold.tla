@@ -4,7 +4,7 @@
 (* termination detection algorithm. Checking the proof requires TLAPS to   *)
 (* be installed.                                                           *)
 (***************************************************************************)
-EXTENDS EWD840_proofModel
+EXTENDS EWD840_proofModel_2
 
 (***************************************************************************)
 (* The algorithm is type-correct: TypeOK is an inductive invariant.        *)

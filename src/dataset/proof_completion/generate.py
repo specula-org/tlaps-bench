@@ -62,6 +62,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
 BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "proof-completion")
 _DUPLICATE_TASK_FAMILIES_PATH = os.path.join(os.path.dirname(__file__), "duplicate_task_families.json")
+_KNOWN_DEGENERATE_PATH = os.path.join(os.path.dirname(__file__), "known_degenerate_targets.json")
 
 
 def find_source_dirs():
@@ -1293,6 +1294,45 @@ def build_task_module(task_module_name, scaffold_module, statement_text, directi
     )
 
 
+def build_prefix_model(sm, source_lines, dump, model_set, target_start):
+    """The read-only model layer, truncated at the target theorem.
+
+    `compute_model_set` picks the state machine from the WHOLE file, so building
+    one model per source and sharing it across that file's targets hands each
+    task everything the module ever declares — including definitions and
+    assumptions the source states AFTER the target. That is a scope change, not
+    just a layout change: `Voting` states `THEOREM QuorumNonEmpty` on line 10 and
+    defines `Ballot` on line 13, so a shared model lets `BY QuorumAssumption DEF
+    Ballot` close a task that cannot even name `Ballot` in the source.
+
+    Truncating here restores the original scope exactly. The scaffold already
+    stops at the target, and it deletes precisely the model-set operators the
+    model keeps, so `model ∪ scaffold` is the source prefix — no more, no less.
+    Two targets whose prefixes yield the same model share one file
+    (`emit_layered_source` dedupes on the body), so a module whose theorems all
+    follow its spec still ships a single model.
+    """
+    prefix_lines = source_lines[: target_start - 1]
+    edits = []
+    for t in dump["theorems"]:
+        loc, ploc = t["loc"], t.get("proof_loc")
+        end = loc["line_end"]
+        if ploc and ploc.get("line_start", -1) > 0:
+            end = max(end, ploc["line_end"])
+        edits.append((loc["line_start"], end, ""))
+    for o in dump["operators"]:
+        if o["name"] not in model_set:
+            edits.append((o["loc"]["line_start"], o["loc"]["line_end"], ""))
+    for inst in dump["instances"]:
+        if inst.get("name") and inst["name"] not in model_set:
+            edits.append((inst["loc"]["line_start"], inst["loc"]["line_end"], ""))
+    edits = [edit for edit in edits if edit[1] < target_start]
+
+    # Truncation drops the source's `====`, so the module needs a terminator.
+    text = sm.apply_edits(prefix_lines, edits) + "=" * 77 + "\n"
+    return sm._sm_tidy(sm._strip_module_directives(sm.strip_comments(text)))
+
+
 def build_scaffold(sm, source_lines, dump, target_thm, scaffold_module_name, model_module, model_set):
     """The read-only scaffold layer: this target's given definitions and lemmas.
 
@@ -1449,14 +1489,20 @@ def emit_layered_source(
     """Emit the layered split + manifest entries for one source file.
 
     Layout per task (Issue #86 contract):
-      <base>Model.tla        shared benchmark-owned model      (read-only)
+      <base>Model.tla        benchmark-owned model, truncated
+                             at the target theorem, shared by
+                             the targets it is identical for  (read-only)
       <task>Scaffold.tla     this target's given scaffolding   (read-only)
       <task>.tla             theorem + markers + PROOF OBVIOUS (editable)
     """
     try:
         dump = sm.dump_sany(source_path)
     except Exception as e:
+        # Not survivable: a source we cannot read is a source whose tasks are
+        # missing from the dataset, so the run must not go on to write a
+        # manifest that quietly omits them.
         audit_writer.write(f"[audit] {source_path}: SANY parse failed — {e}\n")
+        audit_state.setdefault("errors", []).append(f"{source_path}: SANY parse failed — {e}")
         return 0
 
     with open(source_path, encoding="utf-8") as f:
@@ -1472,21 +1518,32 @@ def emit_layered_source(
     written = audit_state.setdefault("written", {})
 
     model_set, _main_specs = sm.compute_model_set(dump, targets)
-    model_module = None
-    if model_set:
-        model_module = f"{base_module}Model"
-        model_text = sm._rename_header(
-            sm._strip_module_directives(sm.build_model(source_lines, dump, model_set)),
-            model_module,
-        )
+    # Model body (pre-rename) -> module name. Keyed on the body so targets whose
+    # source prefixes yield the same model share one file; named in file order,
+    # so regeneration is reproducible.
+    model_variants = {}
+
+    def model_for(target_thm):
+        """The model module this target may see, written on first use."""
+        if not model_set:
+            return None
+        body = build_prefix_model(sm, source_lines, dump, model_set, target_thm["loc"]["line_start"])
+        if body in model_variants:
+            return model_variants[body]
+        suffix = "" if not model_variants else f"_{len(model_variants) + 1}"
+        model_module = f"{base_module}Model{suffix}"
+        model_variants[body] = model_module
+        model_text = sm._rename_header(body, model_module)
         model_path = os.path.join(out_dir, f"{model_module}.tla")
         written[model_path] = model_text
         _write_module(model_path, model_text)
         if sm._THEOREM_SCAN.search(model_text):
             audit_writer.write(f"[audit] {source_path}: LEAK model {model_module} contains a THEOREM/LEMMA\n")
+        return model_module
 
     count = 0
     for target_thm, task_module, task_key in planned:
+        model_module = model_for(target_thm)
         scaffold_module = f"{task_module}Scaffold"
         scaffold_text = build_scaffold(sm, source_lines, dump, target_thm, scaffold_module, model_module, model_set)
         scaffold_path = os.path.join(out_dir, f"{scaffold_module}.tla")
@@ -1559,6 +1616,111 @@ def load_dataset_task_keys(root):
     return keys
 
 
+def drop_known_degenerate(output_root, manifest, audit_writer):
+    """Drop targets recorded as degenerate that the gate cannot detect reliably.
+
+    The triviality gate's verdict is not reproducible under its own 16-way load
+    — see `known_degenerate_targets.json` for the measurements — so a task whose
+    placeholder demonstrably verifies can survive it. Dropping the recorded ones
+    up front makes the dataset deterministic and stops a no-op submission from
+    scoring a PASS, whichever way the gate happens to fall on a given run.
+
+    A recorded target that no longer exists is not an error: it may have been
+    dropped by the gate itself on this run, or renamed by a source change.
+    """
+    with open(_KNOWN_DEGENERATE_PATH, encoding="utf-8") as f:
+        recorded = json.load(f)["targets"]
+
+    removed = []
+    for entry in recorded:
+        task_key = entry["task"]
+        if task_key not in manifest:
+            continue
+        del manifest[task_key]
+        path = os.path.join(output_root, task_key)
+        if os.path.exists(path):
+            os.remove(path)
+        removed.append(task_key)
+        audit_writer.write(
+            f"[audit] {task_key}: recorded as degenerate — dropped — {entry['reason']} ({entry['evidence']})\n"
+        )
+    if removed:
+        print(f"[layered-known-degenerate] dropped {len(removed)} recorded degenerate task(s)")
+    return sorted(removed)
+
+
+def layered_duplicate_gate(output_root, manifest, audit_writer):
+    """Drop approved cross-directory duplicates; reject unknown ones (#90).
+
+    Several `source/` groups vendor the same module, so the same target is
+    generated twice — `Sets_PigeonHole` under both `Data/` and `Consensus/`.
+    The flat gate compares task files byte-for-byte, which a layered task file
+    cannot do alone: it is a thin `EXTENDS <Scaffold>` wrapper, so two tasks
+    could match on it while resting on different givens. Identity here therefore
+    spans the task AND every context module the manifest assigns it — the same
+    rule `layered_cross_dir_dedup` uses, and the same conclusion: two tasks are
+    the same prompt only when their given semantics match.
+
+    The approved families in `duplicate_task_families.json` say which copy is
+    canonical. An unapproved duplicate raises rather than picking a winner, so a
+    new collision is a decision someone makes, not one the generator makes.
+    """
+    import hashlib
+
+    with open(_DUPLICATE_TASK_FAMILIES_PATH, encoding="utf-8") as f:
+        families = json.load(f)
+
+    def digest(task_key):
+        h = hashlib.sha256()
+        for rel in [task_key] + sorted(manifest[task_key]["context"]):
+            h.update(os.path.basename(rel).encode())
+            try:
+                with open(os.path.join(output_root, rel), "rb") as fh:
+                    h.update(fh.read())
+            except OSError:
+                # A context file the manifest names but the tree lacks is a
+                # manifest bug, reported with its own message by the validation
+                # at the end of finalize. Hashing a marker keeps this gate from
+                # masking that with a stack trace, and keeps the two tasks
+                # distinct so neither is dropped as the other's duplicate.
+                h.update(f"<missing:{rel}>".encode())
+        return h.hexdigest()
+
+    groups = {}
+    for task_key in manifest:
+        groups.setdefault((os.path.basename(task_key), digest(task_key)), []).append(task_key)
+
+    removed, unapproved = [], []
+    for (basename, _hash), group in sorted(groups.items()):
+        if len(group) < 2:
+            continue
+        dirs = {key.split("/", 1)[0] for key in group}
+        keeper = None
+        for family in families:
+            if not basename.startswith(family["target_prefix"]):
+                continue
+            canonical = [key for key in group if key.split("/", 1)[0] == family["canonical"]]
+            if len(canonical) == 1 and dirs <= set(family["copies"]) | {family["canonical"]}:
+                keeper = canonical[0]
+                break
+        if keeper is None:
+            unapproved.append(sorted(group))
+            continue
+        for task_key in sorted(group):
+            if task_key == keeper:
+                continue
+            del manifest[task_key]
+            path = os.path.join(output_root, task_key)
+            if os.path.exists(path):
+                os.remove(path)
+            removed.append(task_key)
+            audit_writer.write(f"[audit] {task_key}: duplicate of {keeper} — removed (approved duplicate family)\n")
+
+    if removed:
+        print(f"[layered-duplicate-gate] removed {len(removed)} approved duplicate task(s)")
+    return sorted(removed), unapproved
+
+
 def _finalize_layered(
     sm,
     output_root,
@@ -1575,21 +1737,41 @@ def _finalize_layered(
     Both gates run against each task's exact manifest context, so their verdict
     is the one the grader will reach. A partial run replaces only the tasks whose
     source it regenerated and leaves every other stored task untouched.
+
+    Fails closed: if any source failed to parse, any task failed the SANY gate,
+    the triviality gate could not reach a verdict, or the run produced no tasks
+    at all, the manifest is NOT written and the run raises. A manifest is the
+    dataset's index — writing one that omits the tasks a broken run lost (or an
+    empty one, as a run over a nonexistent source file used to do) turns a
+    visible failure into a silently shrunken benchmark. The audit log is written
+    either way, so the failure is diagnosable.
     """
     existing = sm._load_existing_manifest(output_root) if incremental else {}
     all_bases, processed_bases = scope or ({}, {})
     superseded = sm.tasks_owned_by(existing, all_bases, processed_bases) if incremental else set(existing)
+    errors = list(audit_state.get("errors", []))
 
-    dropped = []
+    dropped, slow = [], []
+    recorded_degenerate = drop_known_degenerate(output_root, manifest, audit_writer)
+    duplicates, unapproved = layered_duplicate_gate(output_root, manifest, audit_writer)
+    for group in unapproved:
+        errors.append(f"unapproved duplicate task group {group} — add it to duplicate_task_families.json or diverge")
     if run_gates:
-        sm.layered_sany_gate(output_root, manifest, audit_writer)
-        dropped = sm.layered_triviality_gate(output_root, manifest, audit_writer)
+        for task_key, err in sm.layered_sany_gate(output_root, manifest, audit_writer):
+            errors.append(f"{task_key}: failed standalone SANY with its manifest context — {err}")
+        # `slow` tasks are KEPT on purpose: the gate proved they cannot be
+        # discharged within the grader's own budget, so they are not errors.
+        dropped, slow = sm.layered_triviality_gate(output_root, manifest, audit_writer)
 
     for key in sorted(superseded - set(manifest)):
         audit_writer.write(f"[audit] {key}: no longer generated by its source — removed from the manifest\n")
     complete = {k: v for k, v in existing.items() if k not in superseded}
     complete.update(manifest)
-    sm.sweep_unreferenced_context(output_root, complete, audit_writer)
+    if not complete:
+        errors.append("the run produced no tasks at all")
+    # The sweep DELETES files; do not let a failing run prune the dataset.
+    if not errors:
+        sm.sweep_unreferenced_context(output_root, complete, audit_writer)
 
     if reference_task_keys is not None:
         if incremental:
@@ -1618,6 +1800,17 @@ def _finalize_layered(
                 f"— a target's scaffolding must belong to exactly one task\n"
             )
 
+    if errors:
+        for message in errors:
+            audit_writer.write(f"[audit] generation error: {message}\n")
+        audit_writer.write(f"[audit] generation FAILED with {len(errors)} error(s) — manifest not written\n")
+        print(f"\n❌ generation failed with {len(errors)} error(s); manifest not written:", file=sys.stderr)
+        for message in errors[:20]:
+            print(f"   {message[:200]}", file=sys.stderr)
+        if len(errors) > 20:
+            print(f"   ... and {len(errors) - 20} more (see the audit log)", file=sys.stderr)
+        raise SystemExit(1)
+
     manifest_path = os.path.join(output_root, MANIFEST_FILENAME)
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(dict(sorted(complete.items())), f, indent=2, ensure_ascii=False)
@@ -1628,7 +1821,9 @@ def _finalize_layered(
 
     scope_note = f"{len(manifest)} regenerated, {len(complete)} total" if incremental else f"{len(complete)} tasks"
     print(
-        f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} ({scope_note}, {len(dropped)} dropped as degenerate)"
+        f"Manifest: {os.path.relpath(manifest_path, PROJECT_ROOT)} ({scope_note}, {len(duplicates)} duplicates and "
+        f"{len(dropped) + len(recorded_degenerate)} degenerate tasks dropped, "
+        f"{len(slow)} kept as beyond the grader's budget)"
     )
     return len(complete)
 
@@ -1695,6 +1890,7 @@ def generate_layered(output_root=None, source_dir=None, filter_substring=None, f
                 )
             except Exception as e:
                 audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
+                audit_state.setdefault("errors", []).append(f"{path}: {e!r}")
                 print(f"  ERROR: {e}", file=sys.stderr)
 
         final_count = _finalize_layered(

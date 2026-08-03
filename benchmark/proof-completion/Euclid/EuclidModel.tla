@@ -20,8 +20,4 @@ Next == \/ /\ x < y
 
 Spec == Init /\ [][Next]_<<x,y>>
 
-
-AXIOM GCDProperty1 == \A p \in Number : GCD(p, p) = p
-AXIOM GCDProperty2 == \A p, q \in Number : GCD(p, q) = GCD(q, p)
-AXIOM GCDProperty3 == \A p, q \in Number : (p < q) => GCD(p, q) = GCD(p, q-p)
-=======================================================
+=============================================================================

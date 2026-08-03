@@ -1,5 +1,5 @@
 ------------------------------- MODULE CRDT_proof_OGLivenessScaffold ---------------------------------
-EXTENDS CRDT_proofModel
+EXTENDS CRDT_proofModel_2
 
 (***************************************************************************)
 (* Proofs of safety properties.                                            *)

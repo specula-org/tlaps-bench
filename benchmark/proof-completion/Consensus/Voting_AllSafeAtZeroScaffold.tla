@@ -1,5 +1,5 @@
 ------------------------------- MODULE Voting_AllSafeAtZeroScaffold -------------------------------
-EXTENDS VotingModel
+EXTENDS VotingModel_2
 
 THEOREM QuorumNonEmpty == \A Q \in Quorum : Q # {}
 PROOF OMITTED

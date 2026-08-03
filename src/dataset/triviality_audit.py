@@ -51,6 +51,25 @@ from common.check_proof import (
 )
 
 
+# A timeout is not a verdict: the placeholder may still verify given more budget.
+# `check_task` reports it as non-degenerate (a lower bound, so a hand audit never
+# deletes a genuine task) and tags the detail with this exact string, so a caller
+# that must not SHIP an unchecked task — the layered gates — can tell "tlapm said
+# no" from "tlapm never answered" and re-check instead of keeping it silently.
+#
+# There is deliberately NO backend-crash counterpart. tlapm prints "There were
+# backend errors processing module" for the ordinary case of a `PROOF OBVIOUS`
+# no backend can discharge, not just for a prover that died: reading it as a
+# non-verdict marked 415 of 486 tasks unresolved. The two are indistinguishable
+# in tlapm's output, so the gate does not guess.
+TIMEOUT_DETAIL = "timeout (placeholder did not verify within budget)"
+
+
+def is_indeterminate(detail: str) -> bool:
+    """True when `detail` records a non-verdict rather than a real result."""
+    return detail == TIMEOUT_DETAIL
+
+
 def is_placeholder_task(path: str) -> bool:
     """A file this gate applies to: it carries the ``PROOF OBVIOUS`` stub."""
     try:
@@ -78,7 +97,7 @@ def check_task(path: str, tlapm_path: str, tlapm_lib: str, timeout: int = 120) -
         try:
             out, err, rc = run_killgroup(cmd, timeout, tmp)
         except subprocess.TimeoutExpired:
-            return False, "timeout (placeholder did not verify within budget)"
+            return False, TIMEOUT_DETAIL
         complete, _n_missing, _failed = parse_strict_status(rc, out + err)
         if complete:
             return True, "placeholder PROOF OBVIOUS verifies unchanged — no-op submission would PASS"

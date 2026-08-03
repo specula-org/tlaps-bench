@@ -10,7 +10,7 @@ No state flags (such as "Prepare", "Wait-Prepare", "Accept", "Wait-Accept"
 are needed.
 - Choose value from a quorum in Accept.
 *)
-EXTENDS TPaxosWithProofModel
+EXTENDS TPaxosWithProofModel_2
 
 LEMMA NoneNotAValue == None \notin Value
 PROOF OMITTED

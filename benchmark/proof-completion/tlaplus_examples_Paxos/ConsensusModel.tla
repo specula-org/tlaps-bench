@@ -12,6 +12,4 @@ Next == /\ chosen = {}
 
 Spec == Init /\ [][Next]_chosen 
 
-ASSUME ValuesNonempty == Value # {}
-
 =============================================================================

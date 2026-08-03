@@ -1,5 +1,5 @@
 ----------------------------- MODULE Consensus_LivenessTheoremScaffold ------------------------------
-EXTENDS ConsensusModel
+EXTENDS ConsensusModel_2
 
   (*************************************************************************)
   (* The set of all values that can be chosen.                             *)

@@ -661,3 +661,87 @@ def test_partial_run_refuses_an_output_dir_with_no_usable_manifest(tmp_path):
 
     (tmp_path / "manifest.json").write_text("{}")
     assert incremental_precondition_error(str(tmp_path)) is None
+
+
+# --- the triviality gate's timeout handling --------------------------------
+
+
+def _triviality_env(tmp_path, monkeypatch, verdicts):
+    """A one-task manifest plus a `check_task` returning `verdicts` in order."""
+    from dataset import triviality_audit
+
+    (tmp_path / "Group").mkdir()
+    (tmp_path / "Group" / "Group_Thm.tla").write_text("---- MODULE Group_Thm ----\nTHEOREM TRUE\nPROOF OBVIOUS\n====\n")
+    monkeypatch.setattr(triviality_audit, "find_tlapm", lambda: "/bin/true")
+    monkeypatch.setattr(triviality_audit, "find_tlapm_lib", lambda _p: "/lib")
+
+    calls = []
+
+    def fake_check_task(path, tlapm_path, tlapm_lib, timeout):
+        calls.append(timeout)
+        return verdicts[len(calls) - 1]
+
+    monkeypatch.setattr(triviality_audit, "check_task", fake_check_task)
+    return {"Group/Group_Thm.tla": {"context": []}}, calls
+
+
+def test_a_timed_out_task_is_rechecked_alone_on_the_graders_budget(tmp_path, monkeypatch):
+    """Regression: Data/SequencesTheorems_AppendDef verifies unchanged in 24s.
+
+    It survived the gate because the parallel pass — 16 tlapm at once, each able
+    to start a multi-GB Isabelle — ran out of budget, and a timeout reads as
+    "not degenerate". The re-check has to be un-starved AND on the grader's
+    budget, or it cannot overturn that.
+    """
+    from dataset.triviality_audit import TIMEOUT_DETAIL
+
+    manifest, calls = _triviality_env(
+        tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (True, "placeholder PROOF OBVIOUS verifies unchanged")]
+    )
+    audit = StringIO()
+    dropped, slow = generate.layered_triviality_gate(str(tmp_path), manifest, audit, timeout=10, retry_timeout=40)
+
+    assert calls == [10, 40], "a timeout must be re-checked on the longer budget"
+    assert dropped == ["Group/Group_Thm.tla"]
+    assert slow == []
+    assert manifest == {}
+    assert not (tmp_path / "Group" / "Group_Thm.tla").exists()
+    assert "verifies on the re-check" in audit.getvalue()
+
+
+def test_the_recheck_budget_defaults_to_the_graders_own_deadline(tmp_path, monkeypatch):
+    """A shorter re-check proves nothing: "did not verify in 120s" does not
+    imply "cannot pass grading", which allows 600s."""
+    from common.check_proof import resolve_timeout
+    from dataset.triviality_audit import TIMEOUT_DETAIL
+
+    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (False, "")])
+    generate.layered_triviality_gate(str(tmp_path), manifest, StringIO(), timeout=10)
+
+    assert calls == [10, resolve_timeout(None)]
+
+
+def test_a_task_beyond_the_graders_budget_is_kept_with_a_reason(tmp_path, monkeypatch):
+    """Keeping it is a conclusion, not a guess: if tlapm cannot discharge the
+    placeholder within the budget grading allows, a no-op submission cannot
+    PASS grading either."""
+    from dataset.triviality_audit import TIMEOUT_DETAIL
+
+    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (False, TIMEOUT_DETAIL)])
+    audit = StringIO()
+    dropped, slow = generate.layered_triviality_gate(str(tmp_path), manifest, audit, timeout=10, retry_timeout=40)
+
+    assert calls == [10, 40]
+    assert dropped == []
+    assert slow == ["Group/Group_Thm.tla"]
+    assert set(manifest) == {"Group/Group_Thm.tla"}, "a genuine task must survive"
+    assert "cannot PASS grading either" in audit.getvalue()
+
+
+def test_a_task_that_fails_its_placeholder_is_kept_without_a_recheck(tmp_path, monkeypatch):
+    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, "")])
+    dropped, slow = generate.layered_triviality_gate(str(tmp_path), manifest, StringIO(), timeout=10)
+
+    assert calls == [10], "a real verdict is not re-checked"
+    assert (dropped, slow) == ([], [])
+    assert set(manifest) == {"Group/Group_Thm.tla"}

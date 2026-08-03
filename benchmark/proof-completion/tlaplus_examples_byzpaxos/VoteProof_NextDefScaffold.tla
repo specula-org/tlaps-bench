@@ -10,7 +10,7 @@
 (* Ballots are not executed in order.  Different acceptors may be          *)
 (* concurrently performing actions for different ballots.                  *)
 (***************************************************************************)
-EXTENDS VoteProofModel
+EXTENDS VoteProofModel_3
 
 (***************************************************************************)
 (* The following assumption asserts that a quorum is a set of acceptors,   *)

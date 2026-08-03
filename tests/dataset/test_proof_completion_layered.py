@@ -12,6 +12,7 @@ Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_proof_completion_layere
 
 import json
 import os
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -27,9 +28,12 @@ from common.task_contract import BEGIN_AGENT_HELPERS, END_AGENT_HELPERS
 from dataset.proof_completion.generate import (
     _engine,
     _finalize_layered,
+    build_prefix_model,
     build_scaffold,
     build_task_module,
     dependency_module_text,
+    drop_known_degenerate,
+    layered_duplicate_gate,
     load_dataset_task_keys,
     module_directives_before,
     strip_proof_step_comments,
@@ -288,6 +292,84 @@ def test_proof_step_comments_are_dropped_but_prose_is_kept():
     assert cleaned.count("\n") == text.count("\n"), "line geometry must survive"
 
 
+# --- the read-only model layer ---------------------------------------------
+
+MODEL_SET = frozenset({"Init", "Next", "Spec"})
+
+
+def test_model_holds_the_state_machine_the_scaffold_gives_up():
+    text = build_prefix_model(_engine(), _lines(), _dump(), set(MODEL_SET), target_start=13)
+    for owned_by_the_model in ("CONSTANT N", "VARIABLE x", "Init ==", "Next ==", "Spec =="):
+        assert owned_by_the_model in text
+    assert "Inv ==" not in text, "the invariant is the scaffold's given, not the model's"
+    assert "LEMMA Base" not in text, "a model must never carry a theorem"
+    assert text.rstrip().endswith("="), "truncation must leave a module terminator"
+
+
+def test_model_stops_at_the_target_so_a_later_definition_stays_out_of_scope():
+    """Regression: `Voting` states `THEOREM QuorumNonEmpty` before defining `Ballot`.
+
+    One model built from every target in the file hoists `Ballot` (and the rest
+    of the state machine) ahead of a theorem the source states above it, so
+    `BY QuorumAssumption DEF Ballot` closes a task that cannot name `Ballot` in
+    the source. Truncating the model at the target restores the original scope.
+    """
+    source = (
+        "---- MODULE Src ----\n"
+        "EXTENDS Integers\n"
+        "CONSTANT Quorum\n"
+        "ASSUME QuorumAssumption == \\A Q \\in Quorum : Q # {}\n"
+        "THEOREM Early == \\A Q \\in Quorum : Q # {}\n"
+        "BY QuorumAssumption\n"
+        "Ballot == Nat\n"
+        "Spec == Ballot = Nat\n"
+        "THEOREM Late == Spec\n"
+        "BY DEF Spec, Ballot\n"
+        "====\n"
+    )
+    dump = {
+        "theorems": [
+            {
+                "name": "Early",
+                "loc": {"line_start": 5, "line_end": 6},
+                "proof_loc": {"line_start": 6, "line_end": 6, "column_start": 1},
+            },
+            {
+                "name": "Late",
+                "loc": {"line_start": 9, "line_end": 10},
+                "proof_loc": {"line_start": 10, "line_end": 10, "column_start": 1},
+            },
+        ],
+        "operators": [
+            {"name": "Ballot", "loc": {"line_start": 7, "line_end": 7}},
+            {"name": "Spec", "loc": {"line_start": 8, "line_end": 8}},
+        ],
+        "instances": [],
+        "constants": [{"name": "Quorum", "loc": {"line_start": 3, "line_end": 3}}],
+        "variables": [],
+        "assumes": [{"name": "QuorumAssumption", "loc": {"line_start": 4, "line_end": 4}}],
+    }
+    lines = source.splitlines(keepends=True)
+    model_set = {"Ballot", "Spec"}
+
+    early = build_prefix_model(_engine(), lines, dump, model_set, target_start=5)
+    assert "ASSUME QuorumAssumption" in early, "what precedes the target is still a given"
+    assert "Ballot ==" not in early, "a definition stated after the target is out of its scope"
+    assert "Spec ==" not in early
+
+    late = build_prefix_model(_engine(), lines, dump, model_set, target_start=9)
+    assert "Ballot ==" in late and "Spec ==" in late
+    assert "THEOREM Early" not in late, "a model must never carry a theorem"
+
+
+def test_targets_with_the_same_prefix_yield_one_shared_model():
+    """Dedup key: identical bodies must let two targets share one model file."""
+    engine = _engine()
+    first = build_prefix_model(engine, _lines(), _dump(), set(MODEL_SET), target_start=13)
+    second = build_prefix_model(engine, _lines(), _dump(), set(MODEL_SET), target_start=16)
+    assert first == second, "nothing is defined between the two targets, so one model serves both"
+
+
 # --- dependency context ----------------------------------------------------
 
 
@@ -462,8 +544,146 @@ def test_shipped_suite_satisfies_the_evaluator_contract():
     assert not shared, f"a target's scaffolding must belong to exactly one task: {shared}"
 
 
+def test_finalize_refuses_to_write_a_manifest_after_a_generation_error(tmp_path):
+    """A source that failed to parse must fail the run, not shrink the dataset.
+
+    Regression: a nonexistent source file logged its SANY error, exited 0 and
+    wrote an EMPTY manifest — the audit trail said "broken" while the artifact
+    said "this is the dataset".
+    """
+    key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
+    audit_state = {"errors": ["source/Nope/Nope.tla: SANY parse failed — no such file"]}
+    with pytest.raises(SystemExit) as excinfo:
+        _finalize(tmp_path, {key: entry}, audit_state)
+
+    assert excinfo.value.code != 0
+    assert not (tmp_path / "manifest.json").exists(), "a failed run must not publish a manifest"
+    audit = (tmp_path / "audit.log").read_text()
+    assert "generation error: source/Nope/Nope.tla" in audit
+    assert "manifest not written" in audit
+
+
+def test_finalize_refuses_an_empty_generation(tmp_path):
+    with pytest.raises(SystemExit):
+        _finalize(tmp_path, {})
+    assert not (tmp_path / "manifest.json").exists()
+
+
+def test_finalize_keeps_context_a_failing_run_would_have_swept(tmp_path):
+    """The sweep DELETES files; a run that is about to fail must not prune."""
+    key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
+    orphan = tmp_path / "Group" / "Group_OldScaffold.tla"
+    orphan.write_text("---- MODULE Group_OldScaffold ----\n====\n")
+    with pytest.raises(SystemExit):
+        _finalize(tmp_path, {key: entry}, {"errors": ["boom"]})
+    assert orphan.exists()
+
+
 def test_finalize_refuses_a_manifest_the_evaluator_would_reject(tmp_path):
     key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
     entry = {"context": [*entry["context"], "Group/Missing.tla"]}
     with pytest.raises(ManifestError):
         _finalize(tmp_path, {key: entry})
+
+
+# --- cross-directory duplicates (#90, in the layered layout) ---------------
+
+
+def _dup_task(root, subdir, module, scaffold_body="Given == TRUE"):
+    directory = root / subdir
+    directory.mkdir(parents=True, exist_ok=True)
+    scaffold = f"{module}Scaffold"
+    (directory / f"{scaffold}.tla").write_text(f"---- MODULE {scaffold} ----\n{scaffold_body}\n====\n")
+    (directory / f"{module}.tla").write_text(build_task_module(module, scaffold, "THEOREM Thm == TRUE"))
+    return f"{subdir}/{module}.tla", {"context": [f"{subdir}/{scaffold}.tla"]}
+
+
+def test_an_approved_duplicate_keeps_only_the_canonical_copy(tmp_path):
+    """`Sets_*` is vendored under both Data/ (canonical) and Consensus/."""
+    canonical, c_entry = _dup_task(tmp_path, "Data", "Sets_PigeonHole")
+    copy, copy_entry = _dup_task(tmp_path, "Consensus", "Sets_PigeonHole")
+    manifest = {canonical: c_entry, copy: copy_entry}
+
+    removed, unapproved = layered_duplicate_gate(str(tmp_path), manifest, StringIO())
+
+    assert unapproved == []
+    assert removed == [copy]
+    assert set(manifest) == {canonical}
+    assert not (tmp_path / "Consensus" / "Sets_PigeonHole.tla").exists()
+
+
+def test_an_unapproved_duplicate_is_reported_not_silently_resolved(tmp_path):
+    first, first_entry = _dup_task(tmp_path, "GroupA", "Mystery_Thm")
+    second, second_entry = _dup_task(tmp_path, "GroupB", "Mystery_Thm")
+    manifest = {first: first_entry, second: second_entry}
+
+    removed, unapproved = layered_duplicate_gate(str(tmp_path), manifest, StringIO())
+
+    assert removed == []
+    assert unapproved == [sorted([first, second])], "a new collision is a human decision"
+    assert set(manifest) == {first, second}
+
+
+def test_same_named_tasks_with_different_givens_are_not_duplicates(tmp_path):
+    """A layered task file is a thin EXTENDS wrapper, so two tasks can match on
+    it while resting on different scaffolding — they are different prompts."""
+    first, first_entry = _dup_task(tmp_path, "Data", "Sets_PigeonHole", scaffold_body="Given == TRUE")
+    second, second_entry = _dup_task(tmp_path, "Consensus", "Sets_PigeonHole", scaffold_body="Given == FALSE")
+    manifest = {first: first_entry, second: second_entry}
+
+    removed, unapproved = layered_duplicate_gate(str(tmp_path), manifest, StringIO())
+
+    assert (removed, unapproved) == ([], [])
+    assert set(manifest) == {first, second}
+
+
+def test_finalize_fails_on_an_unapproved_duplicate(tmp_path):
+    first, first_entry = _dup_task(tmp_path, "GroupA", "Mystery_Thm")
+    second, second_entry = _dup_task(tmp_path, "GroupB", "Mystery_Thm")
+    with pytest.raises(SystemExit):
+        _finalize(tmp_path, {first: first_entry, second: second_entry})
+    assert not (tmp_path / "manifest.json").exists()
+
+
+# --- recorded degenerate targets -------------------------------------------
+
+
+def test_a_recorded_degenerate_target_is_dropped(tmp_path):
+    """The gate's verdict is not reproducible under its own load, so a task
+    measured to verify unchanged is dropped from the record instead."""
+    key, entry = _emit_task(tmp_path, "Data", "SequencesTheorems_AppendDef")
+    manifest = {key: entry}
+
+    removed = drop_known_degenerate(str(tmp_path), manifest, StringIO())
+
+    assert removed == [key], "the recorded target must not survive a run"
+    assert manifest == {}
+    assert not (tmp_path / "Data" / "SequencesTheorems_AppendDef.tla").exists()
+
+
+def test_recorded_targets_leave_every_other_task_alone(tmp_path):
+    key, entry = _emit_task(tmp_path, "Data", "SequencesTheorems_ConcatAssociative")
+    manifest = {key: entry}
+
+    assert drop_known_degenerate(str(tmp_path), manifest, StringIO()) == []
+    assert set(manifest) == {key}
+
+
+def test_a_recorded_target_absent_from_the_run_is_not_an_error(tmp_path):
+    """It may have been dropped by the gate itself, or renamed upstream."""
+    assert drop_known_degenerate(str(tmp_path), {}, StringIO()) == []
+
+
+def test_every_recorded_target_documents_its_measurement():
+    """A recorded drop is a human judgement; it must carry its evidence so it
+    can be rechecked after a tlapm or backend upgrade."""
+    from dataset.proof_completion.generate import _KNOWN_DEGENERATE_PATH
+
+    with open(_KNOWN_DEGENERATE_PATH, encoding="utf-8") as f:
+        recorded = json.load(f)["targets"]
+
+    assert recorded, "the record exists to pin known-degenerate tasks"
+    for entry in recorded:
+        assert entry["task"].endswith(".tla")
+        assert entry["reason"].strip()
+        assert entry["evidence"].strip()

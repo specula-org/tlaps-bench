@@ -1,5 +1,5 @@
 -------------------- MODULE Euclid_CorrectnessScaffold --------------------
-EXTENDS EuclidModel
+EXTENDS EuclidModel_2
 
 ResultCorrect == (x = y) => x = GCD(M, N)
 

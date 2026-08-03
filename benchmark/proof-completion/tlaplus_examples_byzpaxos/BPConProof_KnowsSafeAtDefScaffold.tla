@@ -14,7 +14,7 @@
 (*    pages = "398--461"                                                   *)
 (***************************************************************************)
 
-EXTENDS BPConProofModel
+EXTENDS BPConProofModel_2
 
 (***************************************************************************)
 (* The sets Value and Ballot are the same as in the Voting and             *)

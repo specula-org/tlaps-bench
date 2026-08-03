@@ -109,6 +109,3 @@ Spec == /\ Init /\ [][Next]_vars
         /\ \A self \in Procs : WF_vars((pc[self] # "ncs") /\ p(self))
 
 =============================================================================
-
-Test 1:  5248 distinct initial states  151056 full initial states
-IInit == TypeOK /\ IInv 

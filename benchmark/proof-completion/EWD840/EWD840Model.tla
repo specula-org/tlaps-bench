@@ -58,4 +58,3 @@ Fairness == WF_vars(Controlled)
 Spec == Init /\ [][Next]_vars /\ Fairness
 
 =============================================================================
-

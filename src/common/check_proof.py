@@ -89,26 +89,50 @@ except ImportError:
     BUILD_VERSION = "dev"
 
 
+def _parent_pids():
+    """Snapshot `pid -> ppid` for every live process.
+
+    `/proc` where it exists — the containers and CI this runs in. Elsewhere
+    (macOS has no `/proc`) fall back to `ps`, which reports the same chain:
+    reading `/proc` unconditionally raised FileNotFoundError from inside
+    `run_killgroup`'s timeout handler, so on a developer machine the FIRST
+    tlapm timeout crashed the whole run instead of killing the escapees.
+    """
+    parents = {}
+    if os.path.isdir("/proc"):
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/status") as f:
+                    for line in f:
+                        if line.startswith("PPid:"):
+                            parents[int(entry)] = int(line.split()[1])
+                            break
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
+                continue
+        return parents
+
+    with contextlib.suppress(Exception):
+        out = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid="], capture_output=True, text=True, timeout=30, check=False
+        ).stdout
+        for line in out.splitlines():
+            fields = line.split()
+            if len(fields) == 2 and all(f.isdigit() for f in fields):
+                parents[int(fields[0])] = int(fields[1])
+    return parents
+
+
 def _descendant_pids(root_pid):
-    """Snapshot every descendant of `root_pid` by walking /proc PPid chains.
+    """Snapshot every descendant of `root_pid` by walking PPid chains.
 
     Returned leaves-first so the deepest survivors die before any parent has
     a chance to fork a replacement. Robust against descendants that have
     escaped `root_pid`'s process group or session — only the PPid chain
     matters, which holds as long as we snapshot before any kills land.
     """
-    parents = {}
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit():
-            continue
-        try:
-            with open(f"/proc/{entry}/status") as f:
-                for line in f:
-                    if line.startswith("PPid:"):
-                        parents[int(entry)] = int(line.split()[1])
-                        break
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
+    parents = _parent_pids()
     children = {}
     for child, parent in parents.items():
         children.setdefault(parent, []).append(child)
