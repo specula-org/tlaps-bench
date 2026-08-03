@@ -13,7 +13,7 @@ TypeInvariant ==
   /\ buf \in [Proc -> MReq \cup Val \cup {NoVal}]
 
 Req(p) == /\ ctl[p] = "rdy" 
-          /\ \E req \in  MReq : 
+          /\ \E req \in  MReq :
                 /\ Send(p, req, memInt, memInt') 
                 /\ buf' = [buf EXCEPT ![p] = req]
                 /\ ctl' = [ctl EXCEPT ![p] = "busy"]

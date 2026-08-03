@@ -12,6 +12,7 @@ generate a standalone .tla file where:
 """
 
 import glob
+import json
 import os
 import re
 
@@ -26,6 +27,7 @@ STDLIB_MODULES = _tla_modules.STDLIB_MODULES
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOURCE_ROOT = os.path.join(PROJECT_ROOT, "source")
 BENCHMARK_DIR = os.path.join(PROJECT_ROOT, "benchmark", "proof-completion")
+_DUPLICATE_TASK_FAMILIES_PATH = os.path.join(os.path.dirname(__file__), "duplicate_task_families.json")
 
 
 def find_source_dirs():
@@ -1120,6 +1122,121 @@ def _run_sany_gate(directory):
     return _run_triviality_gate(directory)
 
 
+def _prune_unreferenced_dependencies(directory):
+    """Remove generated dependency modules no surviving task can reach.
+
+    Proof-completion dependencies are resolved among sibling files. Walk the
+    EXTENDS/INSTANCE closure from every task in each output directory, keep that
+    closure, and delete only well-formed non-task modules outside it.
+    """
+    from dataset.sany_audit import is_task_file
+
+    unused = []
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [name for name in dirs if not name.startswith(".")]
+        paths = sorted(os.path.join(root, name) for name in files if name.endswith(".tla"))
+        if not paths:
+            continue
+
+        contents = {}
+        modules = {}
+        tasks = []
+        for path in paths:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            contents[path] = content
+            module = os.path.splitext(os.path.basename(path))[0]
+            modules.setdefault(module, []).append(path)
+            if is_task_file(path):
+                tasks.append(path)
+
+        reachable = set(tasks)
+        stack = list(tasks)
+        while stack:
+            path = stack.pop()
+            for module in _tla_modules.referenced_modules(contents[path]):
+                for dependency in modules.get(module, ()):
+                    if dependency not in reachable:
+                        reachable.add(dependency)
+                        stack.append(dependency)
+
+        unused.extend(path for path in paths if path not in reachable)
+
+    removed = []
+    for path in sorted(unused):
+        os.remove(path)
+        removed.append(path)
+        print(f"  [dependency-prune-l1] removed {os.path.relpath(path, directory)} (unreferenced)")
+
+    for root, _dirs, _files in os.walk(directory, topdown=False):
+        if root != directory and not os.listdir(root):
+            os.rmdir(root)
+
+    if removed:
+        print(f"[dependency-prune-l1] removed {len(removed)} unreferenced dependency module(s)")
+    return removed
+
+
+def _run_duplicate_gate(directory):
+    """Drop approved exact-byte duplicate targets; reject unknown groups."""
+    import hashlib
+
+    from dataset.sany_audit import is_task_file
+
+    with open(_DUPLICATE_TASK_FAMILIES_PATH, encoding="utf-8") as f:
+        duplicate_families = json.load(f)
+
+    tasks = sorted(glob.glob(os.path.join(directory, "**", "*.tla"), recursive=True))
+    tasks = [path for path in tasks if is_task_file(path)]
+    by_hash = {}
+    for path in tasks:
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        by_hash.setdefault(digest, []).append(path)
+
+    approved = []
+    unknown = []
+    for group in (paths for paths in by_hash.values() if len(paths) > 1):
+        basenames = {os.path.basename(path) for path in group}
+        source_dirs = {os.path.relpath(path, directory).split(os.sep, 1)[0] for path in group}
+        keeper = None
+        if len(basenames) == 1:
+            basename = next(iter(basenames))
+            for family in duplicate_families:
+                prefix = family["target_prefix"]
+                canonical = family["canonical"]
+                copies = set(family["copies"])
+                keepers = [path for path in group if os.path.relpath(path, directory).split(os.sep, 1)[0] == canonical]
+                if basename.startswith(prefix) and len(keepers) == 1 and source_dirs <= copies | {canonical}:
+                    keeper = keepers[0]
+                    break
+        if keeper is None:
+            unknown.append(group)
+        else:
+            approved.append((keeper, group))
+
+    if unknown:
+        detail = "\n".join(
+            "  - " + "\n    ".join(os.path.relpath(path, directory) for path in group) for group in unknown
+        )
+        raise RuntimeError(f"duplicate task gate found {len(unknown)} unapproved exact-byte group(s):\n{detail}")
+
+    removed = []
+    for keeper, group in approved:
+        for path in group:
+            if path == keeper:
+                continue
+            os.remove(path)
+            removed.append(path)
+            print(
+                f"  [duplicate-gate-l1] removed {os.path.relpath(path, directory)} "
+                f"(same target as {os.path.relpath(keeper, directory)})"
+            )
+    print(f"[duplicate-gate-l1] checked {len(tasks)} task(s), removed {len(removed)} approved duplicate(s)")
+    _prune_unreferenced_dependencies(directory)
+    return removed
+
+
 def _run_triviality_gate(directory):
     """Post-generation triviality gate: a task whose PROOF OBVIOUS placeholder
     already verifies is degenerate (a no-op submission would PASS grading).
@@ -1129,6 +1246,12 @@ def _run_triviality_gate(directory):
     from dataset.triviality_audit import gate
 
     return len(gate(directory, label="triviality-gate-l1", drop=True))
+
+
+def _drop_detail(total, duplicate_count, dropped):
+    if not duplicate_count and not dropped:
+        return ""
+    return f" ({total} generated, {duplicate_count} duplicates and {dropped} degenerate tasks dropped)"
 
 
 def main():
@@ -1146,9 +1269,11 @@ def main():
 
     if args.shared_model:
         total = generate_shared_model_l1(output_root=args.output_dir)
+        duplicates = _run_duplicate_gate(args.output_dir or BENCHMARK_DIR)
         dropped = _run_sany_gate(args.output_dir or BENCHMARK_DIR)
-        detail = f" ({total} generated, {dropped} dropped as degenerate)" if dropped else ""
-        print(f"Total proof-completion benchmarks (shared-model): {total - dropped}{detail}")
+        _prune_unreferenced_dependencies(args.output_dir or BENCHMARK_DIR)
+        detail = _drop_detail(total, len(duplicates), dropped)
+        print(f"Total proof-completion benchmarks (shared-model): {total - len(duplicates) - dropped}{detail}")
         return
 
     # Clean benchmark dir
@@ -1168,9 +1293,11 @@ def main():
         if count:
             print(f"  -> {count} benchmarks")
 
+    duplicates = _run_duplicate_gate(BENCHMARK_DIR)
     dropped = _run_sany_gate(BENCHMARK_DIR)
-    detail = f" ({total} generated, {dropped} dropped as degenerate)" if dropped else ""
-    print(f"\nTotal benchmarks generated: {total - dropped}{detail}")
+    _prune_unreferenced_dependencies(BENCHMARK_DIR)
+    detail = _drop_detail(total, len(duplicates), dropped)
+    print(f"\nTotal benchmarks generated: {total - len(duplicates) - dropped}{detail}")
 
 
 if __name__ == "__main__":
