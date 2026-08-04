@@ -735,6 +735,7 @@ class PiBackend(AgenticBackend):
     requires_public_pricing = True
     install_script = "install-pi.sh"
     session_state_dir = "/root/.pi"
+    project_skills_dir = ".agents/skills"
     env_keys = [
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_OAUTH_TOKEN",
@@ -780,6 +781,7 @@ class PiBackend(AgenticBackend):
         thinking_option = (
             f"--thinking {shlex.quote(self.reasoning_effort)} " if self.reasoning_effort is not None else ""
         )
+        skills_option = f"--no-approve --skill {shlex.quote(self.project_skills_dir)} "
         return [
             "bash",
             "-lc",
@@ -787,6 +789,7 @@ class PiBackend(AgenticBackend):
                 "prompt=$(cat); "
                 f"cd {shlex.quote(workspace)}; "
                 "pi --mode json --no-session "
+                f"{skills_option}"
                 f"{thinking_option}"
                 f"--provider {shlex.quote(provider)} --model {shlex.quote(model)} "
                 '"$prompt"'

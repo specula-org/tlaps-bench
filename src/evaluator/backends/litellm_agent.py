@@ -11,6 +11,9 @@ import os
 import subprocess
 import sys
 import time
+from xml.sax.saxutils import escape
+
+from evaluator.agent_skills import discover_agent_skills
 
 # Use LiteLLM's bundled model-cost map instead of fetching it at runtime: the
 # container firewall blocks the remote fetch, and a failed fetch both emits a
@@ -69,6 +72,37 @@ TOOLS = [
         },
     },
 ]
+
+
+def _append_skill_catalog(prompt: str, workspace: str, skills_dir: str) -> str:
+    """Expose skill triggers while leaving full instructions on disk."""
+
+    skills = discover_agent_skills(os.path.join(workspace, skills_dir))
+    if not skills:
+        return prompt
+
+    catalog = []
+    for skill in skills:
+        skill_path = os.path.join(skills_dir, skill.name, "SKILL.md")
+        catalog.extend(
+            [
+                "  <skill>",
+                f"    <name>{escape(skill.name)}</name>",
+                f"    <description>{escape(skill.description)}</description>",
+                f"    <path>{escape(skill_path)}</path>",
+                "  </skill>",
+            ]
+        )
+    rendered_catalog = "\n".join(catalog)
+    return (
+        f"{prompt}\n\n"
+        "# Agent Skills\n\n"
+        "Project skills are available below. When a description matches the task, use `read_file` to load that "
+        "skill's `SKILL.md` before following its instructions. Load only relevant skills.\n\n"
+        "<available_skills>\n"
+        f"{rendered_catalog}\n"
+        "</available_skills>"
+    )
 
 
 def _token_detail(details: object, *keys: str) -> int | None:
@@ -186,6 +220,7 @@ def exec_tool(name: str, args: dict, workspace: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
+    parser.add_argument("--skills-dir", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--reasoning-effort", default=None)
     parser.add_argument("--max-iterations", type=int, default=0)
@@ -196,7 +231,7 @@ def main() -> int:
         print(json.dumps({"type": "error", "message": "empty prompt on stdin"}), flush=True)
         sys.exit(1)
 
-    messages = [{"role": "user", "content": prompt}]
+    messages = [{"role": "user", "content": _append_skill_catalog(prompt, args.workspace, args.skills_dir)}]
     total_in = 0
     total_out = 0
     i = 0

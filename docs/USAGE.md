@@ -38,12 +38,13 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --mode proof-from-scratch
 
 ## Backends
 
-A backend is the model integration that attempts the proof. Seven are included:
+A backend is the model integration that attempts the proof. Eight are included:
 
 | Backend | CLI Name | Default Model |
 |---------|----------|---------------|
 | OpenAI Codex | `codex` | `gpt-5.5` |
 | Claude Code | `claude_code` | `claude-opus-4-8` |
+| Cursor | `cursor` | `sonnet-4.5` |
 | GitHub Copilot | `copilot` | `claude-opus-4.8` |
 | GitHub Copilot SDK (one-shot) | `copilot_oneshot` | `claude-opus-4.8` |
 | LiteLLM | `litellm` | `claude-sonnet-4-6` |
@@ -58,6 +59,21 @@ uv run tlaps-bench run --backend pi --model anthropic/claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm --model claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm_oneshot --model claude-sonnet-4-6
 ```
+
+### Agent skills
+
+The benchmark automatically makes the portable skills under `skills/` available to supported agentic backends in both proof modes:
+
+| Backend | Project skills directory |
+|---------|--------------------------|
+| `codex` | `.agents/skills` |
+| `claude_code` | `.claude/skills` |
+| `cursor` | `.agents/skills` |
+| `copilot` | `.github/skills` |
+| `litellm` | `.agents/skills` |
+| `pi` | `.agents/skills` |
+
+One-shot backends do not receive skills.
 
 ### OpenAI-compatible endpoints
 
@@ -281,7 +297,8 @@ results/<mode>/<backend>/<timestamp>/
     ├── input/
     │   ├── benchmark.tla     # Original benchmark file (copied in)
     │   ├── *.tla             # Dependency modules it EXTENDS (copied in)
-    │   └── prompt.txt        # Prompt sent to the agent
+    │   ├── prompt.txt        # Prompt sent to the agent
+    │   └── skills/           # Exact project-skill snapshot available to the backend
     ├── agent/
     │   ├── solution.tla      # The agent's final output
     │   ├── output.jsonl      # Raw agent stdout capture
@@ -453,6 +470,7 @@ from .base import detect_firewall_hosts
 class MyAgentBackend(AgenticBackend):
     name = "my_agent"
     install_script = "install-my-agent.sh"
+    project_skills_dir = ".agents/skills"
     env_keys = ["MY_AGENT_API_KEY"]
 
     def __init__(self, model: str | None = None):
@@ -514,6 +532,7 @@ This script runs inside the container with full network access before the firewa
 |--------|-------------|
 | `name` | String used as the `--backend` CLI value |
 | `install_script` | Filename in `docker/install-scripts/` to run at container start. Set `None` if pre-installed. |
+| `project_skills_dir` | Repository-relative project directory where the backend exposes Agent Skills. Leave `None` for unsupported backends. |
 | `env_keys` | List of host environment variables forwarded into the container |
 | `credential_mounts` | List of credential directory names to mount (see below) |
 | `get_credential_mounts()` | Override this for dynamic credential logic |

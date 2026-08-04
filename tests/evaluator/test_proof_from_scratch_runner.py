@@ -134,10 +134,11 @@ def test_runner_grades_from_pre_agent_canonical_bytes(tmp_path, monkeypatch):
     runner.run_single_benchmark(item)
 
     input_dir = tmp_path / "results" / "Suite" / "Task" / "input"
-    assert sorted(path.name for path in input_dir.iterdir()) == ["Model.tla", "benchmark.tla", "prompt.txt"]
+    assert sorted(path.name for path in input_dir.iterdir()) == ["Model.tla", "benchmark.tla", "prompt.txt", "skills"]
     assert (input_dir / "benchmark.tla").read_text() == task_source
     assert (input_dir / "Model.tla").read_text() == model_source
     assert BEGIN_AGENT_HELPERS in (input_dir / "prompt.txt").read_text()
+    assert list((input_dir / "skills").iterdir()) == []
     assert grader_canonical_dirs[0] != agent_canonical_dirs[0]
 
 

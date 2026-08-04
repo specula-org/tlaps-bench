@@ -436,6 +436,7 @@ class ClaudeCodeBackend(AgenticBackend):
     requires_public_pricing = True
     install_script = "install-claudecode.sh"
     session_state_dir = "/root/.claude"
+    project_skills_dir = ".claude/skills"
     env_keys = [
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_USE_BEDROCK",

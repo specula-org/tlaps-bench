@@ -22,6 +22,7 @@ class LiteLLMBackend(AgenticBackend):
     name = "litellm"
     requires_public_pricing = True
     install_script = "install-litellm.sh"
+    project_skills_dir = ".agents/skills"
     env_keys = ENV_KEYS
     reasoning_effort_values = REASONING_EFFORT_VALUES
 
@@ -40,6 +41,8 @@ class LiteLLMBackend(AgenticBackend):
             "/opt/litellm_agent.py",
             "--workspace",
             workspace,
+            "--skills-dir",
+            self.project_skills_dir,
             "--model",
             self.model,
         ]

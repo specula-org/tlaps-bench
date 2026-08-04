@@ -323,6 +323,7 @@ class CopilotBackend(AgenticBackend):
     requires_public_pricing = True
     install_script = "install-copilot.sh"
     session_state_dir = "/root/.copilot"
+    project_skills_dir = ".github/skills"
     env_keys = [
         "COPILOT_GITHUB_TOKEN",
         "GH_TOKEN",

@@ -38,46 +38,6 @@ check_proof_bin {benchmark_basename} --mode proof-from-scratch --sany-only
 
 If you must stop early, leave your best partial proof in the target file.
 
-# Validating inductive invariant candidates with a model checker
-
-Two model checkers are installed: Apalache as `apalache-mc`, and TLC in `/opt/sany/lib/tla2tools.jar`. Use one to test an inductive invariant candidate in seconds, before investing in a TLAPS proof of it. Prefer Apalache; fall back to TLC when the spec cannot be made to typecheck.
-For a candidate `IndInv` (typically a type invariant conjoined with the extra state constraints you need) and the safety predicate `Safety` that the target theorem is about, three checks together say "IndInv is inductive and strong enough" — run them against the typed wrapper module described below, `APFoo.tla` here:
-`apalache-mc check --config=APFoo.cfg --init=Init --inv=IndInv --length=0 APFoo.tla` — the initial states satisfy the candidate (`Init => IndInv`).
-`apalache-mc check --config=APFoo.cfg --init=IndInv --inv=IndInv --length=1 APFoo.tla` — one step cannot leave the candidate (`IndInv /\ Next => IndInv'`); this is the same obligation as your TLAPS inductive step.
-`apalache-mc check --config=APFoo.cfg --init=IndInv --inv=Safety --length=0 APFoo.tla` — the candidate implies the goal (`IndInv => Safety`).
-
-The two checks that start from `--init=IndInv` need the candidate to assign every variable, so shape it `TypeOK /\ H` with `TypeOK` one `v \in S` clause per variable. Handing them a bare safety predicate instead yields an assignment error (`x' is used before it is assigned`) rather than a counterexample. The stripped model frequently leaves no `TypeOK` behind, so writing one is part of the work; bound any variable the spec types as `Nat` (`num \in [P -> 0..4]`) to keep the check cheap, and widen the bound before trusting a counterexample that looks like an artifact of it.
-
-When a check fails, Apalache reports a counterexample and writes it to `violation1.tla` in a timestamped run directory under `_apalache-out/<module>.tla/` (redirect with `--out-dir` or `--run-dir`); the log line `Check the trace in: ...` gives the exact path. Read it — it says precisely why the candidate is wrong.
-A failure of the second check is the informative one: it gives a concrete pair of states, one satisfying `IndInv` and a successor violating it, and the trailing `InvariantViolation` formula names the conjunct that broke. That state pair is exactly the case your candidate fails to rule out, i.e. the missing fact you must add to strengthen `IndInv` — and the same gap that would leave your TLAPS inductive step unprovable.
-A failure of the first check means the candidate excludes legitimate initial states; a failure of the third means it is too weak to imply the goal.
-Strengthen the candidate from the counterexample and re-run all three checks until each one passes.
-
-Apalache needs typed declarations and finite CONSTANTS, but {benchmark_basename} must not be modified. Prefer the non-invasive wrapper: a new module that re-declares the CONSTANTS and VARIABLES with `\* @type:` annotations and then INSTANCEs the original, leaving the spec itself untouched. For a spec `Foo.tla` declaring `CONSTANT N` and `VARIABLE active`, write `APFoo.tla`:
-  ---- MODULE APFoo ----
-  EXTENDS Naturals
-  CONSTANT
-    \* @type: Int;
-    N
-  VARIABLE
-    \* @type: Set(Int);
-    active
-  INSTANCE Foo
-  ====
-The re-declared names must match the original's so the implicit INSTANCE substitution binds them, and each annotation must sit between the `CONSTANT`/`VARIABLE` keyword and the name it types — one per name, including inside a multi-name `VARIABLES a, b, c` block. A comment above the keyword is not read: Apalache stops with `Expected a type annotation for VARIABLE <name>`. Define your candidate `IndInv` in the wrapper too, so the spec under proof stays untouched while you iterate. Run the three checks against the wrapper (`apalache-mc check ... APFoo.tla`), fixing the CONSTANTS in a `.cfg` file (`CONSTANT N = 5`) or with `--cinit`; for a constant of uninterpreted type, define a `<Const>Val` operator in the wrapper and substitute it in the `.cfg` (`Jug <- JugVal`). If a polymorphic helper (`Sum`, `Range`, `ToSet`, ...) defeats the type checker, shadow it in the wrapper with a monomorphic version.
-Only if the wrapper cannot be made to typecheck should you fall back to annotating a scratch copy of the module (e.g. `mkdir -p scratch && cp {benchmark_basename} scratch/Candidate.tla`).
-Either way it is a private exploration tool and not part of your solution: your solution must never EXTEND or INSTANCE it, and it must not change {benchmark_basename} or any dependency file.
-Apalache cannot type every spec. When the type checker cannot be satisfied even through a wrapper, check the candidate with TLC instead, which is untyped (the technique is Lamport's "Using TLC to Check Inductive Invariance"). Keep it non-invasive the same way: a separate `MCFoo.tla` that EXTENDS the original and defines your candidate, plus an `MCFoo.cfg` beside it. TLC is not on PATH — run it as `java -cp /opt/sany/lib/tla2tools.jar tlc2.TLC -deadlock -config MCFoo.cfg MCFoo.tla`.
-The inductive step is checked by making the candidate its own initial predicate: `IndInv /\ Next => IndInv'` holds exactly when `IndInv` is an ordinary invariant of the spec started in `IndInv`, so the `.cfg` reads
-  INIT IndInv
-  NEXT Next
-  INVARIANT IndInv
-Check `Init => IndInv` separately by running TLC on the real spec (`SPECIFICATION Spec` with `INVARIANT IndInv`), and get `IndInv => Safety` for free by making `Safety` a conjunct of `IndInv`.
-This needs the same `TypeOK /\ H` shape as the Apalache checks, with `TypeOK` clauses TLC can enumerate. TLC builds every state satisfying `TypeOK` before filtering by `H`, so the cost is the product of those set sizes and it explodes fast — start with the tiniest model that is still interesting. Two ways to get further: move a conjunct of `H` up among the `TypeOK` conjuncts, immediately after the ones binding the variables it mentions, so TLC prunes before enumerating the rest; and switch to probabilistic checking by replacing `v \in S` with `v \in RandomSubset(k, S)` from the `Randomization` module (bundled in tla2tools.jar), rewriting `v \subseteq W` as `v \in SUBSET W` and covering it with `RandomSetOfSubsets(k, p, W)`. Aim for a few dozen initial states.
-A reported violation carries the same signal Apalache gives: the two-state trace is a state satisfying `IndInv` followed by a successor that does not, naming the fact your candidate is missing. The converse does not hold once random subsets are involved — finding no error then proves nothing, so re-run it a dozen times, and abandon a run whose search depth passes roughly a dozen steps.
-
-A model checker's verdict is evidence, not a proof: both tools check one small finite instance, so a candidate that passes still has to be proved in TLAPS, and only `check_proof_bin` reporting PASS finishes the task. Never cite Apalache or TLC as justification for a proof step.
-
 # Constraints
 
 - Do not change the module header, imports, marker lines, target theorem statement, or any text outside the two editable regions.

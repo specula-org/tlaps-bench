@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from evaluator.backends.litellm import LiteLLMBackend
+
 litellm_agent = pytest.importorskip(
     "evaluator.backends.litellm_agent",
     reason="litellm is only installed inside the agent container",
@@ -124,7 +126,17 @@ def test_agent_can_finish_a_response_without_usage(monkeypatch, capsys):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["litellm_agent.py", "--workspace", ".", "--model", "unknown/model", "--max-iterations", "1"],
+        [
+            "litellm_agent.py",
+            "--workspace",
+            ".",
+            "--skills-dir",
+            ".agents/skills",
+            "--model",
+            "unknown/model",
+            "--max-iterations",
+            "1",
+        ],
     )
 
     assert litellm_agent.main() == 0
@@ -140,6 +152,83 @@ def test_agent_can_finish_a_response_without_usage(monkeypatch, capsys):
         "output_tokens": 0,
         "model_requests": 1,
     }
+
+
+def test_first_request_lists_skill_metadata_without_eagerly_loading_bodies(monkeypatch, tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    alpha = skills_root / "alpha-skill" / "SKILL.md"
+    zeta = skills_root / "zeta-skill" / "SKILL.md"
+    alpha.parent.mkdir(parents=True)
+    zeta.parent.mkdir(parents=True)
+    alpha.write_text(
+        "---\nname: alpha-skill\ndescription: Use when alpha guidance is relevant.\n---\n\nALPHA_FULL_INSTRUCTIONS\n"
+    )
+    zeta.write_text(
+        "---\nname: zeta-skill\ndescription: Use when zeta guidance is relevant.\n---\n\nZETA_FULL_INSTRUCTIONS\n"
+    )
+    message = SimpleNamespace(
+        content="done",
+        tool_calls=None,
+        model_dump=lambda: {"role": "assistant", "content": "done"},
+    )
+    response = SimpleNamespace(
+        usage=None,
+        model="unknown/model",
+        id="chatcmpl-skills",
+        choices=[SimpleNamespace(finish_reason="stop", message=message)],
+    )
+    completion_calls = []
+
+    def fake_completion(**options):
+        completion_calls.append(options)
+        return response
+
+    monkeypatch.setattr(litellm_agent.litellm, "completion", fake_completion)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("prove this"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "litellm_agent.py",
+            "--workspace",
+            str(tmp_path),
+            "--skills-dir",
+            ".agents/skills",
+            "--model",
+            "unknown/model",
+            "--max-iterations",
+            "1",
+        ],
+    )
+
+    assert litellm_agent.main() == 0
+
+    prompt = completion_calls[0]["messages"][0]["content"]
+    assert prompt.startswith("prove this")
+    assert "Use when alpha guidance is relevant." in prompt
+    assert "Use when zeta guidance is relevant." in prompt
+    assert ".agents/skills/alpha-skill/SKILL.md" in prompt
+    assert ".agents/skills/zeta-skill/SKILL.md" in prompt
+    assert prompt.index("<name>alpha-skill</name>") < prompt.index("<name>zeta-skill</name>")
+    assert "ALPHA_FULL_INSTRUCTIONS" not in prompt
+    assert "ZETA_FULL_INSTRUCTIONS" not in prompt
+    assert (
+        litellm_agent.exec_tool(
+            "read_file",
+            {"path": ".agents/skills/alpha-skill/SKILL.md"},
+            str(tmp_path),
+        )
+        == alpha.read_text()
+    )
+
+
+def test_backend_passes_its_project_skills_directory_to_agent():
+    backend = LiteLLMBackend(model="unknown/model")
+
+    command = backend.build_command("/workspace", "/results")
+
+    skills_option = command.index("--skills-dir")
+    assert command[skills_option + 1] == backend.project_skills_dir
 
 
 def test_request_usage_is_flushed_immediately(monkeypatch):

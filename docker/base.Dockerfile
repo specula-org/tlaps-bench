@@ -114,6 +114,7 @@ ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
     TLAPS_IN_CONTAINER=1
 
 # Layer 8: Provider runners
+COPY src/evaluator/__init__.py src/evaluator/agent_skills.py /opt/evaluator/
 COPY src/evaluator/backends/litellm_agent.py /opt/litellm_agent.py
 COPY src/evaluator/backends/oneshot_runner.py /opt/oneshot_runner.py
 COPY src/evaluator/backends/codex_usage_wrapper.py /opt/codex_usage_wrapper.py

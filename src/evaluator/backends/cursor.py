@@ -59,6 +59,7 @@ class CursorBackend(AgenticBackend):
     requires_public_pricing = True
     install_script = "install-cursor.sh"
     session_state_dir = None
+    project_skills_dir = ".agents/skills"
     # CURSOR_API_KEY / endpoint let users route via an API key instead of the
     # mounted `cursor-agent login` credentials.
     env_keys = [

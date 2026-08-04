@@ -641,6 +641,7 @@ class CodexBackend(AgenticBackend):
     requires_public_pricing = True
     install_script = "install-codex.sh"
     session_state_dir = "/root/.codex"
+    project_skills_dir = ".agents/skills"
     env_keys = [
         "OPENAI_API_KEY",
         "AZURE_OPENAI_API_KEY",

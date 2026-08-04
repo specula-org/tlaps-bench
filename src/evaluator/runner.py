@@ -44,6 +44,7 @@ from common.container import (
 )
 from common.task_contract import TaskContractError
 from evaluator import quota
+from evaluator.agent_skills import discover_agent_skills
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import Backend, SubmissionDisposition
 from evaluator.cost import calculate_equivalent_cost_usd, public_price_error
@@ -66,18 +67,12 @@ from evaluator.usage import UsageSummary, nonnegative_float
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+SKILLS_DIR = os.path.join(REPO_ROOT, "skills")
 
 VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
 
 # Set to True to stream agent output to terminal during container runs
 STREAM_AGENT_OUTPUT = True
-
-# Heading of the prompt section that teaches falsifying an inductive invariant
-# candidate with a model checker (Apalache, or TLC when a spec cannot be typed).
-# Its presence is stamped on every result: the container always ships both
-# checkers, so what actually varies between runs is whether the agent was told
-# to use them, and a result is only comparable against others prompted alike.
-INDINV_PROMPT_MARKER = "# Validating inductive invariant candidates"
 
 # Backoff between infra retries (seconds); the last value repeats. Short: the
 # observed startup blips clear within seconds-to-minutes.
@@ -507,6 +502,29 @@ def _write_bytes(path: str, content: bytes) -> None:
         stream.write(content)
 
 
+def _snapshot_agent_skills(backend: Backend, destination: str) -> list[str]:
+    """Capture the catalog this backend can discover and return its skill names."""
+
+    os.makedirs(destination, exist_ok=True)
+    if backend.project_skills_dir is None:
+        return []
+
+    skills = discover_agent_skills(SKILLS_DIR)
+    for skill in skills:
+        shutil.copytree(skill.source_dir, os.path.join(destination, skill.name))
+    return [skill.name for skill in skills]
+
+
+def _copy_skills_to_workspace(skills_snapshot_dir: str, workspace: str, project_skills_dir: str) -> None:
+    """Copy one immutable input snapshot to a client's project discovery path."""
+
+    workspace = os.path.abspath(workspace)
+    destination = os.path.abspath(os.path.join(workspace, project_skills_dir))
+    if not project_skills_dir or os.path.commonpath((workspace, destination)) != workspace or destination == workspace:
+        raise ValueError(f"project skills directory must stay inside the workspace: {project_skills_dir!r}")
+    shutil.copytree(skills_snapshot_dir, destination)
+
+
 def _build_prompt_from_canonical_inputs(
     backend: Backend,
     mode: Mode,
@@ -545,15 +563,23 @@ def _make_workspace(
     name_no_ext: str,
     canonical_inputs: CanonicalInputs,
     *,
+    skills_snapshot_dir: str | None = None,
+    project_skills_dir: str | None = None,
     read_only_dependencies: bool = False,
 ) -> str:
-    """Fresh isolated workspace: benchmark + dependencies in a git repo (the
-    baseline commit is the cheating check's reference point)."""
+    """Create a fresh Git workspace with canonical inputs and project skills.
+
+    The baseline commit is the cheating check's reference point.
+    """
     workspace = tempfile.mkdtemp(prefix=f"{backend_name}_bench_{name_no_ext}_")
     try:
         canonical_inputs.materialize(workspace)
+        if project_skills_dir is not None:
+            if skills_snapshot_dir is None:
+                raise ValueError("a skills snapshot is required when project skill discovery is enabled")
+            _copy_skills_to_workspace(skills_snapshot_dir, workspace, project_skills_dir)
         subprocess.run(["git", "init"], capture_output=True, cwd=workspace)
-        subprocess.run(["git", "add", "."], capture_output=True, cwd=workspace)
+        subprocess.run(["git", "add", "--force", "."], capture_output=True, cwd=workspace)
         subprocess.run(
             ["git", "commit", "-m", "initial benchmark"],
             capture_output=True,
@@ -602,6 +628,7 @@ def _run_backend_with_retries(
     canonical_inputs: CanonicalInputs,
     basename: str,
     name_no_ext: str,
+    skills_snapshot_dir: str | None = None,
     fixed_workspace: str | None = None,
 ) -> ExecutionOutcome:
     """One agent-run lifecycle, shared by the first attempt and continuation
@@ -661,6 +688,8 @@ def _run_backend_with_retries(
                     backend.name,
                     name_no_ext,
                     canonical_inputs,
+                    skills_snapshot_dir=skills_snapshot_dir,
+                    project_skills_dir=backend.project_skills_dir,
                     read_only_dependencies=read_only_dependencies,
                 )
 
@@ -1119,6 +1148,8 @@ def run_single_benchmark(item: WorkItem):
         "check_verdict": "ERROR",
         "time_secs": None if _supports_cost_time(backend) else 0,
         "error": "",
+        # Skill availability, not evidence that the client invoked a skill.
+        "agent_skills": [],
         # How the agent run ended; reclassified after the run (see termination.py).
         # INFRA_ERROR marks a result that was cut short by infrastructure rather
         # than a genuine model attempt, so a FAIL can be filtered/retried.
@@ -1142,6 +1173,9 @@ def run_single_benchmark(item: WorkItem):
         # non-genuine early exits included — so the continuation metric can
         # state its ≤N budget without guessing from the chains that happened to run.
         result["max_continuations"] = item.max_continuations
+
+    skills_snapshot_dir = os.path.join(input_dir, "skills")
+    result["agent_skills"] = _snapshot_agent_skills(backend, skills_snapshot_dir)
 
     if not quota.wait_for_quota(
         item.usage_script,
@@ -1181,7 +1215,6 @@ def run_single_benchmark(item: WorkItem):
         )
         with open(os.path.join(input_dir, "prompt.txt"), "w") as f:
             f.write(prompt)
-        result["indinv_check_prompted"] = INDINV_PROMPT_MARKER in prompt
 
         # Run the agent
         agent_jsonl = os.path.join(agent_dir, "output.jsonl")
@@ -1201,6 +1234,7 @@ def run_single_benchmark(item: WorkItem):
             canonical_inputs,
             basename,
             name_no_ext,
+            skills_snapshot_dir=skills_snapshot_dir,
         )
         workspace, canonical_dir = run.workspace, run.canonical_dir
 

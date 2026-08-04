@@ -191,6 +191,9 @@ class Backend(ABC):
     # Container path holding this backend's session state; --session-dir mounts
     # a persistent host dir here. None = no session dir (e.g. litellm).
     session_state_dir: str | None = None
+    # Repository-relative directory where this backend exposes project skills.
+    # None means the backend does not support skill discovery.
+    project_skills_dir: str | None = None
     capabilities = BackendCapabilities()
     reasoning_effort: str | None = None
     reasoning_effort_values: tuple[str, ...] = ()

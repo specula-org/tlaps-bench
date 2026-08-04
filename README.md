@@ -46,14 +46,15 @@ can be derived.
 
 | Source | Examples | Proof completion | Proof from scratch | Total |
 |---|--:|--:|--:|--:|
+| [apalache-examples (Konnov)](https://github.com/konnov/apalache-examples) | 2 | 258 | – | 258 |
 | [ZooKeeper (Remix)](https://arxiv.org/abs/2409.14301) | 2 | – | 18 | 18 |
 | [Ivy liveness](https://github.com/kenmcmil/ivy) | 6 | – | 12 | 12 |
 | [etcd (Specula)](https://github.com/specula-org) | 1 | – | 8 | 8 |
 | [OpenAddressing](https://github.com/lemmy/Examples) | 1 | 1 | 5 | 6 |
 | [two_thread_mutex (Anvil)](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | 1 | – | 1 | 1 |
-| **Subtotal** | **11** | **1** | **44** | **45** |
+| **Subtotal** | **13** | **259** | **44** | **303** |
 
-**68 examples, 683 tasks in total.** A per-example breakdown is in
+**70 examples, 941 tasks in total.** A per-example breakdown is in
 [`docs/DATASET.md`](docs/DATASET.md).
 
 ## Running
