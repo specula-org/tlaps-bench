@@ -677,7 +677,7 @@ def _triviality_env(tmp_path, monkeypatch, verdicts):
 
     calls = []
 
-    def fake_check_task(path, tlapm_path, tlapm_lib, timeout):
+    def fake_check_task(path, tlapm_path, tlapm_lib, timeout, community_lib=None):
         calls.append(timeout)
         return verdicts[len(calls) - 1]
 
@@ -699,11 +699,14 @@ def test_a_timed_out_task_is_rechecked_alone_on_the_graders_budget(tmp_path, mon
         tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (True, "placeholder PROOF OBVIOUS verifies unchanged")]
     )
     audit = StringIO()
-    dropped, slow = generate.layered_triviality_gate(str(tmp_path), manifest, audit, timeout=10, retry_timeout=40)
+    dropped, slow, errored = generate.layered_triviality_gate(
+        str(tmp_path), manifest, audit, timeout=10, retry_timeout=40
+    )
 
     assert calls == [10, 40], "a timeout must be re-checked on the longer budget"
     assert dropped == ["Group/Group_Thm.tla"]
     assert slow == []
+    assert errored == []
     assert manifest == {}
     assert not (tmp_path / "Group" / "Group_Thm.tla").exists()
     assert "verifies on the re-check" in audit.getvalue()
@@ -721,27 +724,75 @@ def test_the_recheck_budget_defaults_to_the_graders_own_deadline(tmp_path, monke
     assert calls == [10, resolve_timeout(None)]
 
 
-def test_a_task_beyond_the_graders_budget_is_kept_with_a_reason(tmp_path, monkeypatch):
-    """Keeping it is a conclusion, not a guess: if tlapm cannot discharge the
-    placeholder within the budget grading allows, a no-op submission cannot
-    PASS grading either."""
+def test_a_task_that_really_fails_the_recheck_is_kept_with_a_reason(tmp_path, monkeypatch):
+    """Keeping it is a conclusion, not a guess: if the un-starved re-check
+    reaches a real "does not verify" verdict within the grader's budget, a no-op
+    submission cannot PASS grading either, so the task stays."""
     from dataset.triviality_audit import TIMEOUT_DETAIL
 
-    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (False, TIMEOUT_DETAIL)])
+    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (False, "")])
     audit = StringIO()
-    dropped, slow = generate.layered_triviality_gate(str(tmp_path), manifest, audit, timeout=10, retry_timeout=40)
+    dropped, slow, errored = generate.layered_triviality_gate(
+        str(tmp_path), manifest, audit, timeout=10, retry_timeout=40
+    )
 
     assert calls == [10, 40]
     assert dropped == []
     assert slow == ["Group/Group_Thm.tla"]
+    assert errored == []
     assert set(manifest) == {"Group/Group_Thm.tla"}, "a genuine task must survive"
     assert "cannot PASS grading either" in audit.getvalue()
 
 
+def test_a_second_timeout_is_a_generation_error(tmp_path, monkeypatch):
+    """A re-check that ALSO times out is a non-verdict, not "does not verify".
+
+    The re-check still runs 16-wide, so contention can time it out; reading that
+    as "kept, cannot pass grading" would ship a task the gate never actually
+    judged. Qian-Cheng-nju asked for a second timeout to fail the run instead —
+    so it is reported as errored and the task is neither dropped nor blessed.
+    """
+    from dataset.triviality_audit import TIMEOUT_DETAIL
+
+    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, TIMEOUT_DETAIL), (False, TIMEOUT_DETAIL)])
+    audit = StringIO()
+    dropped, slow, errored = generate.layered_triviality_gate(
+        str(tmp_path), manifest, audit, timeout=10, retry_timeout=40
+    )
+
+    assert calls == [10, 40]
+    assert dropped == []
+    assert slow == []
+    assert errored == ["Group/Group_Thm.tla"]
+    assert set(manifest) == {"Group/Group_Thm.tla"}, "an errored task is left for the caller to fail on"
+    assert "timed out again" in audit.getvalue()
+
+
+def test_a_missing_module_is_a_generation_error(tmp_path, monkeypatch):
+    """A module the gate cannot resolve is a non-verdict, not "does not verify".
+
+    The grader supplies the vendored Community Modules; a task that only errors
+    because the gate lacked them (SumSequence_Lemma2a) must not be kept as
+    non-degenerate. It is reported as errored so the run fails rather than
+    shipping a task the gate could not judge.
+    """
+    from dataset.triviality_audit import missing_module_detail
+
+    manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, missing_module_detail("SequencesExtTheorems"))])
+    audit = StringIO()
+    dropped, slow, errored = generate.layered_triviality_gate(str(tmp_path), manifest, audit, timeout=10)
+
+    assert calls == [10], "a missing module is a verdict-less result; no re-check helps"
+    assert dropped == []
+    assert slow == []
+    assert errored == ["Group/Group_Thm.tla"]
+    assert "could not judge" in audit.getvalue()
+
+
 def test_a_task_that_fails_its_placeholder_is_kept_without_a_recheck(tmp_path, monkeypatch):
     manifest, calls = _triviality_env(tmp_path, monkeypatch, [(False, "")])
-    dropped, slow = generate.layered_triviality_gate(str(tmp_path), manifest, StringIO(), timeout=10)
+    dropped, slow, errored = generate.layered_triviality_gate(str(tmp_path), manifest, StringIO(), timeout=10)
 
     assert calls == [10], "a real verdict is not re-checked"
-    assert (dropped, slow) == ([], [])
+    assert (dropped, slow, errored) == ([], [], [])
     assert set(manifest) == {"Group/Group_Thm.tla"}

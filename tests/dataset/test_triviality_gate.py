@@ -62,3 +62,65 @@ def test_no_degenerate_tasks_is_noop(tmp_path, monkeypatch):
     monkeypatch.setattr(triviality_audit, "audit_dir", lambda directory, **kw: (2, []))
     assert triviality_audit.gate(str(tmp_path), drop=True) == []
     assert good.exists()
+
+
+def _one_task(tmp_path):
+    task = tmp_path / "T_Thm.tla"
+    task.write_text("---- MODULE T_Thm ----\nTHEOREM TRUE PROOF OBVIOUS\n====\n")
+    return task
+
+
+def test_check_task_reports_a_missing_module_rather_than_a_failed_proof(tmp_path, monkeypatch):
+    """An unresolved EXTENDS means tlapm never judged the placeholder. Reading
+    that as "does not verify" would keep SumSequence_Lemma2a, which the grader
+    (with Community Modules) discharges. It must surface as a missing module."""
+    task = _one_task(tmp_path)
+    monkeypatch.setattr(
+        triviality_audit,
+        "run_killgroup",
+        lambda cmd, timeout, cwd: ("", 'Unknown module "SequencesExtTheorems"', 1),
+    )
+
+    degenerate, detail = triviality_audit.check_task(str(task), "/bin/true", "/lib", 10)
+
+    assert degenerate is False
+    assert triviality_audit.is_missing_module(detail)
+    assert "SequencesExtTheorems" in detail
+
+
+def test_check_task_passes_the_supplied_community_lib_to_tlapm(tmp_path, monkeypatch):
+    """The layered gate resolves lib/community once and hands it in, because the
+    throwaway check dir is outside the repo where file-relative discovery fails.
+    The supplied path must reach tlapm's -I flags."""
+    task = _one_task(tmp_path)
+    seen = {}
+
+    def fake_run(cmd, timeout, cwd):
+        seen["cmd"] = cmd
+        return ("", "", 0)
+
+    monkeypatch.setattr(triviality_audit, "run_killgroup", fake_run)
+    monkeypatch.setattr(triviality_audit, "parse_strict_status", lambda rc, out: (True, 0, 0))
+
+    degenerate, _detail = triviality_audit.check_task(
+        str(task), "/bin/true", "/lib", 10, community_lib="/vendored/community"
+    )
+
+    assert degenerate is True
+    assert "/vendored/community" in seen["cmd"], "the grader's Community Modules path must be on tlapm's -I list"
+
+
+def test_check_task_reports_a_timeout_without_a_verdict(tmp_path, monkeypatch):
+    import subprocess
+
+    task = _one_task(tmp_path)
+
+    def fake_run(cmd, timeout, cwd):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(triviality_audit, "run_killgroup", fake_run)
+
+    degenerate, detail = triviality_audit.check_task(str(task), "/bin/true", "/lib", 1)
+
+    assert degenerate is False
+    assert triviality_audit.is_indeterminate(detail)

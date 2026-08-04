@@ -1467,9 +1467,13 @@ def _plan_targets(sm, dump, source_lines, base_module, subdir, reference_task_ke
                 f"[audit] {task_key}: source states no reference proof — retained for existing-dataset selection\n"
             )
         elif reference_task_keys is not None and task_key not in reference_task_keys:
+            # Outside the reviewed selection: a fresh scan finds 803 candidates
+            # vs the 708 shipped (61 extras #95 dropped for failing proofs), so
+            # skip rather than expand the benchmark past what was reviewed.
             audit_writer.write(
-                f"[audit] {task_key}: source candidate is outside the existing dataset selection — generated anyway\n"
+                f"[audit] {task_key}: source candidate is outside the existing dataset selection — skipped\n"
             )
+            continue
 
         used_names[module] = emitted + 1
         planned.append((target_thm, task_module, task_key))
@@ -1584,36 +1588,46 @@ def emit_layered_source(
 def load_dataset_task_keys(root):
     """Task keys that define the repository's curated dataset selection.
 
-    Once a layered manifest exists it is authoritative. Before the migration,
-    derive the same set from the existing flat benchmark tree using the
-    evaluator's task-file rule, so a regeneration can account for every task the
-    dataset used to ship.
+    The union of the layered manifest's tasks and any flat task files it has not
+    migrated yet: main can add flat-layout suites (the #95 ben-or / tendermint
+    tasks) that an older manifest predates, and reading the manifest alone would
+    drop them. A flat file counts only when the manifest lists it neither as a
+    task nor as another task's read-only context (its Scaffold/Model layers match
+    the task-file rule but are not tasks).
     """
     from dataset.sany_audit import is_task_file
 
+    manifest_keys = set()
+    manifest_context = set()
     manifest_path = os.path.join(root, MANIFEST_FILENAME)
     if os.path.isfile(manifest_path):
         try:
             with open(manifest_path, encoding="utf-8") as f:
                 manifest = json.load(f)
             if isinstance(manifest, dict):
-                return set(manifest)
+                manifest_keys = set(manifest)
+                for entry in manifest.values():
+                    if isinstance(entry, dict):
+                        manifest_context.update(entry.get("context", []))
         except (OSError, json.JSONDecodeError):
             pass
 
-    keys = set()
-    if not os.path.isdir(root):
-        return keys
-    for current_root, dirs, files in os.walk(root):
-        # `.tlacache` holds tlapm's fingerprint history, not dataset tasks.
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for fname in files:
-            if not fname.endswith(".tla"):
-                continue
-            path = os.path.join(current_root, fname)
-            if is_task_file(path):
-                keys.add(os.path.relpath(path, root).replace(os.sep, "/"))
-    return keys
+    flat_keys = set()
+    if os.path.isdir(root):
+        for current_root, dirs, files in os.walk(root):
+            # `.tlacache` holds tlapm's fingerprint history, not dataset tasks.
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for fname in files:
+                if not fname.endswith(".tla"):
+                    continue
+                path = os.path.join(current_root, fname)
+                if is_task_file(path):
+                    flat_keys.add(os.path.relpath(path, root).replace(os.sep, "/"))
+
+    # A flat task file that the manifest already owns (as a task or as another
+    # task's context layer) is not an un-migrated task, so it is not added again.
+    unmigrated = {key for key in flat_keys if key not in manifest_keys and key not in manifest_context}
+    return manifest_keys | unmigrated
 
 
 def drop_known_degenerate(output_root, manifest, audit_writer):
@@ -1735,16 +1749,13 @@ def _finalize_layered(
     """Gate, audit isolation, sweep, then write and re-validate manifest.json.
 
     Both gates run against each task's exact manifest context, so their verdict
-    is the one the grader will reach. A partial run replaces only the tasks whose
-    source it regenerated and leaves every other stored task untouched.
+    matches the grader's. A partial run replaces only the tasks whose source it
+    regenerated and leaves the rest untouched.
 
-    Fails closed: if any source failed to parse, any task failed the SANY gate,
-    the triviality gate could not reach a verdict, or the run produced no tasks
-    at all, the manifest is NOT written and the run raises. A manifest is the
-    dataset's index — writing one that omits the tasks a broken run lost (or an
-    empty one, as a run over a nonexistent source file used to do) turns a
-    visible failure into a silently shrunken benchmark. The audit log is written
-    either way, so the failure is diagnosable.
+    Fails closed: a source parse error, a SANY failure, a triviality gate that
+    cannot reach a verdict, a run that does not reproduce the reviewed selection
+    exactly, or an empty result all leave the manifest unwritten and raise. The
+    audit log is written either way, so the failure is diagnosable.
     """
     existing = sm._load_existing_manifest(output_root) if incremental else {}
     all_bases, processed_bases = scope or ({}, {})
@@ -1759,9 +1770,11 @@ def _finalize_layered(
     if run_gates:
         for task_key, err in sm.layered_sany_gate(output_root, manifest, audit_writer):
             errors.append(f"{task_key}: failed standalone SANY with its manifest context — {err}")
-        # `slow` tasks are KEPT on purpose: the gate proved they cannot be
-        # discharged within the grader's own budget, so they are not errors.
-        dropped, slow = sm.layered_triviality_gate(output_root, manifest, audit_writer)
+        # `slow` tasks are kept (they cannot pass on the grader's budget either);
+        # `errored` ones the gate could not judge, so they fail the run.
+        dropped, slow, errored = sm.layered_triviality_gate(output_root, manifest, audit_writer)
+        for task_key in errored:
+            errors.append(f"{task_key}: triviality gate could not reach a verdict (see the audit log)")
 
     for key in sorted(superseded - set(manifest)):
         audit_writer.write(f"[audit] {key}: no longer generated by its source — removed from the manifest\n")
@@ -1769,10 +1782,10 @@ def _finalize_layered(
     complete.update(manifest)
     if not complete:
         errors.append("the run produced no tasks at all")
-    # The sweep DELETES files; do not let a failing run prune the dataset.
-    if not errors:
-        sm.sweep_unreferenced_context(output_root, complete, audit_writer)
 
+    # The run must reproduce EXACTLY the reviewed selection: a missing task
+    # shrinks the benchmark, an unexpected one expands it. Either is fatal, so
+    # this runs before the sweep and manifest write, which are gated on `errors`.
     if reference_task_keys is not None:
         if incremental:
             expected = sm.tasks_owned_by(reference_task_keys, all_bases, processed_bases)
@@ -1790,6 +1803,14 @@ def _finalize_layered(
             f"Dataset selection: {len(expected)} reference, {len(actual)} generated "
             f"({len(missing)} missing, {len(unexpected)} unexpected)"
         )
+        for key in missing:
+            errors.append(f"{key}: reviewed dataset task was not regenerated")
+        for key in unexpected:
+            errors.append(f"{key}: generated task is not in the reviewed dataset selection")
+
+    # The sweep DELETES files; do not let a failing run prune the dataset.
+    if not errors:
+        sm.sweep_unreferenced_context(output_root, complete, audit_writer)
 
     owners = audit_state.get("scaffold_owner", {})
     owners = {k: [t for t in v if t in manifest] for k, v in owners.items()}
@@ -1828,8 +1849,57 @@ def _finalize_layered(
     return len(complete)
 
 
+def _seed_staging(source_root, staging_root):
+    """Copy the current dataset into `staging_root` so a partial run preserves it.
+
+    Staging starts as a copy of the shipped dataset (manifest and `.tlacache`
+    included) and the run overwrites only the files it regenerates.
+    """
+    import shutil
+
+    for name in os.listdir(source_root):
+        src = os.path.join(source_root, name)
+        dst = os.path.join(staging_root, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+
+
+def _promote_dataset(staging_root, output_root):
+    """Replace `output_root` with `staging_root`, restoring the old one on failure.
+
+    The previous dataset is moved aside first and removed only after the new one
+    is in place, so a failed swap leaves it recoverable.
+    """
+    import shutil
+
+    backup = f"{output_root}.promote-backup-{os.getpid()}"
+    if os.path.exists(output_root):
+        os.rename(output_root, backup)
+    try:
+        os.rename(staging_root, output_root)
+    except OSError:
+        if not os.path.exists(output_root) and os.path.exists(backup):
+            os.rename(backup, output_root)
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+
+
 def generate_layered(output_root=None, source_dir=None, filter_substring=None, files=(), run_gates=True):
-    """Generate the layered proof-completion dataset and its manifest."""
+    """Generate the layered proof-completion dataset and its manifest.
+
+    Generation runs entirely in a private staging directory and is promoted over
+    the shipped dataset only after every gate, the sweep, the reviewed-selection
+    check, and manifest validation have passed. A run that fails at any step
+    leaves the existing dataset byte-for-byte unchanged; only the audit log is
+    refreshed at `output_root`, so the failure stays diagnosable. A `--filter`
+    or positional run seeds staging from the current dataset first, so the tasks
+    it does not regenerate survive untouched.
+    """
+    import shutil
+    import tempfile
+
     sm = _engine()
     output_root = os.path.abspath(output_root or BENCHMARK_DIR)
     source_dir = os.path.abspath(source_dir or SOURCE_ROOT)
@@ -1869,41 +1939,61 @@ def generate_layered(output_root=None, source_dir=None, filter_substring=None, f
             )
     scope = (sm.source_bases(ownership_targets), sm.source_bases(targets))
 
-    manifest = {}
-    audit_state = {}
-    total = 0
     audit_path = os.path.join(output_root, "audit.log")
-    with open(audit_path, "w", encoding="utf-8") as audit_writer:
-        for path, subdir in targets:
-            print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
-            key = subdir if subdir is not None else os.path.splitext(os.path.basename(path))[0]
-            try:
-                total += emit_layered_source(
-                    sm,
-                    path,
-                    key,
-                    os.path.join(output_root, key),
-                    audit_writer,
-                    manifest,
-                    audit_state,
-                    reference_task_keys,
-                )
-            except Exception as e:
-                audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
-                audit_state.setdefault("errors", []).append(f"{path}: {e!r}")
-                print(f"  ERROR: {e}", file=sys.stderr)
+    staging_root = tempfile.mkdtemp(
+        prefix=f".staging-{os.path.basename(output_root)}-", dir=os.path.dirname(output_root)
+    )
+    try:
+        if incremental:
+            _seed_staging(output_root, staging_root)
 
-        final_count = _finalize_layered(
-            sm,
-            output_root,
-            manifest,
-            audit_state,
-            audit_writer,
-            run_gates=run_gates,
-            incremental=incremental,
-            scope=scope,
-            reference_task_keys=reference_task_keys,
-        )
+        manifest = {}
+        audit_state = {}
+        total = 0
+        with open(os.path.join(staging_root, "audit.log"), "w", encoding="utf-8") as audit_writer:
+            for path, subdir in targets:
+                print(f"\nProcessing {os.path.relpath(path, PROJECT_ROOT)}")
+                key = subdir if subdir is not None else os.path.splitext(os.path.basename(path))[0]
+                try:
+                    total += emit_layered_source(
+                        sm,
+                        path,
+                        key,
+                        os.path.join(staging_root, key),
+                        audit_writer,
+                        manifest,
+                        audit_state,
+                        reference_task_keys,
+                    )
+                except Exception as e:
+                    audit_writer.write(f"[audit] {path}: ERROR {e!r}\n")
+                    audit_state.setdefault("errors", []).append(f"{path}: {e!r}")
+                    print(f"  ERROR: {e}", file=sys.stderr)
+
+            final_count = _finalize_layered(
+                sm,
+                staging_root,
+                manifest,
+                audit_state,
+                audit_writer,
+                run_gates=run_gates,
+                incremental=incremental,
+                scope=scope,
+                reference_task_keys=reference_task_keys,
+            )
+
+        # Everything passed: replace the shipped dataset with the staged one.
+        _promote_dataset(staging_root, output_root)
+        staging_root = None
+    finally:
+        if staging_root is not None and os.path.isdir(staging_root):
+            # A failed run leaves the dataset untouched, but its audit log still
+            # has to reach the caller — salvage it to `output_root` before the
+            # staging directory (and the half-built dataset in it) is discarded.
+            salvaged = os.path.join(staging_root, "audit.log")
+            if os.path.isfile(salvaged):
+                shutil.copy2(salvaged, audit_path)
+            shutil.rmtree(staging_root, ignore_errors=True)
 
     print(f"\nTotal proof-completion tasks: {final_count} ({total} generated before gates)")
     print(f"Audit log: {os.path.relpath(audit_path, PROJECT_ROOT)}")

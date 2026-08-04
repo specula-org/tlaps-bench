@@ -28,6 +28,8 @@ from common.task_contract import BEGIN_AGENT_HELPERS, END_AGENT_HELPERS
 from dataset.proof_completion.generate import (
     _engine,
     _finalize_layered,
+    _promote_dataset,
+    _seed_staging,
     build_prefix_model,
     build_scaffold,
     build_task_module,
@@ -469,6 +471,37 @@ def test_dataset_selection_prefers_an_existing_manifest(tmp_path):
     assert load_dataset_task_keys(str(tmp_path)) == {"Group/Group_Thm.tla"}
 
 
+def test_dataset_selection_unions_flat_tasks_the_manifest_has_not_migrated(tmp_path):
+    """A branch's older manifest predates the flat ben-or/tendermint suites main
+    added, so those un-migrated flat tasks must join the selection — otherwise
+    they are silently skipped."""
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"Group/Group_Thm.tla": {"context": ["Group/Group_ThmScaffold.tla"]}})
+    )
+    benor = tmp_path / "BenOr"
+    benor.mkdir()
+    (benor / "BenOr_Agreement.tla").write_text("---- MODULE BenOr_Agreement ----\nTHEOREM TRUE\nPROOF OBVIOUS\n====\n")
+    assert load_dataset_task_keys(str(tmp_path)) == {
+        "Group/Group_Thm.tla",
+        "BenOr/BenOr_Agreement.tla",
+    }
+
+
+def test_dataset_selection_does_not_recount_manifest_context_layers(tmp_path):
+    """A read-only Scaffold layer states preceding lemmas, so it matches the
+    task-file rule — but the manifest already names it as context, so it must not
+    be mistaken for an un-migrated task."""
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"Group/Group_Thm.tla": {"context": ["Group/Group_ThmScaffold.tla"]}})
+    )
+    group = tmp_path / "Group"
+    group.mkdir()
+    (group / "Group_ThmScaffold.tla").write_text(
+        "---- MODULE Group_ThmScaffold ----\nLEMMA Earlier == TRUE\nPROOF OBVIOUS\n====\n"
+    )
+    assert load_dataset_task_keys(str(tmp_path)) == {"Group/Group_Thm.tla"}
+
+
 def _emit_task(root, subdir, module, statement="THEOREM Thm == TRUE"):
     directory = root / subdir
     directory.mkdir(parents=True, exist_ok=True)
@@ -500,13 +533,98 @@ def test_finalize_sweeps_context_no_task_references(tmp_path):
     assert not orphan.exists(), "a layer left over from a previous generation must not ship"
 
 
-def test_finalize_reports_tasks_the_regeneration_lost(tmp_path, capsys):
+def test_finalize_fails_when_the_regeneration_loses_a_reviewed_task(tmp_path, capsys):
+    """A task in the reviewed selection that this run did not regenerate is
+    fatal: shipping the shrunken manifest would silently drop it."""
     key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
-    _finalize(tmp_path, {key: entry}, reference_task_keys={key, "Group/Group_Gone.tla"})
+    with pytest.raises(SystemExit) as excinfo:
+        _finalize(tmp_path, {key: entry}, reference_task_keys={key, "Group/Group_Gone.tla"})
 
+    assert excinfo.value.code != 0
     assert "1 missing" in capsys.readouterr().out
+    assert not (tmp_path / "manifest.json").exists(), "a run that lost a task must not publish a manifest"
     audit = (tmp_path / "audit.log").read_text()
     assert "Group/Group_Gone.tla: existing dataset task was not regenerated" in audit
+
+
+def test_finalize_fails_when_the_regeneration_adds_an_unreviewed_task(tmp_path):
+    """A task not in the reviewed selection is fatal too: it expands the
+    benchmark past what was reviewed."""
+    key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
+    with pytest.raises(SystemExit):
+        _finalize(tmp_path, {key: entry}, reference_task_keys={"Group/Group_Other.tla"})
+
+    assert not (tmp_path / "manifest.json").exists()
+    audit = (tmp_path / "audit.log").read_text()
+    assert "Group/Group_Thm.tla: generated task is not in the existing dataset selection" in audit
+
+
+def test_finalize_accepts_a_run_that_reproduces_the_reviewed_selection(tmp_path):
+    key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
+    assert _finalize(tmp_path, {key: entry}, reference_task_keys={key}) == 1
+    assert (tmp_path / "manifest.json").exists()
+
+
+def test_seed_staging_copies_the_current_dataset_verbatim(tmp_path):
+    """A --filter run must keep the tasks it does not regenerate, so staging
+    starts as a byte-for-byte copy of the shipped dataset — files, nested
+    directories, and the manifest alike."""
+    source = tmp_path / "dataset"
+    (source / "Group").mkdir(parents=True)
+    (source / "Group" / "Group_Thm.tla").write_text("theorem body")
+    (source / "manifest.json").write_text('{"Group/Group_Thm.tla": {"context": []}}')
+    staging = tmp_path / "staging"
+    staging.mkdir()
+
+    _seed_staging(str(source), str(staging))
+
+    assert (staging / "Group" / "Group_Thm.tla").read_text() == "theorem body"
+    assert (staging / "manifest.json").read_text() == '{"Group/Group_Thm.tla": {"context": []}}'
+
+
+def test_promote_dataset_swaps_staging_over_the_old_dataset(tmp_path):
+    output = tmp_path / "dataset"
+    output.mkdir()
+    (output / "old.tla").write_text("stale")
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "new.tla").write_text("fresh")
+
+    _promote_dataset(str(staging), str(output))
+
+    assert (output / "new.tla").read_text() == "fresh"
+    assert not (output / "old.tla").exists(), "the previous dataset is fully replaced, not merged"
+    assert not staging.exists(), "staging is consumed by the promotion"
+
+
+def test_promote_dataset_restores_the_old_dataset_when_the_swap_fails(tmp_path, monkeypatch):
+    """The promotion moves the old dataset aside before renaming staging in. If
+    that rename fails, the old dataset must be put back so a failed run leaves it
+    byte-for-byte unchanged."""
+    import os as _os
+
+    output = tmp_path / "dataset"
+    output.mkdir()
+    (output / "keep.tla").write_text("precious")
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "new.tla").write_text("fresh")
+
+    real_rename = _os.rename
+    calls = {"n": 0}
+
+    def flaky_rename(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the staging -> output rename
+            raise OSError("simulated cross-device or race failure")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr("dataset.proof_completion.generate.os.rename", flaky_rename)
+
+    with pytest.raises(OSError):
+        _promote_dataset(str(staging), str(output))
+
+    assert (output / "keep.tla").read_text() == "precious", "a failed swap must not lose the existing dataset"
 
 
 def test_finalize_flags_a_scaffold_two_tasks_share(tmp_path):
