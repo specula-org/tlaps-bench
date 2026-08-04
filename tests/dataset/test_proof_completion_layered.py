@@ -533,6 +533,25 @@ def test_finalize_sweeps_context_no_task_references(tmp_path):
     assert not orphan.exists(), "a layer left over from a previous generation must not ship"
 
 
+def test_finalize_fails_when_the_triviality_gate_cannot_judge_a_task(tmp_path, monkeypatch):
+    """A second timeout (or an unresolved module) makes the gate return the task
+    as `errored`. Finalization must then fail and write no manifest, rather than
+    keeping a task the gate never actually judged — the resource-contention case
+    the reviewer flagged."""
+    import dataset.proof_from_scratch.generate as engine
+
+    key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
+    monkeypatch.setattr(engine, "layered_sany_gate", lambda *a, **k: [])
+    monkeypatch.setattr(engine, "layered_triviality_gate", lambda *a, **k: ([], [], [key]))
+
+    with open(tmp_path / "audit.log", "w", encoding="utf-8") as audit, pytest.raises(SystemExit) as excinfo:
+        _finalize_layered(engine, str(tmp_path), {key: entry}, {}, audit, run_gates=True)
+
+    assert excinfo.value.code != 0
+    assert not (tmp_path / "manifest.json").exists(), "an unjudged task must not be shipped"
+    assert "triviality gate could not reach a verdict" in (tmp_path / "audit.log").read_text()
+
+
 def test_finalize_fails_when_the_regeneration_loses_a_reviewed_task(tmp_path, capsys):
     """A task in the reviewed selection that this run did not regenerate is
     fatal: shipping the shrunken manifest would silently drop it."""
