@@ -130,14 +130,16 @@ def test_drop_detail_omits_all_zero_counts():
 
 
 @pytest.mark.parametrize("shared_model", [False, True])
-def test_main_omits_all_zero_drop_detail(monkeypatch, capsys, tmp_path, shared_model):
+def test_legacy_main_omits_all_zero_drop_detail(monkeypatch, capsys, tmp_path, shared_model):
     monkeypatch.setattr(generate, "BENCHMARK_DIR", str(tmp_path))
     monkeypatch.setattr(generate, "generate_shared_model_l1", lambda output_root: 1)
     monkeypatch.setattr(generate, "find_source_dirs", lambda: [])
     monkeypatch.setattr(generate, "_run_duplicate_gate", lambda directory: [])
     monkeypatch.setattr(generate, "_run_sany_gate", lambda directory: 0)
     monkeypatch.setattr(generate, "_prune_unreferenced_dependencies", lambda directory: [])
-    argv = ["generate.py", "--shared-model"] if shared_model else ["generate.py"]
+    argv = ["generate.py", "--legacy"]
+    if shared_model:
+        argv.append("--shared-model")
     monkeypatch.setattr(sys, "argv", argv)
 
     generate.main()
@@ -145,3 +147,136 @@ def test_main_omits_all_zero_drop_detail(monkeypatch, capsys, tmp_path, shared_m
     output = capsys.readouterr().out
     assert "0 duplicates" not in output
     assert "0 degenerate tasks" not in output
+
+
+def test_main_defaults_to_layered(monkeypatch):
+    calls = []
+    monkeypatch.setattr(generate, "generate_layered", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(sys, "argv", ["generate.py"])
+
+    generate.main()
+
+    assert calls == [
+        {
+            "output_root": None,
+            "source_dir": None,
+            "filter_substring": None,
+            "files": [],
+            "run_gates": True,
+        }
+    ]
+
+
+def test_main_forwards_layered_inputs(monkeypatch, tmp_path):
+    calls = []
+    source_dir = tmp_path / "source"
+    output_dir = tmp_path / "output"
+    source_file = source_dir / "Group" / "Spec.tla"
+    monkeypatch.setattr(generate, "generate_layered", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate.py",
+            "--source-dir",
+            str(source_dir),
+            "--filter",
+            "Group",
+            "--output-dir",
+            str(output_dir),
+            "--skip-gates",
+            str(source_file),
+        ],
+    )
+
+    generate.main()
+
+    assert calls == [
+        {
+            "output_root": str(output_dir),
+            "source_dir": str(source_dir),
+            "filter_substring": "Group",
+            "files": [str(source_file)],
+            "run_gates": False,
+        }
+    ]
+
+
+def test_shared_model_requires_legacy(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["generate.py", "--shared-model"])
+
+    with pytest.raises(SystemExit):
+        generate.main()
+
+    assert "--shared-model requires --legacy" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("shared_model", [False, True])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--skip-gates"],
+        ["--filter", "Group"],
+        ["--source-dir", "source"],
+        ["source/Group/Spec.tla"],
+    ],
+)
+def test_legacy_rejects_layered_only_inputs(monkeypatch, extra, shared_model):
+    argv = ["generate.py", "--legacy"]
+    if shared_model:
+        argv.append("--shared-model")
+    monkeypatch.setattr(sys, "argv", [*argv, *extra])
+
+    with pytest.raises(SystemExit):
+        generate.main()
+
+
+def test_flat_legacy_rejects_output_dir_without_deleting_it(monkeypatch, capsys, tmp_path):
+    sentinel = tmp_path / "keep.txt"
+    sentinel.write_text("keep")
+    monkeypatch.setattr(sys, "argv", ["generate.py", "--legacy", "--output-dir", str(tmp_path)])
+
+    with pytest.raises(SystemExit):
+        generate.main()
+
+    assert "--output-dir requires --shared-model with --legacy" in capsys.readouterr().err
+    assert sentinel.read_text() == "keep"
+
+
+def test_legacy_shared_model_accepts_output_dir(monkeypatch, tmp_path):
+    output_dir = tmp_path / "generated"
+    calls = []
+    monkeypatch.setattr(
+        generate,
+        "generate_shared_model_l1",
+        lambda output_root: calls.append(("generate", output_root)) or 1,
+    )
+    monkeypatch.setattr(
+        generate,
+        "_run_duplicate_gate",
+        lambda directory: calls.append(("duplicates", directory)) or [],
+    )
+    monkeypatch.setattr(
+        generate,
+        "_run_sany_gate",
+        lambda directory: calls.append(("sany", directory)) or 0,
+    )
+    monkeypatch.setattr(
+        generate,
+        "_prune_unreferenced_dependencies",
+        lambda directory: calls.append(("prune", directory)) or [],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["generate.py", "--legacy", "--shared-model", "--output-dir", str(output_dir)],
+    )
+
+    generate.main()
+
+    assert calls == [
+        ("generate", str(output_dir)),
+        ("duplicates", str(output_dir)),
+        ("sany", str(output_dir)),
+        ("prune", str(output_dir)),
+    ]

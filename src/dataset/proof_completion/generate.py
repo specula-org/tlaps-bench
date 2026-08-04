@@ -10,11 +10,12 @@ generate a standalone .tla file where:
 - Files with INSTANCE dependencies have dependency files copied alongside
 - Each benchmark file works standalone (with its dependency files)
 
-Layered layout (`--layered`, Issue #86)
----------------------------------------
+Layered layout (default, Issue #86)
+-----------------------------------
 The layouts above put the whole task in ONE editable module, so an agent can
 "prove" the goal by weakening the specification, redefining the scaffolding, or
-restating the theorem. `--layered` splits each task by ownership instead:
+restating the theorem. The default generator splits each task by ownership
+instead:
 
     <base>Model.tla        declarations, assumptions, state machine, Spec, fairness
     <task>Scaffold.tla     this target's given definitions + preceding lemmas
@@ -1001,9 +1002,9 @@ def process_module_dir(module_dir_name):
 
 
 # ---------------------------------------------------------------------------
-# Shared-model proof-completion (opt-in via --shared-model). Reuses the certified proof-from-scratch dump
+# Legacy shared-model proof-completion (opt-in via --legacy --shared-model). Reuses the certified proof-from-scratch dump
 # engine (src/dataset/proof_from_scratch/generate.py) for the model extraction + helpers,
-# and adds an proof-completion-specific task builder. Default (no flag) keeps the regex path.
+# and adds an proof-completion-specific task builder.
 # ---------------------------------------------------------------------------
 def _load_l2_engine():
     """Load the proof-from-scratch generator as the shared-model engine. proof-from-scratch does
@@ -2144,41 +2145,40 @@ def main():
 
     parser = argparse.ArgumentParser(description="Generate proof-completion benchmarks.")
     parser.add_argument(
-        "--shared-model",
+        "--legacy",
         action="store_true",
-        help="Emit one proof-free <Module>.tla model per output dir "
-        "and have tasks EXTEND it instead of inlining the spec.",
+        help="Use a legacy generator instead of the default layered layout.",
     )
     parser.add_argument(
-        "--layered",
+        "--shared-model",
         action="store_true",
-        help="Split each task into <base>Model.tla + <task>Scaffold.tla + "
-        "<task>.tla (editable, with proof markers) and write manifest.json "
-        "mapping each task to its exact read-only context (Issue #86). "
-        "Implies the shared-model split.",
+        help="Legacy mode only: emit one proof-free <Module>.tla model per output dir "
+        "and have tasks EXTEND it instead of inlining the spec.",
     )
     parser.add_argument(
         "--skip-gates",
         action="store_true",
-        help="Layered mode only: skip the SANY and triviality gates. "
+        help="Skip the SANY and triviality gates for layered generation. "
         "For fast iteration — a shipped dataset must be generated with them.",
     )
+    parser.add_argument("--source-dir", default=None, help="Directory of source .tla files (default: source/)")
+    parser.add_argument("--filter", default=None, help="Substring limiting which source files are processed")
     parser.add_argument(
-        "--source-dir", default=None, help="Directory of source .tla files (default: source/); layered mode only"
+        "--output-dir",
+        default=None,
+        help="Output directory for layered or legacy shared-model generation (default: benchmark/proof-completion)",
     )
-    parser.add_argument(
-        "--filter", default=None, help="Substring limiting which source files are processed; layered mode only"
-    )
-    parser.add_argument("--output-dir", default=None, help="Output directory (default: benchmark/proof-completion)")
-    parser.add_argument("files", nargs="*", help="Specific source .tla files to process; layered mode only")
+    parser.add_argument("files", nargs="*", help="Specific source .tla files to process")
     args = parser.parse_args()
 
-    if args.layered and args.shared_model:
-        parser.error("--layered already performs the model split; do not combine with --shared-model")
-    if not args.layered and (args.filter or args.files or args.source_dir or args.skip_gates):
-        parser.error("--source-dir, --filter, --skip-gates and positional files require --layered")
+    if args.shared_model and not args.legacy:
+        parser.error("--shared-model requires --legacy; layered generation already performs the model split")
+    if args.legacy and args.output_dir is not None and not args.shared_model:
+        parser.error("--output-dir requires --shared-model with --legacy")
+    if args.legacy and (args.filter is not None or args.files or args.source_dir is not None or args.skip_gates):
+        parser.error("--source-dir, --filter, --skip-gates and positional files are unavailable with --legacy")
 
-    if args.layered:
+    if not args.legacy:
         generate_layered(
             output_root=args.output_dir,
             source_dir=args.source_dir,

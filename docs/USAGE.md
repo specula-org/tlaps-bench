@@ -273,12 +273,16 @@ uv run tlaps-bench generate
 uv run tlaps-bench generate --mode proof-from-scratch
 ```
 
-`--layered` emits the layered suite described in [Layered-task trust boundary](#layered-task-trust-boundary): one read-only `<base>Model.tla` per source, one read-only `<task>Scaffold.tla` per target, an editable `<task>.tla` holding the fixed theorem statement and the marked proof region, and a `manifest.json` naming every task's exact context.
+Proof-completion generation emits the layered suite described in [Layered-task trust boundary](#layered-task-trust-boundary): one read-only `<base>Model.tla` per source, one read-only `<task>Scaffold.tla` per target, an editable `<task>.tla` holding the fixed theorem statement and the marked proof region, and a `manifest.json` naming every task's exact context. Use `--legacy` only for the old generators.
 
 ```bash
-uv run tlaps-bench generate --mode proof-completion --layered
-uv run tlaps-bench generate --mode proof-completion --layered --filter EWD840   # one source group
+uv run tlaps-bench generate --mode proof-completion
+uv run tlaps-bench generate --mode proof-completion --filter EWD840   # one source group
+uv run tlaps-bench generate --mode proof-completion --legacy         # old single-file layout
+uv run tlaps-bench generate --mode proof-completion --legacy --shared-model  # old shared-model layout
 ```
+
+`--output-dir` works with the default layered generator and with `--legacy --shared-model`. The flat `--legacy` generator writes only to `benchmark/proof-completion/`.
 
 Every task is parsed back through the evaluator's own contract, then gated: each one must parse under standalone SANY with only its manifest context, and any task whose `PROOF OBVIOUS` placeholder already verifies is dropped as degenerate. `--skip-gates` bypasses both for fast iteration; a shipped dataset is generated with them. A `--filter` or positional-file run regenerates only the tasks belonging to the sources it processed and needs the existing manifest to preserve the rest. `benchmark/<mode>/audit.log` records every drop, every leak check, and every task that the previous dataset had but the run did not regenerate.
 
