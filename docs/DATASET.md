@@ -54,6 +54,7 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [tcp](https://github.com/tlaplus/Examples/tree/master/specifications/tcp) | tlaplus/Examples | 16 | 3 | 19 |
 | [bcastByz](https://github.com/tlaplus/Examples/tree/master/specifications/bcastByz) | tlaplus/Examples | 13 | 5 | 18 |
 | [FiniteMonotonic](https://github.com/tlaplus/Examples/tree/master/specifications/FiniteMonotonic) | tlaplus/Examples | 14 | 3 | 17 |
+| [FlashProtocol](https://github.com/tlaplus/Examples/tree/master/specifications/FlashProtocol) | tlaplus/Examples | – | 17 | 17 |
 | [TeachingConcurrency](https://github.com/tlaplus/Examples/tree/master/specifications/TeachingConcurrency) | tlaplus/Examples | 8 | 8 | 16 |
 | [barriers](https://github.com/tlaplus/Examples/tree/master/specifications/barriers) | tlaplus/Examples | 11 | 5 | 16 |
 | [transaction_commit](https://github.com/tlaplus/Examples/tree/master/specifications/transaction_commit) | tlaplus/Examples | 12 | 4 | 16 |
@@ -89,4 +90,4 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
-**Total: 70 examples — 706 proof-completion + 233 proof-from-scratch = 939 tasks.**
+**Total: 71 examples — 706 proof-completion + 250 proof-from-scratch = 956 tasks.**
