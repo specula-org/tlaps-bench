@@ -1,14 +1,9 @@
----------------------------- MODULE EWD840_proof_Safety ----------------------------
-
-EXTENDS EWD840, NaturalsInduction, TLAPS
-USE NAssumption
-
+---- MODULE EWD840_proof_Safety ----
+EXTENDS EWD840_proof_SafetyDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Safety == Spec => []TerminationDetection
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-=============================================================================
-
+\* END AGENT PROOF
+====

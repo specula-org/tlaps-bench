@@ -1,16 +1,9 @@
---------------------------- MODULE Zab_GlobalPrimaryOrder ---------------------------
-
-EXTENDS Zab
-
-EpochPrecedeInTxn(txn1, txn2) == txn1.zxid[1] < txn2.zxid[1]
-
-GlobalPrimaryOrder == \A i \in Server: lastCommitted[i].index >= 2
-                         => \A idx1, idx2 \in 1..lastCommitted[i].index:
-                                \/ ~EpochPrecedeInTxn(history[i][idx1], history[i][idx2])
-                                \/ /\ EpochPrecedeInTxn(history[i][idx1], history[i][idx2])
-                                   /\ idx1 < idx2
-
+---- MODULE Zab_GlobalPrimaryOrder ----
+EXTENDS Zab_GlobalPrimaryOrderDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []GlobalPrimaryOrder
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

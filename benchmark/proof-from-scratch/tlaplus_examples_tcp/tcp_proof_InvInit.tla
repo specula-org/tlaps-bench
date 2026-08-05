@@ -1,10 +1,9 @@
---------------------------- MODULE tcp_proof_InvInit ---------------------------------
-
-EXTENDS tcp, SequenceTheorems, SequencesExtTheorems, FiniteSetTheorems, TLAPS
-
-ASSUME PeersFinite == IsFiniteSet(Peers)
-
+---- MODULE tcp_proof_InvInit ----
+EXTENDS tcp_proof_InvInitDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM InvInit == Init => Inv
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-============================================================================
+\* END AGENT PROOF
+====

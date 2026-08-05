@@ -1,12 +1,9 @@
------------------------------ MODULE Quicksort_PCorrect -----------------------------
-
-EXTENDS Quicksort
-
-PCorrect == (pc = "Done") => 
-               /\ seq \in PermsOf(seq0)
-               /\ \A p, q \in 1..Len(seq) : p < q => seq[p] =< seq[q] 
-
+---- MODULE Quicksort_PCorrect ----
+EXTENDS Quicksort_PCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []PCorrect
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

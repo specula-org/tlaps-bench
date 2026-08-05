@@ -1,10 +1,9 @@
------------------------------- MODULE GermanData_DirectoryAccurate ------------------------------
-EXTENDS GermanData
-
-DirectoryAccurate ==
-    \A i \in NODE : cache[i].state \in {"S", "E"} => i \in shrSet
-
+---- MODULE GermanData_DirectoryAccurate ----
+EXTENDS GermanData_DirectoryAccurateDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []DirectoryAccurate
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

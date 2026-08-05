@@ -1,12 +1,9 @@
----------------------------- MODULE BinarySearch_resultCorrect ----------------------------
-
-EXTENDS BinarySearch
-
-resultCorrect == 
-   (pc = "Done") => IF \E i \in 1..Len(seq) : seq[i] = val
-                     THEN seq[result] = val
-                     ELSE result = 0 
-
+---- MODULE BinarySearch_resultCorrect ----
+EXTENDS BinarySearch_resultCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []resultCorrect
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
+\* END AGENT PROOF
+====

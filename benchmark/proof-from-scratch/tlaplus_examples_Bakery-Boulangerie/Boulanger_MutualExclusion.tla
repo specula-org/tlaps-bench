@@ -1,11 +1,9 @@
------------------------------- MODULE Boulanger_MutualExclusion ----------------------------
-
-EXTENDS Boulanger
-
-MutualExclusion == \A i,j \in Procs : (i # j) => ~ /\ pc[i] = "cs"
-                                                   /\ pc[j] = "cs"
-
+---- MODULE Boulanger_MutualExclusion ----
+EXTENDS Boulanger_MutualExclusionDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []MutualExclusion
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

@@ -1,14 +1,9 @@
------------- MODULE Bakery_MutualExclusion ----------------------------
-
-EXTENDS Bakery
-
-MutualExclusion == \A i,j \in Procs : (i # j) => ~ /\ pc[i] = "cs"
-                                                   /\ pc[j] = "cs"
-
+---- MODULE Bakery_MutualExclusion ----
+EXTENDS Bakery_MutualExclusionDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []MutualExclusion
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
-Test 1:  5248 distinct initial states  151056 full initial states
-IInit == TypeOK /\ IInv 
+\* END AGENT PROOF
+====

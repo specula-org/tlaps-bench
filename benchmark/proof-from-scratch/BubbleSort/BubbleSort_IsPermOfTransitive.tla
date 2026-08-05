@@ -1,32 +1,11 @@
------------------------------ MODULE BubbleSort_IsPermOfTransitive -----------------------------
-
-EXTENDS Integers, TLAPS, TLC
-
-CONSTANT N
-ASSUME NAssumption == N \in Nat /\ N >= 1
-
------------------------------------------------------------------------------
-
-Perms == { f \in [1..N -> 1..N] : 
-                     \A i \in 1..N : \E j \in 1..N : f[i] = f[j] }
-
-f ** g == [i \in 1..N |-> f[g[i]]]
-   
-IsPermOf(A, B) == \E f \in Perms : A = (B ** f)
-
+---- MODULE BubbleSort_IsPermOfTransitive ----
+EXTENDS BubbleSort_IsPermOfTransitiveDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM IsPermOfTransitive == 
           \A A, B, C \in [1..N -> Int] : 
              IsPermOf(A, B) /\ IsPermOf(B, C) => IsPermOf(A, C)
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-----------------------------------------------------------------------------
-
-VARIABLES A, A0, i, j, pc
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-=============================================================================
-
+\* END AGENT PROOF
+====

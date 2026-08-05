@@ -1,11 +1,9 @@
-------------------------------- MODULE CRDT_proof_Convergence ---------------------------------
-EXTENDS CRDT, Functions, NaturalsInduction, FunctionTheorems, TLAPS
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
+---- MODULE CRDT_proof_Convergence ----
+EXTENDS CRDT_proof_ConvergenceDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM FairSpec => Convergence
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

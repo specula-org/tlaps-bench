@@ -1,13 +1,9 @@
----------------------------- MODULE FindHighest_IsCorrect -----------------------------
-
-EXTENDS FindHighest
-
-Correctness ==
-  pc = "Done" =>
-    \A idx \in DOMAIN f : f[idx] <= h
-
+---- MODULE FindHighest_IsCorrect ----
+EXTENDS FindHighest_IsCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM IsCorrect == Spec => []Correctness
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

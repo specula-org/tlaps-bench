@@ -1,16 +1,10 @@
---------------------------- MODULE GCD_GCD3 ---------------------------
-EXTENDS Integers
-------------------------------------------------------------------
-Divides(p, n) == \E q \in Int : n = p * q
-DivisorsOf(n) == {p \in Int : Divides(p, n)}
-
-SetMax(S) == CHOOSE i \in S : \A j \in S : i >= j
-
-GCD(m, n) == SetMax(DivisorsOf(m) \cap DivisorsOf(n))
------------------------------------------------------------------------------
-------------------------------------------------------------------
-------------------------------------------------------------------
+---- MODULE GCD_GCD3 ----
+EXTENDS GCD_GCD3Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM GCD3 == \A m, n \in Nat \ {0} : 
                     (n > m) => (GCD(m, n) = GCD(m, n-m))
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-===================================================================
+\* END AGENT PROOF
+====

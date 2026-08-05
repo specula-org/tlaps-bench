@@ -1,13 +1,9 @@
------------------------------- MODULE AddTwo_Even --------------------------------
-
-EXTENDS AddTwo
-
-a|b == \E c \in Nat : a*c = b
-
-Even == 2|x
-
+---- MODULE AddTwo_Even ----
+EXTENDS AddTwo_EvenDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []Even
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

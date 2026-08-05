@@ -1,11 +1,9 @@
------------------------------- MODULE GermanData_DataProp ------------------------------
-EXTENDS GermanData
-
-DataProp ==
-    /\ (exGntd = FALSE => memData = auxData)
-    /\ \A i \in NODE : cache[i].state # "I" => cache[i].data = auxData
-
+---- MODULE GermanData_DataProp ----
+EXTENDS GermanData_DataPropDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []DataProp
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

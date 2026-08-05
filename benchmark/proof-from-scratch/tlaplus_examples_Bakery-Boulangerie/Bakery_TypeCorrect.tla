@@ -1,19 +1,9 @@
------------- MODULE Bakery_TypeCorrect ----------------------------
-
-EXTENDS Bakery
-
-TypeOK == /\ num \in [Procs -> Nat]
-          /\ flag \in [Procs -> BOOLEAN]
-          /\ unchecked \in [Procs -> SUBSET Procs]
-          /\ max \in [Procs -> Nat]
-          /\ nxt \in [Procs -> Procs]
-          /\ pc \in [Procs -> {"ncs", "e1", "e2", "e3",
-                               "e4", "w1", "w2", "cs", "exit"}]             
-
+---- MODULE Bakery_TypeCorrect ----
+EXTENDS Bakery_TypeCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM TypeCorrect == Spec => []TypeOK
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
-Test 1:  5248 distinct initial states  151056 full initial states
-IInit == TypeOK /\ IInv 
+\* END AGENT PROOF
+====

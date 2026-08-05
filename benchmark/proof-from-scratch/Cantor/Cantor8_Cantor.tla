@@ -1,11 +1,10 @@
--------------- MODULE Cantor8_Cantor --------------
-
-Range (f) == { f[x] : x \in DOMAIN f }
-
-Surj (f, S) == S \subseteq Range (f)
-
+---- MODULE Cantor8_Cantor ----
+EXTENDS Cantor8_CantorDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Cantor ==
   \A S : ~ \E f \in [S -> SUBSET S] : Surj (f, SUBSET S)
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
+\* END AGENT PROOF
 ====

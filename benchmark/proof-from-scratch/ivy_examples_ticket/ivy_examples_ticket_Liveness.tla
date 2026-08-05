@@ -1,10 +1,9 @@
-------------------------- MODULE ivy_examples_ticket_Liveness -------------------------
-EXTENDS IvyTicket
-
-NonStarvation ==
-  \A t \in Thread : (pc[t] = "Waiting") ~> (pc[t] = "Critical")
-
+---- MODULE ivy_examples_ticket_Liveness ----
+EXTENDS ivy_examples_ticket_LivenessDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Liveness == Spec => NonStarvation
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

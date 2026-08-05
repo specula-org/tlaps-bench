@@ -1,0 +1,19 @@
+-------------------------- MODULE Allocator_InitMutexDefs -----------------------------
+
+CONSTANTS
+  Client,     
+  Resource    
+
+VARIABLES
+  unsat,       
+  alloc        
+
+Init ==
+  /\ unsat = [c \in Client |-> {}]
+  /\ alloc = [c \in Client |-> {}]
+
+Mutex ==
+  \A c1,c2 \in Client : \A r \in Resource :
+     r \in alloc[c1] \cap alloc[c2] => c1 = c2
+
+=========================================================================

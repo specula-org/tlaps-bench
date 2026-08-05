@@ -1,18 +1,9 @@
------------------MODULE PaxosProof_StructOK1-------------------
-EXTENDS TLAPS, PaxosTuple
-
------------------------------------------------------------------------------
-
------------------------------------------------------------
-StructOK1 == \A a \in Acceptor : IF maxVBal[a] = -1
-                                 THEN maxVal[a] = None
-                                 ELSE <<maxVBal[a], maxVal[a]>> \in votes[a]
-
+---- MODULE PaxosProof_StructOK1 ----
+EXTENDS PaxosProof_StructOK1Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []StructOK1
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-------------------------------------------------------------
-============================================================
+\* END AGENT PROOF
+====

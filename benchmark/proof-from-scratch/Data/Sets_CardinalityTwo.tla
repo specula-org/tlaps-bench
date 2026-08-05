@@ -1,36 +1,11 @@
--------------------------------- MODULE Sets_CardinalityTwo --------------------------------
-EXTENDS Integers, NaturalsInduction, TLAPS
-
-IsBijection(f, S, T) == /\ f \in [S -> T]
-                        /\ \A x, y \in S : (x # y) => (f[x] # f[y])
-                        /\ \A y \in T : \E x \in S : f[x] = y
-
-IsFiniteSet(S) == \E n \in Nat : \E f : IsBijection(f, 1..n, S)
-
-CONSTANT Cardinality(_)
-AXIOM CardinalityAxiom ==
-         \A S : IsFiniteSet(S) =>
-           \A n : (n = Cardinality(S)) <=>
-                    (n \in Nat) /\ \E f : IsBijection(f, 1..n, S)
------------------------------------------------------------------------------
-
-------------------------------------------------------------------
-
-------------------------------------------------------------------
-
+---- MODULE Sets_CardinalityTwo ----
+EXTENDS Sets_CardinalityTwoDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM CardinalityTwo == \A m, p : m # p => 
                               /\ IsFiniteSet({m,p})
                               /\ Cardinality({m,p}) = 2
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
--------------------------------------------------------
-
------------------------------------------------------------------------------
-
--------------------------------------------------------
-
-=============================================================================
+\* END AGENT PROOF
+====

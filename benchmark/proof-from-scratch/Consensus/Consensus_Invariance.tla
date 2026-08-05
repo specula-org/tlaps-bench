@@ -1,22 +1,9 @@
------------------------------ MODULE Consensus_Invariance ------------------------------
-EXTENDS Sets, TLAPS
------------------------------------------------------------------------------
-CONSTANT Value  
-VARIABLE chosen 
------------------------------------------------------------------------------
-Init == chosen = {}
-
-Next == 
-    /\ chosen = {}
-    /\ \E v \in Value : chosen' = {v}
-
-Spec == Init /\ [][Next]_chosen
------------------------------------------------------------------------------
-Inv == 
-    /\ chosen \subseteq Value
-    /\ IsFiniteSet(chosen)
-    /\ Cardinality(chosen) \leq 1
------------------------------------------------------------------------------
+---- MODULE Consensus_Invariance ----
+EXTENDS Consensus_InvarianceDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Invariance == Spec => []Inv
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
+\* END AGENT PROOF
+====

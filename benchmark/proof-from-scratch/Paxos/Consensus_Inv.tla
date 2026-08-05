@@ -1,22 +1,9 @@
------------------------------ MODULE Consensus_Inv -----------------------------
-
-EXTENDS Naturals, FiniteSets, TLAPS
------------------------------------------------------------------------------
-CONSTANTS Values 
-
-VARIABLES chosen 
-
------------------------------------------------------------------------------
-Init == chosen = {}
-
-Next == /\ chosen = {}
-        /\ \E v \in Values : chosen' = {v}
-        
-Spec == Init /\ [][Next]_chosen
------------------------------------------------------------------------------
-Inv == Cardinality(chosen) <= 1
-
+---- MODULE Consensus_Inv ----
+EXTENDS Consensus_InvDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []Inv
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

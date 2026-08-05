@@ -1,10 +1,9 @@
----------------------------- MODULE EWD998PCal_proof_InitRefinement ----------------------------
-
-EXTENDS EWD998PCal, TLAPS
-
-USE NAssumption
-
+---- MODULE EWD998PCal_proof_InitRefinement ----
+EXTENDS EWD998PCal_proof_InitRefinementDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM InitRefinement == Init => EWD998!Init
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

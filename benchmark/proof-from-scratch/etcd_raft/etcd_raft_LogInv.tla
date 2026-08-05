@@ -1,7 +1,9 @@
------------------------------ MODULE etcd_raft_LogInv -----------------------------
-EXTENDS EtcdRaft
-
+---- MODULE etcd_raft_LogInv ----
+EXTENDS etcd_raft_LogInvDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []LogInv
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

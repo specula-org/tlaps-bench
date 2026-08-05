@@ -1,10 +1,9 @@
------------------------- MODULE ZkV3_7_0_Leadership2 ------------------------
-
-EXTENDS ZkV3_7_0
-
-Leadership2 == \A epoch \in 1..MAXEPOCH: Cardinality(epochLeader[epoch]) <= 1
-
+---- MODULE ZkV3_7_0_Leadership2 ----
+EXTENDS ZkV3_7_0_Leadership2Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []Leadership2
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

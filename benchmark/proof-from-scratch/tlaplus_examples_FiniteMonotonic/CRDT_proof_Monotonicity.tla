@@ -1,10 +1,9 @@
-------------------------------- MODULE CRDT_proof_Monotonicity ---------------------------------
-EXTENDS CRDT, Functions, NaturalsInduction, FunctionTheorems, TLAPS
-
+---- MODULE CRDT_proof_Monotonicity ----
+EXTENDS CRDT_proof_MonotonicityDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => Monotonicity
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-=============================================================================
+\* END AGENT PROOF
+====

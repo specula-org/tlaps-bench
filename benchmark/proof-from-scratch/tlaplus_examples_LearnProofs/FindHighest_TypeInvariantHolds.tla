@@ -1,16 +1,9 @@
----------------------------- MODULE FindHighest_TypeInvariantHolds -----------------------------
-
-EXTENDS FindHighest
-
-TypeOK ==
-  /\ f \in Seq(Nat)
-  /\ i \in 1..(Len(f) + 1)
-  /\ i \in Nat
-  /\ h \in Nat \cup {-1}
-
+---- MODULE FindHighest_TypeInvariantHolds ----
+EXTENDS FindHighest_TypeInvariantHoldsDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM TypeInvariantHolds == Spec => []TypeOK
-
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

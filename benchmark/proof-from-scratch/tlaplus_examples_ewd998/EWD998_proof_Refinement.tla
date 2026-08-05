@@ -1,15 +1,9 @@
----------------------------- MODULE EWD998_proof_Refinement ----------------------------
-
-EXTENDS EWD998, FiniteSetTheorems, TLAPS
-
-USE NAssumption
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
+---- MODULE EWD998_proof_Refinement ----
+EXTENDS EWD998_proof_RefinementDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Refinement == Spec => TD!Spec
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

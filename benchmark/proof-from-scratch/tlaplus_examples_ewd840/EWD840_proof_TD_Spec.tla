@@ -1,13 +1,9 @@
----------------------------- MODULE EWD840_proof_TD_Spec ----------------------------
-
-EXTENDS EWD840, NaturalsInduction, TLAPS
-USE NAssumption
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
+---- MODULE EWD840_proof_TD_Spec ----
+EXTENDS EWD840_proof_TD_SpecDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => TD!Spec
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

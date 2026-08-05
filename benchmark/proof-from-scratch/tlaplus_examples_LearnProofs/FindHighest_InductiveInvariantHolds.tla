@@ -1,12 +1,9 @@
----------------------------- MODULE FindHighest_InductiveInvariantHolds -----------------------------
-
-EXTENDS FindHighest
-
-InductiveInvariant ==
-  \A idx \in 1..(i - 1) : f[idx] <= h
-
+---- MODULE FindHighest_InductiveInvariantHolds ----
+EXTENDS FindHighest_InductiveInvariantHoldsDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM InductiveInvariantHolds == Spec => []InductiveInvariant
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

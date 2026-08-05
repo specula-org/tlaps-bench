@@ -1,16 +1,9 @@
-------------------------------- MODULE Voting_C_Spec -------------------------------
-
-EXTENDS Voting
-
-ChosenAt(b, v) == \E Q \in Quorum : 
-                     \A a \in Q : VotedFor(a, b, v)
-
-chosen == {v \in Value : \E b \in Ballot : ChosenAt(b, v)}
-
-C == INSTANCE Consensus
-
-THEOREM Spec => C!Spec 
+---- MODULE Voting_C_Spec ----
+EXTENDS Voting_C_SpecDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
+THEOREM Spec => C!Spec
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

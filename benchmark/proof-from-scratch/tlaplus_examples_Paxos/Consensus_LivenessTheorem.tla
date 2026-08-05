@@ -1,25 +1,9 @@
------------------------------ MODULE Consensus_LivenessTheorem ------------------------------
-EXTENDS Naturals, FiniteSets, TLAPS, FiniteSetTheorems
-
-CONSTANT Value 
-
-VARIABLE chosen
-
-Init == chosen = {}
-
-Next == /\ chosen = {}
-        /\ \E v \in Value : chosen' = {v}
-
-Spec == Init /\ [][Next]_chosen 
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-Success == <>(chosen # {})
-LiveSpec == Spec /\ WF_chosen(Next)  
-
-ASSUME ValuesNonempty == Value # {}
-
+---- MODULE Consensus_LivenessTheorem ----
+EXTENDS Consensus_LivenessTheoremDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM LivenessTheorem == LiveSpec =>  Success
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
+\* END AGENT PROOF
+====

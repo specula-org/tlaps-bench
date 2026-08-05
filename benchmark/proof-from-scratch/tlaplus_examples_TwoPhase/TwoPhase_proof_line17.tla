@@ -1,8 +1,9 @@
------------------------- MODULE TwoPhase_proof_line17 -----------------------
-
-EXTENDS TwoPhase, TLAPS
-
-THEOREM Implementation
+---- MODULE TwoPhase_proof_line17 ----
+EXTENDS TwoPhase_proof_line17Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
+THEOREM Spec => A!Spec
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-==============================================================
+\* END AGENT PROOF
+====

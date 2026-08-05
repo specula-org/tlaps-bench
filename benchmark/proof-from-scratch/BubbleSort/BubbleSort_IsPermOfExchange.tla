@@ -1,34 +1,12 @@
------------------------------ MODULE BubbleSort_IsPermOfExchange -----------------------------
-
-EXTENDS Integers, TLAPS, TLC
-
-CONSTANT N
-ASSUME NAssumption == N \in Nat /\ N >= 1
-
------------------------------------------------------------------------------
-
-Perms == { f \in [1..N -> 1..N] : 
-                     \A i \in 1..N : \E j \in 1..N : f[i] = f[j] }
-
-f ** g == [i \in 1..N |-> f[g[i]]]
-   
-IsPermOf(A, B) == \E f \in Perms : A = (B ** f)
-
+---- MODULE BubbleSort_IsPermOfExchange ----
+EXTENDS BubbleSort_IsPermOfExchangeDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM IsPermOfExchange == 
            \A A \in [1..N -> Int],  i, j \in 1..N :
              /\ [A EXCEPT ![i] = A[j], ![j] = A[i]] \in [1..N -> Int]
              /\ IsPermOf([A EXCEPT ![i] = A[j], ![j] = A[i]], A)
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-----------------------------------------------------------------------------
-
-VARIABLES A, A0, i, j, pc
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
------------------------------------------------------------------------------
-
-=============================================================================
-
+\* END AGENT PROOF
+====

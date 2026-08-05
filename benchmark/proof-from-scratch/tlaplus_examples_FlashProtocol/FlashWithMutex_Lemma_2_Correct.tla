@@ -1,16 +1,9 @@
------------------------------- MODULE FlashWithMutex_Lemma_2_Correct ------------------------------
-
-EXTENDS FlashWithMutex
-
-Spec == Init /\ [][Next]_vars
-
-Lemma_2 ==
-    \A src, dst \in NODE :
-        (/\ src # dst /\ dst # Home
-         /\ UniMsg[src].Cmd = "UNI_Get" /\ UniMsg[src].Proc = dst)
-            => /\ Dir.Pending /\ ~Dir.Local
-               /\ PendReqSrc = src /\ FwdCmd = "UNI_Get"
+---- MODULE FlashWithMutex_Lemma_2_Correct ----
+EXTENDS FlashWithMutex_Lemma_2_CorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Lemma_2_Correct == Spec => []Lemma_2
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

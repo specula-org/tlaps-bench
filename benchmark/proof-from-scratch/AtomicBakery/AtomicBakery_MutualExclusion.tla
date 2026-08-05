@@ -1,11 +1,9 @@
------------- MODULE AtomicBakery_MutualExclusion ----------------------------
-
-EXTENDS AtomicBakery
-
-MutualExclusion == \A i,j \in P : (i # j) => ~ /\ pc[i] = "cs"
-                                               /\ pc[j] = "cs"
-
+---- MODULE AtomicBakery_MutualExclusion ----
+EXTENDS AtomicBakery_MutualExclusionDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []MutualExclusion
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

@@ -1,10 +1,9 @@
---------------------------- MODULE tcp_proof_TypeCorrect ---------------------------------
-
-EXTENDS tcp, SequenceTheorems, SequencesExtTheorems, FiniteSetTheorems, TLAPS
-
-ASSUME PeersFinite == IsFiniteSet(Peers)
-
+---- MODULE tcp_proof_TypeCorrect ----
+EXTENDS tcp_proof_TypeCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM TypeCorrect == Spec => []TypeOK
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-============================================================================
+\* END AGENT PROOF
+====

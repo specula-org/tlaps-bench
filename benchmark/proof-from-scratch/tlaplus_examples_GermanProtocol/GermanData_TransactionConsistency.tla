@@ -1,10 +1,9 @@
------------------------------- MODULE GermanData_TransactionConsistency ------------------------------
-EXTENDS GermanData
-
-TransactionConsistency ==
-    (curCmd = "Empty") <=> (curPtr = NoNode)
-
+---- MODULE GermanData_TransactionConsistency ----
+EXTENDS GermanData_TransactionConsistencyDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []TransactionConsistency
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

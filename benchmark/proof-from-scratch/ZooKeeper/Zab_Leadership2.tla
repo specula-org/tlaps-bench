@@ -1,10 +1,9 @@
---------------------------- MODULE Zab_Leadership2 ---------------------------
-
-EXTENDS Zab
-
-Leadership2 == \A epoch \in 1..MAXEPOCH: Cardinality(epochLeader[epoch]) <= 1
-
+---- MODULE Zab_Leadership2 ----
+EXTENDS Zab_Leadership2Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []Leadership2
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

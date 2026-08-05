@@ -1,10 +1,9 @@
------------------------------- MODULE EuclidEx_PartialCorrectness ------------------------------
-EXTENDS EuclidEx
-
-PartialCorrectness ==
-    (pc = "Done") => (x = y) /\ (x = GCD(M, N))
-
+---- MODULE EuclidEx_PartialCorrectness ----
+EXTENDS EuclidEx_PartialCorrectnessDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []PartialCorrectness
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

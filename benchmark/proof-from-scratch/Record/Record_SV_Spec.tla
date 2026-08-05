@@ -1,12 +1,9 @@
-------------------------------- MODULE Record_SV_Spec -------------------------------
-
-EXTENDS Record
-
-maxBal == [p \in Participant |-> state[p][p].maxBal]
-
-SV == INSTANCE SimpleVoting
-
+---- MODULE Record_SV_Spec ----
+EXTENDS Record_SV_SpecDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => SV!Spec
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-=============================================================================
-
+\* END AGENT PROOF
+====

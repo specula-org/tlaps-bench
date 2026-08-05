@@ -1,15 +1,9 @@
----------------------------- MODULE SumSequence_PCorrect ----------------------------
-
-EXTENDS SumSequence
-
-SeqSum(s) == 
-  LET SS[ss \in Seq(Int)] == IF ss = << >> THEN 0 ELSE ss[1] + SS[Tail(ss)]
-  IN  SS[s]
-
-PCorrect == (pc = "Done") => (sum = SeqSum(seq))
-
+---- MODULE SumSequence_PCorrect ----
+EXTENDS SumSequence_PCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []PCorrect
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

@@ -1,36 +1,9 @@
--------------------------- MODULE Allocator_InitTypeInvariant -----------------------------
-
-CONSTANTS
-  Client,     
-  Resource    
-
-VARIABLES
-  unsat,       
-  alloc        
-
-TypeInvariant ==
-  /\ unsat \in [Client -> SUBSET Resource]
-  /\ alloc \in [Client -> SUBSET Resource]
-
--------------------------------------------------------------------------
-
-Init ==
-  /\ unsat = [c \in Client |-> {}]
-  /\ alloc = [c \in Client |-> {}]
-
--------------------------------------------------------------------------
-
--------------------------------------------------------------------------
-
--------------------------------------------------------------------------
-
--------------------------------------------------------------------------
-
--------------------------------------------------------------------------
-
+---- MODULE Allocator_InitTypeInvariant ----
+EXTENDS Allocator_InitTypeInvariantDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM InitTypeInvariant == Init => TypeInvariant
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
--------------------------------------------------------------------------
-
-=========================================================================
+\* END AGENT PROOF
+====

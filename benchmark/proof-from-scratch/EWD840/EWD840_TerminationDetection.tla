@@ -1,15 +1,9 @@
-------------------------------- MODULE EWD840_TerminationDetection -------------------------------
-EXTENDS EWD840
-
-terminationDetected ==
-  /\ tpos = 0 /\ tcolor = "white"
-  /\ color[0] = "white" /\ ~ active[0]
-
-TerminationDetection ==
-  terminationDetected => \A i \in Nodes : ~ active[i]
-
+---- MODULE EWD840_TerminationDetection ----
+EXTENDS EWD840_TerminationDetectionDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM Spec => []TerminationDetection
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====

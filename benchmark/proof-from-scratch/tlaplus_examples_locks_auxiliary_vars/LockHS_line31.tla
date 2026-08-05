@@ -1,19 +1,9 @@
--------------------------------- MODULE LockHS_line31 --------------------------------
-
-EXTENDS Lock, NaturalsInduction
-
-VARIABLE h_turn
-
-VARIABLE s
-INSTANCE Stuttering
-
+---- MODULE LockHS_line31 ----
+EXTENDS LockHS_line31Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM StutterConstantCondition(1..2, 1, LAMBDA j : j-1)
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
-
-===============================================================================
+\* END AGENT PROOF
+====

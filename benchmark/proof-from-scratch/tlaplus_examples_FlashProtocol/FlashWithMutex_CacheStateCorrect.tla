@@ -1,13 +1,9 @@
------------------------------- MODULE FlashWithMutex_CacheStateCorrect ------------------------------
-
-EXTENDS FlashWithMutex
-
-Spec == Init /\ [][Next]_vars
-
-CacheStateProp ==
-    \A p, q \in NODE :
-        p # q => ~(Proc[p].CacheState = "CACHE_E" /\ Proc[q].CacheState = "CACHE_E")
+---- MODULE FlashWithMutex_CacheStateCorrect ----
+EXTENDS FlashWithMutex_CacheStateCorrectDefs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM CacheStateCorrect == Spec => []CacheStateProp
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
+\* END AGENT PROOF
+====

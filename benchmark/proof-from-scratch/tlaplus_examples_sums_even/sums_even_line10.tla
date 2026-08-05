@@ -1,11 +1,9 @@
-------------------------- MODULE sums_even_line10 -------------------------
-
-EXTENDS Naturals, TLAPS
-
-Even(x) == x % 2 = 0
-
+---- MODULE sums_even_line10 ----
+EXTENDS sums_even_line10Defs
+\* BEGIN AGENT HELPERS
+\* END AGENT HELPERS
 THEOREM \A x \in Nat : Even(x+x)
+\* BEGIN AGENT PROOF
 PROOF OBVIOUS
-
-=============================================================================
-
+\* END AGENT PROOF
+====
