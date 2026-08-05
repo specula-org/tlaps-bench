@@ -471,20 +471,15 @@ def test_dataset_selection_prefers_an_existing_manifest(tmp_path):
     assert load_dataset_task_keys(str(tmp_path)) == {"Group/Group_Thm.tla"}
 
 
-def test_dataset_selection_unions_flat_tasks_the_manifest_has_not_migrated(tmp_path):
-    """A branch's older manifest predates the flat ben-or/tendermint suites main
-    added, so those un-migrated flat tasks must join the selection — otherwise
-    they are silently skipped."""
+def test_dataset_selection_uses_complete_manifest_without_scanning_extra_flat_tasks(tmp_path):
+    """Once migration is complete, the manifest is the whole dataset index."""
     (tmp_path / "manifest.json").write_text(
         json.dumps({"Group/Group_Thm.tla": {"context": ["Group/Group_ThmScaffold.tla"]}})
     )
     benor = tmp_path / "BenOr"
     benor.mkdir()
     (benor / "BenOr_Agreement.tla").write_text("---- MODULE BenOr_Agreement ----\nTHEOREM TRUE\nPROOF OBVIOUS\n====\n")
-    assert load_dataset_task_keys(str(tmp_path)) == {
-        "Group/Group_Thm.tla",
-        "BenOr/BenOr_Agreement.tla",
-    }
+    assert load_dataset_task_keys(str(tmp_path)) == {"Group/Group_Thm.tla"}
 
 
 def test_dataset_selection_does_not_recount_manifest_context_layers(tmp_path):
@@ -566,6 +561,31 @@ def test_finalize_fails_when_the_regeneration_loses_a_reviewed_task(tmp_path, ca
     assert "Group/Group_Gone.tla: existing dataset task was not regenerated" in audit
 
 
+def test_finalize_checks_the_selection_before_running_any_gate(tmp_path, monkeypatch):
+    import dataset.proof_completion.generate as completion
+    import dataset.proof_from_scratch.generate as engine
+
+    key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
+    calls = []
+    monkeypatch.setattr(completion, "drop_known_degenerate", lambda *args: calls.append("known") or [])
+    monkeypatch.setattr(completion, "layered_duplicate_gate", lambda *args: calls.append("duplicate") or ([], []))
+    monkeypatch.setattr(engine, "layered_sany_gate", lambda *args: calls.append("sany") or [])
+    monkeypatch.setattr(engine, "layered_triviality_gate", lambda *args: calls.append("triviality") or ([], [], []))
+
+    with open(tmp_path / "audit.log", "w", encoding="utf-8") as audit, pytest.raises(SystemExit):
+        _finalize_layered(
+            engine,
+            str(tmp_path),
+            {key: entry},
+            {},
+            audit,
+            run_gates=True,
+            reference_task_keys={key, "Group/Group_Missing.tla"},
+        )
+
+    assert calls == []
+
+
 def test_finalize_fails_when_the_regeneration_adds_an_unreviewed_task(tmp_path):
     """A task not in the reviewed selection is fatal too: it expands the
     benchmark past what was reviewed."""
@@ -584,6 +604,38 @@ def test_finalize_accepts_a_run_that_reproduces_the_reviewed_selection(tmp_path)
     assert (tmp_path / "manifest.json").exists()
 
 
+def test_finalize_accepts_a_reviewed_task_dropped_by_the_triviality_gate(tmp_path, monkeypatch):
+    import dataset.proof_from_scratch.generate as engine
+
+    kept, kept_entry = _emit_task(tmp_path, "Group", "Group_Kept")
+    degenerate, degenerate_entry = _emit_task(tmp_path, "Group", "Group_Degenerate")
+    manifest = {kept: kept_entry, degenerate: degenerate_entry}
+
+    def drop_degenerate(root, current, audit):
+        del current[degenerate]
+        (Path(root) / degenerate).unlink()
+        audit.write(f"[audit] {degenerate}: placeholder proof verifies — removed\n")
+        return [degenerate], [], []
+
+    monkeypatch.setattr(engine, "layered_sany_gate", lambda *args, **kwargs: [])
+    monkeypatch.setattr(engine, "layered_triviality_gate", drop_degenerate)
+
+    with open(tmp_path / "audit.log", "w", encoding="utf-8") as audit:
+        count = _finalize_layered(
+            engine,
+            str(tmp_path),
+            manifest,
+            {},
+            audit,
+            run_gates=True,
+            reference_task_keys={kept, degenerate},
+        )
+
+    assert count == 1
+    assert set(json.loads((tmp_path / "manifest.json").read_text())) == {kept}
+    assert not (tmp_path / degenerate).exists()
+
+
 def test_seed_staging_copies_the_current_dataset_verbatim(tmp_path):
     """A --filter run must keep the tasks it does not regenerate, so staging
     starts as a byte-for-byte copy of the shipped dataset — files, nested
@@ -599,6 +651,31 @@ def test_seed_staging_copies_the_current_dataset_verbatim(tmp_path):
 
     assert (staging / "Group" / "Group_Thm.tla").read_text() == "theorem body"
     assert (staging / "manifest.json").read_text() == '{"Group/Group_Thm.tla": {"context": []}}'
+
+
+def test_filtered_finalization_keeps_tasks_outside_the_filter(tmp_path):
+    untouched, untouched_entry = _emit_task(tmp_path, "Other", "Other_Thm")
+    regenerated, old_regenerated_entry = _emit_task(tmp_path, "Selected", "Selected_Thm", "THEOREM Old == TRUE")
+    untouched_task = (tmp_path / untouched).read_text()
+    untouched_context = (tmp_path / untouched_entry["context"][0]).read_text()
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({untouched: untouched_entry, regenerated: old_regenerated_entry}, indent=2)
+    )
+
+    regenerated, regenerated_entry = _emit_task(tmp_path, "Selected", "Selected_Thm", "THEOREM New == TRUE")
+    all_bases = {"Other": {"Other"}, "Selected": {"Selected"}}
+    _finalize(
+        tmp_path,
+        {regenerated: regenerated_entry},
+        incremental=True,
+        scope=(all_bases, {"Selected": {"Selected"}}),
+        reference_task_keys={untouched, regenerated},
+    )
+
+    written = json.loads((tmp_path / "manifest.json").read_text())
+    assert set(written) == {untouched, regenerated}
+    assert (tmp_path / untouched).read_text() == untouched_task
+    assert (tmp_path / untouched_entry["context"][0]).read_text() == untouched_context
 
 
 def test_promote_dataset_swaps_staging_over_the_old_dataset(tmp_path):

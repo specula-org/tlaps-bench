@@ -1,4 +1,4 @@
--------------------------- MODULE Ben_or83_proofs_Msgs2AddSetsRep --------------------------
+-------------------------- MODULE Ben_or83_proofs_Pres_Lemma7Scaffold --------------------------
 (*
  * TLAPS proofs for the Ben-Or '83 inductive invariant.
  *
@@ -1165,7 +1165,48 @@ THEOREM Msgs2AddSetsRep ==
          = [ rr \in ROUNDS |->
              { D2(mm.src, rr, mm.v): mm \in { m \in AD \union FD: m.r = rr } }
                \union { Q2(mm.src, rr): mm \in { m \in AQ \union FQ: m.r = rr } } ]
-PROOF OBVIOUS
+PROOF OMITTED
+
+THEOREM UpdateUnionMono ==
+  ASSUME NEW f, DOMAIN f = ROUNDS, NEW rr0 \in ROUNDS, NEW Add
+  PROVE  \A rr \in ROUNDS :
+           f[rr] \subseteq [ f EXCEPT ![rr0] = f[rr0] \union Add ][rr]
+PROOF OMITTED
+
+THEOREM UpdateUnionNewInAdded ==
+  ASSUME NEW f, NEW rr0 \in ROUNDS, NEW Add,
+         DOMAIN f = ROUNDS,
+         NEW rr \in ROUNDS, NEW m,
+         m \in [ f EXCEPT ![rr0] = f[rr0] \union Add ][rr],
+         m \notin f[rr]
+  PROVE  rr = rr0 /\ m \in Add
+PROOF OMITTED
+
+THEOREM UpdateUnion2Mono ==
+  ASSUME NEW f, DOMAIN f = ROUNDS, NEW rr0 \in ROUNDS, NEW Add1, NEW Add2
+  PROVE  \A rr \in ROUNDS :
+           f[rr] \subseteq [ f EXCEPT ![rr0] = f[rr0] \union Add1 \union Add2 ][rr]
+PROOF OMITTED
+
+THEOREM UpdateUnion2NewInAdded ==
+  ASSUME NEW f, NEW rr0 \in ROUNDS, NEW Add1, NEW Add2,
+         DOMAIN f = ROUNDS,
+         NEW rr \in ROUNDS, NEW m,
+         m \in [ f EXCEPT ![rr0] = f[rr0] \union Add1 \union Add2 ][rr],
+         m \notin f[rr]
+  PROVE  rr = rr0 /\ m \in Add1 \union Add2
+PROOF OMITTED
+
+THEOREM FaultyMsgs2AddedFaulty ==
+  ASSUME NEW rr0 \in ROUNDS,
+         NEW F2D \in SUBSET FaultyD2Records(rr0),
+         NEW F2Q \in SUBSET FaultyQ2Records(rr0),
+         NEW m,
+         m \in { D2(mm.src, rr0, mm.v): mm \in F2D }
+              \union { Q2(mm.src, rr0): mm \in F2Q }
+  PROVE  (IsD2(m) => AsD2(m).src \in FAULTY)
+         /\ (IsQ2(m) => AsQ2(m).src \in FAULTY)
+PROOF OMITTED
 
 \*****************************************************************************
 \* FAULTY-STEP CONSEQUENCES.
@@ -1174,6 +1215,38 @@ PROOF OBVIOUS
 \* added message has a FAULTY sender. The proof is split through small EXCEPT-update
 \* helpers so TLAPS does not have to solve the whole consequence theorem at once.
 \*****************************************************************************
+THEOREM FaultyStepProps ==
+  ASSUME TypeOK, FaultyStep
+  PROVE  /\ value' = value /\ decision' = decision /\ round' = round /\ step' = step
+         /\ \A rr \in ROUNDS : msgs1[rr] \subseteq msgs1'[rr] /\ msgs2[rr] \subseteq msgs2'[rr]
+         /\ \A rr \in ROUNDS : \A m \in msgs1'[rr] : m \notin msgs1[rr] => m.src \in FAULTY
+         /\ \A rr \in ROUNDS : \A m \in msgs2'[rr] :
+              m \notin msgs2[rr] =>
+                ((IsD2(m) => AsD2(m).src \in FAULTY) /\ (IsQ2(m) => AsQ2(m).src \in FAULTY))
+PROOF OMITTED
+
+THEOREM SupportedPHasOldCorrectD2 ==
+  ASSUME TypeOK, TypeOK', FaultyStep, NEW r \in ROUNDS, NEW v \in SupportedValuesP(r)
+  PROVE  \E m \in msgs2[r] : IsD2(m) /\ AsD2(m).v = v /\ AsD2(m).src \in CORRECT
+PROOF OMITTED
+
+THEOREM DvFaultyMono ==
+  ASSUME TypeOK, TypeOK', FaultyStep, NEW r \in ROUNDS, NEW v \in VALUES
+  PROVE  /\ IsFiniteSet(DvPSet(r, v))
+          /\ Cardinality(DvSet(r, v)) <= Cardinality(DvPSet(r, v))
+PROOF OMITTED
+
+THEOREM QFaultyMono ==
+  ASSUME TypeOK, TypeOK', FaultyStep, NEW r \in ROUNDS
+  PROVE  /\ IsFiniteSet(QPSet(r))
+          /\ Cardinality(QSet(r)) <= Cardinality(QPSet(r))
+PROOF OMITTED
+
+THEOREM Msgs2FaultyMono ==
+  ASSUME TypeOK, TypeOK', FaultyStep, NEW r \in ROUNDS
+  PROVE  /\ IsFiniteSet(msgs2'[r])
+          /\ Cardinality(msgs2[r]) <= Cardinality(msgs2'[r])
+PROOF OMITTED
 
 \*****************************************************************************
 \* SECTION B -- TYPE PRESERVATION + BASE CASE
@@ -1181,9 +1254,15 @@ PROOF OBVIOUS
 
 \* BASE CASE. With empty message buffers, no decision, round 1 and step S1,
 \* every conjunct of IndInv is vacuous or trivially true.
+THEOREM InitInd == Init => TypeOK /\ IndInv
+PROOF OMITTED
 
 \* TYPE PRESERVATION. Each action keeps every variable in its declared type and
 \* keeps msgs1/msgs2 in the existential "shape" required by TypeOK.
+THEOREM TypePres ==
+  ASSUME TypeOK, [Next]_vars
+  PROVE  TypeOK'
+PROOF OMITTED
 
 \*****************************************************************************
 \* SECTION C -- INDUCTIVE STEP (one preservation theorem per lemma)
@@ -1197,116 +1276,181 @@ PROOF OBVIOUS
 \*****************************************************************************
 
 \* ===== L2: no type-1 equivocation by correct (msgs1) =====
+THEOREM Pres_L2_S2 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step2(id)
+  PROVE  Lemma2_NoEquivocation1ByCorrect'
+PROOF OMITTED
+THEOREM Pres_L2_S3 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step3(id)
+  PROVE  Lemma2_NoEquivocation1ByCorrect'
+PROOF OMITTED
+THEOREM Pres_L2_ST ==
+  ASSUME IndInv, UNCHANGED vars
+  PROVE  Lemma2_NoEquivocation1ByCorrect'
+PROOF OMITTED
 \* The substantive Step1 case: the new M1(id,r,value[id]) is the only round-r message from
 \* id (Lemma4: id is in S1, so it has not sent at its current round), so no equivocation.
+THEOREM Pres_L2_S1 ==
+  ASSUME TypeOK, IndInv, NEW id \in CORRECT, Step1(id)
+  PROVE  Lemma2_NoEquivocation1ByCorrect'
+PROOF OMITTED
 \* FaultyStep case: new msgs1 messages have FAULTY src, so any CORRECT-sender message is
 \* old; no new equivocation among correct senders.
+THEOREM Pres_L2_F ==
+  ASSUME TypeOK, IndInv, FaultyStep
+  PROVE  Lemma2_NoEquivocation1ByCorrect'
+PROOF OMITTED
+THEOREM Pres_Lemma2 ==
+  ASSUME TypeOK, IndInv, [Next]_vars
+  PROVE  Lemma2_NoEquivocation1ByCorrect'
+PROOF OMITTED
 
 \* ===== L3: no type-2 equivocation by correct (msgs2) =====
+THEOREM Pres_L3_S1 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step1(id)
+  PROVE  Lemma3_NoEquivocation2ByCorrect'
+PROOF OMITTED
+THEOREM Pres_L3_S2 ==
+  ASSUME TypeOK, IndInv, NEW id \in CORRECT, Step2(id)
+  PROVE  Lemma3_NoEquivocation2ByCorrect'
+PROOF OMITTED
+THEOREM Pres_L3_S3 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step3(id)
+  PROVE  Lemma3_NoEquivocation2ByCorrect'
+PROOF OMITTED
+THEOREM Pres_L3_ST ==
+  ASSUME IndInv, UNCHANGED vars
+  PROVE  Lemma3_NoEquivocation2ByCorrect'
+PROOF OMITTED
+THEOREM Pres_L3_F ==
+  ASSUME TypeOK, IndInv, FaultyStep
+  PROVE  Lemma3_NoEquivocation2ByCorrect'
+PROOF OMITTED
+THEOREM Pres_Lemma3 ==
+  ASSUME TypeOK, IndInv, [Next]_vars
+  PROVE  Lemma3_NoEquivocation2ByCorrect'
+PROOF OMITTED
 
 \* ===== L4: messages not from the future =====
+THEOREM Pres_L4_ST ==
+  ASSUME IndInv, UNCHANGED vars
+  PROVE  Lemma4_MessagesNotFromFuture'
+PROOF OMITTED
 \* Substantive Step1 case: the new M1 has round = round[id]; id moves S1->S2. We do NOT
 \* USE DEF IndInv (it would expand the Cardinality-heavy lemmas and poison the arithmetic);
 \* we extract just Lemma4. The step/round priming (step EXCEPT ![id]=S2) is handled by a
 \* case split on whether the message's sender is id, with S1#S2#S3 distinctness and Nat
 \* typing of message rounds (to get <= from <).
+THEOREM Pres_L4_S1 ==
+  ASSUME TypeOK, IndInv, NEW id \in CORRECT, Step1(id)
+  PROVE  Lemma4_MessagesNotFromFuture'
+PROOF OMITTED
 \* Substantive Step3 case: id advances round[id]->round[id]+1 and resets step to S1;
 \* msgs1/msgs2 unchanged. Old bounds m.r <= round[id] become m.r < round[id]+1.
+THEOREM Pres_L4_S3 ==
+  ASSUME TypeOK, IndInv, NEW id \in CORRECT, Step3(id)
+  PROVE  Lemma4_MessagesNotFromFuture'
+PROOF OMITTED
 \* Substantive Step2 case: id sends a new D2(id,r,v) or Q2(id,r) into msgs2[r] and moves
 \* S2->S3. The new message carries round r = round[id]; old bounds m.r < round become
 \* m.r <= round (still ok). Handles Step2's two value-quorum branches uniformly via the
 \* shared new-message round/sender shape.
+THEOREM Pres_L4_S2 ==
+  ASSUME TypeOK, IndInv, NEW id \in CORRECT, Step2(id)
+  PROVE  Lemma4_MessagesNotFromFuture'
+PROOF OMITTED
 \* FaultyStep case: step/round unchanged and messages only grow with FAULTY-sender
 \* messages, so any CORRECT-sender message is old and satisfies the (unchanged) bound.
+THEOREM Pres_L4_F ==
+  ASSUME TypeOK, IndInv, FaultyStep
+  PROVE  Lemma4_MessagesNotFromFuture'
+PROOF OMITTED
+THEOREM Pres_Lemma4 ==
+  ASSUME TypeOK, IndInv, [Next]_vars
+  PROVE  Lemma4_MessagesNotFromFuture'
+PROOF OMITTED
 
 \* ===== L5: a non-initial round requires previously sent messages =====
+THEOREM Pres_L5_ST ==
+  ASSUME IndInv, UNCHANGED vars
+  PROVE  Lemma5_RoundNeedsSentMessages'
+PROOF OMITTED
 \* Substantive Step1 case: id sends its first M1 of round[id] and moves S1->S2. The new
 \* M1 witnesses the now-active "r = round[id] /\ step /= S1" obligation; all other
 \* obligations are preserved because msgs1 only grows (monotonicity) and msgs2 is unchanged.
+THEOREM Pres_L5_S1 ==
+  ASSUME TypeOK, IndInv, NEW id0 \in CORRECT, Step1(id0)
+  PROVE  Lemma5_RoundNeedsSentMessages'
+PROOF OMITTED
 \* Step2 case: id sends a new type-2 message into msgs2[round[id]] (witnessing the
 \* "r = round[id] /\ step = S3" obligation) and moves S2->S3; msgs1 unchanged, msgs2 grows.
+THEOREM Pres_L5_S2 ==
+  ASSUME TypeOK, IndInv, NEW id0 \in CORRECT, Step2(id0)
+  PROVE  Lemma5_RoundNeedsSentMessages'
+PROOF OMITTED
 \* Step3 case: id advances round and resets step to S1; messages unchanged. The "step=S3"
 \* obligations at round[id] become "r < round[id]+1" obligations, served by the same messages.
+THEOREM Pres_L5_S3 ==
+  ASSUME TypeOK, IndInv, NEW id0 \in CORRECT, Step3(id0)
+  PROVE  Lemma5_RoundNeedsSentMessages'
+PROOF OMITTED
 \* FaultyStep case: step/round unchanged, messages only grow, so every required message
 \* (a CORRECT replica's own message) still exists.
+THEOREM Pres_L5_F ==
+  ASSUME TypeOK, IndInv, FaultyStep
+  PROVE  Lemma5_RoundNeedsSentMessages'
+PROOF OMITTED
+THEOREM Pres_Lemma5 ==
+  ASSUME TypeOK, IndInv, [Next]_vars
+  PROVE  Lemma5_RoundNeedsSentMessages'
+PROOF OMITTED
 
 \* ===== L6: a decision fixes the value (decision,value) =====
+THEOREM Pres_L6_S1 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step1(id)
+  PROVE  Lemma6_DecisionDefinesValue'
+PROOF OMITTED
+THEOREM Pres_L6_S2 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step2(id)
+  PROVE  Lemma6_DecisionDefinesValue'
+PROOF OMITTED
 \* FaultyStep leaves value/decision unchanged (frame), via FaultyStepProps.
+THEOREM Pres_L6_F ==
+  ASSUME TypeOK, IndInv, FaultyStep
+  PROVE  Lemma6_DecisionDefinesValue'
+PROOF OMITTED
+THEOREM Pres_L6_ST ==
+  ASSUME IndInv, UNCHANGED vars
+  PROVE  Lemma6_DecisionDefinesValue'
+PROOF OMITTED
+THEOREM Pres_L6_S3 ==
+  ASSUME TypeOK, IndInv, NEW id0 \in CORRECT, Step3(id0)
+  PROVE  Lemma6_DecisionDefinesValue'
+PROOF OMITTED
+THEOREM Pres_Lemma6 ==
+  ASSUME TypeOK, IndInv, [Next]_vars
+  PROVE  Lemma6_DecisionDefinesValue'
+PROOF OMITTED
 
 \* ===== L7: a correct D2(v) requires a type-1 quorum for v =====
-
-\* ===== L8: a correct Q2 means no type-1 quorum existed =====
-\* TYPE-1 WITNESS for Lemma8a. From a received set (>= N-T senders) in which no value has
-\* a strict type-1 majority (2*Weights[v] <= N+T), build the abstract witnesses x0, x1:
-\* take the CORRECT senders of value 0 / 1 within received. The N+T bound is exactly what
-\* makes 2*x <= N+T close. No equivocation lemma is needed -- only the message shape and a
-\* sender partition (every received sender is a correct-0, correct-1, or faulty sender).
-
-\* Step2: msgs1 is unchanged, so n0/n1/nf are frame-invariant. Rounds already carrying a
-\* correct Q2 reuse the old witness; the round where id0 emits its Q2 is the only new one,
-\* and its witness comes from LowWeightsReceivedL8Witness applied to id0's received set.
-
-\* ===== L9: rounds connection / value support carries forward =====
-
-\* ===== L10: a type-1 message in round r>1 needs a quorum in r-1 =====
-
-\* ===== L11: a correct replica's value at r>1 is backed by msgs2[r-1] =====
-
-\* ===== L12: reaching round r+1 needs N-T type-2 messages in r =====
-
-\* ===== L13: value lock -- a correct value at r matches Supported(r-1) =====
-
-\* ===== L1: a decision is backed by a D2 quorum in the previous round =====
-\* ===== L1 Step3: a decision requires a quorum2 in the immediately preceding round. =====
-\* Step3 leaves msgs2 unchanged; only id0's decision/round/value/step move. For id # id0 the
-\* old invariant carries verbatim. For id0 that DECIDES this step, the decision condition
-\* 2*Weights[v] > N+T directly yields the quorum at round[id0] = round'[id0]-1. The single
-\* remaining obligation -- id0 has ALREADY decided and advances without re-deciding -- is
-\* isolated in Pres_L1_S3_DecidedCarry below.
-
-\* ISOLATED HARD OBLIGATION. id0 already decided w = decision[id0] # NO_DECISION and takes a
-\* non-deciding Step3 (decision' = decision), advancing round[id0] -> round[id0]+1. Lemma1c'
-\* then needs a strict w-quorum at round[id0].
-\*
-\* Concrete finishing chain, preserving the original goal:
-\*   1. StrictQuorumSupportedSingleton:
-\*        ExistsQuorum2LessRam(a, v) plus N-T type-2 senders implies
-\*        SupportedValues(a) = {v}.
-\*      This is where Lemma7 and the N > 5*T arithmetic show that a strict D2 quorum
-\*      has too few "other" senders for any other support.
-\*   2. LockedRoundCorrectM1:
-\*        SupportedValues(a) = {v} and a + 1 \in ROUNDS imply every correct M1 in
-\*        msgs1[a + 1] carries v (Lemma9), and there are enough such correct M1s in
-\*        any Step2 receive set to force D2(v), not Q2. Lemma8 is the key negative
-\*        fact that rules out a correct Q2 in the locked round.
-\*   3. LockedReceiveStrictD:
-\*        Under the locked-round fact, every Step3 receive set of N-T type-2 senders in
-\*        round a + 1 contains more than (N+T)/2 D2(v) messages. This closes both
-\*        Pres_L1_S3_DecidedCarry and the Pres_L6 Step3 case.
-\*   4. CrossRoundStrictQuorum:
-\*        Reuse the same locked-round induction in Section D to show that any later
-\*        strict quorum is for v; then Agreement follows from Lemma1c for both decisions.
-
-\* --- ASSEMBLED INDUCTIVE STEP ------------------------------------------------
-
-\*****************************************************************************
-\* SECTION D -- IndInv => AgreementInv (round induction)
-\*****************************************************************************
-
-\* SAME-ROUND UNIQUENESS: in one round, at most one value can hold a D2 quorum.
-\* Proof idea: a D2(v) quorum (>half, >=T+1) implies (Lemma7) a type-1 quorum for v
-\* with > (N+T)/2 senders. Two such type-1 quorums (for v and w) each exceed half of
-\* N, so they intersect (QuorumIntersect) in a CORRECT replica, which then sent both
-\* v and w in round r -- contradicting Lemma2 unless v = w.
-
-\* CROSS-ROUND LOCK: once value v has a strict D2 quorum at round a, every strict D2
-\* quorum at any later round is also for v. This is the agreement-facing form of the
-\* same strict-quorum lock that `LockedReceiveStrictD` uses for inductiveness.
-
-\* LockLemma packages the cross-round lock in the quantifier shape used by Agreement.
-
-\* MAIN AGREEMENT THEOREM.
-\* We assume TypeOK alongside IndInv (i.e. the full inductive invariant IndInit), since
-\* AgreementInv needs the variable types (e.g. decision[id] \in VALUES).
-
+THEOREM Pres_L7_S3 ==
+  ASSUME IndInv, NEW id \in CORRECT, Step3(id)
+  PROVE  Lemma7_D2RequiresQuorum'
+PROOF OMITTED
+THEOREM Pres_L7_S1 ==
+  ASSUME TypeOK, IndInv, NEW id0 \in CORRECT, Step1(id0)
+  PROVE  Lemma7_D2RequiresQuorum'
+PROOF OMITTED
+THEOREM Pres_L7_F ==
+  ASSUME TypeOK, IndInv, FaultyStep
+  PROVE  Lemma7_D2RequiresQuorum'
+PROOF OMITTED
+THEOREM Pres_L7_S2 ==
+  ASSUME TypeOK, IndInv, NEW id0 \in CORRECT, Step2(id0)
+  PROVE  Lemma7_D2RequiresQuorum'
+PROOF OMITTED
+THEOREM Pres_L7_ST ==
+  ASSUME IndInv, UNCHANGED vars
+  PROVE  Lemma7_D2RequiresQuorum'
+PROOF OMITTED
 =============================================================================

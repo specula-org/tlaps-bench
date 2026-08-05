@@ -1467,9 +1467,9 @@ def _plan_targets(sm, dump, source_lines, base_module, subdir, reference_task_ke
                 f"[audit] {task_key}: source states no reference proof — retained for existing-dataset selection\n"
             )
         elif reference_task_keys is not None and task_key not in reference_task_keys:
-            # Outside the reviewed selection: a fresh scan finds 803 candidates
-            # vs the 708 shipped (61 extras #95 dropped for failing proofs), so
-            # skip rather than expand the benchmark past what was reviewed.
+            # Outside the reviewed selection: a fresh scan finds candidates the
+            # curated dataset intentionally excludes, so skip rather than expand
+            # the benchmark past what was reviewed.
             audit_writer.write(
                 f"[audit] {task_key}: source candidate is outside the existing dataset selection — skipped\n"
             )
@@ -1588,27 +1588,18 @@ def emit_layered_source(
 def load_dataset_task_keys(root):
     """Task keys that define the repository's curated dataset selection.
 
-    The union of the layered manifest's tasks and any flat task files it has not
-    migrated yet: main can add flat-layout suites (the #95 ben-or / tendermint
-    tasks) that an older manifest predates, and reading the manifest alone would
-    drop them. A flat file counts only when the manifest lists it neither as a
-    task nor as another task's read-only context (its Scaffold/Model layers match
-    the task-file rule but are not tasks).
+    Once a layered manifest exists it is the complete dataset index. Scanning the
+    tree is only the bootstrap path for a legacy dataset that has no manifest.
     """
     from dataset.sany_audit import is_task_file
 
-    manifest_keys = set()
-    manifest_context = set()
     manifest_path = os.path.join(root, MANIFEST_FILENAME)
     if os.path.isfile(manifest_path):
         try:
             with open(manifest_path, encoding="utf-8") as f:
                 manifest = json.load(f)
             if isinstance(manifest, dict):
-                manifest_keys = set(manifest)
-                for entry in manifest.values():
-                    if isinstance(entry, dict):
-                        manifest_context.update(entry.get("context", []))
+                return set(manifest)
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -1623,11 +1614,7 @@ def load_dataset_task_keys(root):
                 path = os.path.join(current_root, fname)
                 if is_task_file(path):
                     flat_keys.add(os.path.relpath(path, root).replace(os.sep, "/"))
-
-    # A flat task file that the manifest already owns (as a task or as another
-    # task's context layer) is not an un-migrated task, so it is not added again.
-    unmigrated = {key for key in flat_keys if key not in manifest_keys and key not in manifest_context}
-    return manifest_keys | unmigrated
+    return flat_keys
 
 
 def drop_known_degenerate(output_root, manifest, audit_writer):
@@ -1753,14 +1740,54 @@ def _finalize_layered(
     regenerated and leaves the rest untouched.
 
     Fails closed: a source parse error, a SANY failure, a triviality gate that
-    cannot reach a verdict, a run that does not reproduce the reviewed selection
-    exactly, or an empty result all leave the manifest unwritten and raise. The
-    audit log is written either way, so the failure is diagnosable.
+    cannot reach a verdict, a run that does not regenerate the reviewed
+    selection before the gates, or an empty result all leave the manifest
+    unwritten and raise. The audit log is written either way, so the failure is
+    diagnosable. The gates may deliberately reduce the final task count.
     """
     existing = sm._load_existing_manifest(output_root) if incremental else {}
     all_bases, processed_bases = scope or ({}, {})
     superseded = sm.tasks_owned_by(existing, all_bases, processed_bases) if incremental else set(existing)
     errors = list(audit_state.get("errors", []))
+
+    def fail_if_errors():
+        if not errors:
+            return
+        for message in errors:
+            audit_writer.write(f"[audit] generation error: {message}\n")
+        audit_writer.write(f"[audit] generation FAILED with {len(errors)} error(s) — manifest not written\n")
+        print(f"\n❌ generation failed with {len(errors)} error(s); manifest not written:", file=sys.stderr)
+        for message in errors[:20]:
+            print(f"   {message[:200]}", file=sys.stderr)
+        if len(errors) > 20:
+            print(f"   ... and {len(errors) - 20} more (see the audit log)", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Before any gate runs, the generator must reproduce EXACTLY the reviewed
+    # selection. This catches source/generation failures without rejecting tasks
+    # the later gates deliberately remove as degenerate or duplicate.
+    if reference_task_keys is not None:
+        if incremental:
+            expected = sm.tasks_owned_by(reference_task_keys, all_bases, processed_bases)
+            actual = sm.tasks_owned_by(manifest, all_bases, processed_bases)
+        else:
+            expected = set(reference_task_keys)
+            actual = set(manifest)
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        for key in missing:
+            audit_writer.write(f"[audit] {key}: existing dataset task was not regenerated\n")
+        for key in unexpected:
+            audit_writer.write(f"[audit] {key}: generated task is not in the existing dataset selection\n")
+        print(
+            f"Dataset selection: {len(expected)} reference, {len(actual)} generated "
+            f"({len(missing)} missing, {len(unexpected)} unexpected)"
+        )
+        for key in missing:
+            errors.append(f"{key}: reviewed dataset task was not regenerated")
+        for key in unexpected:
+            errors.append(f"{key}: generated task is not in the reviewed dataset selection")
+    fail_if_errors()
 
     dropped, slow = [], []
     recorded_degenerate = drop_known_degenerate(output_root, manifest, audit_writer)
@@ -1783,31 +1810,6 @@ def _finalize_layered(
     if not complete:
         errors.append("the run produced no tasks at all")
 
-    # The run must reproduce EXACTLY the reviewed selection: a missing task
-    # shrinks the benchmark, an unexpected one expands it. Either is fatal, so
-    # this runs before the sweep and manifest write, which are gated on `errors`.
-    if reference_task_keys is not None:
-        if incremental:
-            expected = sm.tasks_owned_by(reference_task_keys, all_bases, processed_bases)
-            actual = sm.tasks_owned_by(complete, all_bases, processed_bases)
-        else:
-            expected = set(reference_task_keys)
-            actual = set(complete)
-        missing = sorted(expected - actual)
-        unexpected = sorted(actual - expected)
-        for key in missing:
-            audit_writer.write(f"[audit] {key}: existing dataset task was not regenerated\n")
-        for key in unexpected:
-            audit_writer.write(f"[audit] {key}: generated task is not in the existing dataset selection\n")
-        print(
-            f"Dataset selection: {len(expected)} reference, {len(actual)} generated "
-            f"({len(missing)} missing, {len(unexpected)} unexpected)"
-        )
-        for key in missing:
-            errors.append(f"{key}: reviewed dataset task was not regenerated")
-        for key in unexpected:
-            errors.append(f"{key}: generated task is not in the reviewed dataset selection")
-
     # The sweep DELETES files; do not let a failing run prune the dataset.
     if not errors:
         sm.sweep_unreferenced_context(output_root, complete, audit_writer)
@@ -1821,16 +1823,7 @@ def _finalize_layered(
                 f"— a target's scaffolding must belong to exactly one task\n"
             )
 
-    if errors:
-        for message in errors:
-            audit_writer.write(f"[audit] generation error: {message}\n")
-        audit_writer.write(f"[audit] generation FAILED with {len(errors)} error(s) — manifest not written\n")
-        print(f"\n❌ generation failed with {len(errors)} error(s); manifest not written:", file=sys.stderr)
-        for message in errors[:20]:
-            print(f"   {message[:200]}", file=sys.stderr)
-        if len(errors) > 20:
-            print(f"   ... and {len(errors) - 20} more (see the audit log)", file=sys.stderr)
-        raise SystemExit(1)
+    fail_if_errors()
 
     manifest_path = os.path.join(output_root, MANIFEST_FILENAME)
     with open(manifest_path, "w", encoding="utf-8") as f:

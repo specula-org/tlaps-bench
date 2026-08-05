@@ -229,7 +229,7 @@ Run `uv run tlaps-bench run --help` for the full flag list.
 Check a single proof file for correctness and cheating.
 
 ```bash
-uv run tlaps-bench check path/to/file.tla --mode proof-completion
+uv run tlaps-bench check path/to/file.tla --mode proof-completion --benchmark-dir path/to/canonical-context
 uv run tlaps-bench check path/to/file.tla --mode proof-from-scratch --benchmark-dir path/to/canonical-context
 uv run tlaps-bench check path/to/file.tla --sany-only
 ```

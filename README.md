@@ -38,23 +38,23 @@ can be derived.
 
 | Source | Examples | Proof completion | Proof from scratch | Total |
 |---|--:|--:|--:|--:|
-| [tlaplus/Examples](https://github.com/tlaplus/Examples) | 43 | 358 | 132 | 490 |
+| [tlaplus/Examples](https://github.com/tlaplus/Examples) | 43 | 357 | 132 | 489 |
 | [TLAPS distribution examples](https://github.com/tlaplus/tlapm) | 14 | 91 | 57 | 148 |
-| **Subtotal** | **57** | **449** | **189** | **638** |
+| **Subtotal** | **57** | **448** | **189** | **637** |
 
 **Systems specifications**
 
 | Source | Examples | Proof completion | Proof from scratch | Total |
 |---|--:|--:|--:|--:|
-| [apalache-examples (Konnov)](https://github.com/konnov/apalache-examples) | 2 | 258 | – | 258 |
+| [apalache-examples (Konnov)](https://github.com/konnov/apalache-examples) | 2 | 257 | – | 257 |
 | [ZooKeeper (Remix)](https://arxiv.org/abs/2409.14301) | 2 | – | 18 | 18 |
 | [Ivy liveness](https://github.com/kenmcmil/ivy) | 6 | – | 12 | 12 |
 | [etcd (Specula)](https://github.com/specula-org) | 1 | – | 8 | 8 |
 | [OpenAddressing](https://github.com/lemmy/Examples) | 1 | 1 | 5 | 6 |
 | [two_thread_mutex (Anvil)](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | 1 | – | 1 | 1 |
-| **Subtotal** | **13** | **259** | **44** | **303** |
+| **Subtotal** | **13** | **258** | **44** | **302** |
 
-**70 examples, 941 tasks in total.** A per-example breakdown is in
+**70 examples, 939 tasks in total.** A per-example breakdown is in
 [`docs/DATASET.md`](docs/DATASET.md).
 
 ## Running

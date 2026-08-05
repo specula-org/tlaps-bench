@@ -41,14 +41,14 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SumAndMax](https://github.com/tlaplus/tlapm/blob/main/examples/SumAndMax.tla) | TLAPS distribution examples | – | 1 | 1 |
 | [ZooKeeper](https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/blob/main/high-level-spec/Zab.tla) | ZooKeeper (Remix) | – | 9 | 9 |
 | [ZooKeeper_LowLevel](https://github.com/Disalg-ICS-NJU/zookeeper-tla-spec/tree/main/low-level-spec/zk-3.7) | ZooKeeper (Remix) | – | 9 | 9 |
-| [ben-or83](https://github.com/konnov/apalache-examples/tree/af360379b7cbcd1e16c1a801ff8ac64eb9aca038/ben-or83) | apalache-examples (Konnov) | 210 | – | 210 |
+| [ben-or83](https://github.com/konnov/apalache-examples/tree/af360379b7cbcd1e16c1a801ff8ac64eb9aca038/ben-or83) | apalache-examples (Konnov) | 209 | – | 209 |
 | [tendermint](https://github.com/konnov/apalache-examples/tree/af360379b7cbcd1e16c1a801ff8ac64eb9aca038/tendermint) | apalache-examples (Konnov) | 48 | – | 48 |
 | [etcd_raft](https://github.com/specula-org/Specula/blob/main/skills/spec_generation/examples/etcdraft.tla) | etcd (Specula) | – | 8 | 8 |
 | [ewd998](https://github.com/tlaplus/Examples/tree/master/specifications/ewd998) | tlaplus/Examples | 52 | 7 | 59 |
 | [byzpaxos](https://github.com/tlaplus/Examples/tree/master/specifications/byzpaxos) | tlaplus/Examples | 41 | 11 | 52 |
 | [lamport_mutex](https://github.com/tlaplus/Examples/tree/master/specifications/lamport_mutex) | tlaplus/Examples | 20 | 2 | 22 |
 | [TencentPaxos](https://github.com/tlaplus/Examples/tree/master/specifications/TencentPaxos) | tlaplus/Examples | 19 | 2 | 21 |
-| [LoopInvariance](https://github.com/tlaplus/Examples/tree/master/specifications/LoopInvariance) | tlaplus/Examples | 17 | 3 | 20 |
+| [LoopInvariance](https://github.com/tlaplus/Examples/tree/master/specifications/LoopInvariance) | tlaplus/Examples | 16 | 3 | 19 |
 | [allocator](https://github.com/tlaplus/Examples/tree/master/specifications/allocator) | tlaplus/Examples | 14 | 5 | 19 |
 | [ewd840](https://github.com/tlaplus/Examples/tree/master/specifications/ewd840) | tlaplus/Examples | 14 | 5 | 19 |
 | [tcp](https://github.com/tlaplus/Examples/tree/master/specifications/tcp) | tlaplus/Examples | 16 | 3 | 19 |
@@ -89,4 +89,4 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
-**Total: 70 examples — 708 proof-completion + 233 proof-from-scratch = 941 tasks.**
+**Total: 70 examples — 706 proof-completion + 233 proof-from-scratch = 939 tasks.**
