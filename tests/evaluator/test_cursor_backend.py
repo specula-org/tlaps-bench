@@ -98,6 +98,42 @@ def test_cursor_trusts_zero_terminal_usage(tmp_path):
     assert (usage.input_tokens, usage.output_tokens) == (0, 0)
 
 
+def test_cursor_transcript_uses_the_tool_field_among_metadata(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {
+            "type": "tool_call",
+            "subtype": "started",
+            "call_id": "outer-call",
+            "tool_call": {
+                "toolCallId": "native-call",
+                "startedAtMs": "123",
+                "shellToolCall": {"args": {"command": "tlapm --version"}},
+            },
+        },
+        {
+            "type": "tool_call",
+            "subtype": "completed",
+            "call_id": "outer-call",
+            "tool_call": {
+                "shellToolCall": {
+                    "args": {"command": "tlapm --version"},
+                    "result": "TLAPM version",
+                },
+                "completedAtMs": "456",
+                "toolCallId": "native-call",
+            },
+        },
+    )
+
+    transcript, _input_tokens, _output_tokens = CursorBackend().parse_output(str(output))
+
+    assert "[TOOL] shellToolCall tlapm --version" in transcript
+    assert "[TOOL_RESULT] TLAPM version" in transcript
+    assert "toolCallId" not in transcript
+
+
 def test_cursor_uses_dynamic_firewall_with_default_runtime_hosts(monkeypatch):
     monkeypatch.delenv("CURSOR_API_ENDPOINT", raising=False)
     backend = CursorBackend()

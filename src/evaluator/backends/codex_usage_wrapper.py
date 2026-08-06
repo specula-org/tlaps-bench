@@ -1,9 +1,9 @@
-"""Stream ``codex exec`` JSONL and append a sanitized child-thread usage audit.
+"""Stream ``codex exec`` JSONL and append a sanitized rollout-tree audit.
 
 Codex's public ``turn.completed`` event reports only the primary thread. Rollout
 files persist native cumulative token counters for the full session tree, so this
-wrapper emits child aggregates plus sanitized per-request token/model metadata.
-Prompts and other rollout content never leave the Codex state directory.
+wrapper emits child token aggregates, session-tree tool calls, and sanitized
+per-request metadata. Prompts and rollout content never leave the state directory.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ else:
 
 CODEX_CHILD_USAGE_EVENT = "tlaps.codex_child_usage"
 CODEX_CHILD_USAGE_START_EVENT = "tlaps.codex_child_usage.started"
-CODEX_CHILD_USAGE_VERSION = 4
+CODEX_CHILD_USAGE_VERSION = 5
 
 _TOKEN_FIELDS = (
     "input_tokens",
@@ -44,7 +44,6 @@ _TOKEN_FIELDS = (
 )
 _TURN_STARTED_TYPES = frozenset({"task_started", "turn_started"})
 _TURN_COMPLETED_TYPES = frozenset({"task_complete", "turn_complete"})
-_CONTINUATION_TOOL_NAMES = frozenset({"wait", "write_stdin"})
 _JAVASCRIPT_LANGUAGE = Language(tree_sitter_javascript.language())
 
 
@@ -275,13 +274,11 @@ def _code_mode_shell_commands(value: object) -> tuple[str, ...]:
 
 
 def _tool_dispatch(payload: dict[str, object]) -> tuple[str | None, str | None] | None:
-    """Extract one sanitized rollout dispatch, excluding command polling."""
+    """Extract one sanitized outer rollout dispatch."""
 
     item_type = payload.get("type")
     if item_type == "function_call":
         name = payload.get("name")
-        if name in _CONTINUATION_TOOL_NAMES:
-            return None
         call_id = payload.get("call_id")
         command = None
         if name in {"exec_command", "shell_command"}:
@@ -292,18 +289,23 @@ def _tool_dispatch(payload: dict[str, object]) -> tuple[str | None, str | None] 
         return (call_id if isinstance(call_id, str) and call_id else None, command)
     if item_type == "custom_tool_call":
         name = payload.get("name")
-        if name in _CONTINUATION_TOOL_NAMES:
-            return None
         call_id = payload.get("call_id")
         commands = _code_mode_shell_commands(payload.get("input")) if name == "exec" else ()
         command = "\n".join(commands) if commands else None
         return (call_id if isinstance(call_id, str) and call_id else None, command)
     if item_type == "local_shell_call":
-        item_id = payload.get("id")
+        raw_call_id = payload.get("call_id")
+        item_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else payload.get("id")
         action = payload.get("action")
         command = _shell_command(action.get("command")) if isinstance(action, dict) else None
         return (item_id if isinstance(item_id, str) and item_id else None, command)
-    if item_type in {"computer_call", "mcp_tool_call", "tool_search_call", "web_search_call"}:
+    if item_type in {
+        "computer_call",
+        "image_generation_call",
+        "mcp_tool_call",
+        "tool_search_call",
+        "web_search_call",
+    }:
         raw_call_id = payload.get("call_id")
         item_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else payload.get("id")
         return (item_id if isinstance(item_id, str) and item_id else None, None)
@@ -711,7 +713,7 @@ def _belongs_to_tree(thread_id: str, root_thread_id: str, by_thread: dict[str, _
 
 
 def collect_child_usage(root_thread_id: str, candidate_paths: Iterable[Path]) -> dict[str, object]:
-    """Build a sanitized audit for one newly-created Codex session tree."""
+    """Build a sanitized usage and tool-call audit for one Codex session tree."""
 
     warning_codes: set[str] = set()
     tool_warning_codes: set[str] = set()
@@ -740,6 +742,7 @@ def collect_child_usage(root_thread_id: str, candidate_paths: Iterable[Path]) ->
         and root.meta.forked_from_id is None
     )
     requests: list[_SanitizedRequest] = []
+    session_commands: list[str | None] = []
     if not root_is_primary:
         warning_codes.add("root_rollout_missing")
         tool_warning_codes.add("root_rollout_missing")
@@ -748,7 +751,8 @@ def collect_child_usage(root_thread_id: str, candidate_paths: Iterable[Path]) ->
         _root_totals, root_requests, root_warnings = _analyze_rollout(root, None, allow_empty=True)
         requests.extend(root_requests)
         warning_codes.update(root_warnings)
-        _root_commands, root_tool_warnings = _analyze_tool_rollout(root, None, allow_empty=True)
+        root_commands, root_tool_warnings = _analyze_tool_rollout(root, None, allow_empty=True)
+        session_commands.extend(root_commands)
         tool_warning_codes.update(root_tool_warnings)
 
     known_thread_ids = set(by_thread)
@@ -758,7 +762,6 @@ def collect_child_usage(root_thread_id: str, candidate_paths: Iterable[Path]) ->
 
     child_count = 0
     totals = _TokenTotals()
-    child_commands: list[str | None] = []
     for thread_id, rollout in sorted(by_thread.items()):
         if thread_id == root_thread_id:
             continue
@@ -781,16 +784,16 @@ def collect_child_usage(root_thread_id: str, candidate_paths: Iterable[Path]) ->
             by_thread.get(parent_thread_id) if parent_thread_id else None,
             allow_empty=False,
         )
-        child_commands.extend(rollout_commands)
+        session_commands.extend(rollout_commands)
         tool_warning_codes.update(rollout_tool_warnings)
 
     tool_warnings = (
-        (f"Codex child tool-call audit is incomplete ({', '.join(sorted(tool_warning_codes))})",)
+        (f"Codex session-tree tool-call audit is incomplete ({', '.join(sorted(tool_warning_codes))})",)
         if tool_warning_codes
         else ()
     )
-    child_tool_calls = _toolcalls.ToolCallSummary.from_commands(
-        child_commands,
+    session_tool_calls = _toolcalls.ToolCallSummary.from_commands(
+        session_commands,
         available=True,
         complete=not tool_warning_codes,
         warnings=tool_warnings,
@@ -799,13 +802,14 @@ def collect_child_usage(root_thread_id: str, candidate_paths: Iterable[Path]) ->
     return {
         "type": CODEX_CHILD_USAGE_EVENT,
         "version": CODEX_CHILD_USAGE_VERSION,
+        "tool_calls_scope": "session_tree",
         "root_thread_id": root_thread_id,
         "child_count": child_count,
         **totals.to_dict(),
         "requests": [request.to_dict() for request in requests],
         "complete": not warning_codes,
         "warning_codes": sorted(warning_codes),
-        "tool_calls": child_tool_calls.to_dict(),
+        "tool_calls": session_tool_calls.to_dict(),
     }
 
 
@@ -908,6 +912,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             audit = {
                 "type": CODEX_CHILD_USAGE_EVENT,
                 "version": CODEX_CHILD_USAGE_VERSION,
+                "tool_calls_scope": "session_tree",
                 "root_thread_id": root_thread_id,
                 "child_count": 0,
                 **_TokenTotals().to_dict(),

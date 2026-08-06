@@ -319,10 +319,11 @@ def test_complete_child_audit_aggregates_parent_and_child_native_usage(tmp_path)
     assert usage.warnings == ()
 
 
-def test_version_three_child_usage_remains_readable(tmp_path):
+@pytest.mark.parametrize("version", (3, 4))
+def test_legacy_child_usage_versions_remain_readable(version, tmp_path):
     output = tmp_path / "output.jsonl"
     legacy_audit = _child_audit()
-    legacy_audit["version"] = 3
+    legacy_audit["version"] = version
     _write_jsonl(
         output,
         {"type": "thread.started", "thread_id": "parent"},

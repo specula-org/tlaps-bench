@@ -641,14 +641,29 @@ def test_stable_ids_dominate_anonymous_lifecycle_witnesses(
 # --- per-backend event vocabularies -----------------------------------------
 
 
-def _cursor_call(kind, command=None, subtype="started", call_id=None):
+def _cursor_call(
+    kind,
+    command=None,
+    subtype="started",
+    call_id=None,
+    *,
+    metadata=None,
+    metadata_first=False,
+    include_call_id=True,
+):
     args = {"command": command} if command is not None else {}
-    return {
+    body = {"args": args}
+    tool = {kind: body}
+    metadata = metadata or {}
+    raw_call = {**metadata, **tool} if metadata_first else {**tool, **metadata}
+    event = {
         "type": "tool_call",
         "subtype": subtype,
-        "call_id": call_id or f"{kind}:{command or ''}",
-        "tool_call": {kind: {"args": args}},
+        "tool_call": raw_call,
     }
+    if include_call_id:
+        event["call_id"] = call_id or f"{kind}:{command or ''}"
+    return event
 
 
 def test_cursor_counts_a_started_completed_pair_once(tmp_path):
@@ -664,6 +679,116 @@ def test_cursor_counts_a_started_completed_pair_once(tmp_path):
         {"type": "result", "subtype": "success", "is_error": False},
     )
     assert CursorBackend().parse_run_metadata(path) == {"tool_calls": _summary(total=3, tlaps=1, apalache=1, other=1)}
+
+
+@pytest.mark.parametrize(
+    ("started_metadata_first", "completed_metadata_first"),
+    [(False, False), (True, True), (True, False), (False, True)],
+)
+def test_cursor_ignores_tool_call_metadata_in_any_field_order(
+    tmp_path,
+    started_metadata_first,
+    completed_metadata_first,
+):
+    metadata = {
+        "hookAdditionalContexts": [],
+        "toolCallId": "native-call",
+        "startedAtMs": "123",
+    }
+    path = _write_jsonl(
+        tmp_path / "cursor-metadata.jsonl",
+        _cursor_call(
+            "shellToolCall",
+            "tlapm --version",
+            call_id="outer-call",
+            metadata=metadata,
+            metadata_first=started_metadata_first,
+        ),
+        _cursor_call(
+            "shellToolCall",
+            "tlapm --version",
+            subtype="completed",
+            call_id="outer-call",
+            metadata=metadata,
+            metadata_first=completed_metadata_first,
+        ),
+        {"type": "result", "subtype": "success", "is_error": False},
+    )
+
+    assert CursorBackend().parse_run_metadata(path)["tool_calls"] == _summary(total=1, tlaps=1)
+
+
+def test_cursor_ignores_metadata_on_non_shell_tools(tmp_path):
+    metadata = {"toolCallId": "native-edit", "completedAtMs": "456"}
+    path = _write_jsonl(
+        tmp_path / "cursor-edit-metadata.jsonl",
+        _cursor_call("editToolCall", call_id="outer-edit", metadata=metadata, metadata_first=True),
+        _cursor_call(
+            "editToolCall",
+            subtype="completed",
+            call_id="outer-edit",
+            metadata=metadata,
+        ),
+        {"type": "result", "subtype": "success", "is_error": False},
+    )
+
+    assert CursorBackend().parse_run_metadata(path)["tool_calls"] == _summary(total=1, other=1)
+
+
+@pytest.mark.parametrize(
+    "raw_call",
+    [
+        {"toolCallId": "metadata-only", "startedAtMs": "123"},
+        {
+            "shellToolCall": {"args": {"command": "tlapm Foo.tla"}},
+            "editToolCall": {"args": {"path": "Foo.tla"}},
+        },
+    ],
+    ids=("zero-tool-fields", "two-tool-fields"),
+)
+def test_cursor_damaged_tool_call_objects_are_not_guessed(raw_call, tmp_path):
+    started = {"type": "tool_call", "subtype": "started", "call_id": "damaged", "tool_call": raw_call}
+    completed = {"type": "tool_call", "subtype": "completed", "call_id": "damaged", "tool_call": raw_call}
+    path = _write_jsonl(
+        tmp_path / "cursor-damaged-call.jsonl",
+        started,
+        completed,
+        {"type": "result", "subtype": "success", "is_error": False},
+    )
+
+    summary = CursorBackend().parse_run_metadata(path)["tool_calls"]
+
+    assert (summary["total"], summary["other"]) == (1, 1)
+    assert summary["is_lower_bound"] is True
+    assert any("invalid tool_call object" in warning for warning in summary["warnings"])
+
+
+def test_cursor_does_not_substitute_inner_tool_id_for_missing_outer_call_id(tmp_path):
+    metadata = {"toolCallId": "inner-id", "startedAtMs": "123"}
+    path = _write_jsonl(
+        tmp_path / "cursor-missing-outer-id.jsonl",
+        _cursor_call(
+            "shellToolCall",
+            TLAPM,
+            metadata=metadata,
+            metadata_first=True,
+            include_call_id=False,
+        ),
+        _cursor_call(
+            "shellToolCall",
+            TLAPM,
+            subtype="completed",
+            metadata=metadata,
+            include_call_id=False,
+        ),
+        {"type": "result", "subtype": "success", "is_error": False},
+    )
+
+    summary = CursorBackend().parse_run_metadata(path)["tool_calls"]
+
+    assert (summary["total"], summary["tlaps"]) == (1, 1)
+    assert summary["is_lower_bound"] is True
+    assert any("missing or invalid call_id" in warning for warning in summary["warnings"])
 
 
 def test_cursor_completion_without_start_is_counted_but_not_claimed_exact(tmp_path):

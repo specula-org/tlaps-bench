@@ -44,7 +44,7 @@ _RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CODEX_USAGE_SOURCE = "codex_cli_turn_completed"
 _CODEX_CHILD_USAGE_SOURCE = "codex_rollout_child_token_count"
-_CODEX_CHILD_USAGE_COMPATIBLE_VERSIONS = frozenset({3, CODEX_CHILD_USAGE_VERSION})
+_CODEX_CHILD_USAGE_COMPATIBLE_VERSIONS = frozenset({3, 4, CODEX_CHILD_USAGE_VERSION})
 _MODEL_ACTIVITY_ITEM_TYPES = frozenset(
     {
         "agent_message",
@@ -185,8 +185,8 @@ def _parse_child_usage_audit(
     event: dict[str, Any],
 ) -> tuple[_CodexChildUsageAudit | None, tuple[str, ...]]:
     version = event.get("version")
-    # v4 only adds the independent tool-call tally; its usage payload is still
-    # wire-compatible with v3 records that may already be archived.
+    # Later versions add independent tool-call data, but retain the v3 usage
+    # payload so archived usage audits remain readable.
     if type(version) is not int or version not in _CODEX_CHILD_USAGE_COMPATIBLE_VERSIONS:
         return None, ("Codex child-usage audit has an unsupported version",)
 
@@ -296,11 +296,13 @@ def _parse_child_usage_audit(
 def _parse_child_tool_audit(
     event: dict[str, Any],
 ) -> tuple[_CodexChildToolAudit | None, tuple[str, ...]]:
-    """Validate the tool-only, privacy-preserving part of a child audit."""
+    """Validate the tool-only, privacy-preserving session-tree audit."""
 
     version = event.get("version")
     if type(version) is not int or version != CODEX_CHILD_USAGE_VERSION:
         return None, ("Codex child tool-call audit has an unsupported version",)
+    if event.get("tool_calls_scope") != "session_tree":
+        return None, ("Codex tool-call audit has an invalid scope",)
     root_thread_id = event.get("root_thread_id")
     if not isinstance(root_thread_id, str) or not root_thread_id:
         return None, ("Codex child tool-call audit has no root thread ID",)
@@ -677,7 +679,7 @@ def _same_tool_item(left: dict[str, Any], right: dict[str, Any]) -> bool:
 
 
 def _parse_tool_calls(jsonl_path: str) -> toolcalls.ToolCallSummary:
-    """Count root dispatches and merge the wrapper's sanitized child tally."""
+    """Use the rollout session-tree audit, with CLI root events as fallback."""
 
     evidence = toolcalls.EventStreamEvidence()
     starts: dict[str, list[tuple[int, dict[str, Any]]]] = {}
@@ -694,7 +696,10 @@ def _parse_tool_calls(jsonl_path: str) -> toolcalls.ToolCallSummary:
     saw_stream_lag = False
     saw_multi_agent_activity = False
     child_audit_starts = 0
+    child_audit_start_indexes: list[int] = []
+    child_audit_start_versions: list[object] = []
     child_audit_events = 0
+    child_audit_indexes: list[int] = []
     child_audits: list[_CodexChildToolAudit] = []
     warnings: list[str] = []
 
@@ -712,8 +717,11 @@ def _parse_tool_calls(jsonl_path: str) -> toolcalls.ToolCallSummary:
             terminals.append((index, event_type))
         elif event_type == CODEX_CHILD_USAGE_START_EVENT:
             child_audit_starts += 1
+            child_audit_start_indexes.append(index)
+            child_audit_start_versions.append(event.get("version"))
         elif event_type == CODEX_CHILD_USAGE_EVENT:
             child_audit_events += 1
+            child_audit_indexes.append(index)
             audit, audit_warnings = _parse_child_tool_audit(event)
             warnings.extend(audit_warnings)
             if audit is not None:
@@ -915,16 +923,17 @@ def _parse_tool_calls(jsonl_path: str) -> toolcalls.ToolCallSummary:
         warnings=warnings,
     )
 
+    def invalid_session_tree_audit(*audit_warnings: str) -> toolcalls.ToolCallSummary:
+        return toolcalls.ToolCallSummary.from_commands(
+            (),
+            available=True,
+            complete=False,
+            warnings=(*summary.warnings, *warnings, *audit_warnings),
+        )
+
     if child_audit_starts == 0:
         if child_audit_events:
-            return summary.merge(
-                toolcalls.ToolCallSummary.from_commands(
-                    (),
-                    available=True,
-                    complete=False,
-                    warnings=("Codex child tool-call audit appeared without its start sentinel",),
-                )
-            )
+            return invalid_session_tree_audit("Codex child tool-call audit appeared without its start sentinel")
         if saw_multi_agent_activity:
             return summary.merge(
                 toolcalls.ToolCallSummary.from_commands(
@@ -936,26 +945,19 @@ def _parse_tool_calls(jsonl_path: str) -> toolcalls.ToolCallSummary:
             )
         return summary
 
-    if child_audit_starts != 1 or child_audit_events != 1 or len(child_audits) != 1:
-        return summary.merge(
-            toolcalls.ToolCallSummary.from_commands(
-                (),
-                available=True,
-                complete=False,
-                warnings=("Codex child tool-call audit is missing or ambiguous",),
-            )
-        )
+    if (
+        child_audit_starts != 1
+        or child_audit_start_versions != [CODEX_CHILD_USAGE_VERSION]
+        or child_audit_events != 1
+        or len(child_audits) != 1
+    ):
+        return invalid_session_tree_audit("Codex child tool-call audit is missing or ambiguous")
+    if child_audit_start_indexes != [0] or child_audit_indexes != [evidence.event_count - 1]:
+        return invalid_session_tree_audit("Codex child tool-call audit has an invalid stream position")
     child_audit = child_audits[0]
     if len(root_thread_ids) != 1 or root_thread_ids[0] != child_audit.root_thread_id:
-        return summary.merge(
-            toolcalls.ToolCallSummary.from_commands(
-                (),
-                available=True,
-                complete=False,
-                warnings=("Codex child tool-call audit does not match the primary thread",),
-            )
-        )
-    return summary.merge(child_audit.tool_calls)
+        return invalid_session_tree_audit("Codex child tool-call audit does not match the primary thread")
+    return child_audit.tool_calls
 
 
 class CodexBackend(AgenticBackend):

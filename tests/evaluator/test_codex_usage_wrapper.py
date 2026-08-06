@@ -82,6 +82,14 @@ def _tool_search(call_id: str) -> dict[str, object]:
     }
 
 
+def _response_tool(item_type: str, item_id: str, *, id_key: str = "id", **payload: object) -> dict[str, object]:
+    return {
+        "timestamp": "2026-07-28T00:00:00.000Z",
+        "type": "response_item",
+        "payload": {"type": item_type, id_key: item_id, **payload},
+    }
+
+
 def _tokens(
     input_tokens: int,
     cached_input_tokens: int,
@@ -532,23 +540,11 @@ def test_persisted_child_reference_requires_a_matching_rollout(tmp_path):
     assert "referenced_child_rollout_missing" in audit["warning_codes"]
 
 
-def test_child_tool_audit_counts_only_own_dispatches_and_excludes_continuations(tmp_path):
-    root_path = _rollout(
-        tmp_path,
-        "root",
-        _event("task_started", turn_id="root-turn"),
-        _context("root-turn"),
-        _tool("exec_command", "parent-call", {"cmd": "tlapm Parent.tla"}),
-        _tokens(100, 50, 20, 4),
-        _event("task_complete", turn_id="root-turn"),
-    )
+def test_session_tree_tool_audit_counts_child_dispatches_and_continuations(tmp_path):
+    root_path = _rollout(tmp_path, "root")
     child_path = _rollout(
         tmp_path,
         "child",
-        _meta("root", "root"),
-        _event("task_started", turn_id="root-turn"),
-        _tool("exec_command", "parent-call", {"cmd": "tlapm Parent.tla"}),
-        _event("task_complete", turn_id="root-turn"),
         _event("task_started", turn_id="child-turn"),
         _context("child-turn"),
         _tool("exec_command", "child-call", {"cmd": "/bin/bash -lc 'tlapm Child.tla'"}),
@@ -560,23 +556,112 @@ def test_child_tool_audit_counts_only_own_dispatches_and_excludes_continuations(
         _tokens(130, 60, 30, 6),
         _event("task_complete", turn_id="child-turn"),
         parent_thread_id="root",
-        forked_from_id="root",
     )
 
     audit = collect_child_usage("root", (root_path, child_path))
 
+    assert audit["tool_calls_scope"] == "session_tree"
     assert audit["tool_calls"] == {
-        "total": 3,
+        "total": 6,
         "tlaps": 1,
         "tlc": 0,
         "apalache": 0,
-        "other": 2,
+        "other": 5,
         "available": True,
         "complete": True,
         "is_lower_bound": False,
         "warnings": [],
     }
     assert "/bin/bash" not in json.dumps(audit)
+
+
+@pytest.mark.parametrize(
+    "dispatch",
+    (
+        _tool("wait", "function-wait", {"cell_id": "cell-1"}),
+        _tool("write_stdin", "function-write", {"session_id": 1}),
+        _custom_tool("wait", "custom-wait", '{"cell_id":"cell-1"}'),
+        _custom_tool("write_stdin", "custom-write", '{"session_id":1}'),
+    ),
+    ids=("function-wait", "function-write-stdin", "custom-wait", "custom-write-stdin"),
+)
+def test_session_tree_tool_audit_counts_each_continuation_dispatch(dispatch, tmp_path):
+    root_path = _rollout(
+        tmp_path,
+        "root",
+        _event("task_started", turn_id="root-turn"),
+        dispatch,
+        _event("task_complete", turn_id="root-turn"),
+    )
+
+    audit = collect_child_usage("root", (root_path,))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["other"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is True
+
+
+@pytest.mark.parametrize(
+    "dispatch",
+    (
+        _response_tool("image_generation_call", "image-call"),
+        _response_tool(
+            "local_shell_call",
+            "shell-call",
+            id_key="call_id",
+            action={"command": "tlapm Local.tla"},
+        ),
+    ),
+    ids=("image-generation", "local-shell-call-id"),
+)
+def test_session_tree_tool_audit_counts_response_tool_variants(dispatch, tmp_path):
+    root_path = _rollout(
+        tmp_path,
+        "root",
+        _event("task_started", turn_id="root-turn"),
+        dispatch,
+        _event("task_complete", turn_id="root-turn"),
+    )
+
+    audit = collect_child_usage("root", (root_path,))
+
+    assert audit["tool_calls"]["total"] == 1
+    assert audit["tool_calls"]["complete"] is True
+    if dispatch["payload"]["type"] == "image_generation_call":
+        assert audit["tool_calls"]["other"] == 1
+    else:
+        assert audit["tool_calls"]["tlaps"] == 1
+
+
+def test_session_tree_tool_audit_counts_root_and_child_without_replaying_fork_prefix(tmp_path):
+    root_path = _rollout(
+        tmp_path,
+        "root",
+        _event("task_started", turn_id="root-turn"),
+        _tool("exec_command", "root-call", {"cmd": "tlapm Root.tla"}),
+        _event("task_complete", turn_id="root-turn"),
+    )
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _meta("root", "root"),
+        _event("task_started", turn_id="root-turn"),
+        _tool("exec_command", "root-call", {"cmd": "tlapm Root.tla"}),
+        _event("task_complete", turn_id="root-turn"),
+        _event("task_started", turn_id="child-turn"),
+        _custom_tool("apply_patch", "child-edit"),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"], audit["tool_calls"]["other"]) == (
+        2,
+        1,
+        1,
+    )
+    assert audit["tool_calls"]["complete"] is True
 
 
 def test_code_mode_child_exec_uses_literal_nested_command_for_classification(tmp_path):
@@ -769,7 +854,7 @@ def test_forked_child_preserves_unmatched_prefix_tool_as_a_lower_bound(tmp_path)
     assert any("child_tool_boundary_unavailable" in warning for warning in audit["tool_calls"]["warnings"])
 
 
-def test_forked_child_does_not_double_count_ambiguous_prefix_tool(tmp_path):
+def test_session_tree_keeps_root_but_not_ambiguous_fork_prefix_tool(tmp_path):
     root_path = _rollout(
         tmp_path,
         "root",
@@ -789,7 +874,7 @@ def test_forked_child_does_not_double_count_ambiguous_prefix_tool(tmp_path):
 
     audit = collect_child_usage("root", (root_path, child_path))
 
-    assert audit["tool_calls"]["total"] == 0
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
     assert audit["tool_calls"]["is_lower_bound"] is True
     assert any("child_tool_boundary_unavailable" in warning for warning in audit["tool_calls"]["warnings"])
 
@@ -920,6 +1005,7 @@ print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "output
     assert records[-1] == {
         "type": "tlaps.codex_child_usage",
         "version": CODEX_CHILD_USAGE_VERSION,
+        "tool_calls_scope": "session_tree",
         "root_thread_id": "root-thread",
         "child_count": 0,
         "input_tokens": 0,

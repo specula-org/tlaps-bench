@@ -314,7 +314,7 @@ def test_only_canonical_root_lifecycle_order_is_complete(tmp_path):
         assert summary["complete"] is (events == canonical)
 
 
-def test_complete_matching_child_audit_is_merged_without_raw_commands(tmp_path):
+def test_complete_session_tree_audit_replaces_cli_root_events(tmp_path):
     path = _write_jsonl(
         tmp_path / "output.jsonl",
         {"type": "tlaps.codex_child_usage.started", "version": CODEX_CHILD_USAGE_VERSION},
@@ -326,6 +326,7 @@ def test_complete_matching_child_audit_is_merged_without_raw_commands(tmp_path):
         {
             "type": "tlaps.codex_child_usage",
             "version": CODEX_CHILD_USAGE_VERSION,
+            "tool_calls_scope": "session_tree",
             "root_thread_id": "root",
             "tool_calls": {
                 "total": 2,
@@ -342,16 +343,51 @@ def test_complete_matching_child_audit_is_merged_without_raw_commands(tmp_path):
     )
 
     assert _summary(CodexBackend(), path) == {
-        "total": 3,
+        "total": 2,
         "tlaps": 1,
         "tlc": 1,
         "apalache": 0,
-        "other": 1,
+        "other": 0,
         "available": True,
         "complete": True,
         "is_lower_bound": False,
         "warnings": [],
     }
+
+
+def test_lower_bound_session_tree_audit_is_not_added_to_cli_root_events(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "output.jsonl",
+        {"type": "tlaps.codex_child_usage.started", "version": CODEX_CHILD_USAGE_VERSION},
+        {"type": "thread.started", "thread_id": "root"},
+        {"type": "turn.started"},
+        _item("item.started", "command", "command_execution", "tlapm Root.tla"),
+        _item("item.completed", "command", "command_execution", "tlapm Root.tla"),
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+        {
+            "type": "tlaps.codex_child_usage",
+            "version": CODEX_CHILD_USAGE_VERSION,
+            "tool_calls_scope": "session_tree",
+            "root_thread_id": "root",
+            "tool_calls": {
+                "total": 1,
+                "tlaps": 0,
+                "tlc": 0,
+                "apalache": 0,
+                "other": 1,
+                "available": True,
+                "complete": False,
+                "is_lower_bound": True,
+                "warnings": ["rollout audit incomplete"],
+            },
+        },
+    )
+
+    summary = _summary(CodexBackend(), path)
+
+    assert (summary["total"], summary["tlaps"], summary["other"]) == (1, 0, 1)
+    assert summary["is_lower_bound"] is True
+    assert summary["warnings"] == ["rollout audit incomplete"]
 
 
 def test_started_child_audit_that_never_finishes_is_a_lower_bound(tmp_path):
@@ -368,6 +404,111 @@ def test_started_child_audit_that_never_finishes_is_a_lower_bound(tmp_path):
     assert summary["total"] == 0
     assert summary["is_lower_bound"] is True
     assert any("missing or ambiguous" in warning for warning in summary["warnings"])
+
+
+def test_legacy_child_audit_does_not_fall_back_to_nested_cli_commands(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "output.jsonl",
+        {"type": "tlaps.codex_child_usage.started", "version": 4},
+        {"type": "thread.started", "thread_id": "root"},
+        {"type": "turn.started"},
+        _item("item.started", "tlaps", "command_execution", "tlapm Foo.tla"),
+        _item("item.completed", "tlaps", "command_execution", "tlapm Foo.tla"),
+        _item("item.started", "tlc", "command_execution", "tlc Foo.tla"),
+        _item("item.completed", "tlc", "command_execution", "tlc Foo.tla"),
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+        {
+            "type": "tlaps.codex_child_usage",
+            "version": 4,
+            "root_thread_id": "root",
+            "tool_calls": {
+                "total": 0,
+                "tlaps": 0,
+                "tlc": 0,
+                "apalache": 0,
+                "other": 0,
+                "available": True,
+                "complete": True,
+                "is_lower_bound": False,
+                "warnings": [],
+            },
+        },
+    )
+
+    summary = _summary(CodexBackend(), path)
+
+    assert (summary["total"], summary["tlaps"], summary["tlc"]) == (0, 0, 0)
+    assert summary["is_lower_bound"] is True
+    assert any("unsupported version" in warning for warning in summary["warnings"])
+
+
+def test_session_tree_audit_before_cli_activity_is_not_trusted(tmp_path):
+    audit = {
+        "type": "tlaps.codex_child_usage",
+        "version": CODEX_CHILD_USAGE_VERSION,
+        "tool_calls_scope": "session_tree",
+        "root_thread_id": "root",
+        "tool_calls": {
+            "total": 0,
+            "tlaps": 0,
+            "tlc": 0,
+            "apalache": 0,
+            "other": 0,
+            "available": True,
+            "complete": True,
+            "is_lower_bound": False,
+            "warnings": [],
+        },
+    }
+    path = _write_jsonl(
+        tmp_path / "output.jsonl",
+        {"type": "tlaps.codex_child_usage.started", "version": CODEX_CHILD_USAGE_VERSION},
+        audit,
+        {"type": "thread.started", "thread_id": "root"},
+        {"type": "turn.started"},
+        _item("item.started", "command", "command_execution", "tlapm Foo.tla"),
+        _item("item.completed", "command", "command_execution", "tlapm Foo.tla"),
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    )
+
+    summary = _summary(CodexBackend(), path)
+
+    assert summary["total"] == 0
+    assert summary["is_lower_bound"] is True
+    assert any("invalid stream position" in warning for warning in summary["warnings"])
+
+
+def test_session_tree_sentinel_after_audit_is_not_trusted(tmp_path):
+    path = _write_jsonl(
+        tmp_path / "output.jsonl",
+        {
+            "type": "tlaps.codex_child_usage",
+            "version": CODEX_CHILD_USAGE_VERSION,
+            "tool_calls_scope": "session_tree",
+            "root_thread_id": "root",
+            "tool_calls": {
+                "total": 0,
+                "tlaps": 0,
+                "tlc": 0,
+                "apalache": 0,
+                "other": 0,
+                "available": True,
+                "complete": True,
+                "is_lower_bound": False,
+                "warnings": [],
+            },
+        },
+        {"type": "thread.started", "thread_id": "root"},
+        {"type": "turn.started"},
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+        {"type": "tlaps.codex_child_usage.started", "version": CODEX_CHILD_USAGE_VERSION},
+    )
+
+    summary = _summary(CodexBackend(), path)
+
+    assert summary["total"] == 0
+    assert summary["is_lower_bound"] is True
+    assert any("invalid stream position" in warning for warning in summary["warnings"])
 
 
 def test_legacy_clean_stream_without_child_sentinel_stays_complete(tmp_path):

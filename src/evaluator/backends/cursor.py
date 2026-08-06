@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
@@ -55,23 +56,38 @@ def _result_usage(event: dict[str, object]) -> UsageSummary | None:
     )
 
 
-def _cursor_call(event: dict[str, object]) -> tuple[str | None, str | None]:
-    call = event.get("tool_call")
-    if not isinstance(call, dict) or not call:
-        return None, None
-    kind = next(iter(call))
-    if kind != "shellToolCall":
-        return kind, None
-    body = call.get(kind)
-    args = body.get("args") if isinstance(body, dict) else None
+@dataclass(frozen=True)
+class _CursorCall:
+    kind: str
+    body: dict[str, object]
+
+
+def _cursor_call(event: dict[str, object]) -> _CursorCall | None:
+    raw_call = event.get("tool_call")
+    if not isinstance(raw_call, dict):
+        return None
+    calls = [
+        _CursorCall(kind=kind, body=body)
+        for kind, body in raw_call.items()
+        if isinstance(kind, str) and kind.endswith("ToolCall") and isinstance(body, dict)
+    ]
+    return calls[0] if len(calls) == 1 else None
+
+
+def _cursor_command(call: _CursorCall | None) -> str | None:
+    if call is None or call.kind != "shellToolCall":
+        return None
+    args = call.body.get("args")
     command = args.get("command") if isinstance(args, dict) else None
-    return kind, command if isinstance(command, str) else None
+    return command if isinstance(command, str) else None
 
 
-def _same_cursor_call(started: tuple[str | None, str | None], completed: tuple[str | None, str | None]) -> bool:
-    start_kind, start_command = started
-    completed_kind, completed_command = completed
-    return start_kind == completed_kind and (
+def _same_cursor_call(started: _CursorCall | None, completed: _CursorCall | None) -> bool:
+    if started is None or completed is None:
+        return started is completed
+    start_command = _cursor_command(started)
+    completed_command = _cursor_command(completed)
+    return started.kind == completed.kind and (
         start_command is None or completed_command is None or start_command == completed_command
     )
 
@@ -81,9 +97,9 @@ def _tool_call_summary(jsonl_path: str) -> toolcalls.ToolCallSummary:
 
     evidence = toolcalls.EventStreamEvidence()
     commands: list[str | None] = []
-    starts: dict[str, tuple[str | None, str | None]] = {}
+    starts: dict[str, _CursorCall | None] = {}
     completed_ids: set[str] = set()
-    invalid_calls: dict[str, tuple[str | None, str | None]] = {}
+    invalid_calls: dict[str, _CursorCall | None] = {}
     anonymous_witnesses: list[str | None] = []
     lifecycle_warnings: list[str] = []
     result_count = 0
@@ -98,21 +114,19 @@ def _tool_call_summary(jsonl_path: str) -> toolcalls.ToolCallSummary:
         if event_type != "tool_call":
             continue
         subtype = event.get("subtype")
-        raw_call = event.get("tool_call")
-        if not isinstance(raw_call, dict) or not raw_call or len(raw_call) != 1:
-            lifecycle_warnings.append("Cursor tool call has an invalid tool_call object")
         call = _cursor_call(event)
-        kind, command = call
+        if call is None:
+            lifecycle_warnings.append("Cursor tool call has an invalid tool_call object")
+        command = _cursor_command(call)
         raw_call_id = event.get("call_id")
         call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
         if not isinstance(subtype, str) or subtype not in {"started", "completed"}:
             if call_id is None and not anonymous_witnesses:
                 anonymous_witnesses.append(command)
             elif call_id is not None:
-                previous = invalid_calls.get(call_id)
-                if previous is None:
+                if call_id not in invalid_calls:
                     invalid_calls[call_id] = call
-                elif not _same_cursor_call(previous, call):
+                elif not _same_cursor_call(invalid_calls[call_id], call):
                     lifecycle_warnings.append("Cursor invalid lifecycle records disagree for one call_id")
             lifecycle_warnings.append("Cursor tool-call stream contains an invalid lifecycle subtype")
             continue
@@ -141,7 +155,7 @@ def _tool_call_summary(jsonl_path: str) -> toolcalls.ToolCallSummary:
 
     for call_id, call in invalid_calls.items():
         if call_id not in starts and call_id not in completed_ids:
-            commands.append(call[1])
+            commands.append(_cursor_command(call))
     if not starts and not completed_ids and not invalid_calls:
         commands.extend(anonymous_witnesses)
     open_calls = set(starts) - completed_ids
@@ -307,11 +321,11 @@ class CursorBackend(AgenticBackend):
 
                     elif etype == "tool_call":
                         subtype = event.get("subtype", "")
-                        tc = event.get("tool_call", {})
-                        if not isinstance(tc, dict) or not tc:
+                        call = _cursor_call(event)
+                        if call is None:
                             continue
-                        kind = next(iter(tc))
-                        body = tc.get(kind) if isinstance(tc.get(kind), dict) else {}
+                        kind = call.kind
+                        body = call.body
                         args = body.get("args", {}) if isinstance(body, dict) else {}
                         if subtype == "started":
                             lines.append(f"[TOOL] {kind} {self._summarize_args(kind, args)}")
