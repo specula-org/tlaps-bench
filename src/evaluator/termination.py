@@ -219,14 +219,12 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
     ``"quota"``), an ``abort``, or ``session.shutdown`` with
     ``shutdownType == "error"``.
 
-    We flag INFRA_ERROR only on a WHOLESALE failure — the run reached no clean
-    terminal event. An intermittent ``session.error`` the agent then recovered
-    from (followed by a clean terminal) is NOT flagged. A per-tool failure
-    (``tool.execution_complete`` with ``success: false`` — e.g. tlapm rejecting
-    a proof) and a non-zero ``result`` ``exitCode`` (the proof simply not
-    verifying) are normal parts of an attempt and never count. (Event vocabulary
-    per the Copilot SDK streaming-events docs; no recorded copilot runs yet to
-    validate against.)
+    A ``result`` is only the CLI's terminal envelope: Copilot may emit one with
+    ``exitCode: 1`` immediately after an unrecovered root ``session.error``.
+    Such a result is not clean. A later root ``assistant.message`` followed by a
+    terminal event proves recovery; errors carrying ``agentId`` belong to a
+    subagent and do not poison a completed root run. Per-tool failures and a
+    non-zero result without a root session error remain genuine attempts.
     """
     if ctx.backend != "copilot":
         return None
@@ -234,9 +232,20 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
     if not events:
         return None
     reached_clean_terminal = False
+    root_error_pending = False
     for ev in events:
+        if ev.get("agentId") is not None:
+            continue
         t = ev.get("type")
-        if t == "result" or (t == "session.shutdown" and ev.get("shutdownType") != "error"):
+        root_error = t in {"session.error", "abort"} or (t == "session.shutdown" and ev.get("shutdownType") == "error")
+        if root_error:
+            reached_clean_terminal = False
+            root_error_pending = True
+        elif t == "assistant.message":
+            root_error_pending = False
+        elif not root_error_pending and (
+            t == "result" or (t == "session.shutdown" and ev.get("shutdownType") != "error")
+        ):
             reached_clean_terminal = True
     if reached_clean_terminal:
         return None

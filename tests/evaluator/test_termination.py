@@ -1063,8 +1063,8 @@ def test_cursor_rule_only_applies_to_cursor(tmp_path):
 
 # --- copilot rule (event vocabulary per Copilot SDK streaming-events docs) ---
 
-# A clean run: per-tool failure is normal (tlapm rejecting a proof), terminal
-# `result` with a non-zero exitCode is the proof failing — neither is infra.
+# A clean run: per-tool failure is normal (tlapm rejecting a proof), and a
+# terminal `result` with a non-zero exitCode can be a genuine proof failure.
 CP_COMPLETED = [
     {"type": "assistant.message", "data": {"content": "hi"}},
     {"type": "tool.execution_complete", "data": {"result": {"success": False}}},
@@ -1090,6 +1090,32 @@ CP_RECOVERED = [  # intermittent session.error, then recovered to a clean termin
     {"type": "assistant.message", "data": {"content": "retrying"}},
     {"type": "result", "exitCode": 0, "usage": {"premiumRequests": 2}},
 ]
+CP_ERROR_THEN_RESULT = [  # Copilot emits a result envelope after a fatal root error
+    {"type": "assistant.message", "data": {"content": "working"}},
+    {
+        "type": "model.call_failure",
+        "data": {"model": "gpt-5.6-sol", "source": "top_level", "errorMessage": "ETIMEDOUT"},
+    },
+    {"type": "assistant.turn_end", "data": {"turnId": "20"}},
+    {
+        "type": "session.error",
+        "data": {"errorType": "query", "message": "Failed to get response from the AI model"},
+    },
+    {"type": "assistant.idle", "data": {}},
+    {"type": "result", "exitCode": 1, "usage": {"premiumRequests": 0}},
+]
+CP_SUBAGENT_ERROR_THEN_RESULT = [
+    {"type": "assistant.message", "data": {"content": "working"}},
+    {
+        "type": "session.error",
+        "agentId": "call_rubber_duck",
+        "data": {"errorType": "query", "message": "subagent ETIMEDOUT"},
+    },
+    {"type": "subagent.failed", "agentId": "call_rubber_duck", "data": {"error": "No response generated"}},
+    {"type": "assistant.message", "data": {"content": "finished without the subagent"}},
+    {"type": "assistant.turn_end", "data": {"turnId": "41"}},
+    {"type": "result", "exitCode": 1, "usage": {"premiumRequests": 0}},
+]
 CP_TRUNCATED = [  # cut off before any terminal event
     {"type": "assistant.message", "data": {"content": "working"}},
     {"type": "tool.execution_start", "data": {}},
@@ -1098,7 +1124,7 @@ CP_TRUNCATED = [  # cut off before any terminal event
 
 def test_copilot_completed_is_ok(tmp_path):
     p = _write_jsonl(tmp_path / "done.jsonl", CP_COMPLETED)
-    assert classify(_ctx(p, backend="copilot")) == TerminationReason.OK
+    assert classify(_ctx(p, backend="copilot", agent_exit=1)) == TerminationReason.OK
 
 
 def test_copilot_session_error_is_infra(tmp_path):
@@ -1126,6 +1152,26 @@ def test_copilot_recovered_session_error_is_ok(tmp_path):
     # (followed by a clean terminal) must NOT be flagged.
     p = _write_jsonl(tmp_path / "recov.jsonl", CP_RECOVERED)
     assert classify(_ctx(p, backend="copilot")) == TerminationReason.OK
+
+
+def test_copilot_root_session_error_is_infra_even_with_terminal_result(tmp_path):
+    p = _write_jsonl(tmp_path / "root-error-result.jsonl", CP_ERROR_THEN_RESULT)
+    assert classify(_ctx(p, backend="copilot", agent_exit=1)) == TerminationReason.INFRA_ERROR
+
+
+def test_copilot_subagent_error_does_not_poison_completed_root_run(tmp_path):
+    p = _write_jsonl(tmp_path / "subagent-error-result.jsonl", CP_SUBAGENT_ERROR_THEN_RESULT)
+    assert classify(_ctx(p, backend="copilot", agent_exit=1)) == TerminationReason.OK
+
+
+def test_copilot_subagent_activity_does_not_recover_root_session_error(tmp_path):
+    events = [
+        *CP_ERROR_THEN_RESULT[:-1],
+        {"type": "assistant.message", "agentId": "call_subagent", "data": {"content": "still working"}},
+        CP_ERROR_THEN_RESULT[-1],
+    ]
+    p = _write_jsonl(tmp_path / "root-error-subagent-activity.jsonl", events)
+    assert classify(_ctx(p, backend="copilot", agent_exit=1)) == TerminationReason.INFRA_ERROR
 
 
 def test_copilot_truncated_is_infra(tmp_path):
