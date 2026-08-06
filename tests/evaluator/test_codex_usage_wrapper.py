@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from evaluator.backends.codex_usage_wrapper import CODEX_CHILD_USAGE_VERSION, collect_child_usage, main
 
 
@@ -38,6 +40,45 @@ def _context(turn_id: str, model: str = "gpt-5.6-sol") -> dict[str, object]:
         "timestamp": "2026-07-28T00:00:00.000Z",
         "type": "turn_context",
         "payload": {"turn_id": turn_id, "model": model},
+    }
+
+
+def _tool(name: str, call_id: str, arguments: dict[str, object] | None = None) -> dict[str, object]:
+    return {
+        "timestamp": "2026-07-28T00:00:00.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": name,
+            "call_id": call_id,
+            "arguments": json.dumps(arguments or {}),
+        },
+    }
+
+
+def _custom_tool(name: str, call_id: str, tool_input: str = "redacted by the audit") -> dict[str, object]:
+    return {
+        "timestamp": "2026-07-28T00:00:00.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call",
+            "name": name,
+            "call_id": call_id,
+            "input": tool_input,
+        },
+    }
+
+
+def _tool_search(call_id: str) -> dict[str, object]:
+    return {
+        "timestamp": "2026-07-28T00:00:00.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "tool_search_call",
+            "call_id": call_id,
+            "status": "completed",
+            "arguments": {"query": "redacted by the audit"},
+        },
     }
 
 
@@ -491,6 +532,355 @@ def test_persisted_child_reference_requires_a_matching_rollout(tmp_path):
     assert "referenced_child_rollout_missing" in audit["warning_codes"]
 
 
+def test_child_tool_audit_counts_only_own_dispatches_and_excludes_continuations(tmp_path):
+    root_path = _rollout(
+        tmp_path,
+        "root",
+        _event("task_started", turn_id="root-turn"),
+        _context("root-turn"),
+        _tool("exec_command", "parent-call", {"cmd": "tlapm Parent.tla"}),
+        _tokens(100, 50, 20, 4),
+        _event("task_complete", turn_id="root-turn"),
+    )
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _meta("root", "root"),
+        _event("task_started", turn_id="root-turn"),
+        _tool("exec_command", "parent-call", {"cmd": "tlapm Parent.tla"}),
+        _event("task_complete", turn_id="root-turn"),
+        _event("task_started", turn_id="child-turn"),
+        _context("child-turn"),
+        _tool("exec_command", "child-call", {"cmd": "/bin/bash -lc 'tlapm Child.tla'"}),
+        _tool("write_stdin", "child-poll", {"session_id": 1}),
+        _tool("wait", "child-code-mode-poll", {"cell_id": "cell-1"}),
+        _custom_tool("wait", "defensive-custom-poll", '{"cell_id":"cell-1"}'),
+        _custom_tool("apply_patch", "child-edit"),
+        _tool_search("child-search"),
+        _tokens(130, 60, 30, 6),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert audit["tool_calls"] == {
+        "total": 3,
+        "tlaps": 1,
+        "tlc": 0,
+        "apalache": 0,
+        "other": 2,
+        "available": True,
+        "complete": True,
+        "is_lower_bound": False,
+        "warnings": [],
+    }
+    assert "/bin/bash" not in json.dumps(audit)
+
+
+def test_code_mode_child_exec_uses_literal_nested_command_for_classification(tmp_path):
+    secret_command = "tlapm PrivateChild.tla"
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        _custom_tool(
+            "exec",
+            "code-mode",
+            '// @exec: {"max_output_tokens": 100000}\n'
+            "const results = await Promise.all([\n"
+            '  tools.exec_command({cmd: "echo ready"}),\n'
+            f'  tools.exec_command({{cmd: "{secret_command}"}}),\n'
+            "]);\ntext(results.length);",
+        ),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is True
+    assert secret_command not in json.dumps(audit)
+
+
+def test_non_code_mode_shell_command_uses_its_native_command_field(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        _tool("shell_command", "shell", {"command": ["tlapm", "Child.tla"]}),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is True
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        '// tools.exec_command({cmd: "tlapm Comment.tla"});\ntext("done");',
+        "const example = 'tools.exec_command({cmd: \"tlapm String.tla\"})'; text(example);",
+        'const cmd = "tlapm Dynamic.tla"; await tools.exec_command({cmd});',
+        "await tools.exec_command({cmd: `tlapm ${name}.tla`});",
+        'await tools.exec_command({cmd: "tlapm First.tla", cmd: "echo safe"});',
+        'const opts = {cmd: "echo safe"}; await tools.exec_command({cmd: "tlapm Spread.tla", ...opts});',
+        'await tools.exec_command({cmd: "tlapm Computed.tla", ["cmd"]: "echo safe"});',
+        'await tools.exec_command({cmd: "tlapm Broken.tla"',
+    ),
+    ids=("comment", "string", "dynamic", "template", "duplicate", "spread", "computed", "malformed"),
+)
+def test_code_mode_child_exec_is_conservative_for_nonliteral_nested_commands(source, tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        _custom_tool("exec", "code-mode", source),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["other"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is True
+
+
+def test_aborted_child_can_still_enumerate_observed_tool_calls_exactly(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        _tool("exec_command", "child-call", {"cmd": "tlapm Child.tla"}),
+        _event("turn_aborted", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert audit["tool_calls"]["total"] == 1
+    assert audit["tool_calls"]["tlaps"] == 1
+    assert audit["tool_calls"]["complete"] is True
+    assert audit["tool_calls"]["is_lower_bound"] is False
+
+
+def test_replayed_anonymous_child_dispatch_is_one_lower_bound_witness(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    anonymous = _tool("exec_command", None, {"cmd": "tlapm Child.tla"})
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        anonymous,
+        anonymous,
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["is_lower_bound"] is True
+
+
+def test_stable_child_id_dominates_anonymous_dispatch_witness(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        _tool("exec_command", "stable", {"cmd": "tlapm Child.tla"}),
+        _tool("exec_command", None, {"cmd": "tlapm Child.tla"}),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is False
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_id_invalid" in warning for warning in audit["tool_calls"]["warnings"])
+
+
+def test_duplicate_native_child_dispatch_is_deduplicated_and_downgraded(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    dispatch = _tool("exec_command", "duplicate", {"cmd": "tlapm Child.tla"})
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        dispatch,
+        dispatch,
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_id_duplicate" in warning for warning in audit["tool_calls"]["warnings"])
+
+
+def test_direct_child_preserves_tool_evidence_before_its_first_turn(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _tool("exec_command", "early", {"cmd": "tlapm Child.tla"}),
+        _event("task_started", turn_id="child-turn"),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_lifecycle_invalid" in warning for warning in audit["tool_calls"]["warnings"])
+
+
+def test_forked_child_preserves_unmatched_prefix_tool_as_a_lower_bound(tmp_path):
+    root_path = _rollout(tmp_path, "root", *_turn("root-turn"))
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _tool("exec_command", "early-child", {"cmd": "tlapm Child.tla"}),
+        _event("task_started", turn_id="child-turn"),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_boundary_unavailable" in warning for warning in audit["tool_calls"]["warnings"])
+
+
+def test_forked_child_does_not_double_count_ambiguous_prefix_tool(tmp_path):
+    root_path = _rollout(
+        tmp_path,
+        "root",
+        _event("task_started", turn_id="root-turn"),
+        _tool("exec_command", "parent-call", {"cmd": "tlapm Parent.tla"}),
+        _event("task_complete", turn_id="root-turn"),
+    )
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _tool("exec_command", "parent-call", {"cmd": "tlapm Conflicting.tla"}),
+        _event("task_started", turn_id="child-turn"),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert audit["tool_calls"]["total"] == 0
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_boundary_unavailable" in warning for warning in audit["tool_calls"]["warnings"])
+
+
+def test_forked_child_idless_prefix_tool_is_ambiguous_not_an_exact_zero(tmp_path):
+    root_path = _rollout(tmp_path, "root", *_turn("root-turn"))
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _tool("exec_command", None, {"cmd": "tlapm Ambiguous.tla"}),
+        _event("task_started", turn_id="child-turn"),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert audit["tool_calls"]["total"] == 0
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_boundary_unavailable" in warning for warning in audit["tool_calls"]["warnings"])
+
+
+def test_invalid_usage_telemetry_does_not_downgrade_child_tool_enumeration(tmp_path):
+    root_path = _rollout(tmp_path, "root")
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="child-turn"),
+        _context("child-turn"),
+        _tool("exec_command", "child-call", {"cmd": "tlapm Child.tla"}),
+        _event("token_count", info={"total_token_usage": {"input_tokens": 1}}),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert audit["complete"] is False
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is True
+
+
+def test_invalid_parent_usage_telemetry_does_not_hide_forked_child_tools(tmp_path):
+    invalid_tokens = _event("token_count", info={"total_token_usage": {"input_tokens": 1}})
+    root_path = _rollout(
+        tmp_path,
+        "root",
+        _event("task_started", turn_id="root-turn"),
+        _context("root-turn"),
+        invalid_tokens,
+        _event("task_complete", turn_id="root-turn"),
+    )
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _event("task_started", turn_id="root-turn"),
+        _event("task_complete", turn_id="root-turn"),
+        _event("task_started", turn_id="child-turn"),
+        _context("child-turn"),
+        _tool("exec_command", "child-call", {"cmd": "tlapm Child.tla"}),
+        _event("task_complete", turn_id="child-turn"),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert (audit["tool_calls"]["total"], audit["tool_calls"]["tlaps"]) == (1, 1)
+    assert audit["tool_calls"]["complete"] is True
+
+
+def test_forked_child_without_an_own_turn_does_not_claim_exact_zero_tools(tmp_path):
+    root_path = _rollout(tmp_path, "root", *_turn("root-turn", (10, 5, 2, 1)))
+    child_path = _rollout(
+        tmp_path,
+        "child",
+        _meta("root", "root"),
+        *_turn("root-turn", (10, 5, 2, 1)),
+        parent_thread_id="root",
+        forked_from_id="root",
+    )
+
+    audit = collect_child_usage("root", (root_path, child_path))
+
+    assert audit["tool_calls"]["total"] == 0
+    assert audit["tool_calls"]["complete"] is False
+    assert audit["tool_calls"]["is_lower_bound"] is True
+    assert any("child_tool_lifecycle_invalid" in warning for warning in audit["tool_calls"]["warnings"])
+
+
 def test_wrapper_streams_codex_then_appends_one_finished_audit(tmp_path, monkeypatch, capsys):
     codex_home = tmp_path / "codex-home"
     fake_codex = tmp_path / "fake_codex.py"
@@ -540,4 +930,15 @@ print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "output
         "requests": [],
         "complete": True,
         "warning_codes": [],
+        "tool_calls": {
+            "total": 0,
+            "tlaps": 0,
+            "tlc": 0,
+            "apalache": 0,
+            "other": 0,
+            "available": True,
+            "complete": True,
+            "is_lower_bound": False,
+            "warnings": [],
+        },
     }

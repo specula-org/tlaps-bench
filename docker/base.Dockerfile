@@ -114,9 +114,12 @@ ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
     TLAPS_IN_CONTAINER=1
 
 # Layer 8: Provider runners
+RUN pip install --no-cache-dir --break-system-packages \
+    'tree-sitter>=0.25.2' 'tree-sitter-bash>=0.25.1' 'tree-sitter-javascript>=0.25.0'
 COPY src/evaluator/__init__.py src/evaluator/agent_skills.py /opt/evaluator/
 COPY src/evaluator/backends/litellm_agent.py /opt/litellm_agent.py
 COPY src/evaluator/backends/oneshot_runner.py /opt/oneshot_runner.py
+COPY src/evaluator/toolcalls.py /opt/toolcalls.py
 COPY src/evaluator/backends/codex_usage_wrapper.py /opt/codex_usage_wrapper.py
 
 # Lock down checker + SANY

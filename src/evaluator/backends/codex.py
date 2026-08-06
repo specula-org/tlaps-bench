@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from evaluator import quota
+from evaluator import quota, toolcalls
 from evaluator.usage import RequestUsage, UsageSummary
 
 from .agentic import AgenticBackend
@@ -44,6 +44,7 @@ _RETRY_AT_RE = re.compile(r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CODEX_USAGE_SOURCE = "codex_cli_turn_completed"
 _CODEX_CHILD_USAGE_SOURCE = "codex_rollout_child_token_count"
+_CODEX_CHILD_USAGE_COMPATIBLE_VERSIONS = frozenset({3, CODEX_CHILD_USAGE_VERSION})
 _MODEL_ACTIVITY_ITEM_TYPES = frozenset(
     {
         "agent_message",
@@ -55,6 +56,10 @@ _MODEL_ACTIVITY_ITEM_TYPES = frozenset(
         "web_search",
         "todo_list",
     }
+)
+# Item types that are a tool call rather than the model thinking out loud.
+_TOOL_ITEM_TYPES = frozenset(
+    {"command_execution", "file_change", "mcp_tool_call", "collab_tool_call", "todo_list", "web_search"}
 )
 _STREAM_LAG_RE = re.compile(r"event stream lagged; dropped\s+\d+\s+events?", re.IGNORECASE)
 
@@ -82,6 +87,12 @@ class _CodexChildUsageAudit:
     requests: tuple[RequestUsage, ...]
     complete: bool
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _CodexChildToolAudit:
+    root_thread_id: str
+    tool_calls: toolcalls.ToolCallSummary
 
 
 @dataclass(frozen=True)
@@ -174,7 +185,9 @@ def _parse_child_usage_audit(
     event: dict[str, Any],
 ) -> tuple[_CodexChildUsageAudit | None, tuple[str, ...]]:
     version = event.get("version")
-    if type(version) is not int or version != CODEX_CHILD_USAGE_VERSION:
+    # v4 only adds the independent tool-call tally; its usage payload is still
+    # wire-compatible with v3 records that may already be archived.
+    if type(version) is not int or version not in _CODEX_CHILD_USAGE_COMPATIBLE_VERSIONS:
         return None, ("Codex child-usage audit has an unsupported version",)
 
     root_thread_id = event.get("root_thread_id")
@@ -278,6 +291,24 @@ def _parse_child_usage_audit(
         ),
         (),
     )
+
+
+def _parse_child_tool_audit(
+    event: dict[str, Any],
+) -> tuple[_CodexChildToolAudit | None, tuple[str, ...]]:
+    """Validate the tool-only, privacy-preserving part of a child audit."""
+
+    version = event.get("version")
+    if type(version) is not int or version != CODEX_CHILD_USAGE_VERSION:
+        return None, ("Codex child tool-call audit has an unsupported version",)
+    root_thread_id = event.get("root_thread_id")
+    if not isinstance(root_thread_id, str) or not root_thread_id:
+        return None, ("Codex child tool-call audit has no root thread ID",)
+    raw_summary = event.get("tool_calls")
+    summary = toolcalls.ToolCallSummary.from_dict(raw_summary)
+    if not isinstance(raw_summary, dict) or not summary.available:
+        return None, ("Codex child tool-call audit is missing or invalid",)
+    return _CodexChildToolAudit(root_thread_id=root_thread_id, tool_calls=summary), ()
 
 
 def _request_token_totals(requests: tuple[RequestUsage, ...]) -> tuple[int, int, int, int, int]:
@@ -636,6 +667,297 @@ def _parse_codex_run(jsonl_path: str) -> _ParsedCodexRun:
     )
 
 
+def _tool_command(item: dict[str, Any]) -> str | None:
+    command = item.get("command")
+    return command if item.get("type") == "command_execution" and isinstance(command, str) else None
+
+
+def _same_tool_item(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return left.get("type") == right.get("type") and _tool_command(left) == _tool_command(right)
+
+
+def _parse_tool_calls(jsonl_path: str) -> toolcalls.ToolCallSummary:
+    """Count root dispatches and merge the wrapper's sanitized child tally."""
+
+    evidence = toolcalls.EventStreamEvidence()
+    starts: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    updates: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    completions: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    anonymous_starts: list[tuple[int, dict[str, Any]]] = []
+    anonymous_updates: list[tuple[int, dict[str, Any]]] = []
+    anonymous_completions: list[tuple[int, dict[str, Any]]] = []
+    root_thread_ids: list[str | None] = []
+    root_thread_indexes: list[int] = []
+    turn_started_indexes: list[int] = []
+    terminals: list[tuple[int, str]] = []
+    trailing_root_activity = False
+    saw_stream_lag = False
+    saw_multi_agent_activity = False
+    child_audit_starts = 0
+    child_audit_events = 0
+    child_audits: list[_CodexChildToolAudit] = []
+    warnings: list[str] = []
+
+    for index, event in enumerate(toolcalls.iter_events(jsonl_path, evidence)):
+        event_type = event.get("type")
+        if terminals and event_type in {"turn.started", "turn.completed", "turn.failed"}:
+            trailing_root_activity = True
+        if event_type == "thread.started":
+            thread_id = event.get("thread_id")
+            root_thread_ids.append(thread_id if isinstance(thread_id, str) and thread_id else None)
+            root_thread_indexes.append(index)
+        elif event_type == "turn.started":
+            turn_started_indexes.append(index)
+        elif event_type in {"turn.completed", "turn.failed"}:
+            terminals.append((index, event_type))
+        elif event_type == CODEX_CHILD_USAGE_START_EVENT:
+            child_audit_starts += 1
+        elif event_type == CODEX_CHILD_USAGE_EVENT:
+            child_audit_events += 1
+            audit, audit_warnings = _parse_child_tool_audit(event)
+            warnings.extend(audit_warnings)
+            if audit is not None:
+                child_audits.append(audit)
+
+        item = event.get("item")
+        if not event_type.startswith("item."):
+            continue
+        if not isinstance(item, dict):
+            evidence.warn("Codex item event has an invalid item object")
+            continue
+        if terminals and index > terminals[-1][0]:
+            trailing_root_activity = True
+        item_type = item.get("type")
+        if not isinstance(item_type, str):
+            evidence.warn("Codex item event has a missing or invalid item type")
+            continue
+        if item_type == "collab_tool_call":
+            saw_multi_agent_activity = True
+        elif item_type == "error":
+            message = item.get("message")
+            if isinstance(message, str) and _STREAM_LAG_RE.search(message):
+                saw_stream_lag = True
+        if item_type not in _TOOL_ITEM_TYPES or event_type not in {
+            "item.started",
+            "item.updated",
+            "item.completed",
+        }:
+            continue
+        item_id = item.get("id")
+        if event_type == "item.started":
+            target, anonymous = starts, anonymous_starts
+        elif event_type == "item.updated":
+            target, anonymous = updates, anonymous_updates
+        else:
+            target, anonymous = completions, anonymous_completions
+        if isinstance(item_id, str) and item_id:
+            target.setdefault(item_id, []).append((index, item))
+        else:
+            anonymous.append((index, item))
+
+    lifecycle_complete = True
+    if saw_stream_lag:
+        evidence.warn("Codex reported dropped JSONL events; tool-call totals may be incomplete")
+    if len(root_thread_ids) != 1 or root_thread_ids[0] is None:
+        warnings.append("Codex tool-call stream does not identify exactly one primary thread")
+        lifecycle_complete = False
+    if len(turn_started_indexes) != 1:
+        warnings.append("Codex tool-call stream does not contain exactly one turn.started event")
+        lifecycle_complete = False
+    if len(terminals) != 1 or terminals[0][1] not in {"turn.completed", "turn.failed"}:
+        warnings.append("Codex tool-call stream did not end in one terminal turn event")
+        lifecycle_complete = False
+    if trailing_root_activity:
+        warnings.append("Codex tool-call stream contains item activity after its terminal event")
+        lifecycle_complete = False
+    if (
+        len(root_thread_indexes) == 1
+        and len(turn_started_indexes) == 1
+        and len(terminals) == 1
+        and not (root_thread_indexes[0] < turn_started_indexes[0] < terminals[0][0])
+    ):
+        warnings.append("Codex tool-call stream has an invalid thread/turn event order")
+        lifecycle_complete = False
+
+    tool_item_indexes = [
+        index
+        for entries in (
+            *starts.values(),
+            *updates.values(),
+            *completions.values(),
+            anonymous_starts,
+            anonymous_updates,
+            anonymous_completions,
+        )
+        for index, _item in entries
+    ]
+    if (
+        tool_item_indexes
+        and len(turn_started_indexes) == 1
+        and len(terminals) == 1
+        and any(not (turn_started_indexes[0] < index < terminals[0][0]) for index in tool_item_indexes)
+    ):
+        warnings.append("Codex tool-call stream contains tool activity outside its active turn")
+        lifecycle_complete = False
+
+    observed: list[tuple[int, str | None]] = []
+    all_item_ids = set(starts) | set(updates) | set(completions)
+    todo_ids = {
+        item_id
+        for item_id in all_item_ids
+        if any(
+            item.get("type") == "todo_list"
+            for entries in (starts.get(item_id, ()), updates.get(item_id, ()), completions.get(item_id, ()))
+            for _index, item in entries
+        )
+    }
+    for item_id in sorted(
+        todo_ids,
+        key=lambda candidate: min(
+            index
+            for entries in (starts.get(candidate, ()), updates.get(candidate, ()), completions.get(candidate, ()))
+            for index, _item in entries
+        ),
+    ):
+        started = starts.get(item_id, [])
+        updated = updates.get(item_id, [])
+        completed = completions.get(item_id, [])
+        all_entries = [*started, *updated, *completed]
+        if started:
+            observed.append((started[0][0], _tool_command(started[0][1])))
+        todo_updates = [(index, item) for index, item in updated if item.get("type") == "todo_list"]
+        observed.extend((index, None) for index, _item in todo_updates)
+        if not started and not todo_updates and completed:
+            observed.append((completed[0][0], _tool_command(completed[0][1])))
+
+        if any(item.get("type") != "todo_list" for _index, item in all_entries):
+            warnings.append(f"Codex todo item {item_id} conflicts with another tool item type")
+            lifecycle_complete = False
+        if len(started) != 1:
+            warning = "has no started event" if not started else "has duplicate started events"
+            warnings.append(f"Codex todo item {item_id} {warning}")
+            lifecycle_complete = False
+        if len(completed) != 1:
+            warning = "did not complete" if not completed else "has duplicate completed events"
+            warnings.append(f"Codex todo item {item_id} {warning}")
+            lifecycle_complete = False
+        if started and completed:
+            start_index = started[0][0]
+            completion_index = completed[0][0]
+            if completion_index <= start_index or any(
+                not (start_index < update_index < completion_index) for update_index, _item in updated
+            ):
+                warnings.append(f"Codex todo item {item_id} has an invalid update lifecycle")
+                lifecycle_complete = False
+
+    for item_id, entries in starts.items():
+        if item_id in todo_ids:
+            continue
+        first_index, first_item = entries[0]
+        observed.append((first_index, _tool_command(first_item)))
+        if len(entries) > 1:
+            warnings.append(f"Codex tool item {item_id} has duplicate started events")
+            lifecycle_complete = False
+        if any(not _same_tool_item(first_item, item) for _, item in entries[1:]):
+            warnings.append(f"Codex tool item {item_id} has conflicting started events")
+            lifecycle_complete = False
+        completed = completions.get(item_id, [])
+        if not completed:
+            warnings.append(f"Codex tool item {item_id} started but did not complete")
+            lifecycle_complete = False
+        else:
+            if len(completed) > 1:
+                warnings.append(f"Codex tool item {item_id} has duplicate completed events")
+                lifecycle_complete = False
+            if any(index <= first_index or not _same_tool_item(first_item, item) for index, item in completed):
+                warnings.append(f"Codex tool item {item_id} has an inconsistent completed event")
+                lifecycle_complete = False
+            first_completed = completed[0][1]
+            if any(not _same_tool_item(first_completed, item) for _, item in completed[1:]):
+                warnings.append(f"Codex tool item {item_id} has conflicting completed events")
+                lifecycle_complete = False
+    for item_id, entries in completions.items():
+        if item_id in starts or item_id in todo_ids:
+            continue
+        first_index, first_item = entries[0]
+        observed.append((first_index, _tool_command(first_item)))
+        warnings.append(f"Codex tool item {item_id} completed without a recorded start")
+        lifecycle_complete = False
+        if len(entries) > 1:
+            warnings.append(f"Codex tool item {item_id} has duplicate completed events")
+        if any(not _same_tool_item(first_item, item) for _, item in entries[1:]):
+            warnings.append(f"Codex tool item {item_id} has conflicting completed events")
+    for item_id, entries in updates.items():
+        if item_id in todo_ids:
+            continue
+        warnings.append(f"Codex tool item {item_id} has an unexpected updated event")
+        lifecycle_complete = False
+        if item_id not in starts and item_id not in completions:
+            first_index, first_item = entries[0]
+            observed.append((first_index, _tool_command(first_item)))
+    # Without IDs, repeated lifecycle records cannot be distinguished from
+    # repeated calls.  Keep one positive dispatch witness per signature so the
+    # degraded result remains a genuine lower bound instead of over-counting a
+    # replayed start or completion.
+    anonymous_witnesses = [*anonymous_starts, *anonymous_updates, *anonymous_completions]
+    if anonymous_witnesses and not starts and not updates and not completions:
+        index, item = min(anonymous_witnesses, key=lambda entry: entry[0])
+        observed.append((index, _tool_command(item)))
+    if anonymous_starts or anonymous_updates or anonymous_completions:
+        warnings.append("Codex tool-call stream contains tool items without IDs")
+        lifecycle_complete = False
+
+    observed.sort(key=lambda entry: entry[0])
+    summary = toolcalls.summarize(
+        (command for _, command in observed),
+        evidence,
+        lifecycle_complete=lifecycle_complete,
+        warnings=warnings,
+    )
+
+    if child_audit_starts == 0:
+        if child_audit_events:
+            return summary.merge(
+                toolcalls.ToolCallSummary.from_commands(
+                    (),
+                    available=True,
+                    complete=False,
+                    warnings=("Codex child tool-call audit appeared without its start sentinel",),
+                )
+            )
+        if saw_multi_agent_activity:
+            return summary.merge(
+                toolcalls.ToolCallSummary.from_commands(
+                    (),
+                    available=True,
+                    complete=False,
+                    warnings=("Codex multi-agent activity has no child tool-call audit",),
+                )
+            )
+        return summary
+
+    if child_audit_starts != 1 or child_audit_events != 1 or len(child_audits) != 1:
+        return summary.merge(
+            toolcalls.ToolCallSummary.from_commands(
+                (),
+                available=True,
+                complete=False,
+                warnings=("Codex child tool-call audit is missing or ambiguous",),
+            )
+        )
+    child_audit = child_audits[0]
+    if len(root_thread_ids) != 1 or root_thread_ids[0] != child_audit.root_thread_id:
+        return summary.merge(
+            toolcalls.ToolCallSummary.from_commands(
+                (),
+                available=True,
+                complete=False,
+                warnings=("Codex child tool-call audit does not match the primary thread",),
+            )
+        )
+    return summary.merge(child_audit.tool_calls)
+
+
 class CodexBackend(AgenticBackend):
     name = "codex"
     requires_public_pricing = True
@@ -899,6 +1221,9 @@ class CodexBackend(AgenticBackend):
             return target
         except Exception:
             return None
+
+    def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
+        return {"tool_calls": _parse_tool_calls(jsonl_path).to_dict()}
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         parsed = _parse_codex_run(jsonl_path)

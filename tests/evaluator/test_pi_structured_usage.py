@@ -1116,6 +1116,170 @@ def test_exact_pre_stream_fallback_closes_open_turn_without_model_activity(tmp_p
     assert PiBackend().retry_may_duplicate_model_work(str(output)) is False
 
 
+def test_tool_metadata_counts_native_starts_and_uses_settled_as_terminal(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "tool-1",
+            "toolName": "bash",
+            "args": {"command": "tlapm Foo.tla"},
+        },
+        {"type": "tool_execution_end", "toolCallId": "tool-1", "toolName": "bash", "result": {}},
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "tool-2",
+            "toolName": "read",
+            "args": {"path": "Foo.tla"},
+        },
+        {"type": "tool_execution_end", "toolCallId": "tool-2", "toolName": "read", "result": {}},
+        {"type": "agent_settled"},
+    )
+
+    assert PiBackend().parse_run_metadata(str(output))["tool_calls"] == {
+        "total": 2,
+        "tlaps": 1,
+        "tlc": 0,
+        "apalache": 0,
+        "other": 1,
+        "available": True,
+        "complete": True,
+        "is_lower_bound": False,
+        "warnings": [],
+    }
+
+
+def test_tool_metadata_deduplicates_native_call_ids(tmp_path):
+    output = tmp_path / "output.jsonl"
+    start = {
+        "type": "tool_execution_start",
+        "toolCallId": "tool-1",
+        "toolName": "bash",
+        "args": {"command": "tlapm Foo.tla"},
+    }
+    _write_jsonl(
+        output,
+        start,
+        start,
+        {"type": "tool_execution_end", "toolCallId": "tool-1", "toolName": "bash", "result": {}},
+        {"type": "agent_settled"},
+    )
+
+    summary = PiBackend().parse_run_metadata(str(output))["tool_calls"]
+
+    assert summary["total"] == 1
+    assert summary["tlaps"] == 1
+    assert summary["complete"] is False
+    assert summary["is_lower_bound"] is True
+    assert any("duplicate toolCallId" in warning for warning in summary["warnings"])
+
+
+def test_tool_metadata_counts_orphan_lifecycle_once_as_other(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {
+            "type": "tool_execution_update",
+            "toolCallId": "tool-1",
+            "toolName": "bash",
+            "args": {"command": "tlapm Foo.tla"},
+            "partialResult": {},
+        },
+        {"type": "tool_execution_end", "toolCallId": "tool-1", "toolName": "bash", "result": {}},
+        {"type": "agent_settled"},
+    )
+
+    summary = PiBackend().parse_run_metadata(str(output))["tool_calls"]
+
+    assert (summary["total"], summary["tlaps"], summary["other"]) == (1, 0, 1)
+    assert summary["complete"] is False
+    assert summary["is_lower_bound"] is True
+    assert any("no matching tool_execution_start" in warning for warning in summary["warnings"])
+
+
+def test_tool_metadata_counts_anonymous_orphan_as_positive_evidence(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(
+        output,
+        {"type": "tool_execution_end", "toolName": "bash", "result": {}},
+        {"type": "agent_settled"},
+    )
+
+    summary = PiBackend().parse_run_metadata(str(output))["tool_calls"]
+
+    assert (summary["total"], summary["other"]) == (1, 1)
+    assert summary["is_lower_bound"] is True
+
+
+@pytest.mark.parametrize(
+    "events, warning",
+    [
+        (
+            (
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": "tool-1",
+                    "toolName": "bash",
+                    "args": {"command": "tlapm Foo.tla"},
+                },
+                {"type": "tool_execution_end", "toolCallId": "tool-1", "toolName": "bash", "result": {}},
+            ),
+            "agent_settled was not observed",
+        ),
+        (
+            (
+                {"type": "agent_settled"},
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": "tool-1",
+                    "toolName": "bash",
+                    "args": {"command": "tlapm Foo.tla"},
+                },
+                {"type": "tool_execution_end", "toolCallId": "tool-1", "toolName": "bash", "result": {}},
+            ),
+            "activity after agent_settled",
+        ),
+        (
+            (
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": "tool-1",
+                    "toolName": "bash",
+                    "args": {"command": "tlapm Foo.tla"},
+                },
+                {"type": "agent_settled"},
+            ),
+            "unfinished tool execution",
+        ),
+    ],
+    ids=("missing-settled", "activity-after-settled", "unfinished-tool"),
+)
+def test_tool_metadata_requires_a_complete_pi_lifecycle(events, warning, tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(output, *events)
+
+    summary = PiBackend().parse_run_metadata(str(output))["tool_calls"]
+
+    assert summary["total"] == 1
+    assert summary["complete"] is False
+    assert summary["is_lower_bound"] is True
+    assert any(warning in item for item in summary["warnings"])
+
+
+def test_tool_metadata_malformed_stream_is_a_lower_bound(tmp_path):
+    output = tmp_path / "output.jsonl"
+    _write_jsonl(output, "not-json", {"type": "agent_settled"})
+
+    summary = PiBackend().parse_run_metadata(str(output))["tool_calls"]
+
+    assert summary["total"] == 0
+    assert summary["available"] is True
+    assert summary["complete"] is False
+    assert summary["is_lower_bound"] is True
+    assert "tool-call event stream contains malformed JSON" in summary["warnings"]
+
+
 def test_pi_cli_and_kiro_provider_installs_use_latest_releases():
     script = Path("docker/install-scripts/install-pi.sh").read_text()
 

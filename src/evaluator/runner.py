@@ -43,7 +43,7 @@ from common.container import (
     forward_env,
 )
 from common.task_contract import TaskContractError
-from evaluator import quota
+from evaluator import quota, toolcalls
 from evaluator.agent_skills import discover_agent_skills
 from evaluator.backends import get_backend, list_backends
 from evaluator.backends.base import Backend, SubmissionDisposition
@@ -1530,6 +1530,12 @@ def _run_continuations(
             if formal_round or not _supports_cost_time(item.backend):
                 aggregate_usage = UsageSummary.from_dict(result.get("usage")).merge(round_usage)
                 result["usage"] = aggregate_usage.to_dict()
+                if "tool_calls" in result or "tool_calls" in round_result:
+                    result["tool_calls"] = (
+                        toolcalls.ToolCallSummary.from_dict(result.get("tool_calls"))
+                        .merge(toolcalls.ToolCallSummary.from_dict(round_result.get("tool_calls")))
+                        .to_dict()
+                    )
                 result["time_secs"] = _sum_accounting_values(
                     result.get("time_secs"),
                     round_result.get("time_secs"),

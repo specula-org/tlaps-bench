@@ -30,6 +30,20 @@ STARTUP = {"exit": 1, "stderr": "Error: Failed to load models\n"}
 GENUINE = {"exit": 0, "events": CLEAN_EVENTS, "out_tokens": 500}
 
 
+def _tool_calls(*, tlaps=0, tlc=0, apalache=0, other=0, available=True, complete=True, warnings=()):
+    return {
+        "total": tlaps + tlc + apalache + other,
+        "tlaps": tlaps,
+        "tlc": tlc,
+        "apalache": apalache,
+        "other": other,
+        "available": available,
+        "complete": complete,
+        "is_lower_bound": available and not complete,
+        "warnings": list(warnings),
+    }
+
+
 class _ScriptedBackend(AgenticBackend):
     """Backend whose per-call behavior is scripted (see _install_agent)."""
 
@@ -40,6 +54,7 @@ class _ScriptedBackend(AgenticBackend):
         self.out_tokens = 0  # set by the fake agent for the current call
         self.cost = 0.0
         self.submission_metadata = {}
+        self.tool_calls_by_path = {}
 
     def parse_output(self, jsonl_path):
         return ("", self.in_tokens, self.out_tokens)
@@ -58,6 +73,13 @@ class _ScriptedBackend(AgenticBackend):
             source="scripted",
             complete=True,
         )
+
+    def parse_run_metadata(self, jsonl_path):
+        summary = self.tool_calls_by_path.get(
+            jsonl_path,
+            _tool_calls(available=False, complete=False, warnings=("scripted tool-call data unavailable",)),
+        )
+        return {"tool_calls": summary}
 
     def build_command(self, workspace, result_dir):
         return ["fake-agent"]
@@ -137,6 +159,7 @@ def _install_agent(monkeypatch, backend, calls_spec):
         backend.in_tokens = spec.get("in_tokens", 0)
         backend.out_tokens = spec.get("out_tokens", 0)
         backend.cost = spec.get("cost", 0.0)
+        backend.tool_calls_by_path[agent_jsonl] = spec.get("tool_calls", _tool_calls())
         if "mutate" in spec:
             spec["mutate"](workspace)
         if "mutate_canonical" in spec:
@@ -425,6 +448,99 @@ def test_costs_accumulate_into_top_level(tmp_path, monkeypatch):
     assert result["continuations"][0]["usage"]["costs"] == [
         {"amount": 0.006, "unit": "provider_monetary", "source": "test.cost"}
     ]
+
+
+def test_tool_calls_accumulate_across_formal_continuation_rounds(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    _install_agent(
+        monkeypatch,
+        backend,
+        [
+            dict(GENUINE, tool_calls=_tool_calls(tlaps=1, other=2)),
+            dict(GENUINE, tool_calls=_tool_calls(tlc=2, apalache=1, other=1)),
+            dict(GENUINE, tool_calls=_tool_calls(tlaps=2, tlc=1, apalache=1, other=1)),
+        ],
+    )
+    _install_grader(monkeypatch, ["FAIL", "FAIL", "PASS"])
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, max_continuations=2))
+
+    assert result["tool_calls"] == _tool_calls(tlaps=3, tlc=3, apalache=2, other=4)
+    assert [round_result["tool_calls"] for round_result in result["continuations"]] == [
+        _tool_calls(tlc=2, apalache=1, other=1),
+        _tool_calls(tlaps=2, tlc=1, apalache=1, other=1),
+    ]
+
+
+def test_tool_calls_lower_bound_propagates_from_any_formal_round(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    warning = "continuation tool-call stream was truncated"
+    _install_agent(
+        monkeypatch,
+        backend,
+        [
+            dict(GENUINE, tool_calls=_tool_calls(tlaps=1)),
+            dict(
+                GENUINE,
+                tool_calls=_tool_calls(tlc=2, complete=False, warnings=(warning,)),
+            ),
+        ],
+    )
+    _install_grader(monkeypatch, ["FAIL", "PASS"])
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, max_continuations=1))
+
+    assert result["tool_calls"] == _tool_calls(
+        tlaps=1,
+        tlc=2,
+        complete=False,
+        warnings=(warning,),
+    )
+    assert result["continuations"][0]["tool_calls"] == _tool_calls(
+        tlc=2,
+        complete=False,
+        warnings=(warning,),
+    )
+
+
+def test_zero_first_attempt_then_prover_call_is_nonzero_at_top_level(tmp_path, monkeypatch):
+    backend = _ScriptedBackend()
+    _install_agent(
+        monkeypatch,
+        backend,
+        [
+            dict(GENUINE, tool_calls=_tool_calls()),
+            dict(GENUINE, tool_calls=_tool_calls(tlaps=1)),
+        ],
+    )
+    _install_grader(monkeypatch, ["FAIL", "PASS"])
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, max_continuations=1))
+
+    assert result["tool_calls"] == _tool_calls(tlaps=1)
+    assert result["continuations"][0]["tool_calls"] == _tool_calls(tlaps=1)
+
+
+def test_non_formal_tool_calls_follow_existing_accounting_scope(tmp_path, monkeypatch):
+    for backend_name, expected_total in (("copilot", 1), ("legacy-scripted", 3)):
+        case_dir = tmp_path / backend_name
+        backend = _ScriptedBackend()
+        backend.name = backend_name
+        _install_agent(
+            monkeypatch,
+            backend,
+            [
+                dict(GENUINE, in_tokens=10, tool_calls=_tool_calls(tlaps=1)),
+                dict(STARTUP, in_tokens=20, tool_calls=_tool_calls(other=2)),
+            ],
+        )
+        _install_grader(monkeypatch, ["FAIL", "FAIL"])
+
+        result = runner.run_single_benchmark(_work_item(case_dir, backend, max_continuations=1))
+
+        assert result["tool_calls"]["total"] == expected_total
+        assert result["input_tokens"] == (10 if backend_name == "copilot" else 30)
+        assert result["continuations"][0]["tool_calls"] == _tool_calls(other=2)
 
 
 def test_submission_metadata_cannot_replace_usage_before_continuation(tmp_path, monkeypatch):

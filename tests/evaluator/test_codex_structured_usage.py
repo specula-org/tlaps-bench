@@ -1,6 +1,7 @@
 """Structured usage parsing for the native Codex CLI JSONL contract."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -316,6 +317,23 @@ def test_complete_child_audit_aggregates_parent_and_child_native_usage(tmp_path)
         "codex_rollout_child_token_count",
     )
     assert usage.warnings == ()
+
+
+def test_version_three_child_usage_remains_readable(tmp_path):
+    output = tmp_path / "output.jsonl"
+    legacy_audit = _child_audit()
+    legacy_audit["version"] = 3
+    _write_jsonl(
+        output,
+        {"type": "thread.started", "thread_id": "parent"},
+        _completed_usage(),
+        legacy_audit,
+    )
+
+    usage = CodexBackend().parse_usage(str(output), input_tokens=280, output_tokens=70)
+
+    assert usage.status == "complete"
+    assert (usage.input_tokens, usage.output_tokens) == (280, 70)
 
 
 def test_v3_prices_two_large_requests_individually_instead_of_one_aggregate_tier(tmp_path):
@@ -799,6 +817,8 @@ def test_codex_local_command_uses_the_installed_usage_wrapper(tmp_path):
 
     assert Path(command[1]).resolve() == Path("src/evaluator/backends/codex_usage_wrapper.py").resolve()
     assert command[2:4] == ["--", "codex"]
+    completed = subprocess.run(command[:2] + ["--help"], capture_output=True, text=True, timeout=10)
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_codex_last_message_is_isolated_across_retries():

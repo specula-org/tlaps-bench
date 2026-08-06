@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from evaluator import toolcalls
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
 from .agentic import AgenticBackend
@@ -16,6 +17,159 @@ from .litellm_common import (
     credential_mounts,
     uses_bedrock,
 )
+
+
+def _tool_commands(
+    jsonl_path: str,
+    evidence: toolcalls.EventStreamEvidence,
+) -> tuple[list[str | None], bool, tuple[str, ...]]:
+    """Collect dispatched calls and require the producer's terminal usage record."""
+
+    commands: list[str | None] = []
+    command_indexes: dict[tuple[int | None, str], int] = {}
+    seen_ids: set[tuple[int | None, str]] = set()
+    open_ids: list[tuple[int | None, str]] = []
+    completed_ids: set[tuple[int | None, str]] = set()
+    call_names: dict[tuple[int | None, str], str | None] = {}
+    unknown_absorbed_iterations: dict[str, int] = {}
+    anonymous_open = False
+    anonymous_witness_observed = False
+    anonymous_command_index: int | None = None
+    warnings: list[str] = []
+    terminal_count = 0
+    activity_after_terminal = False
+    call_ids_valid = True
+
+    def canonical_call_key(call_id: str | None, iteration: int | None) -> tuple[int | None, str] | None:
+        if call_id is None:
+            return None
+        unknown_key = (None, call_id)
+        if unknown_key in seen_ids:
+            if iteration is None:
+                return unknown_key
+            absorbed_iteration = unknown_absorbed_iterations.get(call_id)
+            if absorbed_iteration is None:
+                unknown_absorbed_iterations[call_id] = iteration
+                return unknown_key
+            if absorbed_iteration == iteration:
+                return unknown_key
+        if iteration is None:
+            return next(
+                (key for key in seen_ids if key[1] == call_id and key[0] is not None),
+                unknown_key,
+            )
+        return (iteration, call_id)
+
+    for event in toolcalls.iter_events(jsonl_path, evidence):
+        event_type = event.get("type")
+        if event_type == "usage":
+            terminal_count += 1
+            continue
+        if terminal_count and event_type in {"error", "request_usage", "response", "tool_call", "tool_result"}:
+            activity_after_terminal = True
+        if event_type not in {"tool_call", "tool_result"}:
+            continue
+
+        raw_call_id = event.get("toolCallId")
+        call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+        raw_iteration = event.get("iteration")
+        iteration = raw_iteration if type(raw_iteration) is int and raw_iteration > 0 else None
+        if iteration is None:
+            call_ids_valid = False
+            warnings.append(f"LiteLLM {event_type} has a missing or invalid iteration")
+        raw_name = event.get("name")
+        name = raw_name if isinstance(raw_name, str) and raw_name else None
+        if name is None:
+            call_ids_valid = False
+            warnings.append(f"LiteLLM {event_type} has a missing or invalid name")
+        call_key = canonical_call_key(call_id, iteration)
+        if event_type == "tool_result":
+            if call_key is None:
+                call_ids_valid = False
+                warnings.append("LiteLLM tool_result has missing or invalid toolCallId")
+                if anonymous_open:
+                    anonymous_open = False
+                elif open_ids:
+                    open_ids.pop(0)
+                elif not anonymous_witness_observed:
+                    anonymous_command_index = len(commands)
+                    commands.append(None)
+                    anonymous_witness_observed = True
+            elif call_key in open_ids:
+                open_ids.remove(call_key)
+                completed_ids.add(call_key)
+                if call_names.get(call_key) != name:
+                    call_ids_valid = False
+                    warnings.append("LiteLLM tool_call and tool_result names disagree")
+            elif call_key in completed_ids:
+                call_ids_valid = False
+                warnings.append("LiteLLM tool-call stream contains a duplicate tool_result")
+            elif call_key in seen_ids:
+                call_ids_valid = False
+                warnings.append("LiteLLM tool_result has no open dispatch")
+            elif any(seen_call_id == call_id for _seen_iteration, seen_call_id in seen_ids):
+                call_ids_valid = False
+                warnings.append("LiteLLM tool_result iteration disagrees with its tool_call")
+            else:
+                seen_ids.add(call_key)
+                completed_ids.add(call_key)
+                command_indexes[call_key] = len(commands)
+                commands.append(None)
+                call_ids_valid = False
+                warnings.append("LiteLLM tool_result has no matching tool_call")
+            continue
+
+        args = event.get("args")
+        if not isinstance(args, dict):
+            call_ids_valid = False
+            warnings.append("LiteLLM tool_call has invalid args")
+        command = args.get("command") if name == "bash" and isinstance(args, dict) else None
+        command = command if isinstance(command, str) else None
+        record_anonymous_command = False
+        if call_key is None:
+            # Legacy records had no ID. Preserve their observed calls, but they
+            # cannot prove that duplicate dispatch records were not counted.
+            call_ids_valid = False
+            warnings.append("LiteLLM tool_call has missing or invalid toolCallId")
+            if anonymous_open:
+                continue
+            anonymous_open = True
+            if anonymous_witness_observed:
+                continue
+            anonymous_witness_observed = True
+            record_anonymous_command = True
+        elif call_key in seen_ids:
+            call_ids_valid = False
+            warnings.append("LiteLLM tool-call stream contains a duplicate toolCallId")
+            existing_index = command_indexes.get(call_key)
+            if existing_index is not None and (call_names.get(call_key) != name or commands[existing_index] != command):
+                commands[existing_index] = None
+            continue
+        else:
+            seen_ids.add(call_key)
+            open_ids.append(call_key)
+            call_names[call_key] = name
+            command_indexes[call_key] = len(commands)
+
+        if record_anonymous_command:
+            anonymous_command_index = len(commands)
+        commands.append(command)
+
+    if terminal_count == 0:
+        warnings.append("LiteLLM terminal usage event was not observed for tool-call accounting")
+    elif terminal_count > 1:
+        warnings.append("LiteLLM tool-call stream contains multiple terminal usage events")
+    if activity_after_terminal:
+        warnings.append("LiteLLM tool-call stream contains events after the terminal usage event")
+    if seen_ids and anonymous_command_index is not None:
+        commands.pop(anonymous_command_index)
+    unfinished = len(open_ids) + int(anonymous_open)
+    if unfinished:
+        call_ids_valid = False
+        warnings.append(f"LiteLLM tool-call stream ended with {unfinished} unfinished tool execution(s)")
+
+    lifecycle_complete = terminal_count == 1 and not activity_after_terminal and call_ids_valid
+    return commands, lifecycle_complete, tuple(dict.fromkeys(warnings))
 
 
 class LiteLLMBackend(AgenticBackend):
@@ -55,6 +209,17 @@ class LiteLLMBackend(AgenticBackend):
 
     def check_auth(self) -> str | None:
         return check_auth(self.model, self.name)
+
+    def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
+        evidence = toolcalls.EventStreamEvidence()
+        commands, lifecycle_complete, warnings = _tool_commands(jsonl_path, evidence)
+        summary = toolcalls.summarize(
+            commands,
+            evidence,
+            lifecycle_complete=lifecycle_complete,
+            warnings=warnings,
+        )
+        return {"tool_calls": summary.to_dict()}
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

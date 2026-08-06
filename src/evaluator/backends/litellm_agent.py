@@ -282,21 +282,56 @@ def main() -> int:
         # Execute tool calls
         for tc in tool_calls:
             fn_name = tc.function.name
+            raw_arguments = tc.function.arguments
+            arguments_valid = True
             try:
-                fn_args = json.loads(tc.function.arguments)
+                fn_args = json.loads(raw_arguments)
+                if not isinstance(fn_args, dict):
+                    raise TypeError("tool arguments must be a JSON object")
             except (json.JSONDecodeError, TypeError):
                 fn_args = {}
-                err_result = f"ERROR: malformed JSON in tool arguments: {tc.function.arguments[:200]}"
+                arguments_valid = False
+                err_result = f"ERROR: malformed JSON in tool arguments: {str(raw_arguments)[:200]}"
+
+            tool_call_event = {
+                "type": "tool_call",
+                "toolCallId": tc.id,
+                "name": fn_name,
+                "args": fn_args,
+                "iteration": i,
+            }
+            if not arguments_valid:
+                tool_call_event["arguments_valid"] = False
+            # This is the dispatch record: emit it before attempting execution,
+            # including when the model supplied malformed arguments.
+            print(json.dumps(tool_call_event), flush=True)
+
+            if not arguments_valid:
                 print(
-                    json.dumps({"type": "tool_result", "name": fn_name, "result": err_result, "iteration": i}),
+                    json.dumps(
+                        {
+                            "type": "tool_result",
+                            "toolCallId": tc.id,
+                            "name": fn_name,
+                            "result": err_result,
+                            "iteration": i,
+                        }
+                    ),
                     flush=True,
                 )
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_result})
                 continue
-            print(json.dumps({"type": "tool_call", "name": fn_name, "args": fn_args, "iteration": i}), flush=True)
             result = exec_tool(fn_name, fn_args, args.workspace)
             print(
-                json.dumps({"type": "tool_result", "name": fn_name, "result": result[:2000], "iteration": i}),
+                json.dumps(
+                    {
+                        "type": "tool_result",
+                        "toolCallId": tc.id,
+                        "name": fn_name,
+                        "result": result[:2000],
+                        "iteration": i,
+                    }
+                ),
                 flush=True,
             )
             messages.append(

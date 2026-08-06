@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from evaluator import toolcalls
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary
 
 from .agentic import AgenticBackend
@@ -424,6 +425,123 @@ def _event_proves_model_activity(event: dict[str, Any]) -> bool:
     return not _is_pre_stream_exception_fallback(message)
 
 
+def _tool_commands(
+    jsonl_path: str,
+    evidence: toolcalls.EventStreamEvidence,
+) -> tuple[list[str | None], bool, tuple[str, ...]]:
+    """Collect Pi tool starts and validate the session-level lifecycle."""
+
+    commands: list[str | None] = []
+    seen_ids: set[str] = set()
+    open_ids: set[str] = set()
+    tool_names: dict[str, str | None] = {}
+    anonymous_witness_observed = False
+    anonymous_command_index: int | None = None
+    anonymous_open = False
+    warnings: list[str] = []
+    settled = False
+    settled_count = 0
+    activity_after_settled = False
+    tool_lifecycle_valid = True
+
+    for event in toolcalls.iter_events(jsonl_path, evidence):
+        event_type = event.get("type")
+        if settled and event_type in _PI_RUN_ACTIVITY_EVENTS:
+            activity_after_settled = True
+
+        if event_type == "agent_settled":
+            settled = True
+            settled_count += 1
+            continue
+        if event_type not in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
+            continue
+
+        raw_call_id = event.get("toolCallId")
+        call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+        raw_tool_name = event.get("toolName")
+        tool_name = raw_tool_name if isinstance(raw_tool_name, str) and raw_tool_name else None
+        if tool_name is None:
+            tool_lifecycle_valid = False
+            warnings.append(f"Pi {event_type} has a missing or invalid toolName")
+        if event_type == "tool_execution_start":
+            args = event.get("args")
+            if not isinstance(args, dict):
+                tool_lifecycle_valid = False
+                warnings.append("Pi tool_execution_start has invalid args")
+            command = args.get("command") if tool_name == "bash" and isinstance(args, dict) else None
+            command = command if isinstance(command, str) else None
+            if call_id is None:
+                # The event still proves one dispatch, but it cannot participate
+                # in native-ID deduplication or lifecycle correlation.
+                if not anonymous_witness_observed:
+                    anonymous_command_index = len(commands)
+                    commands.append(command)
+                    anonymous_witness_observed = True
+                anonymous_open = True
+                tool_lifecycle_valid = False
+                warnings.append("Pi tool_execution_start has missing or invalid toolCallId")
+                continue
+            if call_id in seen_ids:
+                tool_lifecycle_valid = False
+                warnings.append("Pi tool-call stream contains a duplicate toolCallId")
+                continue
+            seen_ids.add(call_id)
+            open_ids.add(call_id)
+            tool_names[call_id] = tool_name
+            commands.append(command)
+            continue
+
+        # An update/end without its start is positive evidence of a call whose
+        # dispatch record was lost. Count it once by native ID, conservatively as
+        # other, and make the observed tally a lower bound.
+        if call_id is not None and call_id not in seen_ids:
+            seen_ids.add(call_id)
+            tool_names[call_id] = tool_name
+            commands.append(None)
+            tool_lifecycle_valid = False
+            warnings.append(f"Pi {event_type} has no matching tool_execution_start")
+        elif call_id is None:
+            if not anonymous_witness_observed:
+                anonymous_command_index = len(commands)
+                commands.append(None)
+                anonymous_witness_observed = True
+            if event_type == "tool_execution_end":
+                anonymous_open = False
+            tool_lifecycle_valid = False
+            warnings.append(f"Pi {event_type} has missing or invalid toolCallId")
+        elif event_type == "tool_execution_end":
+            if tool_names.get(call_id) != tool_name:
+                tool_lifecycle_valid = False
+                warnings.append("Pi tool start and end names disagree")
+            if call_id not in open_ids:
+                tool_lifecycle_valid = False
+                warnings.append("Pi tool_execution_end has no open tool execution")
+            open_ids.discard(call_id)
+        elif call_id not in open_ids:
+            tool_lifecycle_valid = False
+            warnings.append("Pi tool_execution_update occurred after its tool execution ended")
+        elif tool_names.get(call_id) != tool_name:
+            tool_lifecycle_valid = False
+            warnings.append("Pi tool start and update names disagree")
+
+    if not settled:
+        warnings.append("Pi agent_settled was not observed for tool-call accounting")
+    if settled_count > 1:
+        warnings.append("Pi tool-call stream contains multiple agent_settled events")
+    if activity_after_settled:
+        warnings.append("Pi tool-call stream contains run activity after agent_settled")
+    if seen_ids and anonymous_command_index is not None:
+        commands.pop(anonymous_command_index)
+    if open_ids or anonymous_open:
+        tool_lifecycle_valid = False
+        warnings.append(
+            f"Pi tool-call stream ended with {len(open_ids) + int(anonymous_open)} unfinished tool execution(s)"
+        )
+
+    lifecycle_complete = bool(settled and settled_count == 1 and not activity_after_settled and tool_lifecycle_valid)
+    return commands, lifecycle_complete, tuple(dict.fromkeys(warnings))
+
+
 def _parse_pi_run(
     jsonl_path: str,
     *,
@@ -827,6 +945,17 @@ class PiBackend(AgenticBackend):
         # compatibility fields cannot omit cache writes or diverge from usage.
         del input_tokens, output_tokens
         return _parse_pi_run(jsonl_path, configured_provider=self.provider).usage
+
+    def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
+        evidence = toolcalls.EventStreamEvidence()
+        commands, lifecycle_complete, warnings = _tool_commands(jsonl_path, evidence)
+        summary = toolcalls.summarize(
+            commands,
+            evidence,
+            lifecycle_complete=lifecycle_complete,
+            warnings=warnings,
+        )
+        return {"tool_calls": summary.to_dict()}
 
     def retry_may_duplicate_model_work(self, jsonl_path: str) -> bool:
         # Pi emits final usage only at message_end. Native assistant-stream or

@@ -8,6 +8,7 @@ import os
 import subprocess
 from typing import Any
 
+from evaluator import toolcalls
 from evaluator.cost import calculate_model_aggregate_cost_usd
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
@@ -431,6 +432,121 @@ def parse_claude_code_usage(
     )
 
 
+def _tool_call_summary(jsonl_path: str) -> toolcalls.ToolCallSummary:
+    """Count dispatched ``tool_use`` blocks and require one final result envelope."""
+
+    evidence = toolcalls.EventStreamEvidence()
+    commands: list[str | None] = []
+    seen_calls: dict[str, tuple[int, dict[str, Any]]] = {}
+    completed_ids: dict[str, int] = {}
+    anonymous_call_observed = False
+    anonymous_call_command: str | None = None
+    anonymous_result_observed = False
+    identity_valid = True
+    warnings: list[str] = []
+    result_count = 0
+    activity_after_result = False
+    for event_index, event in enumerate(toolcalls.iter_events(jsonl_path, evidence)):
+        event_type = event.get("type")
+        if event_type == "result":
+            result_count += 1
+        elif result_count and event_type in {"assistant", "user", "system"}:
+            activity_after_result = True
+        if event_type not in {"assistant", "user"}:
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict):
+            evidence.warn(f"Claude Code {event_type} event has an invalid message object")
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            evidence.warn(f"Claude Code {event_type} event has invalid message content")
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                evidence.warn(f"Claude Code {event_type} content contains a malformed block")
+                continue
+            block_type = block.get("type")
+            if not isinstance(block_type, str):
+                evidence.warn(f"Claude Code {event_type} content block has an invalid type")
+                continue
+            if event_type == "user":
+                if block_type != "tool_result":
+                    continue
+                raw_result_id = block.get("tool_use_id")
+                result_id = raw_result_id if isinstance(raw_result_id, str) and raw_result_id else None
+                if result_id is None:
+                    identity_valid = False
+                    anonymous_result_observed = True
+                    warnings.append("Claude Code tool_result has a missing or invalid tool_use_id")
+                elif result_id in completed_ids:
+                    identity_valid = False
+                    warnings.append("Claude Code tool-call stream contains a duplicate tool_result ID")
+                else:
+                    completed_ids[result_id] = event_index
+                continue
+            if block_type != "tool_use":
+                continue
+            record_anonymous_call = False
+            call_id = block.get("id")
+            if isinstance(call_id, str) and call_id:
+                previous = seen_calls.get(call_id)
+                if previous is not None:
+                    identity_valid = False
+                    warning = (
+                        "Claude Code tool-call stream contains a conflicting tool_use ID"
+                        if previous[1] != block
+                        else "Claude Code tool-call stream contains a duplicate tool_use ID"
+                    )
+                    warnings.append(warning)
+                    continue
+                seen_calls[call_id] = (event_index, block)
+            else:
+                identity_valid = False
+                warnings.append("Claude Code tool_use has a missing or invalid ID")
+                # Without a native ID, repeated payloads cannot prove distinct
+                # calls. Keep one positive witness for a genuine lower bound.
+                if anonymous_call_observed:
+                    continue
+                anonymous_call_observed = True
+                record_anonymous_call = True
+            tool_input = block.get("input")
+            command = (
+                tool_input.get("command") if block.get("name") == "Bash" and isinstance(tool_input, dict) else None
+            )
+            command = command if isinstance(command, str) else None
+            if record_anonymous_call:
+                anonymous_call_command = command
+            else:
+                commands.append(command)
+
+    missing_results = set(seen_calls) - set(completed_ids)
+    orphan_results = set(completed_ids) - set(seen_calls)
+    out_of_order = sum(
+        completed_ids[call_id] <= seen_calls[call_id][0] for call_id in set(seen_calls) & set(completed_ids)
+    )
+    if missing_results:
+        identity_valid = False
+        warnings.append(f"Claude Code tool-call stream has {len(missing_results)} unfinished tool call(s)")
+    if orphan_results:
+        identity_valid = False
+        commands.extend(None for _ in orphan_results)
+        warnings.append(f"Claude Code tool-call stream has {len(orphan_results)} orphan tool result(s)")
+    if out_of_order:
+        identity_valid = False
+        warnings.append(f"Claude Code tool-call stream has {out_of_order} result(s) before their tool use")
+    if not seen_calls and not completed_ids:
+        if anonymous_call_observed:
+            commands.append(anonymous_call_command)
+        elif anonymous_result_observed:
+            commands.append(None)
+
+    lifecycle_complete = result_count == 1 and not activity_after_result and identity_valid
+    if result_count != 1 or activity_after_result:
+        warnings.append("Claude Code tool-call stream has no unique final result")
+    return toolcalls.summarize(commands, evidence, lifecycle_complete=lifecycle_complete, warnings=warnings)
+
+
 class ClaudeCodeBackend(AgenticBackend):
     name = "claude_code"
     requires_public_pricing = True
@@ -689,3 +805,6 @@ class ClaudeCodeBackend(AgenticBackend):
             complete=False,
             warnings=("Claude Code usage events unavailable",),
         )
+
+    def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
+        return {"tool_calls": _tool_call_summary(jsonl_path).to_dict()}

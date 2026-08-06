@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import replace
 from typing import Any
 
+from evaluator import toolcalls
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary, nonnegative_float, nonnegative_int
 
 from .agentic import AgenticBackend
@@ -318,6 +319,222 @@ def parse_copilot_otel(path: str) -> UsageSummary | None:
     return usage
 
 
+_COPILOT_ACTIVITY_EVENTS = frozenset(
+    {
+        "assistant.message",
+        "assistant.turn_start",
+        "tool.execution_start",
+        "tool.execution_complete",
+        "tool.execution_partial_result",
+    }
+)
+
+
+def _copilot_data(event: dict[str, Any]) -> dict[str, Any]:
+    data = event.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _copilot_call(data: dict[str, Any], *, name_key: str) -> tuple[str | None, str | None]:
+    raw_name = data.get(name_key)
+    name = raw_name if isinstance(raw_name, str) and raw_name else None
+    arguments = data.get("arguments")
+    command = arguments.get("command") if name == "bash" and isinstance(arguments, dict) else None
+    return name, command if isinstance(command, str) else None
+
+
+def _same_copilot_call(left: tuple[object, str | None], right: tuple[object, str | None]) -> bool:
+    left_name, left_command = left
+    right_name, right_command = right
+    return left_name == right_name and (left_command is None or right_command is None or left_command == right_command)
+
+
+def _copilot_shutdown_type(event: dict[str, Any]) -> object:
+    return event.get("shutdownType", _copilot_data(event).get("shutdownType"))
+
+
+def _tool_call_summary(jsonl_path: str) -> toolcalls.ToolCallSummary:
+    """Count announced tool requests and require a final clean lifecycle envelope."""
+
+    evidence = toolcalls.EventStreamEvidence()
+    requests: dict[str, tuple[object, str | None]] = {}
+    starts: dict[str, tuple[object, str | None]] = {}
+    completions: set[str] = set()
+    request_indexes: dict[str, int] = {}
+    start_indexes: dict[str, int] = {}
+    completion_indexes: dict[str, int] = {}
+    partials: set[str] = set()
+    anonymous_witnesses: list[str | None] = []
+    lifecycle_valid = True
+    clean_terminals = 0
+    hard_terminal = False
+    activity_after_clean_terminal = False
+    warnings: list[str] = []
+
+    for event_index, event in enumerate(toolcalls.iter_events(jsonl_path, evidence)):
+        event_type = event.get("type")
+        if clean_terminals and event_type in _COPILOT_ACTIVITY_EVENTS:
+            activity_after_clean_terminal = True
+
+        if event_type == "result":
+            clean_terminals += 1
+        elif event_type == "session.shutdown":
+            if _copilot_shutdown_type(event) == "routine":
+                clean_terminals += 1
+            else:
+                hard_terminal = True
+        elif event_type == "abort" or (event_type == "session.error" and clean_terminals):
+            hard_terminal = True
+
+        if event_type == "assistant.message":
+            raw_data = event.get("data")
+            if not isinstance(raw_data, dict):
+                evidence.warn("Copilot assistant message has an invalid data object")
+                continue
+            data = raw_data
+            raw_requests = data.get("toolRequests", [])
+            if not isinstance(raw_requests, list):
+                lifecycle_valid = False
+                warnings.append("Copilot assistant message has invalid toolRequests")
+                continue
+            for request in raw_requests:
+                if not isinstance(request, dict):
+                    if not anonymous_witnesses:
+                        anonymous_witnesses.append(None)
+                    lifecycle_valid = False
+                    warnings.append("Copilot tool request is malformed")
+                    continue
+                call = _copilot_call(request, name_key="name")
+                if call[0] is None:
+                    lifecycle_valid = False
+                    warnings.append("Copilot tool request has a missing or invalid name")
+                raw_call_id = request.get("toolCallId")
+                call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+                if call_id is None:
+                    if not anonymous_witnesses:
+                        anonymous_witnesses.append(call[1])
+                    lifecycle_valid = False
+                    warnings.append("Copilot tool request has a missing or invalid toolCallId")
+                    continue
+                previous = requests.get(call_id)
+                if previous is not None:
+                    lifecycle_valid = False
+                    warning = (
+                        "Copilot tool-call stream contains a conflicting toolCallId"
+                        if not _same_copilot_call(previous, call)
+                        else "Copilot tool-call stream contains a duplicate toolCallId"
+                    )
+                    warnings.append(warning)
+                    continue
+                requests[call_id] = call
+                request_indexes[call_id] = event_index
+            continue
+
+        if event_type not in {
+            "tool.execution_start",
+            "tool.execution_partial_result",
+            "tool.execution_complete",
+        }:
+            continue
+
+        data = _copilot_data(event)
+        raw_call_id = data.get("toolCallId")
+        call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+        if call_id is None:
+            if not anonymous_witnesses:
+                anonymous_witnesses.append(None)
+            lifecycle_valid = False
+            warnings.append(f"Copilot {event_type} has a missing or invalid toolCallId")
+            continue
+
+        if event_type == "tool.execution_partial_result":
+            partials.add(call_id)
+            continue
+
+        if event_type == "tool.execution_start":
+            call = _copilot_call(data, name_key="toolName")
+            if call[0] is None:
+                lifecycle_valid = False
+                warnings.append("Copilot execution start has a missing or invalid toolName")
+            previous = starts.get(call_id)
+            if previous is not None:
+                lifecycle_valid = False
+                warning = (
+                    "Copilot tool-call stream contains a conflicting execution start"
+                    if not _same_copilot_call(previous, call)
+                    else "Copilot tool-call stream contains a duplicate execution start"
+                )
+                warnings.append(warning)
+            else:
+                starts[call_id] = call
+                start_indexes[call_id] = event_index
+            continue
+
+        if call_id in completions:
+            lifecycle_valid = False
+            warnings.append("Copilot tool-call stream contains a duplicate execution completion")
+            continue
+        completions.add(call_id)
+        completion_indexes[call_id] = event_index
+
+    commands: list[str | None] = []
+    all_call_ids = set(requests) | set(starts) | completions | partials
+    missing_requests = 0
+    missing_starts = 0
+    unfinished = 0
+    conflicts = 0
+    ordering_conflicts = 0
+    for call_id in all_call_ids:
+        request = requests.get(call_id)
+        start = starts.get(call_id)
+        call = request if request is not None else start
+        commands.append(call[1] if call is not None else None)
+        if request is None:
+            missing_requests += 1
+        if start is None:
+            missing_starts += 1
+        if call_id not in completions:
+            unfinished += 1
+        if request is not None and start is not None and not _same_copilot_call(request, start):
+            conflicts += 1
+        if request is not None and start is not None and call_id in completions:
+            if not (request_indexes[call_id] < start_indexes[call_id] < completion_indexes[call_id]):
+                ordering_conflicts += 1
+    if missing_requests:
+        lifecycle_valid = False
+        warnings.append(f"Copilot tool-call stream has {missing_requests} execution(s) without a tool request")
+    if missing_starts:
+        lifecycle_valid = False
+        warnings.append(f"Copilot tool-call stream has {missing_starts} execution(s) without a start event")
+    if unfinished:
+        lifecycle_valid = False
+        warnings.append(f"Copilot tool-call stream ended with {unfinished} unfinished tool execution(s)")
+    if conflicts:
+        lifecycle_valid = False
+        warnings.append(f"Copilot tool-call stream has {conflicts} request/start conflict(s)")
+    if ordering_conflicts:
+        lifecycle_valid = False
+        warnings.append(f"Copilot tool-call stream has {ordering_conflicts} out-of-order tool lifecycle(s)")
+    if not all_call_ids:
+        commands.extend(anonymous_witnesses)
+    if clean_terminals != 1:
+        warnings.append("Copilot tool-call stream has no unique clean terminal event")
+    if hard_terminal:
+        warnings.append("Copilot tool-call stream contains a terminal abort or error shutdown")
+    if activity_after_clean_terminal:
+        warnings.append("Copilot tool-call stream contains run activity after a clean terminal event")
+
+    lifecycle_complete = (
+        clean_terminals == 1 and not hard_terminal and not activity_after_clean_terminal and lifecycle_valid
+    )
+    return toolcalls.summarize(
+        commands,
+        evidence,
+        lifecycle_complete=lifecycle_complete,
+        warnings=warnings,
+    )
+
+
 class CopilotBackend(AgenticBackend):
     name = "copilot"
     requires_public_pricing = True
@@ -443,6 +660,9 @@ class CopilotBackend(AgenticBackend):
         # can't reach it: the GitHub MCP server is off (--disable-builtin-mcps)
         # and web_fetch is excluded, so this only enables the auth handshake.
         return detect_firewall_hosts(self.model) + ["api.github.com"]
+
+    def parse_run_metadata(self, jsonl_path: str) -> dict[str, object]:
+        return {"tool_calls": _tool_call_summary(jsonl_path).to_dict()}
 
     def parse_output(self, jsonl_path: str) -> tuple[str, int, int]:
         lines: list[str] = []

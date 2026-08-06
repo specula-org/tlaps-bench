@@ -372,3 +372,251 @@ def test_malformed_lines_make_usage_a_lower_bound(tmp_path):
     assert usage.model_requests == 1
     assert usage.status == "lower_bound"
     assert "LiteLLM JSONL contains 1 malformed nonempty line(s)" in usage.warnings
+
+
+def test_tool_metadata_counts_id_keyed_dispatches_before_terminal_usage(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {
+            "type": "tool_call",
+            "toolCallId": "tool-1",
+            "name": "bash",
+            "args": {"command": "tlapm Foo.tla"},
+            "iteration": 1,
+        },
+        {"type": "tool_result", "toolCallId": "tool-1", "name": "bash", "result": "ok", "iteration": 1},
+        {
+            "type": "tool_call",
+            "toolCallId": "tool-2",
+            "name": "write_file",
+            "args": {"path": "Foo.tla"},
+            "iteration": 1,
+        },
+        {
+            "type": "tool_result",
+            "toolCallId": "tool-2",
+            "name": "write_file",
+            "result": "OK",
+            "iteration": 1,
+        },
+        _aggregate(input_tokens=10, output_tokens=5, model_requests=1),
+    )
+
+    assert _backend().parse_run_metadata(path)["tool_calls"] == {
+        "total": 2,
+        "tlaps": 1,
+        "tlc": 0,
+        "apalache": 0,
+        "other": 1,
+        "available": True,
+        "complete": True,
+        "is_lower_bound": False,
+        "warnings": [],
+    }
+
+
+def test_tool_metadata_counts_malformed_arguments_as_other(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {
+            "type": "tool_call",
+            "toolCallId": "tool-1",
+            "name": "bash",
+            "args": {},
+            "arguments_valid": False,
+            "iteration": 1,
+        },
+        {"type": "tool_result", "toolCallId": "tool-1", "name": "bash", "result": "error", "iteration": 1},
+        _aggregate(input_tokens=10, output_tokens=5, model_requests=1),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert (summary["total"], summary["tlaps"], summary["other"]) == (1, 0, 1)
+    assert summary["complete"] is True
+
+
+def test_tool_metadata_deduplicates_native_call_ids(tmp_path):
+    call = {
+        "type": "tool_call",
+        "toolCallId": "tool-1",
+        "name": "bash",
+        "args": {"command": "tlapm Foo.tla"},
+        "iteration": 1,
+    }
+    path = _write(
+        tmp_path / "output.jsonl",
+        call,
+        call,
+        {"type": "tool_result", "toolCallId": "tool-1", "name": "bash", "result": "ok", "iteration": 1},
+        _aggregate(input_tokens=10, output_tokens=5, model_requests=1),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert summary["total"] == 1
+    assert summary["tlaps"] == 1
+    assert summary["complete"] is False
+    assert summary["is_lower_bound"] is True
+    assert any("duplicate toolCallId" in warning for warning in summary["warnings"])
+
+
+def test_tool_metadata_scopes_reused_call_ids_by_iteration(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {
+            "type": "tool_call",
+            "toolCallId": "reused",
+            "name": "bash",
+            "args": {"command": "tlapm First.tla"},
+            "iteration": 1,
+        },
+        {"type": "tool_result", "toolCallId": "reused", "name": "bash", "iteration": 1},
+        {
+            "type": "tool_call",
+            "toolCallId": "reused",
+            "name": "bash",
+            "args": {"command": "tlapm Second.tla"},
+            "iteration": 2,
+        },
+        {"type": "tool_result", "toolCallId": "reused", "name": "bash", "iteration": 2},
+        _aggregate(input_tokens=10, output_tokens=5, model_requests=1),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert (summary["total"], summary["tlaps"]) == (2, 2)
+    assert summary["complete"] is True
+
+
+def test_tool_metadata_merges_unknown_iteration_with_same_native_id(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {
+            "type": "tool_call",
+            "toolCallId": "reused",
+            "name": "bash",
+            "args": {"command": "tlapm Unknown.tla"},
+        },
+        {
+            "type": "tool_call",
+            "toolCallId": "reused",
+            "name": "bash",
+            "args": {"command": "tlapm First.tla"},
+            "iteration": 1,
+        },
+        {"type": "tool_result", "toolCallId": "reused", "name": "bash", "iteration": 1},
+        {
+            "type": "tool_call",
+            "toolCallId": "reused",
+            "name": "bash",
+            "args": {"command": "tlapm Second.tla"},
+            "iteration": 2,
+        },
+        {"type": "tool_result", "toolCallId": "reused", "name": "bash", "iteration": 2},
+        _aggregate(input_tokens=10, output_tokens=5, model_requests=1),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert summary["total"] == 2
+    assert summary["is_lower_bound"] is True
+
+
+def test_tool_metadata_rejects_result_iteration_or_name_conflicts(tmp_path):
+    for suffix, result in (
+        ("iteration", {"toolCallId": "tool-1", "name": "bash", "iteration": 2}),
+        ("name", {"toolCallId": "tool-1", "name": "write_file", "iteration": 1}),
+    ):
+        path = _write(
+            tmp_path / f"output-{suffix}.jsonl",
+            {
+                "type": "tool_call",
+                "toolCallId": "tool-1",
+                "name": "bash",
+                "args": {"command": "tlapm Foo.tla"},
+                "iteration": 1,
+            },
+            {"type": "tool_result", **result},
+            _aggregate(input_tokens=10, output_tokens=5, model_requests=1),
+        )
+
+        summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+        assert (summary["total"], summary["tlaps"]) == (1, 1)
+        assert summary["is_lower_bound"] is True
+
+
+def test_tool_metadata_orphan_result_is_positive_lower_bound_evidence(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {"type": "tool_result", "toolCallId": "tool-1", "name": "bash", "result": "lost start"},
+        _aggregate(input_tokens=0, output_tokens=0, model_requests=0),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert (summary["total"], summary["other"]) == (1, 1)
+    assert summary["is_lower_bound"] is True
+
+
+def test_tool_metadata_unfinished_dispatch_is_a_lower_bound(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {"type": "tool_call", "toolCallId": "tool-1", "name": "bash", "args": {"command": "tlapm Foo.tla"}},
+        _aggregate(input_tokens=0, output_tokens=0, model_requests=0),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert (summary["total"], summary["tlaps"]) == (1, 1)
+    assert summary["is_lower_bound"] is True
+    assert any("unfinished tool execution" in warning for warning in summary["warnings"])
+
+
+def test_tool_metadata_error_then_terminal_usage_is_complete(tmp_path):
+    path = _write(
+        tmp_path / "output.jsonl",
+        {"type": "error", "message": "provider rejected the request", "iteration": 1},
+        _aggregate(input_tokens=0, output_tokens=0, model_requests=1),
+    )
+
+    summary = _backend().parse_run_metadata(path)["tool_calls"]
+
+    assert summary["total"] == 0
+    assert summary["complete"] is True
+    assert summary["is_lower_bound"] is False
+
+
+def test_tool_metadata_requires_one_final_usage_event(tmp_path):
+    missing = _write(
+        tmp_path / "missing-terminal.jsonl",
+        {
+            "type": "tool_call",
+            "toolCallId": "tool-1",
+            "name": "bash",
+            "args": {"command": "tlapm Foo.tla"},
+            "iteration": 1,
+        },
+    )
+    duplicate = _write(
+        tmp_path / "duplicate-terminal.jsonl",
+        _aggregate(input_tokens=1, output_tokens=1, model_requests=1),
+        _aggregate(input_tokens=1, output_tokens=1, model_requests=1),
+    )
+    trailing = _write(
+        tmp_path / "trailing-event.jsonl",
+        _aggregate(input_tokens=1, output_tokens=1, model_requests=1),
+        {"type": "response", "text": "late", "iteration": 1},
+    )
+
+    cases = (
+        (missing, "terminal usage event was not observed"),
+        (duplicate, "multiple terminal usage events"),
+        (trailing, "events after the terminal usage event"),
+    )
+    for path, warning in cases:
+        summary = _backend().parse_run_metadata(path)["tool_calls"]
+        assert summary["complete"] is False
+        assert summary["is_lower_bound"] is True
+        assert any(warning in item for item in summary["warnings"])
