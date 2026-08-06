@@ -209,6 +209,12 @@ def claude_code_result_error(ctx: TerminationContext) -> str | None:
     return None
 
 
+def _copilot_shutdown_type(event: dict) -> object:
+    data = event.get("data")
+    nested = data.get("shutdownType") if isinstance(data, dict) else None
+    return event.get("shutdownType", nested)
+
+
 def copilot_session_error(ctx: TerminationContext) -> str | None:
     """copilot rule: the run did not reach a clean terminal.
 
@@ -237,15 +243,14 @@ def copilot_session_error(ctx: TerminationContext) -> str | None:
         if ev.get("agentId") is not None:
             continue
         t = ev.get("type")
-        root_error = t in {"session.error", "abort"} or (t == "session.shutdown" and ev.get("shutdownType") == "error")
+        shutdown_type = _copilot_shutdown_type(ev)
+        root_error = t in {"session.error", "abort"} or (t == "session.shutdown" and shutdown_type == "error")
         if root_error:
             reached_clean_terminal = False
             root_error_pending = True
         elif t == "assistant.message":
             root_error_pending = False
-        elif not root_error_pending and (
-            t == "result" or (t == "session.shutdown" and ev.get("shutdownType") != "error")
-        ):
+        elif not root_error_pending and (t == "result" or (t == "session.shutdown" and shutdown_type != "error")):
             reached_clean_terminal = True
     if reached_clean_terminal:
         return None

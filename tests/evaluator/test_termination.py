@@ -1079,10 +1079,10 @@ CP_ABORT = [
     {"type": "abort"},
 ]
 CP_SHUTDOWN_ERROR = [
-    {"type": "session.shutdown", "shutdownType": "error", "errorReason": "stream closed"},
+    {"type": "session.shutdown", "data": {"shutdownType": "error", "errorReason": "stream closed"}},
 ]
 CP_SHUTDOWN_OK = [
-    {"type": "session.shutdown", "shutdownType": "routine"},
+    {"type": "session.shutdown", "data": {"shutdownType": "routine"}},
 ]
 CP_RECOVERED = [  # intermittent session.error, then recovered to a clean terminal
     {"type": "assistant.message", "data": {"content": "hi"}},
@@ -1145,6 +1145,15 @@ def test_copilot_shutdown_error_is_infra(tmp_path):
 def test_copilot_shutdown_routine_is_ok(tmp_path):
     p = _write_jsonl(tmp_path / "sdok.jsonl", CP_SHUTDOWN_OK)
     assert classify(_ctx(p, backend="copilot")) == TerminationReason.OK
+
+
+@pytest.mark.parametrize(
+    ("shutdown_type", "expected"),
+    [("error", TerminationReason.INFRA_ERROR), ("routine", TerminationReason.OK)],
+)
+def test_copilot_legacy_top_level_shutdown_type_is_supported(tmp_path, shutdown_type, expected):
+    p = _write_jsonl(tmp_path / "legacy-shutdown.jsonl", [{"type": "session.shutdown", "shutdownType": shutdown_type}])
+    assert classify(_ctx(p, backend="copilot")) == expected
 
 
 def test_copilot_recovered_session_error_is_ok(tmp_path):
