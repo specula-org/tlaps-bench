@@ -136,9 +136,7 @@ def count_steps_and_depth(proof_lines: list[str]) -> tuple[int, int]:
     return steps, depth
 
 
-_CITATION_SPLIT = re.compile(
-    r"(?i)\b(?:PROOF\s+)?(?:BY|USE)\b|\bDEFS?\b|\bHIDE\b|\bOBVIOUS\b|\bOMITTED\b"
-)
+_CITATION_SPLIT = re.compile(r"(?i)\b(?:PROOF\s+)?(?:BY|USE)\b|\bDEFS?\b|\bHIDE\b|\bOBVIOUS\b|\bOMITTED\b")
 
 
 def _split_ident_list(blob: str) -> list[str]:
@@ -233,9 +231,7 @@ def target_theorem_name(task_path: Path) -> str | None:
     return None
 
 
-def find_reference_proof(
-    task_key: str, source_index: dict[str, list[Path]]
-) -> tuple[str, list[str], Path] | None:
+def find_reference_proof(task_key: str, source_index: dict[str, list[Path]]) -> tuple[str, list[str], Path] | None:
     """Return (theorem, proof_lines, source_path) or None."""
     module_dir = task_key.split("/")[0]
     name_no_ext = Path(task_key).stem
@@ -410,10 +406,7 @@ def _obligations_worker(args: tuple) -> tuple[str, int | None, str | None]:
 
 
 def load_composer() -> dict[str, dict]:
-    path = Path(
-        "/Users/mahdiya/UIUC Summer Program/TlapsBench-website/"
-        "composer-2.5-proof-completion/results.json"
-    )
+    path = Path("/Users/mahdiya/UIUC Summer Program/TlapsBench-website/composer-2.5-proof-completion/results.json")
     if not path.is_file():
         return {}
     data = json.loads(path.read_text())
@@ -476,7 +469,7 @@ def spearman(x: list[float], y: list[float]) -> float:
     rx, ry = ranks(x), ranks(y)
     mx = statistics.fmean(rx)
     my = statistics.fmean(ry)
-    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry, strict=True))
     denx = sum((a - mx) ** 2 for a in rx) ** 0.5
     deny = sum((b - my) ** 2 for b in ry) ** 0.5
     if denx == 0 or deny == 0:
@@ -548,7 +541,7 @@ def main() -> int:
         sources_needed.add(src)
         rows[task_key] = m
 
-    print(f"Pass 1 done in {time.time()-t0:.1f}s; proofs found {sum(1 for r in rows.values() if r.proof_found)}")
+    print(f"Pass 1 done in {time.time() - t0:.1f}s; proofs found {sum(1 for r in rows.values() if r.proof_found)}")
 
     # --- Pass 2: SANY graphs scoped per source file (avoid cross-file name merge) ---
     graphs: dict[str, ExampleGraph] = {}
@@ -558,8 +551,7 @@ def main() -> int:
         for i, src in enumerate(sources, 1):
             files = local_module_closure(src, source_index)
             print(
-                f"  [{i}/{len(sources)}] {src.relative_to(PROJECT_ROOT)} "
-                f"(+{len(files)-1} local deps)",
+                f"  [{i}/{len(sources)}] {src.relative_to(PROJECT_ROOT)} (+{len(files) - 1} local deps)",
                 flush=True,
             )
             graphs[str(src)] = build_example_graph(src.relative_to(SOURCE_DIR).parts[0], files)
@@ -577,7 +569,7 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 m.deps_error = str(e)
     else:
-        for task_key, m in rows.items():
+        for _task_key, m in rows.items():
             if m.proof_found:
                 m.transitive_deps = m.deps_seed_size
                 m.notes.append("deps_seed_only")
@@ -679,6 +671,7 @@ def main() -> int:
     composer_trends = {}
     with_c = [r for r in all_rows if r.composer_verdict in ("PASS", "FAIL", "CHEATING")]
     if with_c:
+
         def band_steps(r: TaskMetrics) -> str:
             if r.steps_kind == "Direct":
                 return "Direct"
@@ -852,7 +845,7 @@ def main() -> int:
     print(f"Wrote {csv_path}")
     print(f"Wrote {OUT_DIR / 'summary.json'}")
     print(f"Wrote {OUT_DIR / 'report.md'}")
-    print(f"Total time {time.time()-t0:.1f}s")
+    print(f"Total time {time.time() - t0:.1f}s")
     return 0
 
 
