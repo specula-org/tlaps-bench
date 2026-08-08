@@ -78,6 +78,9 @@ Results land in `results/<mode>/<backend>/<timestamp>/`.
 Scale up, or switch task type:
 
 ```bash
+# Proof-completion Core: 319 selected tasks
+uv run tlaps-bench run --task-list core --jobs 10 --timeout 7200
+
 # Full proof-completion suite: 10 in parallel, 2h timeout each
 uv run tlaps-bench run --jobs 10 --timeout 7200
 

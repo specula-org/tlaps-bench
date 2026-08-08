@@ -209,6 +209,7 @@ uv run tlaps-bench run [flags]
 | `--reasoning-effort` | (backend behavior) | Pass a backend/model-specific reasoning effort |
 | `--max-output-tokens` | (backend behavior) | Positive per-request output limit; currently supported by `copilot_oneshot` |
 | `--filter` | (all benchmarks) | Substring match on path, comma-separated |
+| `--task-list` | (all benchmarks) | Registered cohort name or file of exact mode-relative task IDs; mutually exclusive with `--filter` |
 | `--jobs` | `1` | Number of parallel backend runs |
 | `--timeout` | `28800` | Per-benchmark backend timeout in seconds |
 | `--check-timeout` | `600` | Per-benchmark checker (tlapm) timeout in seconds |
@@ -223,6 +224,16 @@ uv run tlaps-bench run [flags]
 | `--allow-unpriced-model` | off | Continue with blank equivalent cost when public pricing is unavailable |
 
 Run `uv run tlaps-bench run --help` for the full flag list.
+
+The default remains the complete suite. To run the committed 319-task Proof Completion Core:
+
+```bash
+uv run tlaps-bench run --mode proof-completion --task-list core
+```
+
+Core v0 keeps 319 of the 706 tasks. It excludes the task without a valid reference proof, all 215 Direct reference proofs, and the 275 current tasks passed by all five aligned model runs; these sets overlap, so 387 tasks are excluded in total. Full remains available by omitting `--task-list`.
+
+`core` is a registered name for the current mode's committed `core.txt`; Proof Completion provides it today. Explicit file paths remain supported. Task lists use exact manifest IDs rather than substring matching. Unavailable cohorts, missing files, unknown IDs, duplicates, and empty lists fail before authentication, image setup, or model preflight. A task-list run records its resolved cohort in `task-list.json` inside the output directory.
 
 ### `tlaps-bench check`
 
@@ -355,6 +366,8 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proo
 ```
 
 The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory (first-attempt or via a continuation round), and reruns the rest.
+
+When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list.
 
 Inline infra retries are intentionally short: the default `--infra-retries 3` gives the original attempt plus three retries with brief backoff. If a longer provider or network outage leaves `INFRA_ERROR` / `QUOTA_EXHAUSTED` results, rerun later with the same `--output-dir --resume`; those non-genuine results are not skipped.
 

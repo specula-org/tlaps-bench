@@ -9,7 +9,8 @@ For each benchmark:
 
 Usage:
     python3 runner.py [--backend codex|claude_code|copilot|litellm|pi] [--mode proof-completion|proof-from-scratch] \\
-                      [--model NAME] [--reasoning-effort VALUE] [--jobs N] [--filter PATTERN] \\
+                      [--model NAME] [--reasoning-effort VALUE] [--jobs N] \\
+                      [--filter PATTERN | --task-list NAME_OR_FILE] \\
                       [--timeout SECS] [--check-timeout SECS] [--output-dir DIR]
 """
 
@@ -71,6 +72,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 SKILLS_DIR = os.path.join(REPO_ROOT, "skills")
+TASK_LIST_RECORD = "task-list.json"
+NAMED_TASK_LISTS = {"core": "core.txt"}
 
 VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
 
@@ -941,6 +944,101 @@ def _record_result(results: list[dict], new_result: dict) -> None:
 
 def _resume_done_benchmarks(results: list[dict]) -> set[str]:
     return {r["benchmark"] for r in results if _resume_should_skip(r)}
+
+
+def _load_task_list(path: str) -> list[str]:
+    """Load exact mode-relative task IDs, preserving the requested order."""
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            task_ids = [line.strip() for line in f if line.strip()]
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"cannot read task list {path!r}: {exc}") from exc
+
+    if not task_ids:
+        raise ValueError(f"task list {path!r} is empty")
+
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for task_id in task_ids:
+        if task_id in seen and task_id not in duplicates:
+            duplicates.append(task_id)
+        seen.add(task_id)
+    if duplicates:
+        rendered = ", ".join(repr(task_id) for task_id in duplicates)
+        raise ValueError(f"task list {path!r} contains duplicate task ID(s): {rendered}")
+    return task_ids
+
+
+def _resolve_task_list(value: str, mode: Mode) -> str:
+    """Resolve a registered cohort name or preserve an explicit file path."""
+
+    if not value:
+        raise ValueError("--task-list requires a non-empty name or path")
+    filename = NAMED_TASK_LISTS.get(value)
+    if filename is None:
+        return value
+    path = os.path.join(mode.benchmark_dir(), filename)
+    if not os.path.isfile(path):
+        raise ValueError(f"named task list {value!r} is not available for mode {mode.name!r}")
+    return path
+
+
+def _select_exact_tasks(mode: Mode, task_ids: list[str]) -> list[str]:
+    """Resolve exact task IDs against the mode's complete discovered cohort."""
+
+    tasks_by_id = {
+        os.path.relpath(benchmark_path, mode.benchmark_dir()): benchmark_path
+        for benchmark_path in mode.get_benchmark_files()
+    }
+    unknown = [task_id for task_id in task_ids if task_id not in tasks_by_id]
+    if unknown:
+        rendered = ", ".join(repr(task_id) for task_id in unknown)
+        raise ValueError(f"unknown task ID(s) for mode {mode.name!r}: {rendered}")
+    return [tasks_by_id[task_id] for task_id in task_ids]
+
+
+def _task_list_record_payload(mode_name: str, task_ids: list[str]) -> dict:
+    return {"mode": mode_name, "tasks": sorted(task_ids)}
+
+
+def _validate_resume_task_list(output_dir: str, mode_name: str, task_ids: list[str] | None) -> None:
+    """Reject resumes whose recorded cohort differs from the current selection."""
+
+    record_path = os.path.join(output_dir, TASK_LIST_RECORD)
+    results_path = os.path.join(output_dir, "results.json")
+    if not os.path.isfile(record_path):
+        if task_ids is not None and os.path.isfile(results_path):
+            raise ValueError(
+                f"cannot resume with --task-list: {output_dir!r} has results.json but no {TASK_LIST_RECORD}"
+            )
+        return
+
+    if task_ids is None:
+        raise ValueError(f"cannot resume without --task-list: {output_dir!r} was created with a recorded task list")
+
+    try:
+        with open(record_path, encoding="utf-8") as f:
+            recorded = json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read recorded task list {record_path!r}: {exc}") from exc
+
+    expected = _task_list_record_payload(mode_name, task_ids)
+    if recorded != expected:
+        raise ValueError(f"cannot resume with a different task list or mode; recorded cohort is in {record_path!r}")
+
+
+def _write_task_list_record(output_dir: str, mode_name: str, task_ids: list[str] | None) -> None:
+    """Persist task-list provenance, or clear stale provenance for a new Full/filter run."""
+
+    record_path = os.path.join(output_dir, TASK_LIST_RECORD)
+    if task_ids is None:
+        if os.path.isfile(record_path):
+            os.remove(record_path)
+        return
+    with open(record_path, "w", encoding="utf-8") as f:
+        json.dump(_task_list_record_payload(mode_name, task_ids), f, indent=2)
+        f.write("\n")
 
 
 def _total_benchmark_count(results: list[dict], selected_benchmarks: set[str]) -> int:
@@ -2134,7 +2232,14 @@ def main():
         help="Override the per-request model output token limit for supported backends",
     )
     parser.add_argument("--jobs", type=int, default=1, help="Parallel backend runs")
-    parser.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--filter", default=None, help="Only run benchmarks matching pattern")
+    selection.add_argument(
+        "--task-list",
+        default=None,
+        metavar="NAME_OR_FILE",
+        help="Run exact mode-relative task IDs from a file or registered name such as 'core'",
+    )
     parser.add_argument(
         "--timeout",
         type=int,
@@ -2257,11 +2362,16 @@ def main():
     else:
         benchmark_root, checker_binary = resolve_paths()
     mode = get_mode(args.mode, benchmark_root, checker_binary)
+    task_ids = None
     try:
-        benchmark_files = mode.get_benchmark_files(args.filter)
+        if args.task_list is not None:
+            task_ids = _load_task_list(_resolve_task_list(args.task_list, mode))
+            benchmark_files = _select_exact_tasks(mode, task_ids)
+        else:
+            benchmark_files = mode.get_benchmark_files(args.filter)
         identity_loader = getattr(mode, "specification_ids", None)
         task_specification_ids = identity_loader() if identity_loader is not None else None
-    except TaskContractError as exc:
+    except (TaskContractError, ValueError) as exc:
         parser.exit(2, f"{parser.prog}: error: {exc}\n")
     specification_ids = (
         scope_specification_ids(mode.name, task_specification_ids) if task_specification_ids is not None else None
@@ -2275,6 +2385,23 @@ def main():
         parser.exit(
             2, f"{parser.prog}: error: no benchmarks found for mode {mode.name!r} under {mode.benchmark_dir()}\n"
         )
+
+    # Resolve the output path before backend setup so an incompatible task-list
+    # resume fails before authentication, image setup, or a model preflight.
+    if args.output_dir:
+        output_dir = args.output_dir
+    else:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        if os.path.isdir("/result"):
+            output_dir = os.path.join("/result", mode.name, backend.name, timestamp)
+        else:
+            output_dir = os.path.join(REPO_ROOT, "results", mode.name, backend.name, timestamp)
+    output_dir = os.path.abspath(output_dir)
+    if args.resume:
+        try:
+            _validate_resume_task_list(output_dir, mode.name, task_ids)
+        except ValueError as exc:
+            parser.exit(2, f"{parser.prog}: error: {exc}\n")
 
     canonical_inputs_by_path = {}
     if getattr(mode, "canonical_replay_required", False):
@@ -2351,17 +2478,11 @@ def main():
         if not tlapm_lib:
             print(f"ERROR: tlapm lib not found near {tlapm_bin}")
             sys.exit(1)
-    # results/<mode>/<backend>/<ts>/  (mode first, then agent)
-    if args.output_dir:
-        output_dir = args.output_dir
-    else:
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        if os.path.isdir("/result"):
-            output_dir = os.path.join("/result", mode.name, backend.name, timestamp)
-        else:
-            output_dir = os.path.join(REPO_ROOT, "results", mode.name, backend.name, timestamp)
-    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
+    try:
+        _write_task_list_record(output_dir, mode.name, task_ids)
+    except OSError as exc:
+        parser.exit(2, f"{parser.prog}: error: cannot record task list in {output_dir!r}: {exc}\n")
 
     print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
     if backend.reasoning_effort is not None:
