@@ -5,6 +5,7 @@ from .base import AgentBackend as AgentBackend
 from .base import Backend
 from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend
+from .codex_single_turn import CodexSingleTurnBackend
 from .copilot import CopilotBackend
 from .copilot_oneshot import CopilotOneShotBackend
 from .cursor import CursorBackend
@@ -15,6 +16,7 @@ from .pi import PiBackend
 
 _REGISTRY = {
     CodexBackend.name: CodexBackend,
+    CodexSingleTurnBackend.name: CodexSingleTurnBackend,
     ClaudeCodeBackend.name: ClaudeCodeBackend,
     CursorBackend.name: CursorBackend,
     CopilotBackend.name: CopilotBackend,

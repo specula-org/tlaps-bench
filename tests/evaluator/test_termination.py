@@ -24,6 +24,7 @@ from evaluator.termination import (
     agent_startup_failure,
     classify,
     claude_code_result_error,
+    codex_single_turn_contract_error,
     codex_turn_failed,
     copilot_session_error,
     cursor_result_error,
@@ -170,6 +171,71 @@ def test_turn_failed_is_infra(tmp_path):
 def test_turn_completed_is_ok(tmp_path):
     p = _write_jsonl(tmp_path / "genuine.jsonl", GENUINE_STREAM)
     assert classify(_ctx(p)) == TerminationReason.OK
+
+
+def test_codex_single_turn_uses_codex_terminal_contract(tmp_path):
+    audit_start = {"type": "tlaps.codex_child_usage.started", "version": 5}
+    audit = {
+        "type": "tlaps.codex_child_usage",
+        "version": 5,
+        "root_thread_id": "t2",
+        "child_count": 0,
+        "complete": True,
+        "warning_codes": [],
+        "requests": [{"input_tokens": 100, "output_tokens": 10}],
+        "tool_calls": {
+            "total": 0,
+            "tlaps": 0,
+            "tlc": 0,
+            "apalache": 0,
+            "other": 0,
+            "available": True,
+            "complete": True,
+            "is_lower_bound": False,
+            "warnings": [],
+        },
+    }
+    failed = _write_jsonl(tmp_path / "single-turn-infra.jsonl", [audit_start, *INFRA_STREAM, audit])
+    completed = _write_jsonl(tmp_path / "single-turn-genuine.jsonl", [audit_start, *GENUINE_STREAM, audit])
+
+    assert classify(_ctx(failed, backend="codex_single_turn", approach="single_turn_tool_free")) == (
+        TerminationReason.INFRA_ERROR
+    )
+    assert classify(_ctx(completed, backend="codex_single_turn", approach="single_turn_tool_free")) == (
+        TerminationReason.OK
+    )
+
+
+def test_codex_single_turn_contract_excludes_multiple_model_requests(tmp_path):
+    events = [
+        {"type": "tlaps.codex_child_usage.started", "version": 5},
+        *GENUINE_STREAM,
+        {
+            "type": "tlaps.codex_child_usage",
+            "version": 5,
+            "root_thread_id": "t2",
+            "child_count": 0,
+            "complete": True,
+            "warning_codes": [],
+            "requests": [{"input_tokens": 50}, {"input_tokens": 50}],
+            "tool_calls": {
+                "total": 0,
+                "tlaps": 0,
+                "tlc": 0,
+                "apalache": 0,
+                "other": 0,
+                "available": True,
+                "complete": True,
+                "is_lower_bound": False,
+                "warnings": [],
+            },
+        },
+    ]
+    path = _write_jsonl(tmp_path / "single-turn-retried-request.jsonl", events)
+    ctx = _ctx(path, backend="codex_single_turn", approach="single_turn_tool_free")
+
+    assert codex_single_turn_contract_error(ctx) == TerminationReason.INFRA_ERROR
+    assert classify(ctx) == TerminationReason.INFRA_ERROR
 
 
 def test_recovered_midrun_error_is_ok(tmp_path):
@@ -424,6 +490,7 @@ def test_same_truncation_without_timeout_is_still_infra(tmp_path):
 def test_registry_is_the_extension_point():
     # The interface contract: classify() runs INFRA_RULES in order.
     assert codex_turn_failed in INFRA_RULES
+    assert codex_single_turn_contract_error in INFRA_RULES
     assert claude_code_result_error in INFRA_RULES
     assert copilot_session_error in INFRA_RULES
     assert cursor_result_error in INFRA_RULES

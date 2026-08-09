@@ -92,7 +92,17 @@ _USAGE_TOKEN_FIELDS = (
     "reasoning_output_tokens",
 )
 _COST_TIME_BACKENDS = frozenset(
-    {"codex", "claude_code", "copilot", "copilot_oneshot", "cursor", "litellm", "litellm_oneshot", "pi"}
+    {
+        "codex",
+        "codex_single_turn",
+        "claude_code",
+        "copilot",
+        "copilot_oneshot",
+        "cursor",
+        "litellm",
+        "litellm_oneshot",
+        "pi",
+    }
 )
 _RUNNER_OWNED_ACCOUNTING_KEYS = frozenset(
     {"usage", "input_tokens", "output_tokens", "time_secs", "equivalent_cost_usd"}
@@ -110,7 +120,7 @@ def _pricing_provider(backend: Backend) -> str | None:
         return None
     if backend.name.startswith("litellm"):
         return "litellm"
-    if backend.name == "codex":
+    if backend.name.startswith("codex"):
         uses_bedrock = getattr(backend, "_uses_bedrock", None)
         if callable(uses_bedrock) and uses_bedrock():
             return "amazon-bedrock"

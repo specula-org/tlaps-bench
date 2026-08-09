@@ -614,7 +614,17 @@ def test_public_price_preflight_normalizes_cursor_default_model():
 
 @pytest.mark.parametrize(
     "backend_name",
-    ["codex", "claude_code", "copilot", "copilot_oneshot", "cursor", "litellm", "litellm_oneshot", "pi"],
+    [
+        "codex",
+        "codex_single_turn",
+        "claude_code",
+        "copilot",
+        "copilot_oneshot",
+        "cursor",
+        "litellm",
+        "litellm_oneshot",
+        "pi",
+    ],
 )
 def test_supported_backends_require_public_price_preflight(backend_name):
     assert get_backend(backend_name).requires_public_pricing

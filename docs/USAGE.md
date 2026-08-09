@@ -38,11 +38,12 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --mode proof-from-scratch
 
 ## Backends
 
-A backend is the model integration that attempts the proof. Eight are included:
+A backend is the model integration that attempts the proof. Nine are included:
 
 | Backend | CLI Name | Default Model |
 |---------|----------|---------------|
 | OpenAI Codex | `codex` | `gpt-5.5` |
+| OpenAI Codex (single-turn approximation) | `codex_single_turn` | `gpt-5.5` |
 | Claude Code | `claude_code` | `claude-opus-4-8` |
 | Cursor | `cursor` | `sonnet-4.5` |
 | GitHub Copilot | `copilot` | `claude-opus-4.8` |
@@ -58,6 +59,7 @@ uv run tlaps-bench run --backend claude_code --model claude-opus-4-8
 uv run tlaps-bench run --backend pi --model anthropic/claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm --model claude-sonnet-4-6
 uv run tlaps-bench run --backend litellm_oneshot --model claude-sonnet-4-6
+uv run tlaps-bench run --backend codex_single_turn --model gpt-5.6-sol
 ```
 
 ### Agent skills
@@ -73,7 +75,7 @@ The benchmark automatically makes the portable skills under `skills/` available 
 | `litellm` | `.agents/skills` |
 | `pi` | `.agents/skills` |
 
-One-shot backends do not receive skills.
+Strict one-shot backends and `codex_single_turn` do not receive skills.
 
 ### OpenAI-compatible endpoints
 
@@ -126,6 +128,7 @@ If you are already logged in to an agent on your host machine (e.g. `codex login
 | Backend | Environment Variable | Host Credentials (auto-mounted) |
 |---------|---------------------|----------------------------------|
 | `codex` | `OPENAI_API_KEY` or `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_HOST` | `~/.codex/` (logged-in session) |
+| `codex_single_turn` | Same as `codex` | `~/.codex/` (logged-in session, including ChatGPT subscription auth) |
 | `claude_code` | `ANTHROPIC_API_KEY` | `~/.claude/` |
 | `copilot` | `COPILOT_GITHUB_TOKEN` or `GH_TOKEN`. BYOK: `COPILOT_PROVIDER_BASE_URL` + `COPILOT_PROVIDER_API_KEY` + `COPILOT_PROVIDER_TYPE` | |
 | `copilot_oneshot` | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` | |
@@ -156,6 +159,49 @@ Both backends default to three outer infrastructure retries, but only for explic
 Copilot uses the benchmark deadline for startup and inference, records `TIMEOUT` before bounded teardown, and blocks late requests. It accepts `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`; stored CLI sessions and agentic BYOK settings are not used.
 
 With `--no-container`, the runner uses its source-tree path instead of `/opt`. LiteLLM is already a project dependency; native Copilot runs additionally require `github-copilot-sdk` and its runtime (`python3 -m copilot download-runtime`) in the active environment.
+
+### Codex subscription single-turn approximation
+
+`codex_single_turn` provides a subscription-compatible approximation when a
+strict provider API one-shot is unavailable. It uses the official
+[`codex exec`](https://learn.chatgpt.com/docs/non-interactive-mode) interface and
+reuses the same [`codex login`](https://learn.chatgpt.com/docs/auth) credentials
+as the agentic `codex` backend, including ChatGPT subscription authentication:
+
+```bash
+codex login
+uv run tlaps-bench run --backend codex_single_turn --model gpt-5.6-sol --reasoning-effort medium --task-list core
+```
+
+OpenAI, ChatGPT, and Azure Codex authentication are supported. Amazon Bedrock
+models are rejected because their user-level provider configuration is
+intentionally ignored by this isolated mode.
+
+Each benchmark starts one non-interactive Codex process, supplies the strict
+one-shot prompt plus an explicit no-tools instruction on stdin, permits one
+logical turn, disables project skills and Codex shell, code-mode, multi-agent,
+app, browser, computer, image, and goal tool features, and uses a read-only
+sandbox. The final message is materialized as the complete TLA+ module and
+passed to the normal grader. User configuration and repository rules are
+ignored so they cannot silently add tools, instructions, or a different
+service tier. Continuations are disabled.
+
+This backend is not labeled strict one-shot. The public Codex JSONL stream does
+not expose the wire request or prove removal of Codex's built-in internal
+instructions. The evaluator therefore records `one_shot: false`. It keeps the
+Codex session long enough for the rollout wrapper to audit native token-count
+deltas: a valid result records `model_request_count_visible: true`,
+`model_request_count_source: codex_rollout_token_count`, and
+`model_requests: 1`. It also records whether exactly one thread and turn
+completed, whether a complete zero-tool session-tree audit was observed, event
+counts, and the final message's presence. Multiple progress/final
+`agent_message` events inside the same turn do not make it a multi-turn run.
+
+An incomplete rollout audit, more than one model request, any child agent or
+tool call, or a damaged turn is an infrastructure/contract failure and is
+excluded from capability scoring. This keeps a normal SANY or TLAPS rejection
+as a genuine model FAIL without treating a broken approximation as model
+behavior.
 
 ---
 
@@ -346,7 +392,7 @@ With `--max-continuations`, each continuation round also writes a `continuations
 
 ### Usage and cost telemetry
 
-For `codex`, `claude_code`, `copilot`, `copilot_oneshot`, `cursor`, `litellm`, `litellm_oneshot`, and `pi`, each formal benchmark result records:
+For `codex`, `codex_single_turn`, `claude_code`, `copilot`, `copilot_oneshot`, `cursor`, `litellm`, `litellm_oneshot`, and `pi`, each formal benchmark result records:
 
 - `time_secs`: agent wall time, excluding the checker
 - `equivalent_cost_usd`: the same usage valued at public API prices, not the actual subscription spend
@@ -439,7 +485,7 @@ docker ps -a --filter name=tlaps-bench- --format '{{.Names}}' | xargs -r docker 
 
 ### Persisting session state to the host (`--session-dir`)
 
-Session state lives inside the container, and for backends that authenticate from a mounted credential file (`codex` / `claude_code` / `pi`) it is written into a `/tmp` tempdir — so a reboot (e.g. after an OOM) clears it even if the container is kept. To avoid that, the agent's session state is bind-mounted straight to a **persistent host directory**.
+Session state lives inside the container, and for backends that authenticate from a mounted credential file (`codex` / `codex_single_turn` / `claude_code` / `pi`) it is written into a `/tmp` tempdir — so a reboot (e.g. after an OOM) clears it even if the container is kept. To avoid that, the agent's session state is bind-mounted straight to a **persistent host directory**.
 
 With `--keep-container` this happens automatically under `~/.tlaps-bench/sessions/`. Pass `--session-dir` to choose the location explicitly (and to persist without keeping the container):
 
@@ -447,7 +493,7 @@ With `--keep-container` this happens automatically under `~/.tlaps-bench/session
 uv run tlaps-bench run --backend copilot --session-dir ./sessions --filter my_benchmark
 ```
 
-Each run writes its state to `<session-dir>/<backend>/<benchmark>/` (or `<...>/<container-name>/` under `--keep-container`, one dir per retained container). For `codex`/`claude_code`/`pi` the credential files are stored there too, so a single mount holds both auth and session. Because it is a real host path — not `/tmp` and not tied to the container's lifetime — the state survives container removal *and* reboot, and can be moved to another machine. A `.gitignore` (`*`) is written at the session root so this credential-bearing data can't be accidentally committed. `--session-dir` is ignored with `--no-container`.
+Each run writes its state to `<session-dir>/<backend>/<benchmark>/` (or `<...>/<container-name>/` under `--keep-container`, one dir per retained container). For `codex`/`codex_single_turn`/`claude_code`/`pi` the credential files are stored there too, so a single mount holds both auth and session. Because it is a real host path — not `/tmp` and not tied to the container's lifetime — the state survives container removal *and* reboot, and can be moved to another machine. A `.gitignore` (`*`) is written at the session root so this credential-bearing data can't be accidentally committed. `--session-dir` is ignored with `--no-container`.
 
 ### Restoring a session into a container
 
@@ -477,7 +523,7 @@ This installs the Python environment, downloads tlapm 1.6, compiles the checker 
 
 ## Backend Architecture
 
-All entries in the backend registry share the neutral `Backend` lifecycle. Tool-using workspace editors inherit `AgenticBackend`; strict single-response implementations inherit the sibling `OneShotBackend`. Prompt construction, command/deadline propagation, option validation, result metadata, request-audit validation, and submission preparation are polymorphic backend hooks, so the common runner and termination classifier do not special-case one-shot names or provider names. Runtime one-shot providers implement the `OneShotProvider` protocol and are selected through a registry; each one-shot backend cross-checks the common request contract against its provider's raw audit evidence. A provider may report one `usage_details` entry per model request; each entry must explicitly include both `input_tokens` and `output_tokens` to be complete. Providers without per-request details can return exact aggregate token counts instead. Unavailable counts must be `None`, which becomes `null` and makes the record a lower bound; explicit zeroes remain exact zeroes.
+All entries in the backend registry share the neutral `Backend` lifecycle. Tool-using workspace editors inherit `AgenticBackend`; strict single-response implementations inherit the sibling `OneShotBackend`. `codex_single_turn` instead reuses Codex CLI execution and telemetry while overriding its prompt, sandbox, materialization, and continuation capabilities. Prompt construction, command/deadline propagation, option validation, result metadata, request-audit validation, and submission preparation are polymorphic backend hooks, so the common runner and termination classifier do not special-case strict one-shot names or provider names. Runtime one-shot providers implement the `OneShotProvider` protocol and are selected through a registry; each strict one-shot backend cross-checks the common request contract against its provider's raw audit evidence. A provider may report one `usage_details` entry per model request; each entry must explicitly include both `input_tokens` and `output_tokens` to be complete. Providers without per-request details can return exact aggregate token counts instead. Unavailable counts must be `None`, which becomes `null` and makes the record a lower bound; explicit zeroes remain exact zeroes.
 
 ## Adding a New Agentic Backend
 

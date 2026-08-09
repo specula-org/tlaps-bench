@@ -13,6 +13,7 @@ from evaluator.backends import get_backend, litellm_agent
 
 EXPECTED_EFFORT_VALUES = {
     "codex": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+    "codex_single_turn": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
     "claude_code": ("low", "medium", "high", "xhigh", "max"),
     "copilot": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
     "copilot_oneshot": ("low", "medium", "high", "xhigh"),
@@ -37,6 +38,7 @@ def _has_option(command: list[str], option: str, value: str) -> bool:
     ("backend_name", "option", "value"),
     [
         ("codex", "-c", "model_reasoning_effort=low"),
+        ("codex_single_turn", "-c", "model_reasoning_effort=low"),
         ("claude_code", "--effort", "low"),
         ("copilot", "--effort", "low"),
         ("litellm", "--reasoning-effort", "low"),

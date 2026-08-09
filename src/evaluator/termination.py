@@ -14,7 +14,7 @@ LIMIT — the model was working, it just ran out of time — reported as TIMEOUT
 never INFRA_ERROR), then runs a registry of INFRA RULES (criteria). Each rule
 inspects a ``TerminationContext`` and returns a reason if it fires, else
 ``None``; the first that fires wins. There is one rule per backend
-(:func:`codex_turn_failed`, :func:`claude_code_result_error`,
+(:func:`codex_turn_failed`, :func:`codex_single_turn_contract_error`, :func:`claude_code_result_error`,
 :func:`copilot_session_error`, :func:`cursor_result_error`,
 :func:`litellm_completion_error`, :func:`pi_run_failed`), each branching on
 ``ctx.backend`` to read its own event vocabulary, plus one backend-independent
@@ -161,7 +161,7 @@ def codex_turn_failed(ctx: TerminationContext) -> str | None:
     A run that hit a transient error mid-way but recovered and completed a turn
     is NOT flagged.
     """
-    if ctx.backend != "codex":
+    if ctx.backend not in {"codex", "codex_single_turn"}:
         return None
     events = ctx.events()
     if not events:
@@ -177,6 +177,59 @@ def codex_turn_failed(ctx: TerminationContext) -> str | None:
         return TerminationReason.INFRA_ERROR
     if last_terminal is None:
         return TerminationReason.INFRA_ERROR
+    return None
+
+
+def codex_single_turn_contract_error(ctx: TerminationContext) -> str | None:
+    """Require one rollout-audited, tool-free request in one Codex turn."""
+
+    if ctx.backend != "codex_single_turn":
+        return None
+    events = ctx.events()
+    if not ctx.event_stream_valid() or not events:
+        return TerminationReason.INFRA_ERROR
+
+    starts = [event for event in events if event.get("type") == "tlaps.codex_child_usage.started"]
+    audits = [event for event in events if event.get("type") == "tlaps.codex_child_usage"]
+    threads = [event.get("thread_id") for event in events if event.get("type") == "thread.started"]
+    if len(starts) != 1 or len(audits) != 1 or len(threads) != 1:
+        return TerminationReason.INFRA_ERROR
+    if events[0] is not starts[0] or events[-1] is not audits[0]:
+        return TerminationReason.INFRA_ERROR
+
+    version = starts[0].get("version")
+    audit = audits[0]
+    if not isinstance(version, int) or isinstance(version, bool) or version <= 0 or audit.get("version") != version:
+        return TerminationReason.INFRA_ERROR
+    thread_id = threads[0]
+    if not isinstance(thread_id, str) or not thread_id or audit.get("root_thread_id") != thread_id:
+        return TerminationReason.INFRA_ERROR
+    if audit.get("complete") is not True or audit.get("warning_codes") != [] or audit.get("child_count") != 0:
+        return TerminationReason.INFRA_ERROR
+    requests = audit.get("requests")
+    if not isinstance(requests, list) or len(requests) != 1 or not isinstance(requests[0], dict):
+        return TerminationReason.INFRA_ERROR
+
+    tool_calls = audit.get("tool_calls")
+    if not isinstance(tool_calls, dict):
+        return TerminationReason.INFRA_ERROR
+    if (
+        tool_calls.get("available") is not True
+        or tool_calls.get("complete") is not True
+        or tool_calls.get("is_lower_bound") is not False
+        or tool_calls.get("warnings") != []
+        or any(tool_calls.get(field) != 0 for field in ("total", "tlaps", "tlc", "apalache", "other"))
+    ):
+        return TerminationReason.INFRA_ERROR
+
+    allowed_items = {"agent_message", "reasoning", "error"}
+    for event in events:
+        event_type = event.get("type")
+        if not isinstance(event_type, str) or not event_type.startswith("item."):
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") not in allowed_items:
+            return TerminationReason.INFRA_ERROR
     return None
 
 
@@ -457,6 +510,7 @@ def startup_error_snippet(ctx: TerminationContext) -> str:
 # fires. This list IS the extension point.
 INFRA_RULES: list[Rule] = [
     codex_turn_failed,
+    codex_single_turn_contract_error,
     claude_code_result_error,
     copilot_session_error,
     cursor_result_error,

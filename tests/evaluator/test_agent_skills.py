@@ -26,7 +26,7 @@ SUPPORTED_BACKENDS = [
     ("litellm", ".agents/skills"),
     ("pi", ".agents/skills"),
 ]
-UNSUPPORTED_BACKENDS = ["copilot_oneshot", "litellm_oneshot"]
+UNSUPPORTED_BACKENDS = ["codex_single_turn", "copilot_oneshot", "litellm_oneshot"]
 BENCHMARK = "---- MODULE Task ----\nTHEOREM Goal == TRUE\nPROOF OBVIOUS\n====\n"
 
 
