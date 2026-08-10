@@ -803,7 +803,8 @@ LEMMA UpdateStateViewValue ==
   BY <1>a, <1>2, <1>3
 
 LEMMA UpdateStateValue ==
-          ASSUME NEW q \in Participant, NEW p \in Participant, NEW pp \in State, pp.maxBal >= pp.maxVBal,
+          ASSUME NEW q \in Participant, NEW p \in Participant, NEW pp \in State, p # q,
+                     pp.maxBal >= pp.maxVBal,
                      UpdateState(q, p, pp), Inv
             PROVE \/ /\ state'[q][q].maxVBal = state[q][q].maxVBal
                      /\ state'[q][q].maxVVal = state[q][q].maxVVal
@@ -1189,8 +1190,10 @@ LEMMA UpdateStateMsgInv ==
     OBVIOUS
   <2>2. mm.state[p].maxBal >= mm.state[p].maxVBal
     BY DEFS Inv
+  <2>3. p # q
+    BY DEFS Inv, MsgInv
   <2> QED
-    BY <2>1, <2>2, UpdateStateValue DEFS Next
+    BY <2>1, <2>2, <2>3, UpdateStateValue DEFS Next
 <1>b./\\/ /\ nm.state[q].maxVBal = state[q][q].maxVBal
           /\ nm.state[q].maxVVal = state[q][q].maxVVal
           /\ nm.state[q].maxBal = Max(state[q][q].maxBal, mm.state[p].maxBal)

@@ -239,7 +239,8 @@ LEMMA UpdateStateViewValue ==
 PROOF OMITTED
 
 LEMMA UpdateStateValue ==
-          ASSUME NEW q \in Participant, NEW p \in Participant, NEW pp \in State, pp.maxBal >= pp.maxVBal,
+          ASSUME NEW q \in Participant, NEW p \in Participant, NEW pp \in State, p # q,
+                     pp.maxBal >= pp.maxVBal,
                      UpdateState(q, p, pp), Inv
             PROVE \/ /\ state'[q][q].maxVBal = state[q][q].maxVBal
                      /\ state'[q][q].maxVVal = state[q][q].maxVVal
