@@ -69,12 +69,12 @@ Proof checking can use substantial memory, especially for Isabelle-heavy tasks.
 A few of these tasks can use significantly more than 64 GB of RAM, even when
 only one job is running.
 
-Use this configuration as a reference for four parallel jobs:
+Use the following as a rough capacity-planning reference per parallel job:
 
-| Parallel jobs | vCPUs | RAM | Guidance |
-|---:|---:|---:|---|
-| 4 | 32–48 | 384 GB | Recommended for the best memory headroom. |
-| 4 | 32–48 | 256 GB | Expected to run the current benchmark, with less headroom. |
+| Profile | vCPUs per job | RAM per job | Guidance |
+|---|---:|---:|---|
+| Recommended | 8–12 | 96 GB | Provides better memory headroom. |
+| Lower-headroom | 8–12 | 64 GB | A starting point; some Isabelle-heavy tasks may require more. |
 
 On a small machine, start with `--jobs 1`. Increase the value after you
 monitor peak memory use.
