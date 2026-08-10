@@ -63,6 +63,22 @@ Requirements: [uv](https://docs.astral.sh/uv/) and
 [Docker](https://docs.docker.com/get-docker/).
 Windows users should run the benchmark through WSL2; native Windows is not supported.
 
+### Recommended hardware
+
+Proof checking can use substantial memory. A few Isabelle-heavy tasks can use
+significantly more than 64 GB for one job. Memory use varies by task, so a fixed
+RAM-per-job estimate is not reliable.
+
+Use this configuration as a reference for four parallel jobs:
+
+| Parallel jobs | vCPUs | RAM | Guidance |
+|---:|---:|---:|---|
+| 4 | 32–48 | 384 GB | Recommended for the best memory headroom. |
+| 4 | 32–48 | 256 GB | Expected to run the current benchmark, with less headroom. |
+
+CPU capacity is usually not the main bottleneck. On a smaller machine, start
+with `--jobs 1`. Increase the value only after you monitor peak memory use.
+
 ```bash
 git clone https://github.com/specula-org/tlaps-bench.git
 cd tlaps-bench
@@ -78,14 +94,14 @@ Results land in `results/<mode>/<backend>/<timestamp>/`.
 Scale up, or switch task type:
 
 ```bash
-# Proof-completion Core: 293 selected tasks
-uv run tlaps-bench run --task-list core --jobs 10 --timeout 7200
+# Proof-completion Core: 293 selected tasks, 4 in parallel
+uv run tlaps-bench run --task-list core --jobs 4 --timeout 7200
 
-# Full proof-completion suite: 10 in parallel, 2h timeout each
-uv run tlaps-bench run --jobs 10 --timeout 7200
+# Full proof-completion suite: 4 in parallel, 2h timeout each
+uv run tlaps-bench run --jobs 4 --timeout 7200
 
 # Proof from scratch
-uv run tlaps-bench run --mode proof-from-scratch --jobs 10
+uv run tlaps-bench run --mode proof-from-scratch --jobs 4
 ```
 
 Each run writes `results.json` and `summary.md` (with specification pass rate as
