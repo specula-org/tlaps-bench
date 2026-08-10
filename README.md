@@ -65,9 +65,9 @@ Windows users should run the benchmark through WSL2; native Windows is not suppo
 
 ### Recommended hardware
 
-Proof checking can use substantial memory. A few Isabelle-heavy tasks can use
-significantly more than 64 GB for one job. Memory use varies by task, so a fixed
-RAM-per-job estimate is not reliable.
+Proof checking can use substantial memory, especially for Isabelle-heavy tasks.
+A few of these tasks can use significantly more than 64 GB of RAM, even when
+only one job is running.
 
 Use this configuration as a reference for four parallel jobs:
 
@@ -76,8 +76,10 @@ Use this configuration as a reference for four parallel jobs:
 | 4 | 32–48 | 384 GB | Recommended for the best memory headroom. |
 | 4 | 32–48 | 256 GB | Expected to run the current benchmark, with less headroom. |
 
-CPU capacity is usually not the main bottleneck. On a smaller machine, start
-with `--jobs 1`. Increase the value only after you monitor peak memory use.
+On a smaller machine, start with `--jobs 1`. Increase the value after you
+monitor peak memory use.
+
+### Run the benchmark
 
 ```bash
 git clone https://github.com/specula-org/tlaps-bench.git
