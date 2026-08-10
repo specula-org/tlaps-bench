@@ -76,7 +76,7 @@ Use this configuration as a reference for four parallel jobs:
 | 4 | 32–48 | 384 GB | Recommended for the best memory headroom. |
 | 4 | 32–48 | 256 GB | Expected to run the current benchmark, with less headroom. |
 
-On a smaller machine, start with `--jobs 1`. Increase the value after you
+On a small machine, start with `--jobs 1`. Increase the value after you
 monitor peak memory use.
 
 ### Run the benchmark
