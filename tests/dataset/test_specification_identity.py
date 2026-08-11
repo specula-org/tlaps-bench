@@ -37,9 +37,7 @@ def test_current_manifests_map_every_task_to_an_existing_source_specification():
         manifests[mode] = manifest
         assert manifest
         expected_keys = (
-            {"spec_id", "context", "reference_proof_steps"}
-            if mode == "proof-completion"
-            else {"spec_id", "context"}
+            {"spec_id", "context", "reference_proof_steps"} if mode == "proof-completion" else {"spec_id", "context"}
         )
         for task_id, entry in manifest.items():
             assert set(entry) == expected_keys, task_id

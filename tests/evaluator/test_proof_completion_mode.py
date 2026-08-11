@@ -89,7 +89,9 @@ def test_strict_mode_discovers_only_manifest_tasks_and_exact_context(tmp_path):
 def test_strict_mode_is_pickleable_after_discovery(tmp_path):
     suite = tmp_path / "proof-completion"
     task = _write_task(suite, "Example/Example_Target.tla")
-    _write_manifest(suite, {"Example/Example_Target.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
+    _write_manifest(
+        suite, {"Example/Example_Target.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}}
+    )
     mode = _mode(tmp_path)
     mode.get_benchmark_files()
 
@@ -173,7 +175,10 @@ def test_strict_cli_captures_all_inputs_before_backend_setup(tmp_path, monkeypat
     suite = benchmark_root / "proof-completion"
     task = _write_task(suite, "Suite/Task.tla", "EXTENDS Model\n")
     model = _write_module(suite, "Context/Model.tla", "Value == TRUE\n")
-    _write_manifest(suite, {"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": ["Context/Model.tla"], "reference_proof_steps": 0}})
+    _write_manifest(
+        suite,
+        {"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": ["Context/Model.tla"], "reference_proof_steps": 0}},
+    )
     task_source = task.read_bytes()
     model_source = model.read_bytes()
     mode = ProofCompletion(str(benchmark_root), "/checker")

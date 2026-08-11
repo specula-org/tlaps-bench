@@ -45,7 +45,9 @@ def main() -> int:
             "reference_proof_steps": steps,
         }
 
-    MANIFEST.write_text(json.dumps(dict(sorted(updated.items())), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    MANIFEST.write_text(
+        json.dumps(dict(sorted(updated.items())), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     print(f"Annotated {len(updated)} tasks ({missing} with null reference_proof_steps)")
     return 0
 
