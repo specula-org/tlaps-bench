@@ -24,16 +24,33 @@ def _step_band(steps: int) -> str:
     return "101+"
 
 
-def test_core_list_contains_190_unique_manifest_tasks_from_56_specifications():
+def test_core_list_contains_186_unique_manifest_tasks_from_55_specifications():
     manifest = json.loads((SUITE / "manifest.json").read_text(encoding="utf-8"))
     task_ids = [line.strip() for line in (SUITE / "core.txt").read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    assert len(task_ids) == 190
+    assert len(task_ids) == 186
     assert task_ids == sorted(task_ids)
     assert len(task_ids) == len(set(task_ids))
     assert set(task_ids) <= set(manifest)
     assert all((SUITE / task_id).is_file() for task_id in task_ids)
-    assert len({manifest[task_id]["spec_id"] for task_id in task_ids}) == 56
+    assert len({manifest[task_id]["spec_id"] for task_id in task_ids}) == 55
+
+
+def test_core_excludes_tasks_with_invalid_reference_proofs():
+    task_ids = {line.strip() for line in (SUITE / "core.txt").read_text(encoding="utf-8").splitlines() if line.strip()}
+    assert "AtomicBakery/AtomicBakeryWithoutSMT_InductiveInvariant.tla" not in task_ids
+    assert "Consensus/PaxosProof_struct_lemma.tla" not in task_ids
+    assert "Data/Sets_CardinalitySetMinus.tla" not in task_ids
+    assert "Data/Sets_FiniteSubset.tla" not in task_ids
+    # Still present in Full
+    for task_id in (
+        "AtomicBakery/AtomicBakeryWithoutSMT_InductiveInvariant.tla",
+        "Consensus/PaxosProof_struct_lemma.tla",
+        "Data/Sets_CardinalitySetMinus.tla",
+        "Data/Sets_FiniteSubset.tla",
+    ):
+        assert (SUITE / task_id).is_file()
+        assert task_id in json.loads((SUITE / "manifest.json").read_text(encoding="utf-8"))
 
 
 def test_core_tasks_expose_reference_proof_steps_for_website_complexity_bands():
