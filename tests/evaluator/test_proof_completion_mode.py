@@ -62,10 +62,11 @@ def test_strict_mode_discovers_only_manifest_tasks_and_exact_context(tmp_path):
     _write_manifest(
         suite,
         {
-            "Zed/Zed_Target.tla": {"spec_id": "Fixture.tla", "context": []},
+            "Zed/Zed_Target.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0},
             "Alpha/Alpha_Target.tla": {
                 "spec_id": "Fixture.tla",
                 "context": ["Context/ModelB.tla", "Context/ModelA.tla"],
+                "reference_proof_steps": 0,
             },
         },
     )
@@ -88,7 +89,7 @@ def test_strict_mode_discovers_only_manifest_tasks_and_exact_context(tmp_path):
 def test_strict_mode_is_pickleable_after_discovery(tmp_path):
     suite = tmp_path / "proof-completion"
     task = _write_task(suite, "Example/Example_Target.tla")
-    _write_manifest(suite, {"Example/Example_Target.tla": {"spec_id": "Fixture.tla", "context": []}})
+    _write_manifest(suite, {"Example/Example_Target.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
     mode = _mode(tmp_path)
     mode.get_benchmark_files()
 
@@ -154,7 +155,7 @@ def test_marker_in_symlinked_directory_cannot_downgrade_to_legacy(tmp_path):
 def test_strict_and_legacy_modes_select_matching_prompts(tmp_path):
     strict_suite = tmp_path / "strict" / "proof-completion"
     _write_task(strict_suite, "Task.tla")
-    _write_manifest(strict_suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": []}})
+    _write_manifest(strict_suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
     legacy_suite = tmp_path / "legacy" / "proof-completion"
     legacy_suite.mkdir(parents=True)
 
@@ -172,7 +173,7 @@ def test_strict_cli_captures_all_inputs_before_backend_setup(tmp_path, monkeypat
     suite = benchmark_root / "proof-completion"
     task = _write_task(suite, "Suite/Task.tla", "EXTENDS Model\n")
     model = _write_module(suite, "Context/Model.tla", "Value == TRUE\n")
-    _write_manifest(suite, {"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": ["Context/Model.tla"]}})
+    _write_manifest(suite, {"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": ["Context/Model.tla"], "reference_proof_steps": 0}})
     task_source = task.read_bytes()
     model_source = model.read_bytes()
     mode = ProofCompletion(str(benchmark_root), "/checker")

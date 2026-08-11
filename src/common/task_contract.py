@@ -19,6 +19,12 @@ from common.tla_modules import RESOLVABLE_MODULES, referenced_modules
 
 MANIFEST_FILENAME = "manifest.json"
 
+_BASE_MANIFEST_ENTRY_KEYS = frozenset({"spec_id", "context"})
+_SUITE_MANIFEST_ENTRY_KEYS = {
+    "proof-completion": frozenset({"spec_id", "context", "reference_proof_steps"}),
+    "proof-from-scratch": _BASE_MANIFEST_ENTRY_KEYS,
+}
+
 BEGIN_AGENT_HELPERS = r"\* BEGIN AGENT HELPERS"
 END_AGENT_HELPERS = r"\* END AGENT HELPERS"
 BEGIN_AGENT_PROOF = r"\* BEGIN AGENT PROOF"
@@ -56,6 +62,7 @@ class TaskBoundary:
     spec_id: str
     task_path: Path
     context_paths: tuple[Path, ...]
+    reference_proof_steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -188,13 +195,47 @@ def _relative_tla_path(value: str, *, label: str) -> PurePosixPath:
     return path
 
 
-def _manifest_specification_id(task_key: str, entry: Any) -> str:
-    if type(entry) is not dict or set(entry) != {"spec_id", "context"}:
-        raise ManifestError(f"manifest entry {task_key!r} must be an object containing exactly 'spec_id' and 'context'")
+def _manifest_entry_keys(suite_name: str) -> frozenset[str]:
+    return _SUITE_MANIFEST_ENTRY_KEYS.get(suite_name, _BASE_MANIFEST_ENTRY_KEYS)
+
+
+def _manifest_entry_keys_message(suite_name: str) -> str:
+    preferred = ("spec_id", "context", "reference_proof_steps")
+    keys = [key for key in preferred if key in _manifest_entry_keys(suite_name)]
+    for key in sorted(_manifest_entry_keys(suite_name)):
+        if key not in keys:
+            keys.append(key)
+    if len(keys) == 1:
+        return f"exactly '{keys[0]}'"
+    if len(keys) == 2:
+        return f"exactly '{keys[0]}' and '{keys[1]}'"
+    return "exactly " + ", ".join(f"'{key}'" for key in keys[:-1]) + f", and '{keys[-1]}'"
+
+
+def _manifest_reference_proof_steps(task_key: str, entry: Mapping[str, Any], *, suite_name: str) -> int | None:
+    if suite_name != "proof-completion":
+        return None
+    steps = entry["reference_proof_steps"]
+    if steps is None:
+        return None
+    if type(steps) is not int or isinstance(steps, bool) or steps < 0:
+        raise ManifestError(
+            f"manifest entry {task_key!r} field 'reference_proof_steps' must be a non-negative integer or null"
+        )
+    return steps
+
+
+def _manifest_specification_id(task_key: str, entry: Any, *, suite_name: str) -> str:
+    expected = _manifest_entry_keys(suite_name)
+    if type(entry) is not dict or set(entry) != expected:
+        raise ManifestError(
+            f"manifest entry {task_key!r} must be an object containing {_manifest_entry_keys_message(suite_name)}"
+        )
     spec_id = entry["spec_id"]
     if type(spec_id) is not str:
         raise ManifestError(f"manifest entry {task_key!r} field 'spec_id' must be a string")
     _relative_tla_path(spec_id, label=f"manifest entry {task_key!r} field 'spec_id'")
+    _manifest_reference_proof_steps(task_key, entry, suite_name=suite_name)
     return spec_id
 
 
@@ -216,7 +257,7 @@ def load_manifest_specification_ids(suite_root: Path, *, suite_name: str) -> Map
         if type(task_key) is not str:
             raise ManifestError(f"{suite_name} manifest task keys must be strings")
         _relative_tla_path(task_key, label="manifest task key")
-        specification_ids[task_key] = _manifest_specification_id(task_key, entry)
+        specification_ids[task_key] = _manifest_specification_id(task_key, entry, suite_name=suite_name)
     return MappingProxyType(dict(sorted(specification_ids.items())))
 
 
@@ -327,7 +368,7 @@ def load_task_manifest(
     if type(raw) is not dict:
         raise ManifestError(f"{suite_name} manifest root must be a JSON object")
 
-    specifications: dict[str, tuple[str, Path, list[tuple[str, Path]]]] = {}
+    specifications: dict[str, tuple[str, Path, list[tuple[str, Path]], int | None]] = {}
     task_paths: dict[Path, str] = {}
 
     for task_key, entry in raw.items():
@@ -341,7 +382,8 @@ def load_task_manifest(
             raise ManifestError(f"manifest tasks {previous_task!r} and {task_key!r} resolve to the same file")
         task_paths[task_path] = task_key
 
-        spec_id = _manifest_specification_id(task_key, entry)
+        spec_id = _manifest_specification_id(task_key, entry, suite_name=suite_name)
+        reference_proof_steps = _manifest_reference_proof_steps(task_key, entry, suite_name=suite_name)
 
         context = entry["context"]
         if type(context) is not list:
@@ -373,12 +415,12 @@ def load_task_manifest(
             seen_context_paths.add(context_path)
             resolved_context.append((context_key, context_path))
 
-        specifications[task_key] = (spec_id, task_path, resolved_context)
+        specifications[task_key] = (spec_id, task_path, resolved_context, reference_proof_steps)
 
     boundaries: dict[str, TaskBoundary] = {}
     task_keys = set(specifications)
     for task_key in sorted(specifications):
-        spec_id, task_path, context_entries = specifications[task_key]
+        spec_id, task_path, context_entries, reference_proof_steps = specifications[task_key]
         context_paths: list[Path] = []
         for context_key, context_path in context_entries:
             if context_key == task_key or context_path == task_path:
@@ -396,6 +438,7 @@ def load_task_manifest(
             spec_id=spec_id,
             task_path=task_path,
             context_paths=resolved_paths,
+            reference_proof_steps=reference_proof_steps,
         )
 
     return MappingProxyType(boundaries)

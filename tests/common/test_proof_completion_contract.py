@@ -61,10 +61,11 @@ def test_loads_sorted_tasks_and_preserves_exact_context_order(tmp_path):
     _write_manifest(
         suite,
         {
-            "Zed/Zed_Target.tla": {"spec_id": "Fixture.tla", "context": []},
+            "Zed/Zed_Target.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0},
             "Alpha/Alpha_Target.tla": {
                 "spec_id": "Fixture.tla",
                 "context": ["Context/Scaffold.tla", "Context/Model.tla"],
+                "reference_proof_steps": 3,
             },
         },
     )
@@ -75,22 +76,47 @@ def test_loads_sorted_tasks_and_preserves_exact_context_order(tmp_path):
     assert boundaries["Alpha/Alpha_Target.tla"].task_path == task_a
     assert boundaries["Alpha/Alpha_Target.tla"].spec_id == "Fixture.tla"
     assert boundaries["Alpha/Alpha_Target.tla"].context_paths == (scaffold, model)
+    assert boundaries["Alpha/Alpha_Target.tla"].reference_proof_steps == 3
     assert boundaries["Zed/Zed_Target.tla"].task_path == task_z
+    assert boundaries["Zed/Zed_Target.tla"].reference_proof_steps == 0
 
 
 def test_manifest_requires_a_specification_identity(tmp_path):
     suite = tmp_path / "proof-completion"
     _write_task(suite, "Task.tla")
-    _write_manifest(suite, {"Task.tla": {"context": []}})
+    _write_manifest(suite, {"Task.tla": {"context": [], "reference_proof_steps": 0}})
 
-    with pytest.raises(ManifestError, match="exactly 'spec_id' and 'context'"):
+    with pytest.raises(ManifestError, match="exactly 'spec_id', 'context', and 'reference_proof_steps'"):
         load_proof_completion_manifest(suite)
+
+
+@pytest.mark.parametrize("bad_steps", [-1, True, 1.5, "3"])
+def test_manifest_rejects_invalid_reference_proof_steps(tmp_path, bad_steps):
+    suite = tmp_path / "proof-completion"
+    _write_task(suite, "Task.tla")
+    _write_manifest(
+        suite,
+        {"Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": bad_steps}},
+    )
+
+    with pytest.raises(ManifestError, match="reference_proof_steps"):
+        load_proof_completion_manifest(suite)
+
+
+def test_manifest_allows_null_reference_proof_steps(tmp_path):
+    suite = tmp_path / "proof-completion"
+    _write_task(suite, "Task.tla")
+    _write_manifest(suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": None}})
+
+    boundaries = load_proof_completion_manifest(suite)
+
+    assert boundaries["Task.tla"].reference_proof_steps is None
 
 
 def test_task_requires_exact_proof_markers(tmp_path):
     suite = tmp_path / "proof-completion"
     _write_module(suite, "Task.tla", body="THEOREM Target == TRUE\nPROOF OBVIOUS\n")
-    _write_manifest(suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": []}})
+    _write_manifest(suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
 
     with pytest.raises(ManifestError, match="Task.tla.*invalid editable regions"):
         load_proof_completion_manifest(suite)
@@ -103,7 +129,7 @@ def test_task_cannot_expose_a_helper_region(tmp_path):
         "Task.tla",
         body=f"{BEGIN_AGENT_HELPERS}\nHelper == TRUE\n{END_AGENT_HELPERS}\n",
     )
-    _write_manifest(suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": []}})
+    _write_manifest(suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
 
     with pytest.raises(ManifestError, match="must not contain an AGENT HELPERS region"):
         load_proof_completion_manifest(suite)
@@ -114,7 +140,10 @@ def test_manifest_context_must_cover_transitive_references(tmp_path):
     _write_task(suite, "Task.tla", body="EXTENDS Model\n")
     _write_module(suite, "Model.tla", body="EXTENDS Missing\n")
     _write_module(suite, "Missing.tla")
-    _write_manifest(suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": ["Model.tla"]}})
+    _write_manifest(
+        suite,
+        {"Task.tla": {"spec_id": "Fixture.tla", "context": ["Model.tla"], "reference_proof_steps": 0}},
+    )
 
     with pytest.raises(ManifestError, match="incomplete context.*Missing"):
         load_proof_completion_manifest(suite)

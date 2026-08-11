@@ -52,6 +52,7 @@ from common.proof_completion_contract import (
     parse_proof_completion_region,
 )
 from common.task_contract import MANIFEST_FILENAME
+from dataset.proof_completion.reference_steps import reference_proof_steps_for_name
 from dataset.specification_identity import source_spec_id
 
 COMMUNITY_MODULES = _tla_modules.COMMUNITY_MODULES
@@ -1583,6 +1584,7 @@ def emit_layered_source(
         manifest[task_key] = {
             "spec_id": spec_id,
             "context": sorted(set(context)),
+            "reference_proof_steps": reference_proof_steps_for_name(source_lines, target_thm["name"]),
         }
         audit_state.setdefault("scaffold_owner", {}).setdefault(f"{subdir}/{scaffold_module}.tla", []).append(task_key)
 

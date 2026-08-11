@@ -492,7 +492,7 @@ def test_dataset_selection_bootstraps_from_the_flat_task_tree(tmp_path):
 
 def test_dataset_selection_prefers_an_existing_manifest(tmp_path):
     (tmp_path / "manifest.json").write_text(
-        json.dumps({"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": []}})
+        json.dumps({"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
     )
     (tmp_path / "Stray.tla").write_text("---- MODULE Stray ----\nTHEOREM TRUE\n====\n")
     assert load_dataset_task_keys(str(tmp_path)) == {"Group/Group_Thm.tla"}
@@ -501,7 +501,7 @@ def test_dataset_selection_prefers_an_existing_manifest(tmp_path):
 def test_dataset_selection_uses_complete_manifest_without_scanning_extra_flat_tasks(tmp_path):
     """Once migration is complete, the manifest is the whole dataset index."""
     (tmp_path / "manifest.json").write_text(
-        json.dumps({"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": ["Group/Group_ThmScaffold.tla"]}})
+        json.dumps({"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": ["Group/Group_ThmScaffold.tla"], "reference_proof_steps": 0}})
     )
     benor = tmp_path / "BenOr"
     benor.mkdir()
@@ -514,7 +514,7 @@ def test_dataset_selection_does_not_recount_manifest_context_layers(tmp_path):
     task-file rule — but the manifest already names it as context, so it must not
     be mistaken for an un-migrated task."""
     (tmp_path / "manifest.json").write_text(
-        json.dumps({"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": ["Group/Group_ThmScaffold.tla"]}})
+        json.dumps({"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": ["Group/Group_ThmScaffold.tla"], "reference_proof_steps": 0}})
     )
     group = tmp_path / "Group"
     group.mkdir()
@@ -530,7 +530,7 @@ def _emit_task(root, subdir, module, statement="THEOREM Thm == TRUE"):
     scaffold = f"{module}Scaffold"
     (directory / f"{scaffold}.tla").write_text(f"---- MODULE {scaffold} ----\nGiven == TRUE\n====\n")
     (directory / f"{module}.tla").write_text(build_task_module(module, scaffold, statement))
-    return f"{subdir}/{module}.tla", {"spec_id": "Fixture.tla", "context": [f"{subdir}/{scaffold}.tla"]}
+    return f"{subdir}/{module}.tla", {"spec_id": "Fixture.tla", "context": [f"{subdir}/{scaffold}.tla"], "reference_proof_steps": 0}
 
 
 def _finalize(root, manifest, audit_state=None, **kwargs):
@@ -670,7 +670,7 @@ def test_seed_staging_copies_the_current_dataset_verbatim(tmp_path):
     source = tmp_path / "dataset"
     (source / "Group").mkdir(parents=True)
     (source / "Group" / "Group_Thm.tla").write_text("theorem body")
-    (source / "manifest.json").write_text('{"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": []}}')
+    (source / "manifest.json").write_text('{"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}}')
     staging = tmp_path / "staging"
     staging.mkdir()
 
@@ -679,7 +679,7 @@ def test_seed_staging_copies_the_current_dataset_verbatim(tmp_path):
     assert (staging / "Group" / "Group_Thm.tla").read_text() == "theorem body"
     assert (
         staging / "manifest.json"
-    ).read_text() == '{"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": []}}'
+    ).read_text() == '{"Group/Group_Thm.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}}'
 
 
 def test_filtered_finalization_keeps_tasks_outside_the_filter(tmp_path):
@@ -760,7 +760,7 @@ def test_finalize_flags_a_scaffold_two_tasks_share(tmp_path):
     (tmp_path / "Group" / "Group_Two.tla").write_text(
         build_task_module("Group_Two", "Group_OneScaffold", "THEOREM Other == TRUE")
     )
-    manifest = {first: entry, second: {"spec_id": "Fixture.tla", "context": entry["context"]}}
+    manifest = {first: entry, second: {"spec_id": "Fixture.tla", "context": entry["context"], "reference_proof_steps": 0}}
     audit_state = {"scaffold_owner": {entry["context"][0]: [first, second]}}
     _finalize(tmp_path, manifest, audit_state)
 
@@ -824,7 +824,11 @@ def test_finalize_keeps_context_a_failing_run_would_have_swept(tmp_path):
 
 def test_finalize_refuses_a_manifest_the_evaluator_would_reject(tmp_path):
     key, entry = _emit_task(tmp_path, "Group", "Group_Thm")
-    entry = {"spec_id": "Fixture.tla", "context": [*entry["context"], "Group/Missing.tla"]}
+    entry = {
+        "spec_id": "Fixture.tla",
+        "context": [*entry["context"], "Group/Missing.tla"],
+        "reference_proof_steps": 0,
+    }
     with pytest.raises(ManifestError):
         _finalize(tmp_path, {key: entry})
 
@@ -838,7 +842,7 @@ def _dup_task(root, subdir, module, scaffold_body="Given == TRUE"):
     scaffold = f"{module}Scaffold"
     (directory / f"{scaffold}.tla").write_text(f"---- MODULE {scaffold} ----\n{scaffold_body}\n====\n")
     (directory / f"{module}.tla").write_text(build_task_module(module, scaffold, "THEOREM Thm == TRUE"))
-    return f"{subdir}/{module}.tla", {"spec_id": "Fixture.tla", "context": [f"{subdir}/{scaffold}.tla"]}
+    return f"{subdir}/{module}.tla", {"spec_id": "Fixture.tla", "context": [f"{subdir}/{scaffold}.tla"], "reference_proof_steps": 0}
 
 
 def test_an_approved_duplicate_keeps_only_the_canonical_copy(tmp_path):

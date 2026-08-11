@@ -25,7 +25,7 @@ def test_identity_loader_rejects_a_manifest_entry_without_a_mapping(tmp_path):
     suite.mkdir()
     (suite / "manifest.json").write_text(json.dumps({"Task.tla": {"context": []}}), encoding="utf-8")
 
-    with pytest.raises(ManifestError, match="exactly 'spec_id' and 'context'"):
+    with pytest.raises(ManifestError, match="exactly 'spec_id', 'context', and 'reference_proof_steps'"):
         load_manifest_specification_ids(suite, suite_name="proof-completion")
 
 
@@ -36,9 +36,17 @@ def test_current_manifests_map_every_task_to_an_existing_source_specification():
         manifest = json.loads(path.read_text(encoding="utf-8"))
         manifests[mode] = manifest
         assert manifest
+        expected_keys = (
+            {"spec_id", "context", "reference_proof_steps"}
+            if mode == "proof-completion"
+            else {"spec_id", "context"}
+        )
         for task_id, entry in manifest.items():
-            assert set(entry) == {"spec_id", "context"}, task_id
+            assert set(entry) == expected_keys, task_id
             assert (SOURCE_ROOT / entry["spec_id"]).is_file(), task_id
+            if mode == "proof-completion":
+                steps = entry["reference_proof_steps"]
+                assert steps is None or (isinstance(steps, int) and not isinstance(steps, bool) and steps >= 0)
 
     shared_tasks = set(manifests["proof-completion"]) & set(manifests["proof-from-scratch"])
     assert shared_tasks
