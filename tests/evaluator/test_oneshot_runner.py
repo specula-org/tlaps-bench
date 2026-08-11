@@ -823,7 +823,6 @@ def test_litellm_makes_one_call_with_no_tools_system_or_retries(monkeypatch):
             "model": "provider/model",
             "messages": [{"role": "user", "content": "EXACT PROMPT"}],
             "stream": False,
-            "max_tokens": 32_768,
             "num_retries": 0,
         }
     ]
@@ -841,9 +840,11 @@ def test_litellm_makes_one_call_with_no_tools_system_or_retries(monkeypatch):
     assert result.audit["wire_audited"] is False
     assert result.audit["litellm_retries_disabled"] is True
 
-    reasoned_result = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model", "low")
+    reasoned_result = oneshot_runner.run_litellm("EXACT PROMPT", "provider/model", "low", 7_200.0)
     assert calls[-1]["reasoning_effort"] == "low"
+    assert calls[-1]["timeout"] == 7_200.0
     assert reasoned_result.audit["reasoning_effort"] == "low"
+    assert reasoned_result.audit["timeout_seconds"] == 7_200.0
     assert result.audit["system_supplied"] is False
     assert result.audit["tools_supplied"] is False
     assert result.audit["finish_reason"] == "stop"
@@ -910,7 +911,7 @@ def test_litellm_falls_back_to_completion_cost_and_omits_unpriceable(monkeypatch
     assert "costs" not in detail
 
 
-def test_litellm_clamps_output_budget_to_installed_model_metadata(monkeypatch):
+def test_litellm_uses_full_output_budget_from_installed_model_metadata(monkeypatch):
     calls: list[dict] = []
 
     def completion(**kwargs):
@@ -922,14 +923,45 @@ def test_litellm_clamps_output_budget_to_installed_model_metadata(monkeypatch):
 
     fake_litellm = types.ModuleType("litellm")
     fake_litellm.completion = completion
-    fake_litellm.model_cost = {"provider/small-model": {"max_output_tokens": 8_192}}
+    fake_litellm.model_cost = {"provider/large-model": {"max_output_tokens": 128_000}}
     monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
 
-    result = oneshot_runner.run_litellm("EXACT PROMPT", "provider/small-model")
+    result = oneshot_runner.run_litellm("EXACT PROMPT", "provider/large-model")
 
-    assert calls[0]["max_tokens"] == 8_192
-    assert result.audit["max_tokens"] == 8_192
+    assert calls[0]["max_tokens"] == 128_000
+    assert result.audit["max_tokens"] == 128_000
     assert (result.input_tokens, result.output_tokens) == (None, None)
+
+
+def test_litellm_length_failure_keeps_finish_reason_and_usage(monkeypatch):
+    response = SimpleNamespace(
+        id="msg-truncated",
+        model="provider/large-model",
+        choices=[SimpleNamespace(message=SimpleNamespace(content=""), finish_reason="length")],
+        usage=SimpleNamespace(prompt_tokens=123, completion_tokens=128_000),
+    )
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = lambda **_kwargs: response
+    fake_litellm.completion_cost = lambda **_kwargs: 6.5
+    fake_litellm.model_cost = {"provider/large-model": {"max_output_tokens": 128_000}}
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+
+    with pytest.raises(oneshot_runner.ProviderRunError, match="128000-token output limit") as exc_info:
+        oneshot_runner.run_litellm("EXACT PROMPT", "provider/large-model")
+
+    assert exc_info.value.audit["finish_reason"] == "length"
+    assert (exc_info.value.input_tokens, exc_info.value.output_tokens) == (123, 128_000)
+    assert exc_info.value.usage_details == (
+        {
+            "source": "litellm_response_usage",
+            "input_tokens": 123,
+            "output_tokens": 128_000,
+            "model": "provider/large-model",
+            "request_id": "msg-truncated",
+            "costs": [{"amount": 6.5, "unit": "usd", "source": "litellm.completion_cost"}],
+            "finish_reason": "length",
+        },
+    )
 
 
 def test_main_preserves_missing_litellm_usage_as_null(monkeypatch, capsys, tmp_path):

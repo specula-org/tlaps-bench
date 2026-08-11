@@ -164,6 +164,8 @@ def test_shared_command_and_capabilities(tmp_path):
     assert backend.capabilities.max_continuations == 0
     assert backend.capabilities.default_infra_retries == 3
     assert backend.capabilities.max_infra_retries is None
+    assert backend.capabilities.cooperative_deadline is True
+    assert backend.capabilities.timeout_drain_grace == 10.0
 
 
 def test_shared_command_uses_module_runner_for_native_execution(tmp_path):

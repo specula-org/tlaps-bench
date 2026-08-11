@@ -1114,11 +1114,11 @@ def _response_finish_reason(response: object) -> str | None:
     return finish_reason if isinstance(finish_reason, str) and finish_reason else None
 
 
-def _litellm_max_tokens(litellm: object, model: str) -> int:
-    """Use installed LiteLLM metadata without a provider lookup or network preflight."""
+def _litellm_max_tokens(litellm: object, model: str) -> int | None:
+    """Return the provider model limit from installed LiteLLM metadata."""
     model_cost = getattr(litellm, "model_cost", {})
     if not isinstance(model_cost, dict):
-        return 32_768
+        return None
     candidates = (model, model.split("/", 1)[-1])
     for candidate in candidates:
         metadata = model_cost.get(candidate)
@@ -1127,8 +1127,8 @@ def _litellm_max_tokens(litellm: object, model: str) -> int:
         for key in ("max_output_tokens", "max_tokens"):
             limit = metadata.get(key)
             if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
-                return min(32_768, limit)
-    return 32_768
+                return limit
+    return None
 
 
 def _litellm_response_cost(litellm: object, response: object) -> tuple[float, str] | None:
@@ -1152,7 +1152,7 @@ def _litellm_response_cost(litellm: object, response: object) -> tuple[float, st
 def _litellm_audit(
     prompt: str,
     model: str,
-    max_tokens: int = 32_768,
+    max_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> dict[str, object]:
     request: dict[str, object] = {"model": model, "messages": [{"role": "user", "content": prompt}]}
@@ -1177,25 +1177,34 @@ def _litellm_audit(
         ).hexdigest(),
         "system_supplied": False,
         "tools_supplied": False,
-        "max_tokens": max_tokens,
     }
+    if max_tokens is not None:
+        audit["max_tokens"] = max_tokens
     if reasoning_effort is not None:
         audit["reasoning_effort"] = reasoning_effort
     return audit
 
 
-def run_litellm(prompt: str, model: str, reasoning_effort: str | None = None) -> ProviderResult:
+def run_litellm(
+    prompt: str,
+    model: str,
+    reasoning_effort: str | None = None,
+    timeout: float | None = None,
+) -> ProviderResult:
     request: dict[str, object] = {"model": model, "messages": [{"role": "user", "content": prompt}]}
     if reasoning_effort is not None:
         request["reasoning_effort"] = reasoning_effort
     audit = _litellm_audit(prompt, model, reasoning_effort=reasoning_effort)
+    if timeout is not None:
+        audit["timeout_seconds"] = timeout
     try:
         import litellm
     except ImportError as exc:
         raise ProviderRunError("litellm is not installed", audit) from exc
 
     max_tokens = _litellm_max_tokens(litellm, model)
-    audit["max_tokens"] = max_tokens
+    if max_tokens is not None:
+        audit["max_tokens"] = max_tokens
 
     # This disables LiteLLM's own retry orchestration. Provider transports may
     # have behavior below this adapter boundary, so this is intentionally not
@@ -1207,11 +1216,17 @@ def run_litellm(prompt: str, model: str, reasoning_effort: str | None = None) ->
         audit["litellm_completion_invocations"] = 1
         audit["model_requests"] = 1
         audit["request_attempts"] = 1
-        response = litellm.completion(
+        completion_options: dict[str, object] = {
             **request,
-            stream=False,
-            max_tokens=max_tokens,
-            num_retries=0,
+            "stream": False,
+            "num_retries": 0,
+        }
+        if max_tokens is not None:
+            completion_options["max_tokens"] = max_tokens
+        if timeout is not None:
+            completion_options["timeout"] = timeout
+        response = litellm.completion(
+            **completion_options,
         )
         usage = _get(response, "usage")
         request_input = _optional_nonnegative_int(_get(usage, "prompt_tokens"))
@@ -1244,11 +1259,14 @@ def run_litellm(prompt: str, model: str, reasoning_effort: str | None = None) ->
             response_cost, cost_source = cost_evidence
             detail["costs"] = [{"amount": response_cost, "unit": "usd", "source": cost_source}]
         usage_details = (detail,)
-        text = _response_text(response)
         finish_reason = _response_finish_reason(response)
         if finish_reason is not None:
             audit["finish_reason"] = finish_reason
             detail["finish_reason"] = finish_reason
+        if finish_reason == "length":
+            limit = f" {max_tokens}-token" if max_tokens is not None else ""
+            raise RuntimeError(f"one-shot provider exhausted its{limit} output limit")
+        text = _response_text(response)
     except Exception as exc:
         raise ProviderRunError(
             str(exc),
@@ -1703,21 +1721,26 @@ class _LiteLLMProvider:
         prompt: str,
         model: str,
         _workspace: str,
-        _deadline: float | None,
+        deadline: float | None,
         reasoning_effort: str | None = None,
     ) -> None:
         self.prompt = prompt
         self.model = model
         self.reasoning_effort = reasoning_effort
+        self.deadline = deadline
 
     @property
     def audit(self) -> dict[str, object]:
         return _litellm_audit(self.prompt, self.model, reasoning_effort=self.reasoning_effort)
 
     def invoke(self, _on_timeout: Callable[[ProviderTimeoutError], None]) -> ProviderResult:
-        if self.reasoning_effort is None:
-            return run_litellm(self.prompt, self.model)
-        return run_litellm(self.prompt, self.model, self.reasoning_effort)
+        timeout = max(self.deadline - time.time(), 0.001) if self.deadline is not None else None
+        options: dict[str, object] = {}
+        if self.reasoning_effort is not None:
+            options["reasoning_effort"] = self.reasoning_effort
+        if timeout is not None:
+            options["timeout"] = timeout
+        return run_litellm(self.prompt, self.model, **options)
 
 
 class _CopilotProvider:
