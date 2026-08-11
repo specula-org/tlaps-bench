@@ -277,7 +277,7 @@ The default remains the complete suite. To run the committed 192-task Proof Comp
 uv run tlaps-bench run --mode proof-completion --task-list core
 ```
 
-The current Core keeps 192 of the 706 tasks. It excludes the task without a valid reference proof, all 215 Direct reference proofs, the 275 current tasks passed by all five aligned model runs, 26 structurally redundant proof-template variants, five content-redundant specification representations, 39 repeated within-spec proof-role variants, and 57 further Ben-Or and Tendermint helper variants selected by semantic role; these sets overlap, so 514 tasks are excluded in total. Full remains available by omitting `--task-list`.
+The current Core selects 192 tasks across 56 specifications. Full remains the default when `--task-list` is omitted.
 
 `core` is a registered name for the current mode's committed `core.txt`; Proof Completion provides it today. Explicit file paths remain supported. Task lists use exact manifest IDs rather than substring matching. Unavailable cohorts, missing files, unknown IDs, duplicates, and empty lists fail before authentication, image setup, or model preflight. A task-list run records its resolved cohort in `task-list.json` inside the output directory.
 
