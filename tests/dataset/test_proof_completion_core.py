@@ -50,4 +50,4 @@ def test_core_tasks_expose_reference_proof_steps_for_website_complexity_bands():
 
     bands = Counter(_step_band(steps) for steps in steps_by_task.values())
     assert set(bands) == set(_CORE_STEP_BANDS)
-    assert sum(bands.values()) == 192
+    assert sum(bands.values()) == len(task_ids)
