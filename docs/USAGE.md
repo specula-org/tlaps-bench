@@ -271,13 +271,13 @@ uv run tlaps-bench run [flags]
 
 Run `uv run tlaps-bench run --help` for the full flag list.
 
-The default remains the complete suite. To run the committed 192-task Proof Completion Core:
+The default remains the complete suite. To run the committed 190-task Proof Completion Core:
 
 ```bash
 uv run tlaps-bench run --mode proof-completion --task-list core
 ```
 
-The current Core selects 192 tasks across 56 specifications. Full remains the default when `--task-list` is omitted.
+The current Core selects 190 tasks across 56 specifications. Full remains the default when `--task-list` is omitted.
 
 `core` is a registered name for the current mode's committed `core.txt`; Proof Completion provides it today. Explicit file paths remain supported. Task lists use exact manifest IDs rather than substring matching. Unavailable cohorts, missing files, unknown IDs, duplicates, and empty lists fail before authentication, image setup, or model preflight. A task-list run records its resolved cohort in `task-list.json` inside the output directory.
 

@@ -71,7 +71,7 @@ def test_core_name_resolves_for_proof_completion_only():
 
     resolved = runner._resolve_task_list("core", proof_completion)
     assert resolved == str(REPO_ROOT / "benchmark" / "proof-completion" / "core.txt")
-    assert len(runner._load_task_list(resolved)) == 192
+    assert len(runner._load_task_list(resolved)) == 190
     with pytest.raises(ValueError, match="named task list 'core'.*proof-from-scratch"):
         runner._resolve_task_list("core", proof_from_scratch)
 
