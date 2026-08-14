@@ -36,16 +36,6 @@ ASSUME WriterFinite == IsFiniteSet(Writer)
 ASSUME ReaderFinite == IsFiniteSet(Reader)
 
 (***************************************************************************)
-(* `empty' is declared as a `CONSTANT' in `OpenAddressing'.  The spec's    *)
-(* `OAAssumption' only states `empty \notin fps'.  For inductive proofs    *)
-(* about `NoDupsTable' under negate-in-place table updates we additionally *)
-(* need that `empty' is not an integer.  This is consistent with TLC's    *)
-(* treatment of `empty' as a (non-integer) model value distinct from any  *)
-(* fingerprint and its negation.                                          *)
-(***************************************************************************)
-ASSUME EmptyNotInt == empty \notin Int
-
-(***************************************************************************)
 (* The set of pc labels that appear in the spec.  The PlusCal translation  *)
 (* uses string labels at every control point of `p(self)' and the          *)
 (* `Evict(self)' procedure (plus the implicit `Done' label injected by the *)

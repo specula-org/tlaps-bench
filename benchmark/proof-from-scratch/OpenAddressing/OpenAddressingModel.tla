@@ -8,9 +8,13 @@ CONSTANT K, fps, empty, Writer, Reader, L
 ASSUME OAAssumption ==
        /\ K \in (Nat \ {0})
        /\ \A fp \in fps: fp \in (Nat \ {0})
+       /\ IsFiniteSet(fps)
+       /\ Cardinality(fps) > 1
        /\ empty \notin fps
        /\ L \in Nat
        /\ (2*L) <= K 
+
+ASSUME EmptyNotInt == empty \notin Int
 
 last(seq) == seq[Len(seq)]                     
 

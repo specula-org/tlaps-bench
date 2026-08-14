@@ -19,15 +19,23 @@ EXTENDS Sequences, FiniteSets, Integers
 CONSTANT K, fps, empty, Writer, Reader, L
 
 (***************************************************************************)
-(* K is a positive natural.  emtpy is different from all elements in fps.  *)
-(* fingerprints are natural numbers and can be well-ordered.               *)
+(* K is a positive natural. Fingerprints form a finite, nondegenerate set   *)
+(* of positive naturals, so the min/max rescaling divisor is nonzero.       *)
 (***************************************************************************)
 ASSUME OAAssumption ==
        /\ K \in (Nat \ {0})
        /\ \A fp \in fps: fp \in (Nat \ {0})
+       /\ IsFiniteSet(fps)
+       /\ Cardinality(fps) > 1
        /\ empty \notin fps
        /\ L \in Nat
        /\ (2*L) <= K 
+
+(***************************************************************************)
+(* `empty' is a non-integer model value, so it cannot be confused with a   *)
+(* fingerprint or the negative marker used while inserting one.            *)
+(***************************************************************************)
+ASSUME EmptyNotInt == empty \notin Int
 
 ----------------------------------------------------------------------------
 
