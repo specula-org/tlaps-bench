@@ -31,8 +31,8 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [OpenAddressing](https://github.com/lemmy/Examples/tree/mku-OA/specifications/TLC) | OpenAddressing | 1 | 5 | 6 |
 | [Data](https://github.com/tlaplus/tlapm/tree/main/zenon/regression/examples/data) | TLAPS distribution examples | 15 | 9 | 24 |
 | [Consensus](https://github.com/tlaplus/tlapm/tree/main/examples_draft/consensus) | TLAPS distribution examples | 13 | 10 | 23 |
-| [Cantor](https://github.com/tlaplus/tlapm/tree/main/examples/cantor) | TLAPS distribution examples | 11 | 10 | 21 |
 | [Paxos](https://github.com/hengxin/tlaps-examples/tree/master/Paxos) | TLAPS distribution examples | 13 | 6 | 19 |
+| [Cantor](https://github.com/tlaplus/tlapm/tree/main/examples/cantor) | TLAPS distribution examples | 11 | 5 | 16 |
 | [Allocator](https://github.com/tlaplus/tlapm/blob/main/examples/Allocator.tla) | TLAPS distribution examples | 10 | 4 | 14 |
 | [BubbleSort](https://github.com/tlaplus/tlapm/blob/main/examples/BubbleSort.tla) | TLAPS distribution examples | 8 | 3 | 11 |
 | [Euclid](https://github.com/hengxin/tlaps-examples/tree/master/Euclid) | TLAPS distribution examples | 6 | 5 | 11 |
@@ -94,4 +94,4 @@ This file is generated; regenerate it with `python3 scripts/dataset_table.py`.
 | [SpecifyingSystems_HourClock](https://github.com/tlaplus/Examples/tree/master/specifications/SpecifyingSystems/HourClock) | tlaplus/Examples | 1 | – | 1 |
 | [two_thread_mutex](https://github.com/anvil-verifier/anvil/blob/main/src/tla_demo.rs) | two_thread_mutex (Anvil) | – | 1 | 1 |
 
-**Total: 71 examples — 706 proof-completion + 250 proof-from-scratch = 956 tasks.**
+**Total: 71 examples — 706 proof-completion + 245 proof-from-scratch = 951 tasks.**
