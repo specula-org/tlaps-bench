@@ -13,6 +13,7 @@ Run: PYTHONPATH=src python3 -m pytest tests/dataset/test_layered_generator.py
 import json
 import sys
 from io import StringIO
+from pathlib import Path
 
 import pytest
 
@@ -73,6 +74,36 @@ def test_module_directives_are_stripped_from_read_only_layers():
     # read-only layer would hand the agent part of the proof strategy.
     text = "Op == 1\nUSE DEF Op\n  HIDE DEF Op\nOther == 2\n"
     assert _strip_module_directives(text) == "Op == 1\nOther == 2\n"
+
+
+def test_read_only_layers_drop_content_after_the_outer_module():
+    text = "---- MODULE Fixture ----\nOp == 1\n====\nIInit == TypeOK /\\ IInv\n"
+
+    assert _strip_module_directives(text) == "---- MODULE Fixture ----\nOp == 1\n====\n"
+
+
+def test_read_only_layer_truncation_preserves_nested_modules():
+    text = (
+        "---- MODULE Outer ----\n"
+        "---- MODULE Inner ----\n"
+        "InnerOp == TRUE\n"
+        "====\n"
+        "OuterOp == Inner!InnerOp\n"
+        "====\n"
+        "trailing notes\n"
+    )
+
+    stripped = _strip_module_directives(text)
+
+    assert "OuterOp" in stripped
+    assert "trailing notes" not in stripped
+    assert stripped.count("====") == 2
+
+
+def test_read_only_layer_truncation_preserves_whitespace_only_suffixes():
+    text = "---- MODULE Fixture ----\nOp == 1\n====\n\n"
+
+    assert _strip_module_directives(text) == text
 
 
 def test_quantifier_is_not_read_as_a_use_of_a_variable_named_a():
@@ -353,6 +384,51 @@ def test_manifest_round_trips_as_json(tmp_path):
     manifest[key] = entry
     text = json.dumps(dict(sorted(manifest.items())), indent=2)
     assert json.loads(text) == manifest
+
+
+def test_finalize_rejects_a_missing_outer_module_terminator(tmp_path):
+    task_key, entry = _write_task(tmp_path, "Group", "Group_Thm")
+    (tmp_path / entry["context"][0]).write_text("---- MODULE Group_ThmDefs ----\nInv == TRUE\n")
+    audit = StringIO()
+
+    with pytest.raises(RuntimeError, match="failed integrity validation"):
+        generate._finalize_layered(
+            str(tmp_path),
+            {task_key: entry},
+            {},
+            audit,
+            run_gates=False,
+        )
+
+    assert "no complete outer module terminator" in audit.getvalue()
+
+
+def test_finalize_rejects_content_after_the_outer_module(tmp_path):
+    task_key, entry = _write_task(tmp_path, "Group", "Group_Thm")
+    context_path = tmp_path / entry["context"][0]
+    context_path.write_text(context_path.read_text() + "trailing hint\n")
+    audit = StringIO()
+
+    with pytest.raises(RuntimeError, match="failed integrity validation"):
+        generate._finalize_layered(
+            str(tmp_path),
+            {task_key: entry},
+            {},
+            audit,
+            run_gates=False,
+        )
+
+    assert "content remains after the outer module terminator" in audit.getvalue()
+
+
+def test_shipped_layered_output_passes_read_only_integrity():
+    suite = Path(generate.BENCHMARK_DIR)
+    manifest = json.loads((suite / "manifest.json").read_text())
+    audit = StringIO()
+
+    generate.validate_layered_output(str(suite), manifest, audit)
+
+    assert audit.getvalue() == ""
 
 
 def test_multi_line_declaration_statement_is_deleted_as_one_unit():

@@ -11,6 +11,3 @@ TypeOK == /\ num \in [Procs -> Nat]
                                "e4", "w1", "w2", "cs", "exit"}]             
 
 =============================================================================
-
-Test 1:  5248 distinct initial states  151056 full initial states
-IInit == TypeOK /\ IInv 
