@@ -174,7 +174,7 @@ SendDirect(m) ==
 
 \* All pending messages sent from node i
 PendingMessages(i) ==
-    FoldBag(LAMBDA x, y: IF y.msource = i THEN BagAdd(x,y) ELSE x, EmptyBag, pendingMessages)
+    [m \in {msg \in DOMAIN pendingMessages : msg.msource = i} |-> pendingMessages[m]]
 
 \* Remove all messages in pendingMessages that were sent from node i
 ClearPendingMessages(i) ==

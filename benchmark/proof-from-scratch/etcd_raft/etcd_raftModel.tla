@@ -98,7 +98,7 @@ SendDirect(m) ==
     pendingMessages' = WithMessage(m, pendingMessages)
 
 PendingMessages(i) ==
-    FoldBag(LAMBDA x, y: IF y.msource = i THEN BagAdd(x,y) ELSE x, EmptyBag, pendingMessages)
+    [m \in {msg \in DOMAIN pendingMessages : msg.msource = i} |-> pendingMessages[m]]
 
 ClearPendingMessages(i) ==
     pendingMessages (-) PendingMessages(i)
