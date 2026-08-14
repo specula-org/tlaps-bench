@@ -1094,6 +1094,11 @@ def compute_sibling_deps(targets):
 
 
 _THEOREM_SCAN = re.compile(r"^[ \t]*(THEOREM|LEMMA|COROLLARY|PROPOSITION)\b", re.MULTILINE)
+_PROOF_ARTIFACT_SCAN = re.compile(
+    r"^[ \t]*(?:(?:LOCAL[ \t]+)?(?:THEOREM|LEMMA|COROLLARY|PROPOSITION)\b"
+    r"|(?:PROOF|OMITTED|OBVIOUS|BY|QED)\b|<\d+>)",
+    re.MULTILINE,
+)
 _DEFINITION_SCAN = re.compile(r"^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*==", re.MULTILINE)
 
 
@@ -2009,7 +2014,7 @@ def write_pruned_deps(output_root, audit_state, audit_writer):
 
 
 def validate_layered_output(output_root, manifest, audit_writer):
-    """Reject incomplete modules and prompt-visible tails."""
+    """Reject prompt-visible tails and proof artifacts in read-only context."""
     context_files = {rel for entry in manifest.values() for rel in entry["context"]}
     all_files = set(manifest) | context_files
     errors = []
@@ -2023,6 +2028,10 @@ def validate_layered_output(output_root, manifest, audit_writer):
             errors.append(f"{rel}: no complete outer module terminator")
         elif tail.strip():
             errors.append(f"{rel}: content remains after the outer module terminator")
+        if rel in context_files:
+            artifact = _PROOF_ARTIFACT_SCAN.search(strip_comments(text))
+            if artifact:
+                errors.append(f"{rel}: read-only context contains proof artifact `{artifact.group(0).strip()}`")
 
     for error in errors:
         audit_writer.write(f"[audit] {error}\n")

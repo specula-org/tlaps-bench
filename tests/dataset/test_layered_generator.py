@@ -386,6 +386,32 @@ def test_manifest_round_trips_as_json(tmp_path):
     assert json.loads(text) == manifest
 
 
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "THEOREM Shortcut == TRUE\nPROOF OMITTED",
+        "LEMMA Shortcut == TRUE\nBY TRUE",
+        "Inv == TRUE\nBY TRUE",
+        "Inv == TRUE\n<1>1. TRUE",
+    ],
+)
+def test_finalize_rejects_proof_artifacts_in_read_only_context(tmp_path, artifact):
+    task_key, entry = _write_task(tmp_path, "Group", "Group_Thm", defs_body=artifact)
+    audit = StringIO()
+
+    with pytest.raises(RuntimeError, match="failed integrity validation"):
+        generate._finalize_layered(
+            str(tmp_path),
+            {task_key: entry},
+            {},
+            audit,
+            run_gates=False,
+        )
+
+    assert "read-only context contains proof artifact" in audit.getvalue()
+    assert not (tmp_path / "manifest.json").exists()
+
+
 def test_finalize_rejects_a_missing_outer_module_terminator(tmp_path):
     task_key, entry = _write_task(tmp_path, "Group", "Group_Thm")
     (tmp_path / entry["context"][0]).write_text("---- MODULE Group_ThmDefs ----\nInv == TRUE\n")
