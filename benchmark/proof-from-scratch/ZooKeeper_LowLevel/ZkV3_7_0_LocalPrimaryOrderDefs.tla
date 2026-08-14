@@ -12,7 +12,7 @@ LocalPrimaryOrder == LET p_set(i, e) == {p \in proposalMsgsLog: /\ p.source = i
                      IN \A i \in Server: \A e \in 1..currentEpoch[i]:
                          \/ Cardinality(txn_set(i, e)) < 2
                          \/ /\ Cardinality(txn_set(i, e)) >= 2
-                            /\ \E txn1, txn2 \in txn_set(i, e):
+                            /\ \A txn1, txn2 \in txn_set(i, e):
                              \/ TxnEqual(txn1, txn2)
                              \/ /\ ~TxnEqual(txn1, txn2)
                                 /\ LET TxnPre  == IF ZxidCompare(txn1.zxid, txn2.zxid) THEN txn2 ELSE txn1
