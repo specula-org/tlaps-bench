@@ -8,7 +8,7 @@ TxnEqual(txn1, txn2) == /\ ZxidEqual(txn1.zxid, txn2.zxid)
 TotalOrder == \A i, j \in Server: 
                 LET committed1 == lastCommitted[i].index 
                     committed2 == lastCommitted[j].index  
-                IN committed1 >= 2 /\ committed2 >= 2
+                IN committed1 >= 2
                     => \A idx_i1 \in 1..(committed1 - 1) : \A idx_i2 \in (idx_i1 + 1)..committed1 :
                     LET logOk == \E idx \in 1..committed2 :
                                      TxnEqual(history[i][idx_i2], history[j][idx])
