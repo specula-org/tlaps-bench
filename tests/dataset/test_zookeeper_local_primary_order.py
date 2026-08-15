@@ -56,12 +56,8 @@ def test_local_primary_order_quantifies_over_every_broadcast_pair():
         body = _local_primary_order_body(path.read_text(encoding="utf-8"))
         assert EXISTS_PAIR not in body, f"{path} still uses existential pair quantification"
         assert FORALL_PAIR in body, f"{path} is missing forall-pairs LocalPrimaryOrder"
-        assert COMMITTED_GUARD not in body, (
-            f"{path} still skips followers with lastCommitted index 1"
-        )
-        assert DELIVERED_NEXT in body, (
-            f"{path} must parenthesize the delivery check so \\E does not bind =>"
-        )
+        assert COMMITTED_GUARD not in body, f"{path} still skips followers with lastCommitted index 1"
+        assert DELIVERED_NEXT in body, f"{path} must parenthesize the delivery check so \\E does not bind =>"
 
 
 def test_local_primary_order_fails_when_follower_delivered_only_b():
