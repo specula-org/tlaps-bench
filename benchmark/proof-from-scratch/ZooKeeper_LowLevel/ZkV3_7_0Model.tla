@@ -76,6 +76,12 @@ envVars == <<status, partition>>
 vars == <<serverVars, electionVars, leaderVars, followerVars,
           verifyVars, msgVars, envVars>> 
 
+BootstrapProposalMsgs ==
+    { [ source |-> s,
+        epoch  |-> 0,
+        zxid   |-> BootstrapZxid,
+        data   |-> 0 ] : s \in Server }
+
 Maximum(S) == IF S = {} THEN -1
                         ELSE CHOOSE n \in S: \A m \in S: n >= m
 
@@ -175,11 +181,11 @@ CleanInputBufferInCluster(S) == msgs' = [s \in Server |->
 InitServerVars == /\ InitServerVarsL
                   /\ zabState      = [s \in Server |-> ELECTION]
                   /\ acceptedEpoch = [s \in Server |-> 0]
-                  /\ lastCommitted = [s \in Server |-> [ index |-> 0,
-                                                         zxid  |-> <<0, 0>> ] ]
+                  /\ lastCommitted = [s \in Server |-> [ index |-> 1,
+                                                         zxid  |-> BootstrapZxid ] ]
                   /\ lastSnapshot  = [s \in Server |-> [ index |-> 0,
                                                          zxid  |-> <<0, 0>> ] ]
-                  /\ initialHistory = [s \in Server |-> << >>]
+                  /\ initialHistory = [s \in Server |-> <<BootstrapTxn>>]
 
 InitLeaderVars == /\ InitLeaderVarsL
                   /\ learners         = [s \in Server |-> {}]
@@ -198,7 +204,7 @@ InitFollowerVars == /\ connectInfo = [s \in Server |-> [sid |-> NullPoint,
                                         [ notCommitted |-> << >>,
                                           committed    |-> << >> ] ]
 
-InitVerifyVars == /\ proposalMsgsLog    = {}
+InitVerifyVars == /\ proposalMsgsLog    = BootstrapProposalMsgs
                   /\ epochLeader        = [e \in 1..MAXEPOCH |-> {} ]
                    
 InitMsgVars == /\ msgs         = [s \in Server |-> [v \in Server |-> << >>] ]

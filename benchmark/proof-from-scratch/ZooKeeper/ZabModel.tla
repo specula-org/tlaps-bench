@@ -32,6 +32,17 @@ ACK       == "ACK"
 COMMIT    == "COMMIT"
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
 
+BootstrapZxid == <<0, 1>>
+BootstrapTxn == [ zxid   |-> BootstrapZxid,
+                  value  |-> 0,
+                  ackSid |-> Server,
+                  epoch  |-> 0 ]
+BootstrapProposalMsgs ==
+    { [ source |-> s,
+        epoch  |-> 0,
+        zxid   |-> BootstrapZxid,
+        data   |-> 0 ] : s \in Server }
+
 VARIABLES state,          
           zabState,       
                           
@@ -185,9 +196,9 @@ InitServerVars == /\ state         = [s \in Server |-> LOOKING]
                   /\ zabState      = [s \in Server |-> ELECTION]
                   /\ acceptedEpoch = [s \in Server |-> 0]
                   /\ currentEpoch  = [s \in Server |-> 0]
-                  /\ history       = [s \in Server |-> << >>]
-                  /\ lastCommitted = [s \in Server |-> [ index |-> 0,
-                                                         zxid  |-> <<0, 0>> ] ]
+                  /\ history       = [s \in Server |-> <<BootstrapTxn>>]
+                  /\ lastCommitted = [s \in Server |-> [ index |-> 1,
+                                                         zxid  |-> BootstrapZxid ] ]
 
 InitLeaderVars == /\ learners       = [s \in Server |-> {}]
                   /\ cepochRecv     = [s \in Server |-> {}]
@@ -201,7 +212,7 @@ InitElectionVars == leaderOracle = NullPoint
 
 InitMsgVars == msgs = [s \in Server |-> [v \in Server |-> << >>] ]
 
-InitVerifyVars == /\ proposalMsgsLog    = {}
+InitVerifyVars == /\ proposalMsgsLog    = BootstrapProposalMsgs
                   /\ epochLeader        = [i \in 1..MAXEPOCH |-> {} ]
 
 Init == /\ InitServerVars

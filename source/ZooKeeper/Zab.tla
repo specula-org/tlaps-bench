@@ -33,6 +33,19 @@ PROPOSE   == "PROPOSE"
 ACK       == "ACK"
 COMMIT    == "COMMIT"
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
+
+\* The model starts after the client session and target key have been created.
+\* Represent that out-of-scope setup as one common committed log entry.
+BootstrapZxid == <<0, 1>>
+BootstrapTxn == [ zxid   |-> BootstrapZxid,
+                  value  |-> 0,
+                  ackSid |-> Server,
+                  epoch  |-> 0 ]
+BootstrapProposalMsgs ==
+    { [ source |-> s,
+        epoch  |-> 0,
+        zxid   |-> BootstrapZxid,
+        data   |-> 0 ] : s \in Server }
 -----------------------------------------------------------------------------
 \* Variables that all servers use.
 VARIABLES state,          \* State of server, in {LOOKING, FOLLOWING, LEADING}.
@@ -45,7 +58,8 @@ VARIABLES state,          \* State of server, in {LOOKING, FOLLOWING, LEADING}.
           history,        \* History of servers: sequence of transactions,
                           \* containing: [zxid, value, ackSid, epoch].
           lastCommitted   \* Maximum index and zxid known to be committed,
-                          \* namely 'lastCommitted' in Leader. Starts from 0,
+                          \* namely 'lastCommitted' in Leader. Starts after the
+                          \* common bootstrap entry,
                           \* and increases monotonically before restarting.
 
 \* Variables only used for leader.
@@ -227,9 +241,9 @@ InitServerVars == /\ state         = [s \in Server |-> LOOKING]
                   /\ zabState      = [s \in Server |-> ELECTION]
                   /\ acceptedEpoch = [s \in Server |-> 0]
                   /\ currentEpoch  = [s \in Server |-> 0]
-                  /\ history       = [s \in Server |-> << >>]
-                  /\ lastCommitted = [s \in Server |-> [ index |-> 0,
-                                                         zxid  |-> <<0, 0>> ] ]
+                  /\ history       = [s \in Server |-> <<BootstrapTxn>>]
+                  /\ lastCommitted = [s \in Server |-> [ index |-> 1,
+                                                         zxid  |-> BootstrapZxid ] ]
 
 InitLeaderVars == /\ learners       = [s \in Server |-> {}]
                   /\ cepochRecv     = [s \in Server |-> {}]
@@ -243,7 +257,7 @@ InitElectionVars == leaderOracle = NullPoint
 
 InitMsgVars == msgs = [s \in Server |-> [v \in Server |-> << >>] ]
 
-InitVerifyVars == /\ proposalMsgsLog    = {}
+InitVerifyVars == /\ proposalMsgsLog    = BootstrapProposalMsgs
                   /\ epochLeader        = [i \in 1..MAXEPOCH |-> {} ]
 
 Init == /\ InitServerVars
@@ -1045,7 +1059,7 @@ PROOF OBVIOUS
 TotalOrder == \A i, j \in Server: 
                 LET committed1 == lastCommitted[i].index 
                     committed2 == lastCommitted[j].index  
-                IN committed1 >= 2
+                IN committed1 >= 2 /\ committed2 >= 2
                     => \A idx_i1 \in 1..(committed1 - 1) : \A idx_i2 \in (idx_i1 + 1)..committed1 :
                     LET logOk == \E idx \in 1..committed2 :
                                      TxnEqual(history[i][idx_i2], history[j][idx])

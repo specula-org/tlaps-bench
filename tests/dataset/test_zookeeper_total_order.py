@@ -1,10 +1,4 @@
-"""Lock ZooKeeper TotalOrder so a singleton <<b>> log is a miss.
-
-The Remix/Zab comment is: if some follower delivers a before b, any process
-that delivers b must also deliver a before b. The old encoding required
-``committed2 >= 2``, which skips a process whose log is only ``<<b>>``.
-The witness still needs ``committed1 >= 2`` (two entries to have a before b).
-"""
+"""Lock ZooKeeper's pre-initialized history and original TotalOrder guard."""
 
 from __future__ import annotations
 
@@ -22,6 +16,21 @@ TOTAL_ORDER_FILES = (
     REPO_ROOT / "source" / "ZooKeeper_LowLevel" / "ZkV3_7_0.tla",
     REPO_ROOT / "benchmark" / "proof-from-scratch" / "ZooKeeper" / "Zab_TotalOrderDefs.tla",
     REPO_ROOT / "benchmark" / "proof-from-scratch" / "ZooKeeper_LowLevel" / "ZkV3_7_0_TotalOrderDefs.tla",
+)
+
+HIGH_LEVEL_MODELS = (
+    REPO_ROOT / "source" / "ZooKeeper" / "Zab.tla",
+    REPO_ROOT / "benchmark" / "proof-from-scratch" / "ZooKeeper" / "ZabModel.tla",
+)
+
+LOW_LEVEL_MODELS = (
+    REPO_ROOT / "source" / "ZooKeeper_LowLevel" / "ZkV3_7_0.tla",
+    REPO_ROOT / "benchmark" / "proof-from-scratch" / "ZooKeeper_LowLevel" / "ZkV3_7_0Model.tla",
+)
+
+LOW_LEVEL_ELECTION_FILES = (
+    REPO_ROOT / "source" / "ZooKeeper_LowLevel" / "FastLeaderElection.tla",
+    *(REPO_ROOT / "benchmark" / "proof-from-scratch" / "ZooKeeper_LowLevel").glob("ZkV3_7_0_*/FastLeaderElection.tla"),
 )
 
 WITNESS_GUARD = "committed1 >= 2"
@@ -43,14 +52,38 @@ def _total_order_body(text: str) -> str:
     return rest[: min(ends)] if ends else rest
 
 
-def test_total_order_does_not_skip_singleton_delivery_of_b():
+def _compact(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_total_order_keeps_original_two_log_guard():
     for path in TOTAL_ORDER_FILES:
         body = _total_order_body(path.read_text(encoding="utf-8"))
         assert WITNESS_GUARD in body, f"{path} dropped the two-entry witness guard"
-        assert OTHER_GUARD not in body, f"{path} still skips a process with lastCommitted index 1"
+        assert OTHER_GUARD in body, f"{path} dropped the initialized-log guard"
 
 
-def test_total_order_fails_when_other_process_delivered_only_b():
+def test_zookeeper_starts_with_a_committed_bootstrap_prefix():
+    for path in HIGH_LEVEL_MODELS:
+        text = _compact(path.read_text(encoding="utf-8"))
+        assert r"history = [s \in Server |-> <<BootstrapTxn>>]" in text, path
+        assert r"lastCommitted = [s \in Server |-> [ index |-> 1," in text, path
+        assert "proposalMsgsLog = BootstrapProposalMsgs" in text, path
+
+    for path in LOW_LEVEL_MODELS:
+        text = _compact(path.read_text(encoding="utf-8"))
+        assert r"lastCommitted = [s \in Server |-> [ index |-> 1," in text, path
+        assert r"initialHistory = [s \in Server |-> <<BootstrapTxn>>]" in text, path
+        assert "proposalMsgsLog = BootstrapProposalMsgs" in text, path
+
+    assert len(LOW_LEVEL_ELECTION_FILES) == 10
+    for path in LOW_LEVEL_ELECTION_FILES:
+        text = _compact(path.read_text(encoding="utf-8"))
+        assert r"history = [s \in Server |-> <<BootstrapTxn>>]" in text, path
+        assert r"lastProcessed = [s \in Server |-> [index |-> 1," in text, path
+
+
+def test_total_order_catches_b_without_a_after_bootstrap():
     java = shutil.which("java")
     if java is None:
         pytest.skip("java is required to evaluate the TotalOrder TLC fixture")

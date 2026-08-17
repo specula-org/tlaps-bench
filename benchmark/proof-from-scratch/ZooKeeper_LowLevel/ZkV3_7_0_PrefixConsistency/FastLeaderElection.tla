@@ -21,6 +21,12 @@ NONE == "NONE"
 -----------------------------------------------------------------------------
 Quorums == {Q \in SUBSET Server: Cardinality(Q)*2 > Cardinality(Server)}
 
+BootstrapZxid == <<0, 1>>
+BootstrapTxn == [ zxid   |-> BootstrapZxid,
+                  value  |-> 0,
+                  ackSid |-> Server,
+                  epoch  |-> 0 ]
+
 -----------------------------------------------------------------------------
 
 VARIABLE state
@@ -179,9 +185,9 @@ CheckLeader(i, votes, thisleader, thisround) == IF thisleader = i THEN (IF thisr
 -----------------------------------------------------------------------------    
 InitServerVarsL == /\ state         = [s \in Server |-> LOOKING]
                    /\ currentEpoch  = [s \in Server |-> 0]
-                   /\ lastProcessed = [s \in Server |-> [index |-> 0,
-                                                         zxid  |-> <<0, 0>>] ]
-                   /\ history       = [s \in Server |-> << >>]
+                   /\ lastProcessed = [s \in Server |-> [index |-> 1,
+                                                         zxid  |-> BootstrapZxid] ]
+                   /\ history       = [s \in Server |-> <<BootstrapTxn>>]
 
 InitElectionVarsL == /\ currentVote   = [s \in Server |-> SelfVote(s)]
                      /\ logicalClock  = [s \in Server |-> 0]

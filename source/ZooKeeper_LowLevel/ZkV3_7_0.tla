@@ -55,7 +55,8 @@ VARIABLES zabState,      \* Current phase of server, in
           acceptedEpoch, \* Epoch of the last LEADERINFO packet accepted,
                          \* namely f.p in paper.
           lastCommitted, \* Maximum index and zxid known to be committed,
-                         \* namely 'lastCommitted' in Leader. Starts from 0,
+                         \* namely 'lastCommitted' in Leader. Starts after the
+                         \* common bootstrap entry,
                          \* and increases monotonically before restarting.
           lastSnapshot,  \* Index and zxid corresponding to latest snapshot
                          \* from data tree.
@@ -170,6 +171,12 @@ Proposal ==
       epoch: Nat,
       zxid: Zxid,
       data: Value ]   
+
+BootstrapProposalMsgs ==
+    { [ source |-> s,
+        epoch  |-> 0,
+        zxid   |-> BootstrapZxid,
+        data   |-> 0 ] : s \in Server }
 
 LastItem ==
     [ index: Nat, zxid: Zxid ]
@@ -375,11 +382,11 @@ CleanInputBufferInCluster(S) == msgs' = [s \in Server |->
 InitServerVars == /\ InitServerVarsL
                   /\ zabState      = [s \in Server |-> ELECTION]
                   /\ acceptedEpoch = [s \in Server |-> 0]
-                  /\ lastCommitted = [s \in Server |-> [ index |-> 0,
-                                                         zxid  |-> <<0, 0>> ] ]
+                  /\ lastCommitted = [s \in Server |-> [ index |-> 1,
+                                                         zxid  |-> BootstrapZxid ] ]
                   /\ lastSnapshot  = [s \in Server |-> [ index |-> 0,
                                                          zxid  |-> <<0, 0>> ] ]
-                  /\ initialHistory = [s \in Server |-> << >>]
+                  /\ initialHistory = [s \in Server |-> <<BootstrapTxn>>]
 
 InitLeaderVars == /\ InitLeaderVarsL
                   /\ learners         = [s \in Server |-> {}]
@@ -398,7 +405,7 @@ InitFollowerVars == /\ connectInfo = [s \in Server |-> [sid |-> NullPoint,
                                         [ notCommitted |-> << >>,
                                           committed    |-> << >> ] ]
 
-InitVerifyVars == /\ proposalMsgsLog    = {}
+InitVerifyVars == /\ proposalMsgsLog    = BootstrapProposalMsgs
                   /\ epochLeader        = [e \in 1..MAXEPOCH |-> {} ]
                    
 InitMsgVars == /\ msgs         = [s \in Server |-> [v \in Server |-> << >>] ]
@@ -1758,7 +1765,7 @@ PROOF OBVIOUS
 TotalOrder == \A i, j \in Server: 
                 LET committed1 == lastCommitted[i].index 
                     committed2 == lastCommitted[j].index  
-                IN committed1 >= 2
+                IN committed1 >= 2 /\ committed2 >= 2
                     => \A idx_i1 \in 1..(committed1 - 1) : \A idx_i2 \in (idx_i1 + 1)..committed1 :
                     LET logOk == \E idx \in 1..committed2 :
                                      TxnEqual(history[i][idx_i2], history[j][idx])
