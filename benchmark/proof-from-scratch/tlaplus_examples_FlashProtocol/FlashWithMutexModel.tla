@@ -5,14 +5,10 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
     NODE,        
     DATA,        
-    Other,       
     Undefined    
 
-ASSUME OtherNotInNODE   == Other \notin NODE
-ASSUME OtherNotInDATA   == Other \notin DATA
 ASSUME UndefNotInNODE   == Undefined \notin NODE
 ASSUME UndefNotInDATA   == Undefined \notin DATA
-ASSUME UndefNotOther    == Undefined # Other
 ASSUME NODEDATADisjoint == NODE \cap DATA = {}
 ASSUME NODENonEmpty     == NODE # {}
 ASSUME DATANonEmpty     == DATA # {}
@@ -22,11 +18,10 @@ ReqCmd      == {"Get", "GetX"}
 
 VARIABLES
     Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-    CurrData, PrevData, PendReqSrc, PendReqCmd, Collecting, FwdCmd, FwdSrc, Env_o
+    CurrData, PrevData, PendReqSrc, PendReqCmd, Collecting, FwdCmd, FwdSrc
 
 vars == <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-          CurrData, PrevData, PendReqSrc, PendReqCmd, Collecting, FwdCmd, FwdSrc,
-          Env_o>>
+          CurrData, PrevData, PendReqSrc, PendReqCmd, Collecting, FwdCmd, FwdSrc>>
 
 pendVars == <<PendReqSrc, PendReqCmd, Collecting>>
 
@@ -54,7 +49,6 @@ Init ==
         /\ Collecting = FALSE
         /\ FwdCmd = "UNI_None"
         /\ FwdSrc = Undefined
-        /\ Env_o = TRUE
 
 InvNodes(exclude) ==
     {p \in NODE \ exclude : \/ (Dir.ShrVld /\ p \in Dir.ShrSet)
@@ -76,7 +70,7 @@ Store(src, data) ==
     /\ Proc' = [Proc EXCEPT ![src].CacheData = data]
     /\ CurrData' = data
     /\ UNCHANGED <<Home, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   PrevData, pendVars, fwdVars, Env_o>>
+                   PrevData, pendVars, fwdVars>>
 
 PI_Remote(src, c) ==
     /\ src # Home
@@ -86,7 +80,7 @@ PI_Remote(src, c) ==
     /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> IF c = "Get" THEN "UNI_Get" ELSE "UNI_GetX",
                                           Proc |-> Home, Data |-> Undefined]]
     /\ UNCHANGED <<Home, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 PI_Local_Get_Get ==
     /\ Proc[Home].ProcCmd = "NODE_None"
@@ -101,7 +95,7 @@ PI_Local_Get_Get ==
     /\ PendReqCmd' = "UNI_Get"
     /\ Collecting' = FALSE
     /\ UNCHANGED <<Home, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   PrevData, FwdSrc, Env_o>>
+                   PrevData, FwdSrc>>
 
 PI_Local_Get_Put ==
     /\ Proc[Home].ProcCmd = "NODE_None"
@@ -112,7 +106,7 @@ PI_Local_Get_Put ==
                                        CacheState |-> IF Proc[Home].InvMarked THEN "CACHE_I" ELSE "CACHE_S",
                                        CacheData |-> IF Proc[Home].InvMarked THEN Undefined ELSE MemData]]
     /\ UNCHANGED <<Home, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 PI_Local_GetX_GetX ==
     /\ Proc[Home].ProcCmd = "NODE_None"
@@ -127,7 +121,7 @@ PI_Local_GetX_GetX ==
     /\ PendReqCmd' = "UNI_GetX"
     /\ Collecting' = FALSE
     /\ UNCHANGED <<Home, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   PrevData, FwdSrc, Env_o>>
+                   PrevData, FwdSrc>>
 
 PI_Local_GetX_PutX_Inv ==
     /\ Dir.HeadVld
@@ -153,7 +147,7 @@ PI_Local_GetX_PutX ==
     /\ \/ PI_Local_GetX_PutX_Inv
        \/ PI_Local_GetX_PutX_Grant
     /\ UNCHANGED <<Home, MemData, UniMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   PendReqCmd, fwdVars, Env_o>>
+                   PendReqCmd, fwdVars>>
 
 PI_Remote_PutX(dst) ==
     /\ dst # Home
@@ -162,7 +156,7 @@ PI_Remote_PutX(dst) ==
     /\ Proc' = [Proc EXCEPT ![dst].CacheState = "CACHE_I", ![dst].CacheData = Undefined]
     /\ WbMsg' = [Cmd |-> "WB_Wb", Proc |-> dst, Data |-> Proc[dst].CacheData]
     /\ UNCHANGED <<Home, Dir, MemData, UniMsg, InvMsg, RpMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 PI_Local_PutX ==
     /\ Proc[Home].ProcCmd = "NODE_None"
@@ -171,7 +165,7 @@ PI_Local_PutX ==
     /\ Dir' = [Dir EXCEPT !.Dirty = FALSE, !.Local = IF Dir.Pending THEN Dir.Local ELSE FALSE]
     /\ MemData' = Proc[Home].CacheData
     /\ UNCHANGED <<Home, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, fwdVars, Env_o>>
+                   PrevData, pendVars, fwdVars>>
 
 PI_Remote_Replace(src) ==
     /\ src # Home
@@ -180,7 +174,7 @@ PI_Remote_Replace(src) ==
     /\ Proc' = [Proc EXCEPT ![src].CacheState = "CACHE_I", ![src].CacheData = Undefined]
     /\ RpMsg' = [RpMsg EXCEPT ![src] = [Cmd |-> "RP_Replace"]]
     /\ UNCHANGED <<Home, Dir, MemData, UniMsg, InvMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 PI_Local_Replace ==
     /\ Proc[Home].ProcCmd = "NODE_None"
@@ -188,7 +182,7 @@ PI_Local_Replace ==
     /\ Dir' = [Dir EXCEPT !.Local = FALSE]
     /\ Proc' = [Proc EXCEPT ![Home].CacheState = "CACHE_I", ![Home].CacheData = Undefined]
     /\ UNCHANGED <<Home, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Nak(dst) ==
     /\ UniMsg[dst].Cmd = "UNI_Nak"
@@ -196,14 +190,14 @@ NI_Nak(dst) ==
                                           Data |-> Undefined]]
     /\ Proc' = [Proc EXCEPT ![dst].ProcCmd = "NODE_None", ![dst].InvMarked = FALSE]
     /\ UNCHANGED <<Home, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Nak_Clear ==
     /\ NakcMsg.Cmd = "NAKC_Nakc"
     /\ NakcMsg' = [Cmd |-> "NAKC_None"]
     /\ Dir' = [Dir EXCEPT !.Pending = FALSE]
     /\ UNCHANGED <<Home, Proc, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Local_Get_Nak(src) ==
     /\ src # Home
@@ -215,7 +209,7 @@ NI_Local_Get_Nak(src) ==
        \/ (Dir.Dirty /\ ~Dir.Local /\ Dir.HeadPtr = src)
     /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_Nak", Proc |-> Home, Data |-> Undefined]]
     /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Local_Get_Get(src) ==
     /\ src # Home
@@ -231,7 +225,7 @@ NI_Local_Get_Get(src) ==
     /\ PendReqCmd' = "UNI_Get"
     /\ Collecting' = FALSE
     /\ UNCHANGED <<Home, Proc, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, FwdSrc, Env_o>>
+                   CurrData, PrevData, FwdSrc>>
 
 NI_Local_Get_Put(src) ==
     /\ src # Home
@@ -253,7 +247,7 @@ NI_Local_Get_Put(src) ==
                                                Data |-> Proc[Home].CacheData]]
                  ELSE [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_Put", Proc |-> Home, Data |-> MemData]]
     /\ UNCHANGED <<Home, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData, PrevData,
-                   pendVars, fwdVars, Env_o>>
+                   pendVars, fwdVars>>
 
 NI_Remote_Nak(src, dst) ==
     /\ src # dst /\ dst # Home
@@ -265,7 +259,7 @@ NI_Remote_Nak(src, dst) ==
     /\ FwdCmd' = "UNI_None"
     /\ FwdSrc' = src
     /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
+                   PrevData, pendVars>>
 
 NI_Remote_Get_Put(src, dst) ==
     /\ src # dst /\ dst # Home
@@ -281,7 +275,7 @@ NI_Remote_Get_Put(src, dst) ==
                   THEN [Cmd |-> "SHWB_ShWb", Proc |-> src, Data |-> Proc[dst].CacheData]
                   ELSE ShWbMsg
     /\ UNCHANGED <<Home, Dir, MemData, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
+                   PrevData, pendVars>>
 
 NI_Local_GetX_Nak(src) ==
     /\ src # Home
@@ -292,7 +286,7 @@ NI_Local_GetX_Nak(src) ==
        \/ (Dir.Dirty /\ ~Dir.Local /\ Dir.HeadPtr = src)
     /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_Nak", Proc |-> Home, Data |-> Undefined]]
     /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Local_GetX_GetX(src) ==
     /\ src # Home
@@ -307,7 +301,7 @@ NI_Local_GetX_GetX(src) ==
     /\ PendReqCmd' = "UNI_GetX"
     /\ Collecting' = FALSE
     /\ UNCHANGED <<Home, Proc, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, FwdSrc, Env_o>>
+                   CurrData, PrevData, FwdSrc>>
 
 NI_Local_GetX_PutX_Dirty(src) ==
     /\ Dir.Dirty
@@ -350,8 +344,7 @@ NI_Local_GetX_PutX(src) ==
     /\ \/ NI_Local_GetX_PutX_Dirty(src)
        \/ NI_Local_GetX_PutX_Grant(src)
        \/ NI_Local_GetX_PutX_Inv(src)
-    /\ UNCHANGED <<Home, MemData, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData, fwdVars,
-                   Env_o>>
+    /\ UNCHANGED <<Home, MemData, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData, fwdVars>>
 
 NI_Remote_GetX_PutX(src, dst) ==
     /\ src # dst /\ dst # Home
@@ -367,7 +360,7 @@ NI_Remote_GetX_PutX(src, dst) ==
                   THEN [Cmd |-> "SHWB_FAck", Proc |-> src, Data |-> Undefined]
                   ELSE ShWbMsg
     /\ UNCHANGED <<Home, Dir, MemData, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
+                   PrevData, pendVars>>
 
 NI_Local_Put ==
     /\ UniMsg[Home].Cmd = "UNI_Put"
@@ -379,7 +372,7 @@ NI_Local_Put ==
                                        CacheState |-> IF Proc[Home].InvMarked THEN "CACHE_I" ELSE "CACHE_S",
                                        CacheData |-> IF Proc[Home].InvMarked THEN Undefined ELSE UniMsg[Home].Data]]
     /\ UNCHANGED <<Home, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData, PrevData,
-                   pendVars, fwdVars, Env_o>>
+                   pendVars, fwdVars>>
 
 NI_Remote_Put(dst) ==
     /\ dst # Home
@@ -390,7 +383,7 @@ NI_Remote_Put(dst) ==
                                       CacheState |-> IF Proc[dst].InvMarked THEN "CACHE_I" ELSE "CACHE_S",
                                       CacheData |-> IF Proc[dst].InvMarked THEN Undefined ELSE UniMsg[dst].Data]]
     /\ UNCHANGED <<Home, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Local_PutXAcksDone ==
     /\ UniMsg[Home].Cmd = "UNI_PutX"
@@ -400,7 +393,7 @@ NI_Local_PutXAcksDone ==
     /\ Proc' = [Proc EXCEPT ![Home] = [ProcCmd |-> "NODE_None", InvMarked |-> FALSE,
                                        CacheState |-> "CACHE_E", CacheData |-> UniMsg[Home].Data]]
     /\ UNCHANGED <<Home, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, fwdVars, Env_o>>
+                   PrevData, pendVars, fwdVars>>
 
 NI_Remote_PutX(dst) ==
     /\ dst # Home
@@ -411,7 +404,7 @@ NI_Remote_PutX(dst) ==
     /\ Proc' = [Proc EXCEPT ![dst] = [ProcCmd |-> "NODE_None", InvMarked |-> FALSE,
                                       CacheState |-> "CACHE_E", CacheData |-> UniMsg[dst].Data]]
     /\ UNCHANGED <<Home, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_Inv(dst) ==
     /\ dst # Home
@@ -422,7 +415,7 @@ NI_Inv(dst) ==
                             ![dst].InvMarked = IF Proc[dst].ProcCmd = "NODE_Get" THEN TRUE
                                                ELSE Proc[dst].InvMarked]
     /\ UNCHANGED <<Home, Dir, MemData, UniMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_InvAck_More(src) ==
     /\ Dir.InvSet \ {src} # {}
@@ -443,7 +436,7 @@ NI_InvAck(src) ==
     /\ \/ NI_InvAck_More(src)
        \/ NI_InvAck_Last(src)
     /\ UNCHANGED <<Home, Proc, MemData, UniMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, PendReqSrc, PendReqCmd, fwdVars, Env_o>>
+                   CurrData, PrevData, PendReqSrc, PendReqCmd, fwdVars>>
 
 NI_Wb ==
     /\ WbMsg.Cmd = "WB_Wb"
@@ -451,25 +444,24 @@ NI_Wb ==
     /\ Dir' = [Dir EXCEPT !.Dirty = FALSE, !.HeadVld = FALSE, !.HeadPtr = Undefined]
     /\ MemData' = WbMsg.Data
     /\ UNCHANGED <<Home, Proc, UniMsg, InvMsg, RpMsg, ShWbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, fwdVars, Env_o>>
+                   PrevData, pendVars, fwdVars>>
 
 NI_FAck ==
     /\ ShWbMsg.Cmd = "SHWB_FAck"
     /\ ShWbMsg' = [Cmd |-> "SHWB_None", Proc |-> Undefined, Data |-> Undefined]
     /\ Dir' = [Dir EXCEPT !.Pending = FALSE, !.HeadPtr = IF Dir.Dirty THEN ShWbMsg.Proc ELSE Dir.HeadPtr]
     /\ UNCHANGED <<Home, Proc, MemData, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
 NI_ShWb ==
     /\ ShWbMsg.Cmd = "SHWB_ShWb"
     /\ ShWbMsg' = [Cmd |-> "SHWB_None", Proc |-> Undefined, Data |-> Undefined]
-
     /\ Dir' = [Dir EXCEPT !.Pending = FALSE, !.Dirty = FALSE, !.ShrVld = TRUE,
-                          !.ShrSet = Dir.ShrSet \cup ({ShWbMsg.Proc} \cap NODE),
-                          !.InvSet = Dir.ShrSet \cup ({ShWbMsg.Proc} \cap NODE)]
+                          !.ShrSet = Dir.ShrSet \cup {ShWbMsg.Proc},
+                          !.InvSet = Dir.ShrSet \cup {ShWbMsg.Proc}]
     /\ MemData' = ShWbMsg.Data
     /\ UNCHANGED <<Home, Proc, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, fwdVars, Env_o>>
+                   PrevData, pendVars, fwdVars>>
 
 NI_Replace(src) ==
     /\ RpMsg[src].Cmd = "RP_Replace"
@@ -477,252 +469,9 @@ NI_Replace(src) ==
     /\ Dir' = [Dir EXCEPT !.ShrSet = IF Dir.ShrVld THEN Dir.ShrSet \ {src} ELSE Dir.ShrSet,
                           !.InvSet = IF Dir.ShrVld THEN Dir.InvSet \ {src} ELSE Dir.InvSet]
     /\ UNCHANGED <<Home, Proc, MemData, UniMsg, InvMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
+                   CurrData, PrevData, pendVars, fwdVars>>
 
-AbsDirtyClean ==
-    /\ Dir.Dirty
-    /\ WbMsg.Cmd # "WB_Wb"
-    /\ ShWbMsg.Cmd # "SHWB_ShWb"
-    /\ \A p \in NODE : Proc[p].CacheState # "CACHE_E"
-    /\ UniMsg[Home].Cmd # "UNI_Put"
-    /\ \A q \in NODE : UniMsg[q].Cmd # "UNI_PutX"
-
-ABS_Store(data) ==
-    /\ Env_o
-    /\ AbsDirtyClean
-    /\ CurrData' = data
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg,
-                   NakcMsg, PrevData, pendVars, fwdVars, Env_o>>
-
-ABS_PI_Remote_PutX ==
-    /\ Env_o
-    /\ AbsDirtyClean
-    /\ WbMsg' = [Cmd |-> "WB_Wb", Proc |-> Other, Data |-> CurrData]
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, fwdVars, Env_o>>
-
-ABS_NI_Local_Get_Get ==
-    /\ Env_o
-    /\ ~Dir.Pending /\ Dir.Dirty /\ ~Dir.Local /\ Dir.HeadPtr # Other
-    /\ Dir' = [Dir EXCEPT !.Pending = TRUE]
-    /\ FwdCmd' = IF Dir.HeadPtr # Home THEN "UNI_Get" ELSE FwdCmd
-    /\ PendReqSrc' = Other
-    /\ PendReqCmd' = "UNI_Get"
-    /\ Collecting' = FALSE
-    /\ UNCHANGED <<Home, Proc, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, FwdSrc, Env_o>>
-
-ABS_NI_Local_Get_Put ==
-    /\ Env_o
-    /\ ~Dir.Pending
-    /\ (Dir.Dirty => (Dir.Local /\ Proc[Home].CacheState = "CACHE_E"))
-    /\ Dir' = IF Dir.Dirty
-              THEN [Dir EXCEPT !.Dirty = FALSE, !.HeadVld = TRUE, !.HeadPtr = Other]
-              ELSE IF Dir.HeadVld
-                   THEN [Dir EXCEPT !.ShrVld = TRUE, !.InvSet = Dir.ShrSet]
-                   ELSE [Dir EXCEPT !.HeadVld = TRUE, !.HeadPtr = Other]
-    /\ MemData' = IF Dir.Dirty THEN Proc[Home].CacheData ELSE MemData
-    /\ Proc' = IF Dir.Dirty THEN [Proc EXCEPT ![Home].CacheState = "CACHE_S"] ELSE Proc
-    /\ UNCHANGED <<Home, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, fwdVars, Env_o>>
-
-ABS_NI_Remote_Nak_src(dst) ==
-    /\ Env_o /\ dst # Home
-    /\ Proc[dst].CacheState # "CACHE_E"
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = Other /\ FwdCmd \in {"UNI_Get", "UNI_GetX"}
-    /\ NakcMsg' = [Cmd |-> "NAKC_Nakc"]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = Other
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg,
-                   CurrData, PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_Get_Nak_dst(src) ==
-    /\ Env_o
-    /\ UniMsg[src].Cmd = "UNI_Get" /\ UniMsg[src].Proc = Other
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = src /\ FwdCmd = "UNI_Get"
-    /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_Nak", Proc |-> Other, Data |-> Undefined]]
-    /\ NakcMsg' = [Cmd |-> "NAKC_Nakc"]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = src
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_Nak_src_dst ==
-    /\ Env_o
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = Other /\ FwdCmd \in {"UNI_Get", "UNI_GetX"}
-    /\ NakcMsg' = [Cmd |-> "NAKC_Nakc"]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = Other
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg,
-                   CurrData, PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_Get_Put_src(dst) ==
-    /\ Env_o /\ dst # Home
-    /\ Proc[dst].CacheState = "CACHE_E"
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = Other /\ FwdCmd = "UNI_Get"
-    /\ Proc' = [Proc EXCEPT ![dst].CacheState = "CACHE_S"]
-    /\ ShWbMsg' = [Cmd |-> "SHWB_ShWb", Proc |-> Other, Data |-> Proc[dst].CacheData]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = Other
-    /\ UNCHANGED <<Home, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_Get_Put_dst(src) ==
-    /\ Env_o
-    /\ UniMsg[src].Cmd = "UNI_Get" /\ UniMsg[src].Proc = Other
-    /\ AbsDirtyClean
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = src /\ FwdCmd = "UNI_Get"
-    /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_Put", Proc |-> Other, Data |-> CurrData]]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = src
-    /\ ShWbMsg' = IF src # Home
-                  THEN [Cmd |-> "SHWB_ShWb", Proc |-> src, Data |-> CurrData]
-                  ELSE ShWbMsg
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_Get_Put_src_dst ==
-    /\ Env_o
-    /\ AbsDirtyClean
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = Other /\ FwdCmd = "UNI_Get"
-    /\ ShWbMsg' = [Cmd |-> "SHWB_ShWb", Proc |-> Other, Data |-> CurrData]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = Other
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, Env_o>>
-
-ABS_NI_Local_GetX_GetX ==
-    /\ Env_o
-    /\ ~Dir.Pending /\ Dir.Dirty /\ ~Dir.Local /\ Dir.HeadPtr # Other
-    /\ Dir' = [Dir EXCEPT !.Pending = TRUE]
-    /\ FwdCmd' = IF Dir.HeadPtr # Home THEN "UNI_GetX" ELSE FwdCmd
-    /\ PendReqSrc' = Other
-    /\ PendReqCmd' = "UNI_GetX"
-    /\ Collecting' = FALSE
-    /\ UNCHANGED <<Home, Proc, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, FwdSrc, Env_o>>
-
-ABS_NI_Local_GetX_PutX_Dirty ==
-    /\ Dir.Dirty
-    /\ Dir' = [Dir EXCEPT !.Local = FALSE, !.Dirty = TRUE, !.HeadVld = TRUE,
-                          !.HeadPtr = Other, !.ShrVld = FALSE, !.ShrSet = {}, !.InvSet = {}]
-    /\ Proc' = ProcHomeInvalid
-    /\ UNCHANGED <<InvMsg, PrevData, pendVars>>
-
-ABS_NI_Local_GetX_PutX_Grant ==
-    /\ ~Dir.Dirty
-    /\ NoOtherSharers(Other)
-    /\ Dir' = [Dir EXCEPT !.Local = FALSE, !.Dirty = TRUE, !.HeadVld = TRUE,
-                          !.HeadPtr = Other, !.ShrVld = FALSE, !.ShrSet = {}, !.InvSet = {}]
-    /\ Proc' = IF Dir.Local THEN ProcHomeInvalidMarked ELSE ProcHomeInvalid
-    /\ UNCHANGED <<InvMsg, PrevData, pendVars>>
-
-ABS_NI_Local_GetX_PutX_Inv ==
-    /\ ~Dir.Dirty
-    /\ ~NoOtherSharers(Other)
-    /\ Dir' = [Pending |-> TRUE, Local |-> FALSE, Dirty |-> TRUE, HeadVld |-> TRUE,
-               HeadPtr |-> Other, ShrVld |-> FALSE, ShrSet |-> {}, InvSet |-> InvNodes({Home})]
-    /\ Proc' = IF Dir.Local THEN ProcHomeInvalidMarked ELSE Proc
-    /\ InvMsg' = [p \in NODE |-> [Cmd |-> IF p \in InvNodes({Home})
-                                          THEN "INV_Inv" ELSE "INV_None"]]
-    /\ PendReqSrc' = Other
-    /\ PendReqCmd' = "UNI_GetX"
-    /\ Collecting' = TRUE
-    /\ PrevData' = CurrData
-
-ABS_NI_Local_GetX_PutX ==
-    /\ Env_o
-    /\ ~Dir.Pending
-    /\ (Dir.Dirty => (Dir.Local /\ Proc[Home].CacheState = "CACHE_E"))
-    /\ \/ ABS_NI_Local_GetX_PutX_Dirty
-       \/ ABS_NI_Local_GetX_PutX_Grant
-       \/ ABS_NI_Local_GetX_PutX_Inv
-    /\ UNCHANGED <<Home, MemData, UniMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg, CurrData,
-                   fwdVars, Env_o>>
-
-ABS_NI_Remote_GetX_Nak_dst(src) ==
-    /\ Env_o
-    /\ UniMsg[src].Cmd = "UNI_GetX" /\ UniMsg[src].Proc = Other
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = src /\ FwdCmd = "UNI_GetX"
-    /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_Nak", Proc |-> Other, Data |-> Undefined]]
-    /\ NakcMsg' = [Cmd |-> "NAKC_Nakc"]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = src
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, ShWbMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_GetX_PutX_src(dst) ==
-    /\ Env_o /\ dst # Home
-    /\ Proc[dst].CacheState = "CACHE_E"
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = Other /\ FwdCmd = "UNI_GetX"
-    /\ Proc' = [Proc EXCEPT ![dst].CacheState = "CACHE_I", ![dst].CacheData = Undefined]
-    /\ ShWbMsg' = [Cmd |-> "SHWB_FAck", Proc |-> Other, Data |-> Undefined]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = Other
-    /\ UNCHANGED <<Home, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_GetX_PutX_dst(src) ==
-    /\ Env_o
-    /\ UniMsg[src].Cmd = "UNI_GetX" /\ UniMsg[src].Proc = Other
-    /\ AbsDirtyClean
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = src /\ FwdCmd = "UNI_GetX"
-    /\ UniMsg' = [UniMsg EXCEPT ![src] = [Cmd |-> "UNI_PutX", Proc |-> Other, Data |-> CurrData]]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = src
-    /\ ShWbMsg' = IF src # Home
-                  THEN [Cmd |-> "SHWB_FAck", Proc |-> src, Data |-> Undefined]
-                  ELSE ShWbMsg
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, Env_o>>
-
-ABS_NI_Remote_GetX_PutX_src_dst ==
-    /\ Env_o
-    /\ AbsDirtyClean
-    /\ Dir.Pending /\ ~Dir.Local
-    /\ PendReqSrc = Other /\ FwdCmd = "UNI_GetX"
-    /\ ShWbMsg' = [Cmd |-> "SHWB_FAck", Proc |-> Other, Data |-> Undefined]
-    /\ FwdCmd' = "UNI_None"
-    /\ FwdSrc' = Other
-    /\ UNCHANGED <<Home, Proc, Dir, MemData, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg,
-                   CurrData, PrevData, pendVars, Env_o>>
-
-ABS_NI_InvAck ==
-    /\ Env_o
-    /\ Dir.Pending /\ Collecting
-    /\ Dir.InvSet = {}
-    /\ NakcMsg.Cmd = "NAKC_None" /\ ShWbMsg.Cmd = "SHWB_None"
-    /\ \A q \in NODE :
-         /\ ((UniMsg[q].Cmd = "UNI_Get" \/ UniMsg[q].Cmd = "UNI_GetX")
-                => UniMsg[q].Proc = Home)
-         /\ (UniMsg[q].Cmd = "UNI_PutX"
-                => (UniMsg[q].Proc = Home /\ PendReqSrc = q))
-    /\ Dir' = [Dir EXCEPT !.Pending = FALSE,
-                          !.Local = IF Dir.Local /\ ~Dir.Dirty THEN FALSE ELSE Dir.Local]
-    /\ Collecting' = FALSE
-    /\ UNCHANGED <<Home, Proc, MemData, UniMsg, InvMsg, RpMsg, WbMsg, ShWbMsg, NakcMsg,
-                   CurrData, PrevData, PendReqSrc, PendReqCmd, fwdVars, Env_o>>
-
-ABS_NI_ShWb ==
-    /\ Env_o
-    /\ ShWbMsg.Cmd = "SHWB_ShWb" /\ ShWbMsg.Proc = Other
-    /\ ShWbMsg' = [Cmd |-> "SHWB_None", Proc |-> Undefined, Data |-> Undefined]
-    /\ Dir' = [Dir EXCEPT !.Pending = FALSE, !.Dirty = FALSE, !.ShrVld = TRUE,
-                          !.InvSet = Dir.ShrSet]
-    /\ MemData' = ShWbMsg.Data
-    /\ UNCHANGED <<Home, Proc, UniMsg, InvMsg, RpMsg, WbMsg, NakcMsg, CurrData,
-                   PrevData, pendVars, fwdVars, Env_o>>
-
-System ==
+Next ==
     \/ \E src \in NODE, data \in DATA : Store(src, data)
     \/ \E src \in NODE :
          \/ \E c \in ReqCmd : PI_Remote(src, c)
@@ -741,22 +490,5 @@ System ==
     \/ PI_Local_PutX \/ PI_Local_Replace
     \/ NI_Nak_Clear \/ NI_Local_Put \/ NI_Local_PutXAcksDone
     \/ NI_Wb \/ NI_FAck \/ NI_ShWb
-
-Environment ==
-    \/ \E data \in DATA : ABS_Store(data)
-    \/ \E src \in NODE :
-         \/ ABS_NI_Remote_Nak_src(src)
-         \/ ABS_NI_Remote_Get_Nak_dst(src)
-         \/ ABS_NI_Remote_Get_Put_src(src)  \/ ABS_NI_Remote_Get_Put_dst(src)
-         \/ ABS_NI_Remote_GetX_Nak_dst(src)
-         \/ ABS_NI_Remote_GetX_PutX_src(src) \/ ABS_NI_Remote_GetX_PutX_dst(src)
-    \/ ABS_PI_Remote_PutX
-    \/ ABS_NI_Local_Get_Get \/ ABS_NI_Local_Get_Put
-    \/ ABS_NI_Remote_Nak_src_dst \/ ABS_NI_Remote_Get_Put_src_dst
-    \/ ABS_NI_Local_GetX_GetX \/ ABS_NI_Local_GetX_PutX
-    \/ ABS_NI_Remote_GetX_PutX_src_dst
-    \/ ABS_NI_InvAck \/ ABS_NI_ShWb
-
-Next == System \/ Environment
 
 =============================================================================

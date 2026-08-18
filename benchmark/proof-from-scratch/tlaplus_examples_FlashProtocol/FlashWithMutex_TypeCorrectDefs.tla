@@ -2,8 +2,6 @@
 
 EXTENDS FlashWithMutexModel
 
-ABS_NODE == NODE \cup {Other}
-
 CACHE_STATE == {"CACHE_I", "CACHE_S", "CACHE_E"}
 NODE_CMD    == {"NODE_None", "NODE_Get", "NODE_GetX"}
 UNI_CMD     == {"UNI_None", "UNI_Get", "UNI_GetX", "UNI_Put", "UNI_PutX", "UNI_Nak"}
@@ -14,7 +12,7 @@ SHWB_CMD    == {"SHWB_None", "SHWB_ShWb", "SHWB_FAck"}
 NAKC_CMD    == {"NAKC_None", "NAKC_Nakc"}
 
 DataU  == DATA \cup {Undefined}
-NodeU  == ABS_NODE \cup {Undefined}
+NodeU  == NODE \cup {Undefined}
 UniU   == UNI_CMD \cup {Undefined}
 
 TypeOK ==
@@ -38,7 +36,6 @@ TypeOK ==
     /\ Collecting \in BOOLEAN
     /\ FwdCmd \in UNI_CMD
     /\ FwdSrc \in NodeU
-    /\ Env_o \in BOOLEAN
 
 Spec == Init /\ [][Next]_vars
 
