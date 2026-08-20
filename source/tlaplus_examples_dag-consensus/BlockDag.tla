@@ -33,10 +33,11 @@ ASSUME IsLeader(Genesis) \* this should hold
 (* `CHOOSE' is deterministic but arbitrary choice, i.e. `CHOOSE e \in S : TRUE' is    *)
 (* always the same `e' if `S' is the same                                             *)
 (**************************************************************************************)
-RECURSIVE OrderSet(_)
-OrderSet(S) == IF S = {} THEN <<>> ELSE
-    LET e == CHOOSE e \in S : TRUE
-    IN  Append(OrderSet(S \ {e}), e)
+OrderSet(S) ==
+    LET orderSet[s \in SUBSET S] == IF s = {} THEN <<>> ELSE
+          LET e == CHOOSE e \in s : TRUE
+          IN  Append(orderSet[s \ {e}], e)
+    IN  orderSet[S]
     
 (**************************************************************************************)
 (* PreviousLeader(dag, r) returns the leader vertex in dag whose round is the         *)
