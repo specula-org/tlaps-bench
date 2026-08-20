@@ -211,4 +211,18 @@ Liveness == \A r \in R : r >= GST /\ Leader(r) \notin F =>
     \A n \in N \ F : round[n] >= r+2 =>
         \E i \in DOMAIN log[n] : log[n][i] = LeaderVertex(r)
 
+(***************************************************************************)
+(* Proof obligations added for tlaps-bench. Each goal is an invariant the  *)
+(* upstream TLC configurations check; the upstream module states no        *)
+(* theorems.                                                              *)
+(***************************************************************************)
+THEOREM TypeOKCorrect == Spec => []TypeOK
+PROOF OMITTED
+
+THEOREM AgreementCorrect == Spec => []Agreement
+PROOF OMITTED
+
+THEOREM LivenessCorrect == Spec => []Liveness
+PROOF OMITTED
+
 ===========================================================================
