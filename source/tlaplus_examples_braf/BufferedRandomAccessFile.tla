@@ -292,4 +292,51 @@ Alias == [
     \* abstract vars
     abstract_contents |-> LogicalFileContent]
 
+(***************************************************************************)
+(* Proof obligations added for tlaps-bench. Each goal is an invariant or   *)
+(* property the upstream TLC configuration checks; the upstream module     *)
+(* states no theorems.                                                    *)
+(***************************************************************************)
+THEOREM Thm_TypeOK == Spec => []TypeOK
+PROOF OMITTED
+
+THEOREM Thm_Inv1 == Spec => []Inv1
+PROOF OMITTED
+
+THEOREM Thm_Inv3 == Spec => []Inv3
+PROOF OMITTED
+
+THEOREM Thm_Inv4 == Spec => []Inv4
+PROOF OMITTED
+
+THEOREM Thm_Inv5 == Spec => []Inv5
+PROOF OMITTED
+
+THEOREM Thm_Safety == Spec => Safety
+PROOF OMITTED
+
+THEOREM Thm_FlushBufferCorrect == Spec => FlushBufferCorrect
+PROOF OMITTED
+
+THEOREM Thm_SeekCorrect == Spec => SeekCorrect
+PROOF OMITTED
+
+THEOREM Thm_SeekEstablishesInv2 == Spec => SeekEstablishesInv2
+PROOF OMITTED
+
+THEOREM Thm_Write1Correct == Spec => Write1Correct
+PROOF OMITTED
+
+THEOREM Thm_Read1Correct == Spec => Read1Correct
+PROOF OMITTED
+
+THEOREM Thm_WriteAtMostCorrect == Spec => WriteAtMostCorrect
+PROOF OMITTED
+
+THEOREM Thm_ReadCorrect == Spec => ReadCorrect
+PROOF OMITTED
+
+THEOREM Thm_Inv2CanAlwaysBeRestored == Spec => Inv2CanAlwaysBeRestored
+PROOF OMITTED
+
 ===============================================================================
