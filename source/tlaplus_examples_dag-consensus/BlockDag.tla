@@ -55,13 +55,18 @@ PreviousLeader(dag, r) == CHOOSE l \in Vertices(dag) :
 (* OrderSet) is fine. This assume a DAG where all paths end with the Genesis          *)
 (* vertex.                                                                            *)
 (**************************************************************************************)
-RECURSIVE Linearize(_, _)
-Linearize(dag, l) == IF Vertices(dag) = {<<>>} THEN <<>> ELSE
-    LET dagOfL == SubDag(dag, {l})
-        prevL == PreviousLeader(dagOfL, Round(l))
-        dagOfPrev == SubDag(dag, {prevL})
-        remaining == Vertices(dagOfL) \ Vertices(dagOfPrev)
-    IN  Linearize(dagOfPrev, prevL) \o OrderSet(remaining \ {l}) \o <<l>>
+\* Each recursive call passes a sub-dag of dag and one of its vertices, so a
+\* function over the sub-dags of dag expresses the recursion directly.
+Linearize(dag, l) ==
+    LET linearize[d \in (SUBSET Vertices(dag)) \X (SUBSET Edges(dag)),
+                  v \in Vertices(dag)] ==
+          IF Vertices(d) = {<<>>} THEN <<>> ELSE
+          LET dagOfL == SubDag(d, {v})
+              prevL == PreviousLeader(dagOfL, Round(v))
+              dagOfPrev == SubDag(d, {prevL})
+              remaining == Vertices(dagOfL) \ Vertices(dagOfPrev)
+          IN  linearize[dagOfPrev, prevL] \o OrderSet(remaining \ {v}) \o <<v>>
+    IN  linearize[dag, l]
 
 Compatible(s1, s2) == \* whether the sequence s1 is a prefix of the sequence s2, or vice versa
     \A i \in 1..Min({Len(s1), Len(s2)}) : s1[i] = s2[i]
