@@ -11,6 +11,11 @@ CONSTANTS
     ArbitrarySymbol, \* special token for an arbitrary symbol (to reduce the need for nondeterministic choice)
     MaxOffset \* the highest possible offset (in reality this is 2^63 - 1)
 
+\* Added for tlaps-bench: the upstream modules state no assumptions, and the
+\* comments above describe these constants' intended values.
+ASSUME MaxOffset \in Nat
+ASSUME ArbitrarySymbol \notin Symbols
+
 \* The set of legal offsets
 Offset == 0..MaxOffset
 
