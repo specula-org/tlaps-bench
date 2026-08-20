@@ -12,6 +12,12 @@ import os
 import re
 from dataclasses import dataclass, field
 
+from common.proof_libraries import (
+    ProofLibraryError,
+    load_frozen_catalog,
+    resolve_frozen_catalog,
+    scan_installed_libraries,
+)
 from tlacore.model import Module
 from tlacore.provenance import Provenance, classify
 from tlacore.sany.dump import try_dump_normalized
@@ -44,6 +50,8 @@ class CheckContext:
     summary: Summary | None = None
     tlapm_output: str = ""
     tlapm_passed: bool = False
+    official_library_modules: frozenset[str] = field(default_factory=frozenset)
+    proof_library_digest: str | None = None
 
     # -- derived helpers -----------------------------------------------------
 
@@ -142,6 +150,17 @@ def build_context(
     solution_source = _read(sol_path)
     baseline_source = _read(base_path) if os.path.exists(base_path) else ""
 
+    official_library_modules: frozenset[str] = frozenset()
+    proof_library_digest = None
+    catalog_path = resolve_frozen_catalog(benchmark_dir)
+    try:
+        catalog = load_frozen_catalog(catalog_path) if catalog_path is not None else scan_installed_libraries()
+    except ProofLibraryError:
+        catalog = None
+    if catalog is not None:
+        official_library_modules = catalog.allowed_modules
+        proof_library_digest = catalog.digest
+
     prov = classify(solution_dir, target_name, benchmark_dir=benchmark_dir)
     agent_modules: dict[str, Module] = {}
     for name, path in prov.agent_created.items():
@@ -185,6 +204,8 @@ def build_context(
         summary=summary,
         tlapm_output=tlapm_output,
         tlapm_passed=tlapm_passed,
+        official_library_modules=official_library_modules,
+        proof_library_digest=proof_library_digest,
     )
 
 

@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # Detect the host platform. tlapm ships a separate binary per platform; the
-# other deps (Apalache, tla2tools, CommunityModules) are JVM/text artifacts and
+# other deps (Apalache and tla2tools) are JVM artifacts and
 # are platform-agnostic, so only the tlapm asset name is conditional below.
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
@@ -39,9 +39,6 @@ APALACHE_URL="https://github.com/apalache-mc/apalache/releases/download/${APALAC
 
 TLATOOLS_TAG="v1.8.0"
 TLATOOLS_URL="https://github.com/tlaplus/tlaplus/releases/download/${TLATOOLS_TAG}/tla2tools.jar"
-
-COMMUNITY_TAG="202607181436"
-COMMUNITY_URL="https://github.com/tlaplus/CommunityModules/archive/refs/tags/${COMMUNITY_TAG}.tar.gz"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIB_DIR="${REPO_ROOT}/lib"
@@ -225,32 +222,13 @@ else
   printf '%s\n' "${TLATOOLS_TAG}" > "${TLATOOLS_MARKER}"
 fi
 
-# --- CommunityModules (.tla) ---
-COMMUNITY_MARKER="${LIB_DIR}/community/.tlaps-bench-version"
-if [[ -f "${LIB_DIR}/community/SequencesExt.tla" \
-      && -f "${LIB_DIR}/community/Graphs.tla" \
-      && -f "${LIB_DIR}/community/GraphTheorems.tla" \
-      && -f "${COMMUNITY_MARKER}" \
-      && "$(<"${COMMUNITY_MARKER}")" == "${COMMUNITY_TAG}" ]]; then
-  echo "[install_deps] CommunityModules ${COMMUNITY_TAG} already at lib/community/ — skipping"
-else
-  CM_TMP="$(mktemp -d)"
-  TMP_DIRS+=("${CM_TMP}")
-  download "${COMMUNITY_URL}" "${CM_TMP}/community.tar.gz" "CommunityModules ${COMMUNITY_TAG}"
-  tar -xzf "${CM_TMP}/community.tar.gz" -C "${CM_TMP}/"
-  STAGED_COMMUNITY="${CM_TMP}/community"
-  mkdir -p "${STAGED_COMMUNITY}"
-  cp "${CM_TMP}/CommunityModules-${COMMUNITY_TAG}/modules/"*.tla "${STAGED_COMMUNITY}/"
-  [[ -f "${STAGED_COMMUNITY}/SequencesExt.tla" ]] \
-    || die "downloaded CommunityModules archive is missing SequencesExt.tla"
-  [[ -f "${STAGED_COMMUNITY}/Graphs.tla" ]] \
-    || die "downloaded CommunityModules archive is missing Graphs.tla"
-  [[ -f "${STAGED_COMMUNITY}/GraphTheorems.tla" ]] \
-    || die "downloaded CommunityModules archive is missing GraphTheorems.tla"
-  printf '%s\n' "${COMMUNITY_TAG}" > "${STAGED_COMMUNITY}/.tlaps-bench-version"
-  rm -rf "${LIB_DIR}/community"
-  mv "${STAGED_COMMUNITY}" "${LIB_DIR}/community"
+# --- Official proof libraries (.tla) ---
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="python3"
 fi
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/install_proof_libraries.py" install --root "${LIB_DIR}"
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/install_proof_libraries.py" check-upstream
 
 echo "[install_deps] done."
 echo
@@ -260,4 +238,4 @@ tlapm_version="$("${HOME}/.tlapm/bin/tlapm" --version 2>/dev/null | sed -n '1p' 
 echo "  tlapm:           ${TLAPM_TAG} (${tlapm_version:-version unavailable})"
 echo "  Apalache:        ${APALACHE_VERSION}"
 echo "  tla2tools/SANY:  ${TLATOOLS_TAG}"
-echo "  CommunityModules: ${COMMUNITY_TAG}"
+echo "  proof libraries: config/proof-library-sources.json"

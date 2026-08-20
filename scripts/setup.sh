@@ -119,7 +119,7 @@ main() {
   local smoke_output
   if ! smoke_output="$(
     SANY_RUN_SH="${REPO_ROOT}/src/dataset/sany-dump/run.sh" \
-      TLAPS_LIB="${HOME}/.tlapm/lib/tlapm/stdlib" \
+      TLAPS_LIB="${REPO_ROOT}/lib/tlapm" \
       COMMUNITY_LIB="${REPO_ROOT}/lib/community" \
       "${REPO_ROOT}/check_proof_bin" \
       "${REPO_ROOT}/benchmark/proof-completion/Euclid/GCD_GCD3.tla" --no-container --sany-only \

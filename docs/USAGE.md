@@ -229,7 +229,7 @@ For layered suites, `benchmark/<mode>/manifest.json` is the authority for task d
 
 Proof-completion targets contain one `AGENT PROOF` marker pair. Only its interior may change; imports, the target theorem statement, marker lines, and all surrounding text remain canonical. Module-level declarations are rejected inside the proof region, while proof-local steps such as `DEFINE` and `USE` remain valid. Model and scaffold modules are read-only context; their admitted scaffold lemmas are allowed as givens.
 
-Proof-from-scratch targets contain separate `AGENT HELPERS` and `AGENT PROOF` marker pairs. The helper region accepts fresh operator definitions, module-level `USE DEF` / `HIDE DEF`, and fully proved named lemmas or theorems. Constants, variables, assumptions, instances, nested modules, shadowed names, and module-level declarations in the proof region are rejected.
+Proof-from-scratch targets contain separate `AGENT HELPERS` and `AGENT PROOF` marker pairs. The helper region accepts fresh operator definitions, module-level `USE DEF` / `HIDE DEF`, fully proved named lemmas or theorems, and named `LOCAL <alias> == INSTANCE <module>` imports from the run's frozen official proof-library catalog. Unnamed instances, `WITH`, non-official modules, constants, variables, assumptions, nested modules, shadowed names, and module-level declarations in the proof region are rejected.
 
 For both marked layouts, all fixed bytes must match the canonical target. Extra newlines at EOF are ignored; other newline-only differences fail but are not labeled cheating. Proof completion temporarily retains compatibility with the checked-in legacy unmarked dataset: when its manifest is absent and no task contains proof markers, the evaluator emits one warning and uses the previous heuristic discovery and preamble check. A malformed manifest or any marked proof-completion task without a manifest fails closed. Proof from scratch has no fallback.
 
@@ -415,7 +415,7 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proo
 
 The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory (first-attempt or via a continuation round), and reruns the rest.
 
-When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list.
+When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list. Proof-from-scratch runs also record `run-manifest.json` and reject resume when the canonical corpus or pinned official proof-library digest changed.
 
 Inline infra retries are intentionally short: the default `--infra-retries 3` gives the original attempt plus three retries with brief backoff. If a longer provider or network outage leaves `INFRA_ERROR` / `QUOTA_EXHAUSTED` results, rerun later with the same `--output-dir --resume`; those non-genuine results are not skipped.
 
@@ -519,7 +519,7 @@ Only needed if you run with `--no-container` or develop the tooling itself.
 make setup
 ```
 
-This installs the Python environment, downloads tlapm 1.6, compiles the checker binary, and runs a SANY smoke test. Safe to rerun. Uses about 3 GB of disk.
+This installs the Python environment, downloads tlapm 1.6, installs the exact official proof-library commits pinned in `config/proof-library-sources.json`, compiles the checker binary, and runs a SANY smoke test. Safe to rerun. Uses about 3 GB of disk. Setup warns when either official repository has moved but never updates the pins automatically; maintainers can inspect the pinned trees with `python3 scripts/install_proof_libraries.py inspect` before editing the source lock.
 
 ---
 

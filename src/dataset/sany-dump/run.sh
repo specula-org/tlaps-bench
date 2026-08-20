@@ -13,7 +13,7 @@ fi
 # TLAPS stdlib must be on the SANY search path so EXTENDS TLAPS resolves.
 # The input file's own directory is also added so INSTANCE/EXTENDS of sibling
 # modules (e.g. Paxos -> Consensus) resolves.
-TLAPS_LIB="${TLAPS_LIB:-$HOME/.tlapm/lib/tlapm/stdlib}"
+TLAPS_LIB="${TLAPS_LIB:-$REPO_ROOT/lib/tlapm}"
 # Vendored CommunityModules (lib/community/) so EXTENDS SequencesExt / BagsExt /
 # SequencesExtTheorems / ... resolves for the tlaplus/Examples imports.
 COMMUNITY_LIB="${COMMUNITY_LIB:-$REPO_ROOT/lib/community}"

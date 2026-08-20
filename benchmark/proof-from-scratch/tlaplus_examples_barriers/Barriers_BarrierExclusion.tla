@@ -1,11 +1,6 @@
 ---- MODULE Barriers_BarrierExclusion ----
 EXTENDS Barriers_BarrierExclusionDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM BarrierExclusion ==

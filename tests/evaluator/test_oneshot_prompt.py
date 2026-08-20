@@ -1,5 +1,6 @@
 """Provider-neutral prompts for one-shot proof generation."""
 
+from common.proof_libraries import CATALOG_FILENAME, scan_official_libraries
 from evaluator.modes.proof_completion import ProofCompletion
 from evaluator.modes.proof_from_scratch import ProofFromScratch
 
@@ -88,13 +89,14 @@ def test_agentic_prompts_include_community_modules(tmp_path):
 
     for cls in (ProofCompletion, ProofFromScratch):
         prompt = _mode(cls, tmp_path).build_prompt(target.name, "/custom/tlapm", "/custom/tlapm/lib")
-        assert "Community Modules library is at `$COMMUNITY_LIB`" in prompt
+        assert "$COMMUNITY_LIB" in prompt
         assert '-I /custom/tlapm/lib -I "$COMMUNITY_LIB"' in prompt
 
 
 def test_proof_from_scratch_one_shot_prompt_enforces_marked_regions(tmp_path):
     target = tmp_path / "Target_Goal.tla"
     target.write_text(TARGET)
+    (tmp_path / CATALOG_FILENAME).write_bytes(scan_official_libraries().to_bytes())
 
     prompt = _mode(ProofFromScratch, tmp_path).build_one_shot_prompt(str(target), [])
 
@@ -104,10 +106,11 @@ def test_proof_from_scratch_one_shot_prompt_enforces_marked_regions(tmp_path):
     assert "The target is the only editable file" in prompt
     assert "fully proved named helper lemmas" in prompt
     assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
-    assert "Do not add or change dependency modules, imports" in prompt
-    assert "NatInductionLib!NatInduction" in prompt
-    assert "FiniteSetTheoremsLib!FS_Induction" in prompt
-    assert "WellFoundedInductionLib!WFInduction" in prompt
+    assert "INSTANCE` is allowed only in the official-library form" in prompt
+    assert "LOCAL <alias> == INSTANCE <module>" in prompt
+    assert "FiniteSetTheorems" in prompt
+    assert "WellFoundedInduction" in prompt
+    assert "must not use `WITH`" in prompt
     assert "Do not return a patch" in prompt
     assert "Keep editing" not in prompt
     assert "check_proof_bin" not in prompt
@@ -123,7 +126,7 @@ def test_proof_from_scratch_agentic_prompt_enforces_same_boundary(tmp_path):
     assert r"\* BEGIN AGENT PROOF" in prompt
     assert "Do not change the module header, imports, marker lines" in prompt
     assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
-    assert "NatInductionLib!NatInduction" in prompt
-    assert "FiniteSetTheoremsLib!FS_Induction" in prompt
-    assert "WellFoundedInductionLib!WFInduction" in prompt
+    assert "$TLAPS_PROOF_LIBRARY_CATALOG" in prompt
+    assert "LOCAL <alias> == INSTANCE <module>" in prompt
+    assert "must not modify library files or use `WITH`" in prompt
     assert "check_proof_bin Target_Goal.tla --mode proof-from-scratch" in prompt

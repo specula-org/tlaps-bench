@@ -69,19 +69,12 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && mkdir -p /opt/sany/lib \
     && cp /tmp/downloads/tla2tools-${TLATOOLS_TAG}.jar /opt/sany/lib/tla2tools.jar
 
-# Layer 5: Community modules (downloaded inside Docker — no host dependency)
-ARG COMMUNITY_TAG=202607181436
-ARG COMMUNITY_URL=https://github.com/tlaplus/CommunityModules/archive/refs/tags/${COMMUNITY_TAG}.tar.gz
-RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz ]; then \
-      curl -fsSL -o /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz "${COMMUNITY_URL}"; \
-    fi \
-    && mkdir -p /opt/community \
-    && tar -xzf /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz -C /tmp/ \
-    && cp /tmp/CommunityModules-${COMMUNITY_TAG}/modules/*.tla /opt/community/ \
-    && test -f /opt/community/Graphs.tla \
-    && test -f /opt/community/GraphTheorems.tla \
-    && rm -rf /tmp/CommunityModules-${COMMUNITY_TAG}
+# Layer 5: Audited official proof-library source snapshots.
+COPY config/proof-library-sources.json /opt/tlaps-bench/config/proof-library-sources.json
+COPY scripts/install_proof_libraries.py /opt/tlaps-bench/scripts/install_proof_libraries.py
+RUN python3 /opt/tlaps-bench/scripts/install_proof_libraries.py install \
+      --lock /opt/tlaps-bench/config/proof-library-sources.json \
+      --root /opt/proof-libraries
 
 # Layer 5b: Apalache model checker (downloaded inside Docker — no host
 # dependency). Kept in sync with scripts/install_deps.sh (host → ~/.apalache).
@@ -102,15 +95,15 @@ RUN --mount=type=cache,target=/tmp/downloads \
 
 # Layer 6: SANY DumpSemantics compilation (needs tla2tools.jar + JDK)
 COPY src/dataset/sany-dump /opt/sany/src/dataset/sany-dump
-RUN cp -r /opt/community /opt/sany/lib/community \
+RUN cp -r /opt/proof-libraries/community /opt/sany/lib/community \
     && cd /opt/sany/src/dataset/sany-dump && bash build.sh
 
 # Layer 7: check_proof_bin (changes when src/ changes)
 COPY --from=builder /check_proof_bin /usr/local/bin/check_proof_bin
 
 ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
-    TLAPS_LIB=/opt/tlapm/lib/tlapm/stdlib \
-    COMMUNITY_LIB=/opt/community \
+    TLAPS_LIB=/opt/proof-libraries/tlapm \
+    COMMUNITY_LIB=/opt/proof-libraries/community \
     TLAPS_IN_CONTAINER=1
 
 # Layer 8: Provider runners

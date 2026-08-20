@@ -1,11 +1,6 @@
 ---- MODULE Sets_IsBijectionTransitive ----
 EXTENDS Sets_IsBijectionTransitiveDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM IsBijectionTransitive ==

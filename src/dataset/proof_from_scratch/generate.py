@@ -96,9 +96,9 @@ the two must stay byte-compatible.
 Only spec-goal targets extend the shared model; a pure lemma target keeps a
 self-contained Defs layer with just the declarations it uses.
 
-Every task module also carries a fixed proof-library context before its
-editable regions.  This gives all agents the same trusted TLAPS interfaces
-without allowing submissions to change the task's import surface.
+Agents may add named instances of approved official proof libraries inside the
+helper region. The evaluator validates those imports against the frozen library
+catalog for the run.
 """
 
 import argparse
@@ -895,13 +895,6 @@ END_AGENT_HELPERS = r"\* END AGENT HELPERS"
 BEGIN_AGENT_PROOF = r"\* BEGIN AGENT PROOF"
 END_AGENT_PROOF = r"\* END AGENT PROOF"
 
-PROOF_LIBRARY_CONTEXT = (
-    "LOCAL INSTANCE TLAPS\n"
-    "LOCAL NatInductionLib == INSTANCE NaturalsInduction\n"
-    "LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems\n"
-    "LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction"
-)
-
 # `USE`/`HIDE` are prover hints from the original proof, not given semantics, so
 # they never belong in a read-only layer. Every occurrence in source/ is one line.
 _MODULE_DIRECTIVE = re.compile(r"(?m)^[ \t]*(USE|HIDE)\b[^\n]*\n?")
@@ -1056,18 +1049,17 @@ def build_defs(source_lines, dump, defs_set, defs_module_name, model_module, kee
 
 
 def build_task_module(task_module_name, defs_module, statement_text):
-    """Build a task with fixed proof libraries and two editable regions.
+    """Build a task with two editable regions.
 
-    The task extends its Defs layer, exposes a small trusted proof interface,
-    then places the four marker lines around an empty helper region and a
-    ``PROOF OBVIOUS`` proof region.  The theorem statement remains fixed between
-    them.  Building from scratch keeps the evaluator's marker contract exact.
+    The task extends its Defs layer, then places the four marker lines around an
+    empty helper region and a ``PROOF OBVIOUS`` proof region. The theorem
+    statement remains fixed between them. Building from scratch keeps the
+    evaluator's marker contract exact.
     """
     stmt = statement_text.rstrip("\n")
     return (
         f"---- MODULE {task_module_name} ----\n"
         f"EXTENDS {defs_module}\n\n"
-        f"{PROOF_LIBRARY_CONTEXT}\n\n"
         f"{BEGIN_AGENT_HELPERS}\n"
         f"{END_AGENT_HELPERS}\n"
         f"{stmt}\n"

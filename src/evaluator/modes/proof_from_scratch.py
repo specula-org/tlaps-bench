@@ -13,6 +13,7 @@ from functools import cached_property
 from pathlib import Path
 
 from common.proof_from_scratch_contract import TaskBoundary, load_proof_from_scratch_manifest
+from common.proof_libraries import CATALOG_FILENAME, load_frozen_catalog, scan_installed_libraries
 
 from .base import Mode
 
@@ -71,3 +72,8 @@ class ProofFromScratch(Mode):
                 f"{benchmark_path}"
             )
         return [str(path) for path in boundary.context_paths]
+
+    def one_shot_prompt_values(self, benchmark_path: str) -> dict[str, str]:
+        path = Path(benchmark_path).parent / CATALOG_FILENAME
+        catalog = load_frozen_catalog(path) if path.is_file() else scan_installed_libraries()
+        return {"proof_library_modules": ", ".join(sorted(catalog.allowed_modules))}
