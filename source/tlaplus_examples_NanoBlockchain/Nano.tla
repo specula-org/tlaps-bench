@@ -187,14 +187,16 @@ CryptographicInvariant ==
                     publicKey,
                     hash)
 
-RECURSIVE SumBag(_)
+\* Summing each distinct element times its multiplicity is the same total as
+\* removing one copy at a time.
 SumBag(B) ==
-    LET S == BagToSet(B) IN
-    IF S = {}
-    THEN 0
-    ELSE
-        LET e == CHOOSE x \in S : TRUE IN
-        e + SumBag(B (-) SetToBag({e}))
+    LET S == BagToSet(B)
+        sumOf[s \in SUBSET S] ==
+          IF s = {}
+          THEN 0
+          ELSE LET e == CHOOSE x \in s : TRUE
+               IN  e * B[e] + sumOf[s \ {e}]
+    IN  sumOf[S]
 
 BalanceInvariant ==
     /\ \A node \in Node :
