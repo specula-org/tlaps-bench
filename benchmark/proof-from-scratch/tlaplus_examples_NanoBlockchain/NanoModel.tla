@@ -1,31 +1,23 @@
--------------------------------- MODULE Nano --------------------------------
-(***************************************************************************)
-(* An outdated and not-ultimately-useful specification of the original     *)
-(* protocol used by the Nano blockchain. Primarily interesting as an       *)
-(* example of how to model hash functions and cryptographic signatures,    *)
-(* and the difficulties in using finite modelchecking to analyze           *)
-(* blockchain-like data structures or anything else that records action    *)
-(* history in an ordered way.                                              *)
-(***************************************************************************)
+-------------------------------- MODULE NanoModel --------------------------------
 
 EXTENDS
     Naturals,
     Bags
 
 CONSTANTS
-    Hash,                   \* The set of all 256-bit Blake2b block hashes
-    CalculateHash(_,_,_),   \* An action calculating the hash of a block
-    PrivateKey,             \* The set of all Ed25519 private keys
-    PublicKey,              \* The set of all Ed25519 public keys
-    KeyPair,                \* The public key paired with each private key
-    Node,                   \* The set of all nodes in the network
-    GenesisBalance,         \* The total number of coins in the network
-    Ownership               \* The private key owned by each node
+    Hash,                   
+    CalculateHash(_,_,_),   
+    PrivateKey,             
+    PublicKey,              
+    KeyPair,                
+    Node,                   
+    GenesisBalance,         
+    Ownership               
 
 VARIABLES
-    lastHash,               \* The last calculated block hash
-    distributedLedger,      \* The distributed ledger of confirmed blocks
-    received                \* The blocks received but not yet validated
+    lastHash,               
+    distributedLedger,      
+    received                
 
 ASSUME
     /\ \A data, oldHash, newHash :
@@ -33,13 +25,6 @@ ASSUME
     /\ KeyPair \in [PrivateKey -> PublicKey]
     /\ GenesisBalance \in Nat
     /\ Ownership \in [Node -> PrivateKey]
-
------------------------------------------------------------------------------
-
-(***************************************************************************)
-(* Functions to sign hashes with private key and validate signatures       *)
-(* against public key.                                                     *)
-(***************************************************************************)
 
 SignHash(hash, privateKey) ==
     [data       |-> hash,
@@ -53,10 +38,6 @@ ValidateSignature(signature, expectedPublicKey, expectedHash) ==
 Signature ==
     [data       : Hash,
     signedWith  : PrivateKey]
-
-(***************************************************************************)
-(* Defines the set of protocol-conforming blocks.                          *)
-(***************************************************************************)
 
 AccountBalance == 0 .. GenesisBalance
 
@@ -102,12 +83,6 @@ NoBlock == CHOOSE b : b \notin SignedBlock
 
 NoHash == CHOOSE h : h \notin Hash
 
-Ledger == [Hash -> SignedBlock \cup {NoBlock}]
-
-(***************************************************************************)
-(* Utility functions to calculate block lattice properties.                *)
-(***************************************************************************)
-
 GenesisBlockExists ==
     /\ lastHash /= NoHash
 
@@ -133,19 +108,6 @@ PublicKeyOf(ledger, blockHash) ==
               ELSE publicKeyOf[block.previous]
     IN  publicKeyOf[blockHash]
 
-TopBlock(ledger, publicKey) ==
-    CHOOSE hash \in Hash :
-        LET signedBlock == ledger[hash] IN
-        /\ signedBlock /= NoBlock
-        /\ PublicKeyOf(ledger, hash) = publicKey
-        /\ ~\E otherHash \in Hash :
-            LET otherSignedBlock == ledger[otherHash] IN
-            /\ otherSignedBlock /= NoBlock
-            /\ otherSignedBlock.block.type \in {"send", "receive", "change"}
-            /\ otherSignedBlock.block.previous = hash
-
-\* ValueOfSendBlock is inlined here so that the recursion is over one hash
-\* chain only, which a recursive function can express directly.
 BalanceAt(ledger, hash) ==
     LET balanceAt[h \in Hash] ==
           LET block == ledger[h].block
@@ -159,64 +121,6 @@ BalanceAt(ledger, hash) ==
               [] block.type = "change" -> balanceAt[block.previous]
               [] block.type = "genesis" -> block.balance
     IN  balanceAt[hash]
-
-ValueOfSendBlock(ledger, hash) ==
-    LET
-      signedBlock == ledger[hash]
-      block == signedBlock.block
-    IN BalanceAt(ledger, block.previous) - block.balance
- 
-(***************************************************************************)
-(* The type & safety invariants.                                           *)
-(***************************************************************************)
-
-TypeInvariant ==
-    /\ lastHash \in Hash \cup {NoHash}
-    /\ distributedLedger \in [Node -> Ledger]
-    /\ received \in [Node -> SUBSET SignedBlock]
-
-CryptographicInvariant ==
-    /\ \A node \in Node :
-        LET ledger == distributedLedger[node] IN
-        /\ \A hash \in Hash :
-            LET signedBlock == ledger[hash] IN
-            /\ signedBlock /= NoBlock =>
-                LET publicKey == PublicKeyOf(ledger, hash) IN
-                /\ ValidateSignature(
-                    signedBlock.signature,
-                    publicKey,
-                    hash)
-
-\* Summing each distinct element times its multiplicity is the same total as
-\* removing one copy at a time.
-SumBag(B) ==
-    LET S == BagToSet(B)
-        sumOf[s \in SUBSET S] ==
-          IF s = {}
-          THEN 0
-          ELSE LET e == CHOOSE x \in s : TRUE
-               IN  e * B[e] + sumOf[s \ {e}]
-    IN  sumOf[S]
-
-BalanceInvariant ==
-    /\ \A node \in Node :
-        LET
-          ledger == distributedLedger[node]
-          openAccounts == {account \in PublicKey : IsAccountOpen(ledger, account)}
-          topBlocks == {TopBlock(ledger, account) : account \in openAccounts}
-          accountBalances ==
-            LET ledgerBalanceAt(hash) == BalanceAt(ledger, hash) IN
-            BagOfAll(ledgerBalanceAt, SetToBag(topBlocks))
-        IN
-        /\ GenesisBlockExists =>
-            /\ SumBag(accountBalances) <= GenesisBalance
-
-SafetyInvariant ==
-    /\ CryptographicInvariant
-
-(***************************************************************************)
-(* Creates the genesis block.                                              *)
-(***************************************************************************)
 
 CreateGenesisBlock(privateKey) ==
     LET
@@ -238,13 +142,6 @@ CreateGenesisBlock(privateKey) ==
                 ![lastHash'] =
                     signedGenesisBlock]]
     /\ UNCHANGED received
-
-(***************************************************************************)
-(* Creation, validation, and confirmation of open blocks. Checks include:  *)
-(*  - The block is signed by the private key of the account being opened   *)
-(*  - The node's ledger contains the referenced source block               *)
-(*  - The source block is a send block to the account being opened         *)
-(***************************************************************************)
 
 ValidateOpenBlock(ledger, block) ==
     /\ block.type = "open"
@@ -289,13 +186,6 @@ ProcessOpenBlock(node, signedBlock) ==
     /\ distributedLedger' =
         [distributedLedger EXCEPT
             ![node][lastHash'] = signedBlock]
-
-(***************************************************************************)
-(* Creation, validation, and confirmation of send blocks. Checks include:  *)
-(*  - The node's ledger contains the referenced previous block             *)
-(*  - The block is signed by the account sourcing the funds                *)
-(*  - The value sent is non-negative                                       *)
-(***************************************************************************)
 
 ValidateSendBlock(ledger, block) ==
     /\ block.type = "send"
@@ -344,14 +234,6 @@ ProcessSendBlock(node, signedBlock) ==
     /\ distributedLedger' =
         [distributedLedger EXCEPT
             ![node][lastHash'] = signedBlock]
-
-(***************************************************************************)
-(* Creation, validation, & confirmation of receive blocks. Checks include: *)
-(*  - The node's ledger contains the referenced previous & source blocks   *)
-(*  - The block is signed by the account sourcing the funds                *)
-(*  - The source block is a send block to the receive block's account      *)
-(*  - The source block does not already have a corresponding receive/open  *)
-(***************************************************************************)
 
 ValidateReceiveBlock(ledger, block) ==
     /\ block.type = "receive"
@@ -403,12 +285,6 @@ ProcessReceiveBlock(node, signedBlock) ==
         [distributedLedger EXCEPT
             ![node][lastHash'] = signedBlock]
 
-(***************************************************************************)
-(* Creation, validation, & confirmation of change blocks. Checks include:  *)
-(*  - The node's ledger contains the referenced previous block             *)
-(*  - The block is signed by the correct account                           *)
-(***************************************************************************)
-
 ValidateChangeBlock(ledger, block) ==
     /\ block.type = "change"
     /\ ledger[block.previous] /= NoBlock
@@ -454,9 +330,6 @@ ProcessChangeRepBlock(node, signedBlock) ==
         [distributedLedger EXCEPT
             ![node][lastHash'] = signedBlock]
 
-(***************************************************************************)
-(* Top-level actions.                                                      *)
-(***************************************************************************)
 CreateBlock(node) ==
     \/ CreateOpenBlock(node)
     \/ CreateSendBlock(node)
@@ -484,9 +357,6 @@ Next ==
 Spec ==
     /\ Init
     /\ [][Next]_<<lastHash, distributedLedger, received>>
-
-THEOREM Safety == Spec => TypeInvariant /\ SafetyInvariant
-PROOF OMITTED
 
 =============================================================================
 
