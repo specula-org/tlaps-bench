@@ -66,9 +66,11 @@ ChildNodeFor(node, key) ==
 
 \* Identify the leaf node based on key
 \* Find the leaf node associated with a key
-RECURSIVE FindLeafNode(_, _)
+\* The key is unchanged by the recursion, so a function over Nodes suffices.
 FindLeafNode(node, key) ==
-    IF isLeaf[node] THEN node ELSE FindLeafNode(ChildNodeFor(node, key), key)
+    LET findLeaf[n \in Nodes] ==
+          IF isLeaf[n] THEN n ELSE findLeaf[ChildNodeFor(n, key)]
+    IN  findLeaf[node]
 
 AtMaxOccupancy(node) == Cardinality(keysOf[node]) = MaxOccupancy
 
