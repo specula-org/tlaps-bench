@@ -1,5 +1,5 @@
-\* Note: deletes have not been implemented
----- MODULE btree ----
+
+---- MODULE btreeModel ----
 EXTENDS TLC,
         Naturals,
         FiniteSets,
@@ -10,7 +10,6 @@ CONSTANTS Vals,
           MaxNode,
           MaxOccupancy,
 
-          \* states
           READY,
           GET_VALUE,
           FIND_LEAF_TO_ADD,
@@ -22,9 +21,6 @@ CONSTANTS Vals,
           SPLIT_ROOT_INNER,
           UPDATE_LEAF
 
-\* Added for tlaps-bench: the upstream module states no assumptions, but every
-\* goal quantifies over the constants. These are the values the upstream TLC
-\* configuration uses.
 ASSUME MaxNode \in Nat \ {0}
 ASSUME MaxKey \in Nat
 ASSUME MaxOccupancy \in Nat \ {0}
@@ -35,7 +31,6 @@ Nodes == 1..MaxNode
 NIL == CHOOSE x : x \notin Nodes
 MISSING == CHOOSE v : v \notin Vals
 
-
 VARIABLES root,
           isLeaf, keysOf, childOf, lastOf, valOf,
           focus,
@@ -43,22 +38,8 @@ VARIABLES root,
           op, args, ret,
           state
 
-TypeOk == /\ root \in Nodes
-          /\ isLeaf \in [Nodes -> BOOLEAN]
-          /\ keysOf \in [Nodes -> SUBSET Keys]
-          /\ childOf \in [Nodes \X Keys -> Nodes \union {NIL}]
-          /\ lastOf \in [Nodes -> Nodes \union {NIL}]
-          /\ valOf \in [Nodes \X Keys -> Vals \union {NIL}]
-          /\ focus \in Nodes \union {NIL}
-          /\ toSplit \in Seq(Nodes)
-          /\ op \in {"get", "insert", "update", NIL}
-          /\ ret \in Vals \union {"ok", "error", MISSING, NIL}
-          /\ state \in {READY, GET_VALUE, FIND_LEAF_TO_ADD, WHICH_TO_SPLIT, ADD_TO_LEAF, SPLIT_LEAF, SPLIT_INNER, SPLIT_ROOT_LEAF, SPLIT_ROOT_INNER, UPDATE_LEAF}
-
-\* Max element in a set
 Max(xs) == CHOOSE x \in xs : (\A y \in xs \ {x} : x > y)
 
-\* Find the appropriate child node associated with the key
 ChildNodeFor(node, key) ==
     LET keys == keysOf[node]
         maxKey == Max(keys)
@@ -66,14 +47,10 @@ ChildNodeFor(node, key) ==
                                            /\ ~(\E j \in keys \ {k} : j>key /\ j<k)
     IN IF keys = {} \/ key >= maxKey
        THEN lastOf[node]
-       \* smallest k that's bigger than key
+       
        ELSE
        childOf[node, closestKey]
 
-
-\* Identify the leaf node based on key
-\* Find the leaf node associated with a key
-\* The key is unchanged by the recursion, so a function over Nodes suffices.
 FindLeafNode(node, key) ==
     LET findLeaf[n \in Nodes] ==
           IF isLeaf[n] THEN n ELSE findLeaf[ChildNodeFor(n, key)]
@@ -81,12 +58,9 @@ FindLeafNode(node, key) ==
 
 AtMaxOccupancy(node) == Cardinality(keysOf[node]) = MaxOccupancy
 
-
-\* We model a "free" (not yet part of the tree) node as one as a leaf with no keys
 IsFree(node) == isLeaf[node] /\ keysOf[node] = {}
 
 ChooseFreeNode == CHOOSE n \in Nodes : IsFree(n)
-
 
 Init == /\ isLeaf = [n \in Nodes |-> TRUE]
         /\ keysOf = [n \in Nodes |-> {}]
@@ -116,7 +90,6 @@ GetValue ==
     /\ state' = READY
     /\ ret' = IF key \in keysOf[node] THEN valOf[node, key] ELSE MISSING
     /\ UNCHANGED <<root, isLeaf, keysOf, childOf, lastOf, valOf, focus, toSplit, args, op>>
-    
 
 InsertReq(key, val) ==
     /\ state = READY
@@ -155,7 +128,6 @@ FindLeafToAdd ==
        /\ state' = IF AtMaxOccupancy(leaf) THEN WHICH_TO_SPLIT ELSE ADD_TO_LEAF
        /\ UNCHANGED <<root, isLeaf, keysOf, childOf, lastOf, valOf, args, op, ret>>
 
-
 ParentOf(n) == CHOOSE p \in Nodes: \/ \E k \in Keys: n = childOf[p, k]
                                    \/ lastOf[p]=n
 
@@ -163,7 +135,7 @@ WhichToSplit ==
     LET  node == Head(toSplit)
          parent == ParentOf(node)
          splitParent == AtMaxOccupancy(parent)
-         noMoreSplits == ~splitParent  \* if the parent doesn't need splitting, we don't need to consider more nodes for splitting
+         noMoreSplits == ~splitParent  
     IN /\ state = WHICH_TO_SPLIT
        /\ toSplit' =
            CASE node = root   -> toSplit
@@ -177,8 +149,6 @@ WhichToSplit ==
               [] OTHER                                        -> WHICH_TO_SPLIT
        /\ UNCHANGED <<root, isLeaf, keysOf, childOf, lastOf, valOf, op, args, ret, focus>>
 
-\* Adding the <<key, val>> pair in args to the node indicated by focus
-\* If the key is already present, this is an error
 AddToLeaf ==
     LET key == args[1]
         val == args[2] IN
@@ -189,7 +159,6 @@ AddToLeaf ==
        /\ state' = READY
        /\ UNCHANGED <<root, isLeaf, childOf, lastOf, op, args, focus, toSplit>>
 
-\* Return the pivot (midpoint) of a set of keys. If there are an even number of keys, bias towards the smaller one
 PivotOf(keys) == CHOOSE k \in keys :
     LET smaller == {x \in keys : x < k}
         larger == {x \in keys: x > k} IN
@@ -215,8 +184,7 @@ SplitRootLeaf ==
         CASE n=n1 /\ k \in n2Keys -> NIL
           [] n=n2 /\ k \in n2Keys -> valOf[n1, k]
           [] OTHER                -> valOf[n, k]]
-    \* No more splits necessary, add the focus to the leaf
-    \* Note that the focus may have changed due to the split
+
     /\ state' = ADD_TO_LEAF
     /\ focus' = IF keyToInsert < pivot THEN n1 ELSE n2
     /\ UNCHANGED <<op, args, ret, toSplit>>
@@ -233,7 +201,7 @@ SplitRootInner ==
         newRoot == CHOOSE n \in Nodes : IsFree(n) /\ (n # n2)
         keys == keysOf[n1]
         pivot == PivotOf(keys)
-        (* when splitting an inner node, pivot does not appear in either node, only in parent *)
+        
         n1Keys == {x \in keys: x<pivot}
         n2Keys == {x \in keys: x>pivot} IN
     /\ state = SPLIT_ROOT_INNER
@@ -264,8 +232,7 @@ SplitLeaf ==
     /\ state = SPLIT_LEAF
     /\ isLeaf' = [isLeaf EXCEPT ![n2]=TRUE]
     /\ keysOf' = [keysOf EXCEPT ![parent]=@ \union {pivot}, ![n1]=n1Keys, ![n2]=n2Keys]
-    \* In the parent, point the pivot key to n1, and point the parent key to n2.
-    \* TODO: handle the edge case where n1 was the last element
+
     /\ childOf' = IF IsLastOfParent(n1)
                   THEN [childOf EXCEPT ![parent, pivot]=n1]
                   ELSE [childOf EXCEPT ![parent, pivot]=n1, ![parent, ParentKeyOf(n1)]=n2]
@@ -277,7 +244,6 @@ SplitLeaf ==
     /\ state' = ADD_TO_LEAF
     /\ focus' = IF keyToInsert < pivot THEN n1 ELSE n2
     /\ UNCHANGED <<root, toSplit, op, args, ret>>
-
 
 Next == \/ \E key \in Keys, val \in Vals : 
             \/ InsertReq(key, val)
@@ -295,52 +261,5 @@ Next == \/ \E key \in Keys, val \in Vals :
 vars == <<root, isLeaf, keysOf, childOf, lastOf, valOf, focus, toSplit, op, args, ret, state>>
 
 Spec == Init /\ [][Next]_vars /\ WF_op(\E key \in Keys: GetReq(key))
-
-\*
-\* Refinement mapping
-\*
-
-Leaves == {n \in Nodes : isLeaf[n]}
-
-Mapping == INSTANCE kvstore
-    WITH dict <- [key \in Keys |-> IF \E leaf \in Leaves : key \in keysOf[leaf] 
-                                 THEN LET leaf == CHOOSE leaf \in Leaves : key \in keysOf[leaf] 
-                                      IN valOf[leaf, key] ELSE MISSING],
-         state <- IF state = READY THEN "ready" ELSE "working"
-
-
-Refinement == Mapping!Spec
-
-\*
-\* Invariants
-\*
-Inners == {n \in Nodes: ~isLeaf[n]}
-
-InnersMustHaveLast == \A n \in Inners : lastOf[n] # NIL
-KeyOrderPreserved == \A n \in Inners : (\A k \in keysOf[n] : (\A kc \in keysOf[childOf[n, k]]: kc < k))
-LeavesCantHaveLast == \A n \in Leaves : lastOf[n] = NIL
-KeysInLeavesAreUnique ==
-    \A n1, n2 \in Leaves : ((keysOf[n1] \intersect keysOf[n2]) # {}) => n1=n2
-FreeNodesRemain == \E n \in Nodes : IsFree(n)
-
-(***************************************************************************)
-(* Proof obligations added for tlaps-bench. Each goal is an invariant the  *)
-(* upstream TLC configuration checks; the upstream module states no        *)
-(* theorems.                                                              *)
-(***************************************************************************)
-THEOREM TypeOkCorrect == Spec => []TypeOk
-PROOF OMITTED
-
-THEOREM InnersMustHaveLastCorrect == Spec => []InnersMustHaveLast
-PROOF OMITTED
-
-THEOREM LeavesCantHaveLastCorrect == Spec => []LeavesCantHaveLast
-PROOF OMITTED
-
-THEOREM KeyOrderPreservedCorrect == Spec => []KeyOrderPreserved
-PROOF OMITTED
-
-THEOREM KeysInLeavesAreUniqueCorrect == Spec => []KeysInLeavesAreUnique
-PROOF OMITTED
 
 ====
