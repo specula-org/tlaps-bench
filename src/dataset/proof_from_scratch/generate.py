@@ -945,7 +945,10 @@ def _set_extends(text, module):
     for i, line in enumerate(lines):
         if _EXTENDS_START.match(line):
             j = i
-            while lines[j].rstrip().endswith(","):
+            # `EXTENDS` alone on its line continues onto the next one, as does a
+            # line ending in a comma. Missing the first form leaves the module
+            # names behind as a dangling statement.
+            while lines[j].rstrip().endswith(",") or lines[j].strip() == "EXTENDS":
                 j += 1
             return "\n".join(lines[:i] + [f"EXTENDS {module}"] + lines[j + 1 :])
     for i, line in enumerate(lines):
