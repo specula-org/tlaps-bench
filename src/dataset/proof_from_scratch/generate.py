@@ -817,8 +817,43 @@ def _rewrite_extends_line(text, module):
     return "\n".join(out)
 
 
+_DEFINED_NAME = re.compile(r"(?m)^[ \t]*([A-Za-z_]\w*)[ \t]*(?:\([^)]*\))?[ \t]*==")
+_RECURSIVE_DECL = re.compile(r"([A-Za-z_]\w*)[ \t]*(\([^)]*\))?")
+
+
+def _prune_recursive_decls(text):
+    """Drop RECURSIVE declarations whose definition is no longer in the module.
+
+    A RECURSIVE declaration is a statement in its own right, so stripping the
+    definition it announces leaves SANY with `Symbol X declared in RECURSIVE
+    statement but not defined`. The same applies in the Defs layer when the
+    definition moved to the shared model.
+    """
+    defined = set(_DEFINED_NAME.findall(text))
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        if not lines[i].lstrip().startswith("RECURSIVE "):
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i
+        while lines[j].rstrip().endswith(","):
+            j += 1
+        indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+        body = " ".join(l.strip() for l in lines[i : j + 1])[len("RECURSIVE ") :]
+        kept = [
+            f"{n}{a or ''}" for n, a in _RECURSIVE_DECL.findall(body) if n in defined
+        ]
+        if kept:
+            out.append(f"{indent}RECURSIVE " + ", ".join(kept))
+        i = j + 1
+    return "\n".join(out)
+
+
 def _sm_tidy(text):
     """Drop stranded pure-dash `----` dividers and collapse blank runs."""
+    text = _prune_recursive_decls(text)
     text = re.sub(r"(?m)^-{4,}[ \t]*$\n?", "", text)
     return re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", text)
 
