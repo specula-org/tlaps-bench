@@ -125,15 +125,13 @@ IsSendReceived(ledger, sourceHash) ==
         /\ signedBlock.block.type \in {"open", "receive"}
         /\ signedBlock.block.source = sourceHash
 
-RECURSIVE PublicKeyOf(_,_)
 PublicKeyOf(ledger, blockHash) ==
-    LET
-      signedBlock == ledger[blockHash]
-      block == signedBlock.block
-    IN
-    IF block.type \in {"genesis", "open"}
-    THEN block.account
-    ELSE PublicKeyOf(ledger, block.previous)
+    LET publicKeyOf[hash \in Hash] ==
+          LET block == ledger[hash].block
+          IN  IF block.type \in {"genesis", "open"}
+              THEN block.account
+              ELSE publicKeyOf[block.previous]
+    IN  publicKeyOf[blockHash]
 
 TopBlock(ledger, publicKey) ==
     CHOOSE hash \in Hash :
