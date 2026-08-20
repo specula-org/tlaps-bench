@@ -144,21 +144,21 @@ TopBlock(ledger, publicKey) ==
             /\ otherSignedBlock.block.type \in {"send", "receive", "change"}
             /\ otherSignedBlock.block.previous = hash
 
-RECURSIVE BalanceAt(_, _)
-RECURSIVE ValueOfSendBlock(_, _)
-
+\* ValueOfSendBlock is inlined here so that the recursion is over one hash
+\* chain only, which a recursive function can express directly.
 BalanceAt(ledger, hash) ==
-    LET
-      signedBlock == ledger[hash]
-      block == signedBlock.block
-    IN
-    CASE block.type = "open" -> ValueOfSendBlock(ledger, block.source)
-    [] block.type = "send" -> block.balance
-    [] block.type = "receive" ->
-        BalanceAt(ledger, block.previous)
-        + ValueOfSendBlock(ledger, block.source)
-    [] block.type = "change" -> BalanceAt(ledger, block.previous)
-    [] block.type = "genesis" -> block.balance
+    LET balanceAt[h \in Hash] ==
+          LET block == ledger[h].block
+              valueOfSend(sourceHash) ==
+                LET sourceBlock == ledger[sourceHash].block
+                IN  balanceAt[sourceBlock.previous] - sourceBlock.balance
+          IN  CASE block.type = "open" -> valueOfSend(block.source)
+              [] block.type = "send" -> block.balance
+              [] block.type = "receive" ->
+                  balanceAt[block.previous] + valueOfSend(block.source)
+              [] block.type = "change" -> balanceAt[block.previous]
+              [] block.type = "genesis" -> block.balance
+    IN  balanceAt[hash]
 
 ValueOfSendBlock(ledger, hash) ==
     LET
