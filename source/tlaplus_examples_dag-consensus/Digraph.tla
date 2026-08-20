@@ -19,10 +19,14 @@ Children(digraph, v) ==
 (**************************************************************************************)
 (* Descendants(dag, vs) is the set of vertices reachable from any vertex in vs       *)
 (**************************************************************************************)
-RECURSIVE Descendants(_, _)
-Descendants(dag, vs) == IF vs = {} THEN {} ELSE
-    LET children == {c \in Vertices(dag) : \E v \in vs : <<v,c>> \in Edges(dag)} IN
-        children \cup Descendants(dag, children)
+\* Every recursive call passes a set of vertices of dag, so a function over the
+\* subsets of dag's vertices (together with the initial vs) covers the recursion.
+Descendants(dag, vs) ==
+    LET descendants[s \in SUBSET (Vertices(dag) \cup vs)] ==
+          IF s = {} THEN {} ELSE
+          LET children == {c \in Vertices(dag) : \E v \in s : <<v,c>> \in Edges(dag)} IN
+              children \cup descendants[children]
+    IN  descendants[vs]
 
 (**************************************************************************************)
 (* The sub-dag reachable from the set of vertices vs:                                 *)
