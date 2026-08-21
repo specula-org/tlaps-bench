@@ -841,10 +841,8 @@ def _prune_recursive_decls(text):
         while lines[j].rstrip().endswith(","):
             j += 1
         indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
-        body = " ".join(l.strip() for l in lines[i : j + 1])[len("RECURSIVE ") :]
-        kept = [
-            f"{n}{a or ''}" for n, a in _RECURSIVE_DECL.findall(body) if n in defined
-        ]
+        body = " ".join(ln.strip() for ln in lines[i : j + 1])[len("RECURSIVE ") :]
+        kept = [f"{n}{a or ''}" for n, a in _RECURSIVE_DECL.findall(body) if n in defined]
         if kept:
             out.append(f"{indent}RECURSIVE " + ", ".join(kept))
         i = j + 1
