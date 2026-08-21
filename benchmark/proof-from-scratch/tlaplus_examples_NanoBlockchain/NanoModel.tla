@@ -19,7 +19,7 @@ VARIABLES
     distributedLedger,      
     received                
 
-ASSUME
+ASSUME ConstantTypes ==
     /\ \A data, oldHash, newHash :
         /\ CalculateHash(data, oldHash, newHash) \in BOOLEAN
     /\ KeyPair \in [PrivateKey -> PublicKey]

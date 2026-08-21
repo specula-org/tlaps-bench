@@ -27,7 +27,9 @@ VARIABLES
     distributedLedger,      \* The distributed ledger of confirmed blocks
     received                \* The blocks received but not yet validated
 
-ASSUME
+\* Name added for tlaps-bench: tlapm only admits an assumption a proof can cite
+\* by name. The statement is upstream's.
+ASSUME ConstantTypes ==
     /\ \A data, oldHash, newHash :
         /\ CalculateHash(data, oldHash, newHash) \in BOOLEAN
     /\ KeyPair \in [PrivateKey -> PublicKey]
