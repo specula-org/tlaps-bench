@@ -42,6 +42,7 @@ from common.container import (
     ContainerConfig,
     ContainerRunner,
     DockerUnavailableError,
+    _image_source_fingerprint,
     ensure_image,
     forward_env,
 )
@@ -1115,6 +1116,7 @@ def _proof_from_scratch_run_identity(mode: Mode, catalog: OfficialLibraryCatalog
         "schema_version": 1,
         "mode": mode.name,
         "benchmark_revision": _benchmark_revision(),
+        "execution_source_digest": _image_source_fingerprint(),
         "corpus_digest": _corpus_digest(mode, catalog.digest),
         "proof_library_digest": catalog.digest,
         "proof_library_sources": {name: dict(source) for name, source in catalog.sources.items()},
@@ -1135,9 +1137,14 @@ def _validate_resume_run_manifest(output_dir: str, expected: dict[str, object] |
             recorded = json.load(stream)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read recorded run identity {record_path!r}: {exc}") from exc
-    if recorded != expected:
+    # Keep the Git revision as provenance, but do not make it a resume gate:
+    # unrelated commits can preserve every run input, while dirty edits to
+    # prompts/checker sources are captured by execution_source_digest.
+    comparable_recorded = {key: value for key, value in recorded.items() if key != "benchmark_revision"}
+    comparable_expected = {key: value for key, value in expected.items() if key != "benchmark_revision"}
+    if comparable_recorded != comparable_expected:
         raise ValueError(
-            "cannot resume with different benchmark or official proof-library inputs; "
+            "cannot resume with different benchmark, execution, or official proof-library inputs; "
             f"recorded identity is in {record_path!r}"
         )
 

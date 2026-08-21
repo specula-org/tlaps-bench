@@ -415,7 +415,7 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proo
 
 The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory (first-attempt or via a continuation round), and reruns the rest.
 
-When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list. Proof-from-scratch runs also record `run-manifest.json` and reject resume when the canonical corpus or pinned official proof-library digest changed.
+When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list. Proof-from-scratch runs also record `run-manifest.json` and reject resume when the canonical corpus, execution sources, or pinned official proof-library digest changed.
 
 Inline infra retries are intentionally short: the default `--infra-retries 3` gives the original attempt plus three retries with brief backoff. If a longer provider or network outage leaves `INFRA_ERROR` / `QUOTA_EXHAUSTED` results, rerun later with the same `--output-dir --resume`; those non-genuine results are not skipped.
 

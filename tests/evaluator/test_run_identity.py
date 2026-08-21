@@ -46,7 +46,36 @@ def test_resume_rejects_different_proof_library_identity(tmp_path):
     (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps({"schema_version": 1, "proof_library_digest": "old"}))
     (tmp_path / "results.json").write_text("[]")
 
-    with pytest.raises(ValueError, match="different benchmark or official proof-library inputs"):
+    with pytest.raises(ValueError, match="different benchmark, execution, or official proof-library inputs"):
+        runner._validate_resume_run_manifest(str(tmp_path), expected)
+
+
+def test_resume_ignores_provenance_revision_when_inputs_match(tmp_path):
+    recorded = {
+        "schema_version": 1,
+        "benchmark_revision": "old-revision",
+        "execution_source_digest": "same-sources",
+        "corpus_digest": "same-corpus",
+        "proof_library_digest": "same-libraries",
+    }
+    expected = {**recorded, "benchmark_revision": "new-revision-dirty"}
+    (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps(recorded))
+
+    runner._validate_resume_run_manifest(str(tmp_path), expected)
+
+
+def test_resume_rejects_changed_execution_sources(tmp_path):
+    recorded = {
+        "schema_version": 1,
+        "benchmark_revision": "same-revision-dirty",
+        "execution_source_digest": "old-sources",
+        "corpus_digest": "same-corpus",
+        "proof_library_digest": "same-libraries",
+    }
+    expected = {**recorded, "execution_source_digest": "new-sources"}
+    (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps(recorded))
+
+    with pytest.raises(ValueError, match="different benchmark, execution, or official proof-library inputs"):
         runner._validate_resume_run_manifest(str(tmp_path), expected)
 
 
