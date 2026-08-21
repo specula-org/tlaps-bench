@@ -26,7 +26,9 @@ Round(v) == IF v = <<>> THEN 0 ELSE v[2] \* accomodates <<>> as default value
 LeaderVertex(r) == IF r > 0 THEN <<Leader(r), r>> ELSE <<>>
 IsLeader(v) == LeaderVertex(Round(v)) = v
 Genesis == <<>>
-ASSUME IsLeader(Genesis) \* this should hold
+\* Name added for tlaps-bench: tlapm only admits an assumption a proof can cite
+\* by name. The statement is upstream's.
+ASSUME GenesisIsLeader == IsLeader(Genesis) \* this should hold
 
 (**************************************************************************************)
 (* OrderSet(S) arbitrarily order the members of the set S.  Note that, in TLA+,       *)

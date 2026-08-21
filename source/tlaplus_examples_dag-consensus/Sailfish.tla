@@ -17,21 +17,25 @@ CONSTANTS
 ,   Leader(_) \* operator mapping each round to its leader
 ,   GST \* the first round in which the system is synchronous
 
-ASSUME \E n \in R : R = 1..n \* rounds start at 1; 0 is used as default placeholder
+\* Names added for tlaps-bench: tlapm only admits an assumption a proof can
+\* cite by name. This statement is upstream's.
+ASSUME RoundsAreInterval == \E n \in R : R = 1..n \* rounds start at 1; 0 is used as default placeholder
 
 \* Added for tlaps-bench: upstream leaves the quorum system's properties to the
 \* instantiating module, but a theorem about this module quantifies over the
 \* constants. These are the properties TLCSailfish1 and TLCSailfish2 describe
 \* for their concrete choices: two quorums share a correct node, and a blocking
 \* set contains a correct node and meets every quorum.
-ASSUME F \subseteq N
-ASSUME \A r \in R : Leader(r) \in N
-ASSUME \A Q1 \in SUBSET N : \A Q2 \in SUBSET N :
-          IsQuorum(Q1) /\ IsQuorum(Q2) => (Q1 \cap Q2) \ F # {}
-ASSUME \A B \in SUBSET N :
-          IsBlocking(B) =>
-            /\ B \ F # {}
-            /\ \A Q \in SUBSET N : IsQuorum(Q) => B \cap Q # {}
+ASSUME FaultyAreNodes == F \subseteq N
+ASSUME LeaderIsNode == \A r \in R : Leader(r) \in N
+ASSUME QuorumsIntersectInCorrect ==
+          \A Q1 \in SUBSET N : \A Q2 \in SUBSET N :
+            IsQuorum(Q1) /\ IsQuorum(Q2) => (Q1 \cap Q2) \ F # {}
+ASSUME BlockingSetHasCorrect ==
+          \A B \in SUBSET N :
+            IsBlocking(B) =>
+              /\ B \ F # {}
+              /\ \A Q \in SUBSET N : IsQuorum(Q) => B \cap Q # {}
 
 INSTANCE BlockDag \* Import definitions related to DAGs of blocks
 

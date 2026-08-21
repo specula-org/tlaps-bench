@@ -11,16 +11,18 @@ CONSTANTS
 ,   Leader(_) 
 ,   GST 
 
-ASSUME \E n \in R : R = 1..n 
+ASSUME RoundsAreInterval == \E n \in R : R = 1..n 
 
-ASSUME F \subseteq N
-ASSUME \A r \in R : Leader(r) \in N
-ASSUME \A Q1 \in SUBSET N : \A Q2 \in SUBSET N :
-          IsQuorum(Q1) /\ IsQuorum(Q2) => (Q1 \cap Q2) \ F # {}
-ASSUME \A B \in SUBSET N :
-          IsBlocking(B) =>
-            /\ B \ F # {}
-            /\ \A Q \in SUBSET N : IsQuorum(Q) => B \cap Q # {}
+ASSUME FaultyAreNodes == F \subseteq N
+ASSUME LeaderIsNode == \A r \in R : Leader(r) \in N
+ASSUME QuorumsIntersectInCorrect ==
+          \A Q1 \in SUBSET N : \A Q2 \in SUBSET N :
+            IsQuorum(Q1) /\ IsQuorum(Q2) => (Q1 \cap Q2) \ F # {}
+ASSUME BlockingSetHasCorrect ==
+          \A B \in SUBSET N :
+            IsBlocking(B) =>
+              /\ B \ F # {}
+              /\ \A Q \in SUBSET N : IsQuorum(Q) => B \cap Q # {}
 
 INSTANCE BlockDag 
 

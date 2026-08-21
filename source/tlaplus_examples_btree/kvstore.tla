@@ -28,8 +28,10 @@ CONSTANTS Keys, Vals, MISSING, NIL
 
 Ops == {"get", "insert", "delete", "update"}
 
-ASSUME MISSING \notin Vals
-ASSUME NIL \notin Vals \union Ops \union {MISSING}
+\* Names added for tlaps-bench: tlapm only admits an assumption a proof can
+\* cite by name. The statements are upstream's.
+ASSUME MissingIsFresh == MISSING \notin Vals
+ASSUME NilIsFresh == NIL \notin Vals \union Ops \union {MISSING}
 
 VARIABLES op,
     args,

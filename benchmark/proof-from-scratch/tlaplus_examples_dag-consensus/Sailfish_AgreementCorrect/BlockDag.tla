@@ -13,7 +13,8 @@ Round(v) == IF v = <<>> THEN 0 ELSE v[2]
 LeaderVertex(r) == IF r > 0 THEN <<Leader(r), r>> ELSE <<>>
 IsLeader(v) == LeaderVertex(Round(v)) = v
 Genesis == <<>>
-ASSUME IsLeader(Genesis) 
+
+ASSUME GenesisIsLeader == IsLeader(Genesis) 
 
 OrderSet(S) ==
     LET orderSet[s \in SUBSET S] == IF s = {} THEN <<>> ELSE

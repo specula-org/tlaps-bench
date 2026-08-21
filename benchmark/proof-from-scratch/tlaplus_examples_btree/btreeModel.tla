@@ -21,9 +21,9 @@ CONSTANTS Vals,
           SPLIT_ROOT_INNER,
           UPDATE_LEAF
 
-ASSUME MaxNode \in Nat \ {0}
-ASSUME MaxKey \in Nat
-ASSUME MaxOccupancy \in Nat \ {0}
+ASSUME MaxNodePositive == MaxNode \in Nat \ {0}
+ASSUME MaxKeyInNat == MaxKey \in Nat
+ASSUME MaxOccupancyPositive == MaxOccupancy \in Nat \ {0}
 
 Keys == 1..MaxKey
 Nodes == 1..MaxNode

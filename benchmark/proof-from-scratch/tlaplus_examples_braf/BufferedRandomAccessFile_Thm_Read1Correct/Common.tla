@@ -9,8 +9,8 @@ CONSTANTS
     ArbitrarySymbol, 
     MaxOffset 
 
-ASSUME MaxOffset \in Nat
-ASSUME ArbitrarySymbol \notin Symbols
+ASSUME MaxOffsetInNat == MaxOffset \in Nat
+ASSUME ArbitraryIsFresh == ArbitrarySymbol \notin Symbols
 
 Offset == 0..MaxOffset
 

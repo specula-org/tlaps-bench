@@ -21,10 +21,12 @@ CONSTANTS
   Values,  (* The set of values storable in the RingBuffer's slots. *)
   NULL
 
-ASSUME Size \in Nat \ {0}
-ASSUME Writers /= {}
-ASSUME Readers /= {}
-ASSUME NULL \notin Values
+\* Names added for tlaps-bench: tlapm only admits an assumption a proof can
+\* cite by name. The statements are upstream's.
+ASSUME SizePositive == Size \in Nat \ {0}
+ASSUME WritersNonEmpty == Writers /= {}
+ASSUME ReadersNonEmpty == Readers /= {}
+ASSUME NullIsFresh == NULL \notin Values
 
 VARIABLE ringbuffer
 

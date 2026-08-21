@@ -6,7 +6,7 @@ EXTENDS Naturals, Sequences, TLC, Common
 
 CONSTANT BuffSz
 
-ASSUME BuffSz \in Nat \ {0}
+ASSUME BuffSzPositive == BuffSz \in Nat \ {0}
 
 VARIABLES
     

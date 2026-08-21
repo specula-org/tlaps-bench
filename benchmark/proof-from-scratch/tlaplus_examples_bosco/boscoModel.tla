@@ -9,15 +9,18 @@ moreNminusTdiv2 == (N - T) \div 2 + 1
 
 VARIABLE pc, rcvd, sent
 
-ASSUME  /\ N \in Nat /\ T \in Nat /\ F \in Nat
+ASSUME ParamsInNat ==
+        /\ N \in Nat /\ T \in Nat /\ F \in Nat
         /\ moreNplus3Tdiv2 \in Nat /\ moreNminusTdiv2 \in Nat
     
-ASSUME (N > 3 * T) /\ (T >= F) /\ (F >= 0)
+ASSUME ResilienceCondition == (N > 3 * T) /\ (T >= F) /\ (F >= 0)
 
-ASSUME  \/ 2 * moreNplus3Tdiv2 = N + 3 * T + 1
+ASSUME MoreNplus3Tdiv2Def ==
+        \/ 2 * moreNplus3Tdiv2 = N + 3 * T + 1
         \/ 2 * moreNplus3Tdiv2 = N + 3 * T + 2
 
-ASSUME  \/ 2 * moreNminusTdiv2 = N - T + 1
+ASSUME MoreNminusTdiv2Def ==
+        \/ 2 * moreNminusTdiv2 = N - T + 1
         \/ 2 * moreNminusTdiv2 = N - T + 2
 
 P == 1 .. N                 

@@ -12,9 +12,10 @@ CONSTANTS
     MaxOffset \* the highest possible offset (in reality this is 2^63 - 1)
 
 \* Added for tlaps-bench: the upstream modules state no assumptions, and the
-\* comments above describe these constants' intended values.
-ASSUME MaxOffset \in Nat
-ASSUME ArbitrarySymbol \notin Symbols
+\* comments above describe these constants' intended values. Named because
+\* tlapm only admits an assumption a proof can cite by name.
+ASSUME MaxOffsetInNat == MaxOffset \in Nat
+ASSUME ArbitraryIsFresh == ArbitrarySymbol \notin Symbols
 
 \* The set of legal offsets
 Offset == 0..MaxOffset

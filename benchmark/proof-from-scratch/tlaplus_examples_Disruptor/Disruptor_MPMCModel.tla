@@ -9,10 +9,10 @@ CONSTANTS
   Size,             
   NULL
 
-ASSUME Writers /= {}
-ASSUME Readers /= {}
-ASSUME Size         \in Nat \ {0}
-ASSUME MaxPublished \in Nat \ {0}
+ASSUME WritersNonEmpty  == Writers /= {}
+ASSUME ReadersNonEmpty  == Readers /= {}
+ASSUME SizePositive     == Size         \in Nat \ {0}
+ASSUME MaxPublishedPositive == MaxPublished \in Nat \ {0}
 
 VARIABLES
   ringbuffer,

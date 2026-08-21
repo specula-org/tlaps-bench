@@ -22,10 +22,12 @@ CONSTANTS
   Size,         (* Ringbuffer size.                                  *)
   NULL
 
-ASSUME Writers /= {}
-ASSUME Readers /= {}
-ASSUME Size         \in Nat \ {0}
-ASSUME MaxPublished \in Nat \ {0}
+\* Names added for tlaps-bench: tlapm only admits an assumption a proof can
+\* cite by name. The statements are upstream's.
+ASSUME WritersNonEmpty  == Writers /= {}
+ASSUME ReadersNonEmpty  == Readers /= {}
+ASSUME SizePositive     == Size         \in Nat \ {0}
+ASSUME MaxPublishedPositive == MaxPublished \in Nat \ {0}
 
 VARIABLES
   ringbuffer,
