@@ -37,6 +37,7 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
     description: str = ""
     read_only_dependencies: bool = False
     canonical_replay_required: bool = False
+    requires_workspace_tools: bool = False
 
     def __init__(self, benchmark_root: str, checker_binary: str):
         """
@@ -219,7 +220,14 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
             benchmark_basename=benchmark_basename,
             target_contents=target_contents,
             dependencies=dependencies_text,
+            **self.one_shot_prompt_values(benchmark_path),
         )
+
+    def one_shot_prompt_values(self, benchmark_path: str) -> dict[str, str]:
+        """Additional mode-specific values for the one-shot prompt template."""
+
+        del benchmark_path
+        return {}
 
     def build_continuation_prompt(self, benchmark_basename: str, tlapm_path: str, tlapm_lib: str) -> str:
         """Prompt for a continuation round (--max-continuations): the shared

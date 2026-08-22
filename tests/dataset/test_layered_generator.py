@@ -23,7 +23,6 @@ from dataset.proof_from_scratch.generate import (
     BEGIN_AGENT_PROOF,
     END_AGENT_HELPERS,
     END_AGENT_PROOF,
-    PROOF_LIBRARY_CONTEXT,
     _defined_names,
     _plan_layered_targets,
     _strip_module_directives,
@@ -61,12 +60,14 @@ def test_task_module_ships_an_empty_helper_region_and_placeholder_proof():
     assert proof.strip() == "PROOF OBVIOUS"
 
 
-def test_task_module_adds_fixed_proof_library_context_before_editable_regions():
+def test_task_module_does_not_preload_proof_libraries():
     text = build_task_module("Foo_Thm", "Foo_ThmDefs", "THEOREM TRUE")
     assert text.startswith("---- MODULE Foo_Thm ----\nEXTENDS Foo_ThmDefs\n")
     assert text.count("EXTENDS ") == 1
-    assert text.count(PROOF_LIBRARY_CONTEXT) == 1
-    assert text.index(PROOF_LIBRARY_CONTEXT) < text.index(BEGIN_AGENT_HELPERS)
+    assert "INSTANCE TLAPS" not in text
+    assert "INSTANCE NaturalsInduction" not in text
+    assert "INSTANCE FiniteSetTheorems" not in text
+    assert "INSTANCE WellFoundedInduction" not in text
     # The theorem is fixed scaffold, never inside an editable region.
     assert text.index("THEOREM TRUE") > text.index(END_AGENT_HELPERS)
     assert text.index("THEOREM TRUE") < text.index(BEGIN_AGENT_PROOF)
@@ -460,14 +461,17 @@ def test_shipped_layered_output_passes_read_only_integrity():
     assert audit.getvalue() == ""
 
 
-def test_shipped_tasks_include_fixed_proof_library_context():
+def test_shipped_tasks_do_not_preload_proof_libraries():
     suite = Path(generate.BENCHMARK_DIR)
     manifest = json.loads((suite / "manifest.json").read_text())
 
     for task_key in manifest:
         text = (suite / task_key).read_text()
-        assert text.count(PROOF_LIBRARY_CONTEXT) == 1, task_key
-        assert text.index(PROOF_LIBRARY_CONTEXT) < text.index(BEGIN_AGENT_HELPERS), task_key
+        fixed_prefix = text[: text.index(BEGIN_AGENT_HELPERS)]
+        assert "INSTANCE TLAPS" not in fixed_prefix, task_key
+        assert "INSTANCE NaturalsInduction" not in fixed_prefix, task_key
+        assert "INSTANCE FiniteSetTheorems" not in fixed_prefix, task_key
+        assert "INSTANCE WellFoundedInduction" not in fixed_prefix, task_key
 
 
 def test_multi_line_declaration_statement_is_deleted_as_one_unit():

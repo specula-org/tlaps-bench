@@ -48,6 +48,9 @@ def find_tlapm_lib(tlapm_path: str) -> str | None:
     1.6 subdir is checked first because lib/tlapm exists in 1.6 too but does
     not directly hold the .tla files.
     """
+    configured = os.environ.get("TLAPS_LIB")
+    if configured and os.path.isdir(configured):
+        return configured
     base = os.path.dirname(os.path.dirname(tlapm_path))
     for sub in _LIB_SUBDIRS:
         path = os.path.join(base, sub)

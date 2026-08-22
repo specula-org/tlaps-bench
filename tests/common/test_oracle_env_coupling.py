@@ -22,6 +22,7 @@ from common import check_proof
 BENCHMARK_DIR_ENV = "TLAPS_BENCHMARK_DIR"
 CHECK_TIMEOUT_ENV = "TLAPS_CHECK_TIMEOUT"
 COMMUNITY_LIB_ENV = "COMMUNITY_LIB"
+PROOF_LIBRARY_CATALOG_ENV = "TLAPS_PROOF_LIBRARY_CATALOG"
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,7 @@ def _clear_env(monkeypatch):
     monkeypatch.delenv(BENCHMARK_DIR_ENV, raising=False)
     monkeypatch.delenv(CHECK_TIMEOUT_ENV, raising=False)
     monkeypatch.delenv(COMMUNITY_LIB_ENV, raising=False)
+    monkeypatch.delenv(PROOF_LIBRARY_CATALOG_ENV, raising=False)
 
 
 def _canon(tmp_path, name="Foo"):
@@ -184,9 +186,17 @@ def test_env_var_names_coupled_between_runner_and_checker(env_name):
     leave the name present in just one file and trip this test.
     """
     runner = _src("evaluator/runner.py")
-    checker = _src("common/check_proof.py")
+    checker = _src("common/check_proof.py") + _src("common/proof_libraries.py")
     assert env_name in runner, f"runner.py no longer sets {env_name}"
     assert env_name in checker, f"check_proof.py no longer reads {env_name}"
+
+
+def test_proof_library_catalog_env_coupled_between_runner_and_checker():
+    runner = _src("evaluator/runner.py")
+    catalog = _src("common/proof_libraries.py")
+
+    assert "CATALOG_ENV" in runner
+    assert PROOF_LIBRARY_CATALOG_ENV in catalog
 
 
 def test_community_lib_env_coupled_between_runner_checker_and_prompts():

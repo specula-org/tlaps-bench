@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
+
+import pytest
 
 from common.proof_from_scratch_contract import (
     BEGIN_AGENT_HELPERS,
@@ -13,8 +16,10 @@ from common.proof_from_scratch_contract import (
     END_AGENT_HELPERS,
     END_AGENT_PROOF,
 )
+from common.proof_libraries import OfficialLibraryCatalog
 from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
+from evaluator.backends.base import BackendCapabilities
 from evaluator.modes.proof_from_scratch import ProofFromScratch
 
 
@@ -51,6 +56,16 @@ def _task():
             "",
         )
     )
+
+
+def _catalog():
+    payload = {"schema_version": 1, "sources": {}, "modules": {}}
+    encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    return OfficialLibraryCatalog(sources={}, modules={}, digest=hashlib.sha256(encoded).hexdigest())
+
+
+def _toolchain():
+    return {"schema_version": 1, "digest": "locked-toolchain"}
 
 
 def test_runner_grades_from_pre_agent_canonical_bytes(tmp_path, monkeypatch):
@@ -181,6 +196,7 @@ def test_cli_captures_all_replay_inputs_before_backend_setup(tmp_path, monkeypat
     monkeypatch.setattr(runner, "get_backend", lambda *args, **kwargs: backend)
     monkeypatch.setattr(runner, "get_mode", lambda *args, **kwargs: mode)
     monkeypatch.setattr(runner, "resolve_paths", lambda: (str(benchmark_root), "/checker"))
+    monkeypatch.setattr(runner, "_native_verification_environment", lambda: (_catalog(), _toolchain()))
     monkeypatch.setattr(backend, "check_auth", mutate_during_backend_setup)
     monkeypatch.setattr(runner, "ensure_tlapm", lambda: None)
     monkeypatch.setattr(runner, "find_tlapm_lib", lambda _tlapm: "/tlapm/lib")
@@ -206,3 +222,101 @@ def test_cli_captures_all_replay_inputs_before_backend_setup(tmp_path, monkeypat
     assert canonical_inputs is not None
     assert canonical_inputs.target_bytes == task_source.encode()
     assert canonical_inputs.dependencies == (("Model.tla", model_source.encode()),)
+
+
+def test_proof_from_scratch_tool_free_backend_fails_before_setup(tmp_path, monkeypatch, capsys):
+    benchmark_root = tmp_path / "benchmark"
+    suite = benchmark_root / "proof-from-scratch"
+    task = suite / "Suite" / "Task.tla"
+    model = suite / "Context" / "Model.tla"
+    task.parent.mkdir(parents=True)
+    model.parent.mkdir(parents=True)
+    task.write_text(_task())
+    model.write_text(_module("Model"))
+    (suite / "manifest.json").write_text(
+        json.dumps({"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": ["Context/Model.tla"]}})
+    )
+    mode = ProofFromScratch(str(benchmark_root), "/checker")
+    backend = _Backend()
+    backend.name = "tool-free"
+    backend.capabilities = BackendCapabilities(workspace_tools=False)
+    ensure_image_calls = []
+
+    monkeypatch.setattr(runner, "get_backend", lambda *args, **kwargs: backend)
+    monkeypatch.setattr(runner, "get_mode", lambda *args, **kwargs: mode)
+    monkeypatch.setattr(runner, "ensure_image", lambda **kwargs: ensure_image_calls.append(kwargs))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tlaps-bench", "--mode", "proof-from-scratch", "--output-dir", str(tmp_path / "results")],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner.main()
+
+    assert exc_info.value.code == 2
+    assert "is tool-free and does not support mode 'proof-from-scratch'" in capsys.readouterr().err
+    assert ensure_image_calls == []
+
+
+def test_container_proof_from_scratch_uses_image_environment(tmp_path, monkeypatch):
+    benchmark_root = tmp_path / "benchmark"
+    suite = benchmark_root / "proof-from-scratch"
+    task = suite / "Suite" / "Task.tla"
+    model = suite / "Context" / "Model.tla"
+    task.parent.mkdir(parents=True)
+    model.parent.mkdir(parents=True)
+    task.write_text(_task())
+    model.write_text(_module("Model"))
+    (suite / "manifest.json").write_text(
+        json.dumps({"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": ["Context/Model.tla"]}})
+    )
+    mode = ProofFromScratch(str(benchmark_root), "/checker")
+    backend = _Backend()
+    captured_items = []
+    inspected_images = []
+
+    monkeypatch.setattr(runner, "get_backend", lambda *args, **kwargs: backend)
+    monkeypatch.setattr(runner, "get_mode", lambda *args, **kwargs: mode)
+    monkeypatch.setattr(runner, "ensure_image", lambda force=False: "tlaps-bench-base:locked")
+    monkeypatch.setattr(
+        runner,
+        "_container_verification_environment",
+        lambda image: (inspected_images.append(image) or _catalog(), _toolchain()),
+    )
+    monkeypatch.setattr(runner, "scan_official_libraries", lambda: pytest.fail("host libraries were scanned"))
+    monkeypatch.setattr(backend, "check_auth", lambda: None)
+    monkeypatch.setattr(runner, "_run_preflight", lambda *args: None)
+    monkeypatch.setattr(
+        runner,
+        "run_single_benchmark",
+        lambda item: (
+            captured_items.append(item)
+            or {
+                "benchmark": "Suite/Task.tla",
+                "check_verdict": "FAIL",
+                "time_secs": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
+        ),
+    )
+    monkeypatch.setattr(runner, "update_summary", lambda *args: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tlaps-bench",
+            "--mode",
+            "proof-from-scratch",
+            "--skip-preflight",
+            "--output-dir",
+            str(tmp_path / "results"),
+        ],
+    )
+
+    runner.main()
+
+    assert inspected_images == ["tlaps-bench-base:locked"]
+    assert captured_items[0].container_image == "tlaps-bench-base:locked"
+    assert captured_items[0].canonical_inputs.proof_library_catalog == _catalog().to_bytes()

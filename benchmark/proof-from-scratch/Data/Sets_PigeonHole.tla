@@ -1,11 +1,6 @@
 ---- MODULE Sets_PigeonHole ----
 EXTENDS Sets_PigeonHoleDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM PigeonHole ==

@@ -48,40 +48,72 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs
 
-# Layer 3: tlapm (rolling pre-release, ~850MB download, rarely changes)
-ARG TLAPM_TAG=1.6.0-pre
-ARG TLAPM_ASSET=tlapm-${TLAPM_TAG}-x86_64-linux-gnu.tar.gz
-ARG TLAPM_URL=https://github.com/tlaplus/tlapm/releases/download/${TLAPM_TAG}/${TLAPM_ASSET}
+# Layer 3: content-locked verification tools (~850MB TLAPM download).
+COPY config/verification-toolchain.json /opt/tlaps-bench/config/verification-toolchain.json
+COPY src/common/__init__.py src/common/verification_toolchain.py /opt/tlaps-bench/src/common/
 RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/${TLAPM_ASSET} ]; then \
-      curl -fsSL -o /tmp/downloads/${TLAPM_ASSET} "${TLAPM_URL}"; \
+    TLAPM_PLATFORM=linux-x86_64 \
+    && TLAPM_TAG="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value tlapm tag \
+         --platform ${TLAPM_PLATFORM})" \
+    && TLAPM_ASSET="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value tlapm asset \
+         --platform ${TLAPM_PLATFORM})" \
+    && TLAPM_SHA256="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value tlapm sha256 \
+         --platform ${TLAPM_PLATFORM})" \
+    && TLAPM_URL="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value tlapm url \
+         --platform ${TLAPM_PLATFORM})" \
+    && TLAPM_CACHE="/tmp/downloads/${TLAPM_SHA256}-${TLAPM_ASSET}" \
+    && if [ ! -f "${TLAPM_CACHE}" ]; then \
+      curl -fsSL -o "${TLAPM_CACHE}" "${TLAPM_URL}"; \
     fi \
-    && tar -xzf /tmp/downloads/${TLAPM_ASSET} -C /opt/ \
-    && rm -f /opt/tlapm/bin/tlapm_lsp
+    && PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json verify-artifact tlapm \
+         "${TLAPM_CACHE}" --platform ${TLAPM_PLATFORM} \
+    && tar -xzf "${TLAPM_CACHE}" -C /opt/ \
+    && TLAPM_HELP="$(/opt/tlapm/bin/tlapm --help 2>&1 || true)" \
+    && [[ "${TLAPM_HELP}" == *"--strict"* ]] \
+    && PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json write-tlapm-marker \
+         /opt/tlapm/bin/tlapm /opt/tlapm/.tlaps-bench-toolchain.json \
+         --platform ${TLAPM_PLATFORM} \
+    && rm -f /opt/tlapm/bin/tlapm_lsp \
+    && echo "Installed locked tlapm ${TLAPM_TAG} (${TLAPM_SHA256})"
 
 # Layer 4: tla2tools.jar / SANY (downloaded inside Docker — no host dependency)
-ARG TLATOOLS_TAG=v1.8.0
-ARG TLATOOLS_URL=https://github.com/tlaplus/tlaplus/releases/download/${TLATOOLS_TAG}/tla2tools.jar
 RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/tla2tools-${TLATOOLS_TAG}.jar ]; then \
-      curl -fsSL -o /tmp/downloads/tla2tools-${TLATOOLS_TAG}.jar "${TLATOOLS_URL}"; \
+    TLATOOLS_TAG="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value sany tag)" \
+    && TLATOOLS_ASSET="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value sany asset)" \
+    && TLATOOLS_SHA256="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value sany sha256)" \
+    && TLATOOLS_URL="$(PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json value sany url)" \
+    && TLATOOLS_CACHE="/tmp/downloads/${TLATOOLS_SHA256}-${TLATOOLS_ASSET}" \
+    && if [ ! -f "${TLATOOLS_CACHE}" ]; then \
+      curl -fsSL -o "${TLATOOLS_CACHE}" "${TLATOOLS_URL}"; \
     fi \
+    && PYTHONPATH=/opt/tlaps-bench/src python3 -m common.verification_toolchain \
+         --lock /opt/tlaps-bench/config/verification-toolchain.json verify-artifact sany \
+         "${TLATOOLS_CACHE}" \
     && mkdir -p /opt/sany/lib \
-    && cp /tmp/downloads/tla2tools-${TLATOOLS_TAG}.jar /opt/sany/lib/tla2tools.jar
+    && cp "${TLATOOLS_CACHE}" /opt/sany/lib/tla2tools.jar \
+    && echo "Installed locked tla2tools ${TLATOOLS_TAG} (${TLATOOLS_SHA256})"
 
-# Layer 5: Community modules (downloaded inside Docker — no host dependency)
-ARG COMMUNITY_TAG=202607181436
-ARG COMMUNITY_URL=https://github.com/tlaplus/CommunityModules/archive/refs/tags/${COMMUNITY_TAG}.tar.gz
-RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz ]; then \
-      curl -fsSL -o /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz "${COMMUNITY_URL}"; \
-    fi \
-    && mkdir -p /opt/community \
-    && tar -xzf /tmp/downloads/community-${COMMUNITY_TAG}.tar.gz -C /tmp/ \
-    && cp /tmp/CommunityModules-${COMMUNITY_TAG}/modules/*.tla /opt/community/ \
-    && test -f /opt/community/Graphs.tla \
-    && test -f /opt/community/GraphTheorems.tla \
-    && rm -rf /tmp/CommunityModules-${COMMUNITY_TAG}
+# Layer 5: Audited official proof-library source snapshots.
+COPY config/proof-library-sources.json /opt/tlaps-bench/config/proof-library-sources.json
+COPY scripts/install_proof_libraries.py /opt/tlaps-bench/scripts/install_proof_libraries.py
+RUN python3 /opt/tlaps-bench/scripts/install_proof_libraries.py install \
+      --lock /opt/tlaps-bench/config/proof-library-sources.json \
+      --root /opt/proof-libraries
+ARG TLAPS_BENCH_BUILD_SHA256=unknown
+RUN --mount=type=bind,source=src,target=/tmp/tlaps-bench-src,readonly \
+    test -n "${TLAPS_BENCH_BUILD_SHA256}" \
+    && PYTHONPATH=/tmp/tlaps-bench-src python3 -c \
+      "from pathlib import Path; from common.proof_libraries import scan_official_libraries; Path('/opt/proof-libraries/proof-library-catalog.json').write_bytes(scan_official_libraries(source_lock=Path('/opt/tlaps-bench/config/proof-library-sources.json'), tlapm_library=Path('/opt/proof-libraries/tlapm'), community_library=Path('/opt/proof-libraries/community')).to_bytes())"
 
 # Layer 5b: Apalache model checker (downloaded inside Docker — no host
 # dependency). Kept in sync with scripts/install_deps.sh (host → ~/.apalache).
@@ -102,15 +134,15 @@ RUN --mount=type=cache,target=/tmp/downloads \
 
 # Layer 6: SANY DumpSemantics compilation (needs tla2tools.jar + JDK)
 COPY src/dataset/sany-dump /opt/sany/src/dataset/sany-dump
-RUN cp -r /opt/community /opt/sany/lib/community \
+RUN cp -r /opt/proof-libraries/community /opt/sany/lib/community \
     && cd /opt/sany/src/dataset/sany-dump && bash build.sh
 
 # Layer 7: check_proof_bin (changes when src/ changes)
 COPY --from=builder /check_proof_bin /usr/local/bin/check_proof_bin
 
 ENV SANY_RUN_SH=/opt/sany/src/dataset/sany-dump/run.sh \
-    TLAPS_LIB=/opt/tlapm/lib/tlapm/stdlib \
-    COMMUNITY_LIB=/opt/community \
+    TLAPS_LIB=/opt/proof-libraries/tlapm \
+    COMMUNITY_LIB=/opt/proof-libraries/community \
     TLAPS_IN_CONTAINER=1
 
 # Layer 8: Provider runners
@@ -141,7 +173,6 @@ WORKDIR /workspace
 
 # Invalidate locally cached images when sources or the checker version change.
 # Keep this label last so the expensive dependency layers remain cacheable.
-ARG TLAPS_BENCH_BUILD_SHA256=unknown
 LABEL org.specula.tlaps-bench.build-sha256="${TLAPS_BENCH_BUILD_SHA256}"
 
 ENTRYPOINT ["/entrypoint.sh"]

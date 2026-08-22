@@ -17,6 +17,8 @@ Usage:
 import argparse
 import contextlib
 import fcntl
+import glob
+import hashlib
 import json
 import os
 import random
@@ -34,16 +36,30 @@ import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from common.container import (
     IMAGE_TAG,
     ContainerConfig,
     ContainerRunner,
     DockerUnavailableError,
+    _image_source_fingerprint,
     ensure_image,
     forward_env,
 )
+from common.proof_libraries import (
+    CATALOG_ENV,
+    CATALOG_FILENAME,
+    OfficialLibraryCatalog,
+    ProofLibraryError,
+    scan_official_libraries,
+)
 from common.task_contract import TaskContractError
+from common.verification_toolchain import (
+    VerificationToolchainError,
+    validate_toolchain_identity,
+    verification_toolchain_identity,
+)
 from evaluator import quota, toolcalls
 from evaluator.agent_skills import discover_agent_skills
 from evaluator.backends import get_backend, list_backends
@@ -73,6 +89,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 SKILLS_DIR = os.path.join(REPO_ROOT, "skills")
 TASK_LIST_RECORD = "task-list.json"
+RUN_MANIFEST_RECORD = "run-manifest.json"
 NAMED_TASK_LISTS = {"core": "core.txt"}
 
 VERDICT_ICONS = {"PASS": "✅", "FAIL": "❌", "CHEATING": "⚠️", "TIMEOUT": "⏱️", "ERROR": "💥"}
@@ -484,6 +501,7 @@ class WorkItem:
     session_dir: str = ""
     # Replay-required modes capture every task before the worker pool starts.
     canonical_inputs: "CanonicalInputs | None" = None
+    run_identity: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -493,19 +511,29 @@ class CanonicalInputs:
     target_name: str
     target_bytes: bytes
     dependencies: tuple[tuple[str, bytes], ...]
+    proof_library_catalog: bytes | None = None
 
     @classmethod
-    def capture(cls, benchmark_path: str, basename: str, deps: list[str]) -> "CanonicalInputs":
+    def capture(
+        cls,
+        benchmark_path: str,
+        basename: str,
+        deps: list[str],
+        *,
+        proof_library_catalog: bytes | None = None,
+    ) -> "CanonicalInputs":
         dependencies = tuple((os.path.basename(path), _read_bytes(path)) for path in deps)
         names = [basename, *(name for name, _content in dependencies)]
         if len(names) != len(set(names)):
             raise ValueError(f"canonical inputs contain duplicate basenames: {names}")
-        return cls(basename, _read_bytes(benchmark_path), dependencies)
+        return cls(basename, _read_bytes(benchmark_path), dependencies, proof_library_catalog)
 
     def materialize(self, destination: str, *, target_name: str | None = None) -> None:
         _write_bytes(os.path.join(destination, target_name or self.target_name), self.target_bytes)
         for name, content in self.dependencies:
             _write_bytes(os.path.join(destination, name), content)
+        if self.proof_library_catalog is not None:
+            _write_bytes(os.path.join(destination, CATALOG_FILENAME), self.proof_library_catalog)
 
 
 def _read_bytes(path: str) -> bytes:
@@ -613,6 +641,8 @@ def _make_workspace(
             os.chmod(target_path, os.stat(target_path).st_mode | stat.S_IWUSR)
             for dep_name, _content in canonical_inputs.dependencies:
                 os.chmod(os.path.join(workspace, dep_name), 0o444)
+            if canonical_inputs.proof_library_catalog is not None:
+                os.chmod(os.path.join(workspace, CATALOG_FILENAME), 0o444)
         return workspace
     except Exception:
         shutil.rmtree(workspace, ignore_errors=True)
@@ -1051,6 +1081,166 @@ def _write_task_list_record(output_dir: str, mode_name: str, task_ids: list[str]
         f.write("\n")
 
 
+def _update_identity_digest(digest, value: bytes) -> None:
+    digest.update(len(value).to_bytes(8, byteorder="big"))
+    digest.update(value)
+
+
+def _corpus_digest(mode: Mode, proof_library_digest: str) -> str:
+    root = os.path.abspath(mode.benchmark_dir())
+    paths = [os.path.join(root, "manifest.json")]
+    paths.extend(path for path in glob.glob(os.path.join(root, "**", "*.tla"), recursive=True) if os.path.isfile(path))
+    digest = hashlib.sha256()
+    _update_identity_digest(digest, b"proof-from-scratch-corpus-v1")
+    _update_identity_digest(digest, proof_library_digest.encode())
+    for path in sorted(set(paths)):
+        relative = os.path.relpath(path, root).replace(os.sep, "/")
+        _update_identity_digest(digest, relative.encode())
+        _update_identity_digest(digest, _read_bytes(path))
+    return digest.hexdigest()
+
+
+def _benchmark_revision() -> str:
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+    )
+    value = revision.stdout.strip() if revision.returncode == 0 else "unknown"
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+    )
+    return f"{value}-dirty" if dirty.returncode == 0 and dirty.stdout.strip() else value
+
+
+def _container_verification_environment(
+    image: str,
+) -> tuple[OfficialLibraryCatalog, dict[str, object]]:
+    """Read the proof libraries and verifier identity from the selected image."""
+
+    script = "\n".join(
+        (
+            "import json",
+            "from pathlib import Path",
+            "from common.verification_toolchain import verification_toolchain_identity",
+            "catalog = json.loads(Path('/opt/proof-libraries/proof-library-catalog.json').read_bytes())",
+            "toolchain = verification_toolchain_identity(",
+            "    Path('/opt/tlapm/bin/tlapm'),",
+            "    Path('/opt/sany/lib/tla2tools.jar'),",
+            "    lock_path=Path('/opt/tlaps-bench/config/verification-toolchain.json'),",
+            "    platform_key='linux-x86_64',",
+            ")",
+            "print(json.dumps({'catalog': catalog, 'toolchain': toolchain}, sort_keys=True))",
+        )
+    )
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--entrypoint",
+                "python3",
+                "--env",
+                "PYTHONPATH=/opt/tlaps-bench/src",
+                image,
+                "-c",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"cannot inspect proof environment in Docker image {image}: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise ValueError(f"cannot inspect proof environment in Docker image {image}: {detail or 'unknown error'}")
+    try:
+        value = json.loads(result.stdout)
+        if type(value) is not dict or set(value) != {"catalog", "toolchain"}:
+            raise ValueError("unexpected proof environment shape")
+        catalog = OfficialLibraryCatalog.from_bytes(
+            (json.dumps(value["catalog"], sort_keys=True, separators=(",", ":")) + "\n").encode()
+        )
+        toolchain = validate_toolchain_identity(value["toolchain"])
+    except (json.JSONDecodeError, ProofLibraryError, VerificationToolchainError, ValueError) as exc:
+        raise ValueError(f"invalid proof environment from Docker image {image}: {exc}") from exc
+    return catalog, toolchain
+
+
+def _native_verification_environment() -> tuple[OfficialLibraryCatalog, dict[str, object]]:
+    ensure_tlapm()
+    tlapm_library = os.path.join(REPO_ROOT, "lib", "tlapm")
+    if not os.path.isdir(tlapm_library):
+        raise ValueError(f"pinned official tlapm library not found at {tlapm_library}; run make setup")
+    catalog = scan_official_libraries()
+    toolchain = verification_toolchain_identity(
+        Path(TLAPM_PERSISTENT) / "bin" / "tlapm",
+        Path(REPO_ROOT) / "lib" / "tla2tools.jar",
+    )
+    return catalog, toolchain
+
+
+def _proof_from_scratch_run_identity(
+    mode: Mode,
+    catalog: OfficialLibraryCatalog,
+    toolchain: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "mode": mode.name,
+        "benchmark_revision": _benchmark_revision(),
+        "execution_source_digest": _image_source_fingerprint(),
+        "corpus_digest": _corpus_digest(mode, catalog.digest),
+        "proof_library_digest": catalog.digest,
+        "proof_library_sources": {name: dict(source) for name, source in catalog.sources.items()},
+        "verification_toolchain_digest": toolchain["digest"],
+        "verification_toolchain": toolchain,
+    }
+
+
+def _validate_resume_run_manifest(output_dir: str, expected: dict[str, object] | None) -> None:
+    if expected is None:
+        return
+    record_path = os.path.join(output_dir, RUN_MANIFEST_RECORD)
+    results_path = os.path.join(output_dir, "results.json")
+    if not os.path.isfile(record_path):
+        if os.path.isfile(results_path):
+            raise ValueError(f"cannot resume proof-from-scratch results without the recorded {RUN_MANIFEST_RECORD}")
+        return
+    try:
+        with open(record_path, encoding="utf-8") as stream:
+            recorded = json.load(stream)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read recorded run identity {record_path!r}: {exc}") from exc
+    # Keep the Git revision as provenance, but do not make it a resume gate:
+    # unrelated commits can preserve every run input, while dirty edits to
+    # prompts/checker sources are captured by execution_source_digest.
+    comparable_recorded = {key: value for key, value in recorded.items() if key != "benchmark_revision"}
+    comparable_expected = {key: value for key, value in expected.items() if key != "benchmark_revision"}
+    if comparable_recorded != comparable_expected:
+        raise ValueError(
+            "cannot resume with different benchmark, execution, official proof-library, or verification-toolchain "
+            "inputs; "
+            f"recorded identity is in {record_path!r}"
+        )
+
+
+def _write_run_manifest(output_dir: str, identity: dict[str, object] | None) -> None:
+    if identity is None:
+        return
+    with open(os.path.join(output_dir, RUN_MANIFEST_RECORD), "w", encoding="utf-8") as stream:
+        json.dump(identity, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+
+
 def _total_benchmark_count(results: list[dict], selected_benchmarks: set[str]) -> int:
     """Count unique benchmarks in the cumulative results and current selection."""
     return len(selected_benchmarks | {result["benchmark"] for result in results})
@@ -1136,6 +1326,14 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
         lines.append(f"# {backend_name} on {mode_name}\n")
         lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"**Progress**: {total}/{total_benchmarks}")
+        corpus_digests = {result.get("corpus_digest") for result in results if result.get("corpus_digest")}
+        library_digests = {
+            result.get("proof_library_digest") for result in results if result.get("proof_library_digest")
+        }
+        if len(corpus_digests) == 1:
+            lines.append(f"**Corpus digest**: `{next(iter(corpus_digests))}`")
+        if len(library_digests) == 1:
+            lines.append(f"**Official proof libraries**: `{next(iter(library_digests))}`")
         if specification_ids is None:
             # Guarded legacy proof-completion suites have no identity manifest.
             pass_pct, n_pass, scored = weighted_score(results, SCORERS["equal"])
@@ -1278,6 +1476,9 @@ def run_single_benchmark(item: WorkItem):
         "termination_reason": TerminationReason.OK,
         **backend.initial_result_metadata(),
     }
+    if item.run_identity is not None:
+        result["corpus_digest"] = item.run_identity["corpus_digest"]
+        result["proof_library_digest"] = item.run_identity["proof_library_digest"]
     if _supports_cost_time(backend):
         result["equivalent_cost_usd"] = None
     # Usage is runner-owned structured evidence; backend metadata must not
@@ -1797,6 +1998,7 @@ def _run_backend_container(
         )
     if canonical_dir:
         config.env["TLAPS_BENCHMARK_DIR"] = "/benchmark"
+        config.env[CATALOG_ENV] = f"/benchmark/{CATALOG_FILENAME}"
     if getattr(item.mode, "canonical_replay_required", False):
         config.env["TLAPS_CANONICAL_REPLAY_REQUIRED"] = "1"
     # Self-check uses the SAME tlapm budget as the grader (item.check_timeout),
@@ -1948,6 +2150,7 @@ def _run_backend_local(
 
     agent_env = dict(os.environ)
     agent_env.update(backend.execution_environment(agent_dir))
+    agent_env["TLAPS_LIB"] = item.tlapm_lib
     agent_env.setdefault("COMMUNITY_LIB", os.path.join(REPO_ROOT, "lib", "community"))
     checker_dir = os.path.dirname(os.path.abspath(checker_bin))
     agent_env["PATH"] = checker_dir + os.pathsep + agent_env.get("PATH", "")
@@ -1958,6 +2161,7 @@ def _run_backend_local(
     # /benchmark mount exists, so the env var is how the checker discovers them).
     if canonical_dir:
         agent_env["TLAPS_BENCHMARK_DIR"] = canonical_dir
+        agent_env[CATALOG_ENV] = os.path.join(canonical_dir, CATALOG_FILENAME)
     if getattr(mode, "canonical_replay_required", False):
         agent_env["TLAPS_CANONICAL_REPLAY_REQUIRED"] = "1"
     # Same tlapm budget the grader uses, so the discharge verdict matches.
@@ -2080,6 +2284,7 @@ def _run_grader_container(
     config.env["GIT_CONFIG_COUNT"] = "1"
     config.env["GIT_CONFIG_KEY_0"] = "safe.directory"
     config.env["GIT_CONFIG_VALUE_0"] = "/workspace"
+    config.env[CATALOG_ENV] = f"/benchmark/{CATALOG_FILENAME}"
     try:
         exit_code, stdout, stderr = runner.run_with_output(config, check_cmd, timeout=item.check_timeout + 60)
         with open(os.path.join(grading_dir, "check_debug.txt"), "w") as dbg:
@@ -2120,7 +2325,10 @@ def _run_grader_local(
     )
     try:
         check_env = dict(os.environ)
+        check_env["TLAPS_LIB"] = item.tlapm_lib
         check_env.setdefault("COMMUNITY_LIB", os.path.join(REPO_ROOT, "lib", "community"))
+        if canonical_dir:
+            check_env[CATALOG_ENV] = os.path.join(canonical_dir, CATALOG_FILENAME)
         if os.path.isfile(sany_run_sh):
             check_env["SANY_RUN_SH"] = sany_run_sh
         check_proc = subprocess.run(
@@ -2401,8 +2609,15 @@ def main():
             2, f"{parser.prog}: error: no benchmarks found for mode {mode.name!r} under {mode.benchmark_dir()}\n"
         )
 
-    # Resolve the output path before backend setup so an incompatible task-list
-    # resume fails before authentication, image setup, or a model preflight.
+    if getattr(mode, "requires_workspace_tools", False) and not backend.capabilities.workspace_tools:
+        parser.exit(
+            2,
+            f"{parser.prog}: error: backend {backend.name!r} is tool-free and does not support mode {mode.name!r}\n",
+        )
+
+    # Resolve and validate the selected cohort before Docker or native
+    # verification-toolchain setup. A bad resume should remain a cheap CLI
+    # error and must not build an image.
     if args.output_dir:
         output_dir = args.output_dir
     else:
@@ -2418,6 +2633,32 @@ def main():
         except ValueError as exc:
             parser.exit(2, f"{parser.prog}: error: {exc}\n")
 
+    proof_library_catalog = None
+    run_identity = None
+    container_ready = False
+    native_toolchain_ready = False
+    if mode.name == "proof-from-scratch":
+        try:
+            if use_container:
+                container_image = ensure_image(force=args.force_build)
+                container_ready = True
+                proof_library_catalog, verification_toolchain = _container_verification_environment(container_image)
+            else:
+                proof_library_catalog, verification_toolchain = _native_verification_environment()
+                native_toolchain_ready = True
+            run_identity = _proof_from_scratch_run_identity(
+                mode,
+                proof_library_catalog,
+                verification_toolchain,
+            )
+        except (DockerUnavailableError, OSError, RuntimeError, ValueError) as exc:
+            parser.exit(2, f"{parser.prog}: error: cannot freeze proof verification environment: {exc}\n")
+    if args.resume:
+        try:
+            _validate_resume_run_manifest(output_dir, run_identity)
+        except ValueError as exc:
+            parser.exit(2, f"{parser.prog}: error: {exc}\n")
+
     canonical_inputs_by_path = {}
     if getattr(mode, "canonical_replay_required", False):
         try:
@@ -2427,6 +2668,7 @@ def main():
                     benchmark_path,
                     os.path.basename(benchmark_path),
                     dependencies,
+                    proof_library_catalog=(proof_library_catalog.to_bytes() if proof_library_catalog else None),
                 )
         except (OSError, TaskContractError, ValueError) as exc:
             parser.exit(2, f"{parser.prog}: error: cannot capture canonical inputs: {exc}\n")
@@ -2466,13 +2708,14 @@ def main():
         # In container mode, tlapm and checker are inside the image.
         # Use container-side paths for prompts.
         tlapm_root = "/opt/tlapm"
-        tlapm_lib = "/opt/tlapm/lib/tlapm/stdlib"
+        tlapm_lib = "/opt/proof-libraries/tlapm"
 
-        try:
-            container_image = ensure_image(force=args.force_build)
-        except DockerUnavailableError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            sys.exit(1)
+        if not container_ready:
+            try:
+                container_image = ensure_image(force=args.force_build)
+            except DockerUnavailableError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                sys.exit(1)
         print(f"Container mode: ON (image: {container_image})")
 
         # Preflight: validate install + auth + model + firewall on a trivial
@@ -2486,18 +2729,20 @@ def main():
             print(f"Preflight: skipped — backend {backend.name!r} does not support a model preflight request")
     else:
         # Local mode: require tlapm and checker on host
-        ensure_tlapm()
+        if not native_toolchain_ready:
+            ensure_tlapm()
+            tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
+            if not os.path.isdir(tlapm_lib):
+                print(f"ERROR: pinned official tlapm library not found at {tlapm_lib}; run make setup")
+                sys.exit(1)
         tlapm_root = TLAPM_PERSISTENT
-        tlapm_bin = os.path.join(tlapm_root, "bin", "tlapm")
-        tlapm_lib = find_tlapm_lib(tlapm_bin)
-        if not tlapm_lib:
-            print(f"ERROR: tlapm lib not found near {tlapm_bin}")
-            sys.exit(1)
+        tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
     os.makedirs(output_dir, exist_ok=True)
     try:
         _write_task_list_record(output_dir, mode.name, task_ids)
+        _write_run_manifest(output_dir, run_identity)
     except OSError as exc:
-        parser.exit(2, f"{parser.prog}: error: cannot record task list in {output_dir!r}: {exc}\n")
+        parser.exit(2, f"{parser.prog}: error: cannot record run inputs in {output_dir!r}: {exc}\n")
 
     print(f"Backend: {backend.name}" + (f" (model={args.model})" if args.model else ""))
     if backend.reasoning_effort is not None:
@@ -2506,6 +2751,10 @@ def main():
         print(f"Max output tokens: {backend.max_output_tokens}")
     print(f"Mode:   {mode.name} — {mode.description}")
     print(f"Output:  {output_dir}")
+    if run_identity is not None:
+        print(f"Corpus:  {str(run_identity['corpus_digest'])[:12]}")
+        print(f"Official proof libraries: {str(run_identity['proof_library_digest'])[:12]}")
+        print(f"Verification toolchain: {str(run_identity['verification_toolchain_digest'])[:12]}")
 
     # Proactive quota gate. The backend supplies its usage probe and default
     # thresholds; --quota-5h/7d override them. Gating stays off when the backend
@@ -2597,6 +2846,7 @@ def main():
                 keep_container=use_container and args.keep_container,
                 session_dir=session_dir,
                 canonical_inputs=canonical_inputs_by_path.get(bf),
+                run_identity=run_identity,
             )
         )
 

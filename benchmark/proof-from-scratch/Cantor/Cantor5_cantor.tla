@@ -1,11 +1,6 @@
 ---- MODULE Cantor5_cantor ----
 EXTENDS Cantor5_cantorDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM cantor ==

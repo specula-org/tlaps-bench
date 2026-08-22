@@ -1,11 +1,6 @@
 ---- MODULE etcd_raft_LeaderCompleteness ----
 EXTENDS etcd_raft_LeaderCompletenessDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM LeaderCompleteness == Spec => []LeaderCompletenessInv

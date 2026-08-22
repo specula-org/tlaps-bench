@@ -136,6 +136,7 @@ def test_backend_uses_one_shot_prompt_and_disables_continuations():
     assert backend.project_skills_dir is None
     assert backend.capabilities.model_preflight is True
     assert backend.capabilities.max_continuations == 0
+    assert backend.capabilities.workspace_tools is False
     assert metadata["one_shot"] is False
     assert metadata["single_turn"] is True
     assert metadata["model_request_count_visible"] is False

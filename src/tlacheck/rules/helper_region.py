@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from common.task_contract import (
     BEGIN_AGENT_HELPERS,
     END_AGENT_HELPERS,
@@ -10,6 +12,7 @@ from common.task_contract import (
     parse_editable_regions,
     parse_proof_region,
 )
+from tlacore.source import slice_loc, strip_comments
 
 from ..context import CheckContext
 from ..issue import Issue, Severity
@@ -65,7 +68,6 @@ def check(ctx: CheckContext) -> list[Issue]:
         ("CONSTANT", ctx.solution.constants),
         ("VARIABLE", ctx.solution.variables),
         ("ASSUME/AXIOM", ctx.solution.assumes),
-        ("INSTANCE", ctx.solution.instances),
     )
     if helper_bounds is not None:
         for kind, declarations in forbidden:
@@ -79,6 +81,36 @@ def check(ctx: CheckContext) -> list[Issue]:
                             str(label),
                         )
                     )
+
+        for instance in ctx.solution.instances:
+            if not _inside(instance.loc, helper_bounds):
+                continue
+            source = strip_comments(slice_loc(ctx.solution_source, instance.loc)) if instance.loc else ""
+            if instance.name is None:
+                issues.append(
+                    _issue(
+                        "IMPORT_ALIAS_REQUIRED: use LOCAL <alias> == INSTANCE <module>",
+                        instance.loc.line_start if instance.loc else None,
+                        instance.module or "INSTANCE",
+                    )
+                )
+            if instance.module not in ctx.official_library_modules:
+                issues.append(
+                    _issue(
+                        f"IMPORT_NOT_ALLOWED: module {instance.module or '?'} is not in the official "
+                        "proof-library catalog",
+                        instance.loc.line_start if instance.loc else None,
+                        instance.module or "INSTANCE",
+                    )
+                )
+            if re.search(r"\bWITH\b", source):
+                issues.append(
+                    _issue(
+                        "IMPORT_WITH_FORBIDDEN: INSTANCE ... WITH is not allowed",
+                        instance.loc.line_start if instance.loc else None,
+                        instance.module or "INSTANCE",
+                    )
+                )
 
         for theorem in ctx.solution.theorems:
             if not _inside(theorem.loc, helper_bounds):
@@ -101,6 +133,7 @@ def check(ctx: CheckContext) -> list[Issue]:
                 )
 
         allowed = (
+            ("official library INSTANCE", ctx.solution.instances),
             ("operator", ctx.solution.operators),
             ("THEOREM/LEMMA", ctx.solution.theorems),
             ("module directive", ctx.solution.directives),
@@ -116,6 +149,7 @@ def check(ctx: CheckContext) -> list[Issue]:
                     )
 
     declarations = forbidden + (
+        ("INSTANCE", ctx.solution.instances),
         ("operator", ctx.solution.operators),
         ("THEOREM/LEMMA", ctx.solution.theorems),
         ("nested module", ctx.solution.inner_modules),

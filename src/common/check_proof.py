@@ -76,6 +76,14 @@ from common.cheating_detection import (
     strip_comments,
 )
 from common.container import ContainerConfig, ContainerRunner, DockerUnavailableError, ensure_image
+from common.proof_libraries import (
+    ProofLibraryError,
+    load_frozen_catalog,
+    resolve_frozen_catalog,
+    scan_installed_libraries,
+    validate_official_imports,
+    verify_installed_libraries,
+)
 from common.task_contract import (
     EditableRegionError,
     contains_marker_text,
@@ -208,6 +216,9 @@ def find_tlapm_lib(tlapm_path):
     The 1.6 sub is checked first because lib/tlapm exists in 1.6 too but
     does NOT directly contain the .tla files.
     """
+    configured = os.environ.get("TLAPS_LIB")
+    if configured and os.path.isdir(configured):
+        return configured
     base = os.path.dirname(os.path.dirname(tlapm_path))
     for sub in ["lib/tlapm/stdlib", "lib/tlaps", "lib/tlapm", "lib"]:
         path = os.path.join(base, sub)
@@ -570,6 +581,30 @@ def canonical_replay_required(explicit):
     """Whether this check must discard workspace dependency copies."""
 
     return explicit or os.environ.get("TLAPS_CANONICAL_REPLAY_REQUIRED") == "1"
+
+
+def detect_official_library_shadowing(filepath, benchmark_dir, official_modules):
+    """Reject workspace files whose names override an approved official module."""
+
+    canonical_names = set()
+    if benchmark_dir:
+        canonical_names = {
+            os.path.splitext(os.path.basename(path))[0] for path in glob.glob(os.path.join(benchmark_dir, "*.tla"))
+        }
+    issues = []
+    for path in glob.glob(os.path.join(os.path.dirname(filepath), "*.tla")):
+        if os.path.abspath(path) == os.path.abspath(filepath):
+            continue
+        module_name = os.path.splitext(os.path.basename(path))[0]
+        if module_name in official_modules and module_name not in canonical_names:
+            issues.append(
+                (
+                    0,
+                    f"IMPORT_SHADOWING: workspace module {module_name}.tla cannot override an official library",
+                    "IMPORT_SHADOWING",
+                )
+            )
+    return issues
 
 
 def stage_verification_files(filepath, destination, *, benchmark_dir=None, require_canonical=False):
@@ -1213,10 +1248,32 @@ def main(*, require_canonical_for_proof_from_scratch: bool = False):
     if args.container or (not args.no_container and not in_container and find_tlapm() is None):
         _run_in_container(filepath, args)
 
+    proof_library_catalog = None
+    import_violations = []
+    if args.mode == "proof-from-scratch" and strict_contract:
+        catalog_path = resolve_frozen_catalog(benchmark_dir)
+        try:
+            proof_library_catalog = (
+                load_frozen_catalog(catalog_path) if catalog_path is not None else scan_installed_libraries()
+            )
+            verify_installed_libraries(proof_library_catalog)
+            with open(filepath, encoding="utf-8", errors="ignore") as stream:
+                import_violations = validate_official_imports(
+                    stream.read(),
+                    proof_library_catalog.allowed_modules,
+                )
+        except ProofLibraryError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(3)
+
     # Fast path: --sany-only skips tlapm and just reports whether the solution
     # parses under standalone tla2sany (seconds, vs a full proof run). Same gate
     # the full check applies, so the agent can iterate on syntax quickly.
     if args.sany_only:
+        if import_violations:
+            for violation in import_violations:
+                print(f"FAIL {violation.message} (line {violation.line})")
+            sys.exit(1)
         sany_file = filepath
         staged_dir = None
         if args.canonical_replay_required:
@@ -1321,6 +1378,15 @@ def main(*, require_canonical_for_proof_from_scratch: bool = False):
             benchmark_dir=benchmark_dir,
             require_complete_context=strict_contract,
         )
+        cheating_issues.extend((violation.line, violation.message, violation.code) for violation in import_violations)
+        if proof_library_catalog is not None:
+            cheating_issues.extend(
+                detect_official_library_shadowing(
+                    filepath,
+                    benchmark_dir,
+                    proof_library_catalog.allowed_modules,
+                )
+            )
         boundary_issues = []
         if strict_contract:
             try:

@@ -1,11 +1,6 @@
 ---- MODULE ivy_examples_tlb_Safety ----
 EXTENDS ivy_examples_tlb_SafetyDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM Safety == SafetySpec => []NoError

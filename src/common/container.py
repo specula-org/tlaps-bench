@@ -24,11 +24,14 @@ _IMAGE_BUILD_FINGERPRINT_LABEL = "org.specula.tlaps-bench.build-sha256"
 _IMAGE_BUILD_FINGERPRINT_ARG = "TLAPS_BENCH_BUILD_SHA256"
 _IMAGE_SOURCE_PATHS = (
     ".dockerignore",
+    "config/proof-library-sources.json",
+    "config/verification-toolchain.json",
     "docker/base.Dockerfile",
     "docker/base-entrypoint.sh",
     "docker/firewall.sh",
     "docker/install-scripts",
     "pyproject.toml",
+    "scripts/install_proof_libraries.py",
     "src",
 )
 _IGNORED_IMAGE_SOURCE_PARTS = {

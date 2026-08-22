@@ -1,5 +1,7 @@
 """Provider-neutral prompts for one-shot proof generation."""
 
+import pytest
+
 from evaluator.modes.proof_completion import ProofCompletion
 from evaluator.modes.proof_from_scratch import ProofFromScratch
 
@@ -88,29 +90,16 @@ def test_agentic_prompts_include_community_modules(tmp_path):
 
     for cls in (ProofCompletion, ProofFromScratch):
         prompt = _mode(cls, tmp_path).build_prompt(target.name, "/custom/tlapm", "/custom/tlapm/lib")
-        assert "Community Modules library is at `$COMMUNITY_LIB`" in prompt
+        assert "$COMMUNITY_LIB" in prompt
         assert '-I /custom/tlapm/lib -I "$COMMUNITY_LIB"' in prompt
 
 
-def test_proof_from_scratch_one_shot_prompt_enforces_marked_regions(tmp_path):
+def test_proof_from_scratch_rejects_one_shot_prompt(tmp_path):
     target = tmp_path / "Target_Goal.tla"
     target.write_text(TARGET)
 
-    prompt = _mode(ProofFromScratch, tmp_path).build_one_shot_prompt(str(target), [])
-
-    assert "Return a complete, valid TLAPS solution" in prompt
-    assert r"\* BEGIN AGENT HELPERS" in prompt
-    assert r"\* BEGIN AGENT PROOF" in prompt
-    assert "The target is the only editable file" in prompt
-    assert "fully proved named helper lemmas" in prompt
-    assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
-    assert "Do not add or change dependency modules, imports" in prompt
-    assert "NatInductionLib!NatInduction" in prompt
-    assert "FiniteSetTheoremsLib!FS_Induction" in prompt
-    assert "WellFoundedInductionLib!WFInduction" in prompt
-    assert "Do not return a patch" in prompt
-    assert "Keep editing" not in prompt
-    assert "check_proof_bin" not in prompt
+    with pytest.raises(ValueError, match="requires a backend with workspace tools"):
+        _mode(ProofFromScratch, tmp_path).build_one_shot_prompt(str(target), [])
 
 
 def test_proof_from_scratch_agentic_prompt_enforces_same_boundary(tmp_path):
@@ -123,7 +112,7 @@ def test_proof_from_scratch_agentic_prompt_enforces_same_boundary(tmp_path):
     assert r"\* BEGIN AGENT PROOF" in prompt
     assert "Do not change the module header, imports, marker lines" in prompt
     assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
-    assert "NatInductionLib!NatInduction" in prompt
-    assert "FiniteSetTheoremsLib!FS_Induction" in prompt
-    assert "WellFoundedInductionLib!WFInduction" in prompt
+    assert "$TLAPS_PROOF_LIBRARY_CATALOG" in prompt
+    assert "LOCAL <alias> == INSTANCE <module>" in prompt
+    assert "must not modify library files or use `WITH`" in prompt
     assert "check_proof_bin Target_Goal.tla --mode proof-from-scratch" in prompt
