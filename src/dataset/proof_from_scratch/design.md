@@ -63,6 +63,9 @@ instances, and parameterized instances using `WITH`.
 The catalog is generated once before a run from the exact TLAPM and
 CommunityModules commits pinned in `config/proof-library-sources.json`. Setup
 warns when either upstream has moved but never updates the pins automatically.
+Proof-from-scratch requires a tool-using backend that can inspect these public
+interfaces and iterate with TLAPM; tool-free one-shot backends are not run in
+this mode.
 
 ## Top-level theorem identification
 

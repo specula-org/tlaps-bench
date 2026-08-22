@@ -25,6 +25,7 @@ _IMAGE_BUILD_FINGERPRINT_ARG = "TLAPS_BENCH_BUILD_SHA256"
 _IMAGE_SOURCE_PATHS = (
     ".dockerignore",
     "config/proof-library-sources.json",
+    "config/verification-toolchain.json",
     "docker/base.Dockerfile",
     "docker/base-entrypoint.sh",
     "docker/firewall.sh",

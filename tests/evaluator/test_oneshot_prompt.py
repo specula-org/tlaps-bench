@@ -1,6 +1,7 @@
 """Provider-neutral prompts for one-shot proof generation."""
 
-from common.proof_libraries import CATALOG_FILENAME, scan_official_libraries
+import pytest
+
 from evaluator.modes.proof_completion import ProofCompletion
 from evaluator.modes.proof_from_scratch import ProofFromScratch
 
@@ -93,27 +94,12 @@ def test_agentic_prompts_include_community_modules(tmp_path):
         assert '-I /custom/tlapm/lib -I "$COMMUNITY_LIB"' in prompt
 
 
-def test_proof_from_scratch_one_shot_prompt_enforces_marked_regions(tmp_path):
+def test_proof_from_scratch_rejects_one_shot_prompt(tmp_path):
     target = tmp_path / "Target_Goal.tla"
     target.write_text(TARGET)
-    (tmp_path / CATALOG_FILENAME).write_bytes(scan_official_libraries().to_bytes())
 
-    prompt = _mode(ProofFromScratch, tmp_path).build_one_shot_prompt(str(target), [])
-
-    assert "Return a complete, valid TLAPS solution" in prompt
-    assert r"\* BEGIN AGENT HELPERS" in prompt
-    assert r"\* BEGIN AGENT PROOF" in prompt
-    assert "The target is the only editable file" in prompt
-    assert "fully proved named helper lemmas" in prompt
-    assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
-    assert "INSTANCE` is allowed only in the official-library form" in prompt
-    assert "LOCAL <alias> == INSTANCE <module>" in prompt
-    assert "FiniteSetTheorems" in prompt
-    assert "WellFoundedInduction" in prompt
-    assert "must not use `WITH`" in prompt
-    assert "Do not return a patch" in prompt
-    assert "Keep editing" not in prompt
-    assert "check_proof_bin" not in prompt
+    with pytest.raises(ValueError, match="requires a backend with workspace tools"):
+        _mode(ProofFromScratch, tmp_path).build_one_shot_prompt(str(target), [])
 
 
 def test_proof_from_scratch_agentic_prompt_enforces_same_boundary(tmp_path):

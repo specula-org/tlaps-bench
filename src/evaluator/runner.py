@@ -36,6 +36,7 @@ import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from common.container import (
     IMAGE_TAG,
@@ -54,6 +55,11 @@ from common.proof_libraries import (
     scan_official_libraries,
 )
 from common.task_contract import TaskContractError
+from common.verification_toolchain import (
+    VerificationToolchainError,
+    validate_toolchain_identity,
+    verification_toolchain_identity,
+)
 from evaluator import quota, toolcalls
 from evaluator.agent_skills import discover_agent_skills
 from evaluator.backends import get_backend, list_backends
@@ -1111,15 +1117,92 @@ def _benchmark_revision() -> str:
     return f"{value}-dirty" if dirty.returncode == 0 and dirty.stdout.strip() else value
 
 
-def _proof_from_scratch_run_identity(mode: Mode, catalog: OfficialLibraryCatalog) -> dict[str, object]:
+def _container_verification_environment(
+    image: str,
+) -> tuple[OfficialLibraryCatalog, dict[str, object]]:
+    """Read the proof libraries and verifier identity from the selected image."""
+
+    script = "\n".join(
+        (
+            "import json",
+            "from pathlib import Path",
+            "from common.verification_toolchain import verification_toolchain_identity",
+            "catalog = json.loads(Path('/opt/proof-libraries/proof-library-catalog.json').read_bytes())",
+            "toolchain = verification_toolchain_identity(",
+            "    Path('/opt/tlapm/bin/tlapm'),",
+            "    Path('/opt/sany/lib/tla2tools.jar'),",
+            "    lock_path=Path('/opt/tlaps-bench/config/verification-toolchain.json'),",
+            "    platform_key='linux-x86_64',",
+            ")",
+            "print(json.dumps({'catalog': catalog, 'toolchain': toolchain}, sort_keys=True))",
+        )
+    )
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--entrypoint",
+                "python3",
+                "--env",
+                "PYTHONPATH=/opt/tlaps-bench/src",
+                image,
+                "-c",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"cannot inspect proof environment in Docker image {image}: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise ValueError(f"cannot inspect proof environment in Docker image {image}: {detail or 'unknown error'}")
+    try:
+        value = json.loads(result.stdout)
+        if type(value) is not dict or set(value) != {"catalog", "toolchain"}:
+            raise ValueError("unexpected proof environment shape")
+        catalog = OfficialLibraryCatalog.from_bytes(
+            (json.dumps(value["catalog"], sort_keys=True, separators=(",", ":")) + "\n").encode()
+        )
+        toolchain = validate_toolchain_identity(value["toolchain"])
+    except (json.JSONDecodeError, ProofLibraryError, VerificationToolchainError, ValueError) as exc:
+        raise ValueError(f"invalid proof environment from Docker image {image}: {exc}") from exc
+    return catalog, toolchain
+
+
+def _native_verification_environment() -> tuple[OfficialLibraryCatalog, dict[str, object]]:
+    ensure_tlapm()
+    tlapm_library = os.path.join(REPO_ROOT, "lib", "tlapm")
+    if not os.path.isdir(tlapm_library):
+        raise ValueError(f"pinned official tlapm library not found at {tlapm_library}; run make setup")
+    catalog = scan_official_libraries()
+    toolchain = verification_toolchain_identity(
+        Path(TLAPM_PERSISTENT) / "bin" / "tlapm",
+        Path(REPO_ROOT) / "lib" / "tla2tools.jar",
+    )
+    return catalog, toolchain
+
+
+def _proof_from_scratch_run_identity(
+    mode: Mode,
+    catalog: OfficialLibraryCatalog,
+    toolchain: dict[str, object],
+) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "mode": mode.name,
         "benchmark_revision": _benchmark_revision(),
         "execution_source_digest": _image_source_fingerprint(),
         "corpus_digest": _corpus_digest(mode, catalog.digest),
         "proof_library_digest": catalog.digest,
         "proof_library_sources": {name: dict(source) for name, source in catalog.sources.items()},
+        "verification_toolchain_digest": toolchain["digest"],
+        "verification_toolchain": toolchain,
     }
 
 
@@ -1144,7 +1227,8 @@ def _validate_resume_run_manifest(output_dir: str, expected: dict[str, object] |
     comparable_expected = {key: value for key, value in expected.items() if key != "benchmark_revision"}
     if comparable_recorded != comparable_expected:
         raise ValueError(
-            "cannot resume with different benchmark, execution, or official proof-library inputs; "
+            "cannot resume with different benchmark, execution, official proof-library, or verification-toolchain "
+            "inputs; "
             f"recorded identity is in {record_path!r}"
         )
 
@@ -2525,17 +2609,15 @@ def main():
             2, f"{parser.prog}: error: no benchmarks found for mode {mode.name!r} under {mode.benchmark_dir()}\n"
         )
 
-    proof_library_catalog = None
-    run_identity = None
-    if mode.name == "proof-from-scratch":
-        try:
-            proof_library_catalog = scan_official_libraries()
-            run_identity = _proof_from_scratch_run_identity(mode, proof_library_catalog)
-        except (OSError, ProofLibraryError, ValueError) as exc:
-            parser.exit(2, f"{parser.prog}: error: cannot freeze official proof libraries: {exc}\n")
+    if getattr(mode, "requires_workspace_tools", False) and not backend.capabilities.workspace_tools:
+        parser.exit(
+            2,
+            f"{parser.prog}: error: backend {backend.name!r} is tool-free and does not support mode {mode.name!r}\n",
+        )
 
-    # Resolve the output path before backend setup so an incompatible task-list
-    # resume fails before authentication, image setup, or a model preflight.
+    # Resolve and validate the selected cohort before Docker or native
+    # verification-toolchain setup. A bad resume should remain a cheap CLI
+    # error and must not build an image.
     if args.output_dir:
         output_dir = args.output_dir
     else:
@@ -2548,6 +2630,31 @@ def main():
     if args.resume:
         try:
             _validate_resume_task_list(output_dir, mode.name, task_ids)
+        except ValueError as exc:
+            parser.exit(2, f"{parser.prog}: error: {exc}\n")
+
+    proof_library_catalog = None
+    run_identity = None
+    container_ready = False
+    native_toolchain_ready = False
+    if mode.name == "proof-from-scratch":
+        try:
+            if use_container:
+                container_image = ensure_image(force=args.force_build)
+                container_ready = True
+                proof_library_catalog, verification_toolchain = _container_verification_environment(container_image)
+            else:
+                proof_library_catalog, verification_toolchain = _native_verification_environment()
+                native_toolchain_ready = True
+            run_identity = _proof_from_scratch_run_identity(
+                mode,
+                proof_library_catalog,
+                verification_toolchain,
+            )
+        except (DockerUnavailableError, OSError, RuntimeError, ValueError) as exc:
+            parser.exit(2, f"{parser.prog}: error: cannot freeze proof verification environment: {exc}\n")
+    if args.resume:
+        try:
             _validate_resume_run_manifest(output_dir, run_identity)
         except ValueError as exc:
             parser.exit(2, f"{parser.prog}: error: {exc}\n")
@@ -2603,11 +2710,12 @@ def main():
         tlapm_root = "/opt/tlapm"
         tlapm_lib = "/opt/proof-libraries/tlapm"
 
-        try:
-            container_image = ensure_image(force=args.force_build)
-        except DockerUnavailableError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            sys.exit(1)
+        if not container_ready:
+            try:
+                container_image = ensure_image(force=args.force_build)
+            except DockerUnavailableError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                sys.exit(1)
         print(f"Container mode: ON (image: {container_image})")
 
         # Preflight: validate install + auth + model + firewall on a trivial
@@ -2621,12 +2729,14 @@ def main():
             print(f"Preflight: skipped — backend {backend.name!r} does not support a model preflight request")
     else:
         # Local mode: require tlapm and checker on host
-        ensure_tlapm()
+        if not native_toolchain_ready:
+            ensure_tlapm()
+            tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
+            if not os.path.isdir(tlapm_lib):
+                print(f"ERROR: pinned official tlapm library not found at {tlapm_lib}; run make setup")
+                sys.exit(1)
         tlapm_root = TLAPM_PERSISTENT
         tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
-        if not os.path.isdir(tlapm_lib):
-            print(f"ERROR: pinned official tlapm library not found at {tlapm_lib}; run make setup")
-            sys.exit(1)
     os.makedirs(output_dir, exist_ok=True)
     try:
         _write_task_list_record(output_dir, mode.name, task_ids)
@@ -2644,6 +2754,7 @@ def main():
     if run_identity is not None:
         print(f"Corpus:  {str(run_identity['corpus_digest'])[:12]}")
         print(f"Official proof libraries: {str(run_identity['proof_library_digest'])[:12]}")
+        print(f"Verification toolchain: {str(run_identity['verification_toolchain_digest'])[:12]}")
 
     # Proactive quota gate. The backend supplies its usage probe and default
     # thresholds; --quota-5h/7d override them. Gating stays off when the backend

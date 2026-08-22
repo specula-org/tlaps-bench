@@ -19,6 +19,7 @@ def _source(root, source_name: str, repository: str, commit: str, module: str):
     directory = root / source_name
     directory.mkdir()
     (directory / f"{module}.tla").write_text(f"---- MODULE {module} ----\n====\n")
+    (directory / f"{module}_proofs.tla").write_text(f"---- MODULE {module}_proofs ----\n====\n")
     digest = tree_digest(directory)
     marker = {
         "schema_version": 1,
@@ -68,7 +69,7 @@ def _fixture(tmp_path):
     return lock_path, tlapm, community
 
 
-def test_scan_freezes_every_module_from_the_two_official_sources(tmp_path):
+def test_scan_freezes_public_modules_from_the_two_official_sources(tmp_path):
     lock, tlapm, community = _fixture(tmp_path)
 
     catalog = scan_official_libraries(

@@ -33,6 +33,7 @@ class CodexSingleTurnBackend(CodexBackend):
         default_infra_retries=3,
         max_infra_retries=None,
         max_continuations=0,
+        workspace_tools=False,
     )
 
     def _uses_bedrock(self) -> bool:

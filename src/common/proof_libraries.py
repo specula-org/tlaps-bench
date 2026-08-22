@@ -132,6 +132,8 @@ def _scan_source(
     for path in sorted(directory.glob("*.tla"), key=lambda candidate: candidate.name):
         content = path.read_bytes()
         name = _module_name(path, content)
+        if name.endswith("_proofs"):
+            continue
         modules[name] = {
             "source": source_name,
             "sha256": hashlib.sha256(content).hexdigest(),

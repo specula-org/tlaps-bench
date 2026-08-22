@@ -37,6 +37,7 @@ class Mode(ABC):  # noqa: B024 - ABC used as a non-instantiable base marker; sub
     description: str = ""
     read_only_dependencies: bool = False
     canonical_replay_required: bool = False
+    requires_workspace_tools: bool = False
 
     def __init__(self, benchmark_root: str, checker_binary: str):
         """

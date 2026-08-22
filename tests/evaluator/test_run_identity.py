@@ -42,11 +42,11 @@ def test_corpus_digest_changes_with_library_catalog(tmp_path):
 
 
 def test_resume_rejects_different_proof_library_identity(tmp_path):
-    expected = {"schema_version": 1, "proof_library_digest": "new"}
-    (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps({"schema_version": 1, "proof_library_digest": "old"}))
+    expected = {"schema_version": 2, "proof_library_digest": "new"}
+    (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps({"schema_version": 2, "proof_library_digest": "old"}))
     (tmp_path / "results.json").write_text("[]")
 
-    with pytest.raises(ValueError, match="different benchmark, execution, or official proof-library inputs"):
+    with pytest.raises(ValueError, match="different benchmark, execution, official proof-library"):
         runner._validate_resume_run_manifest(str(tmp_path), expected)
 
 
@@ -75,7 +75,20 @@ def test_resume_rejects_changed_execution_sources(tmp_path):
     expected = {**recorded, "execution_source_digest": "new-sources"}
     (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps(recorded))
 
-    with pytest.raises(ValueError, match="different benchmark, execution, or official proof-library inputs"):
+    with pytest.raises(ValueError, match="different benchmark, execution, official proof-library"):
+        runner._validate_resume_run_manifest(str(tmp_path), expected)
+
+
+def test_resume_rejects_changed_verification_toolchain(tmp_path):
+    recorded = {
+        "schema_version": 2,
+        "benchmark_revision": "same-revision",
+        "verification_toolchain_digest": "old-toolchain",
+    }
+    expected = {**recorded, "verification_toolchain_digest": "new-toolchain"}
+    (tmp_path / runner.RUN_MANIFEST_RECORD).write_text(json.dumps(recorded))
+
+    with pytest.raises(ValueError, match="verification-toolchain inputs"):
         runner._validate_resume_run_manifest(str(tmp_path), expected)
 
 
@@ -85,5 +98,5 @@ def test_resume_rejects_legacy_results_without_run_manifest(tmp_path):
     with pytest.raises(ValueError, match="without the recorded run-manifest.json"):
         runner._validate_resume_run_manifest(
             str(tmp_path),
-            {"schema_version": 1, "proof_library_digest": "current"},
+            {"schema_version": 2, "proof_library_digest": "current"},
         )
