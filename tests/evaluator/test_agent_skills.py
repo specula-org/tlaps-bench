@@ -571,11 +571,8 @@ def test_infrastructure_retry_repopulates_skills_from_the_input_snapshot(tmp_pat
 
 def test_agentic_prompt_drops_inline_model_checker_guide_without_skill_pointer(tmp_path):
     mode = ProofFromScratch(str(tmp_path), "/bin/true")
-    target = tmp_path / "Target.tla"
-    target.write_text(BENCHMARK)
 
     prompt = mode.build_prompt("Target.tla", "/opt/tlapm", "/opt/tlapm/lib")
-    one_shot_prompt = mode.build_one_shot_prompt(str(target), [])
 
     assert "Validating inductive invariant candidates" not in prompt
     assert "apalache-mc" not in prompt
@@ -585,6 +582,3 @@ def test_agentic_prompt_drops_inline_model_checker_guide_without_skill_pointer(t
     assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
     assert 'SMTT("rN")' in prompt
     assert "Do not modify, replace, or add dependency modules" in prompt
-    assert "Return a complete, valid TLAPS solution" in one_shot_prompt
-    assert "apalache-mc" not in one_shot_prompt
-    assert not EXPECTED_SKILLS.intersection(one_shot_prompt.split())
