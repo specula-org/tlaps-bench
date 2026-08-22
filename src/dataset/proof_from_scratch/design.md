@@ -243,6 +243,32 @@ scratch. (Exception: when the target property *is* an invariant, as in
 - **Output**: `benchmark/proof-from-scratch/<Module>/<File>_<TheoremName>.tla` (one file per top-level theorem, plus copied INSTANCE dependency `.tla` files)
 - **CLI**: `python3 src/dataset/proof_from_scratch/generate.py [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/proof-from-scratch/]`
 
+## Module-task foundation (Issue #132; not yet active)
+
+The checked-in theorem tasks and their canonical contexts remain the current
+execution contract. A future corpus revision will group the existing manifest
+targets by `spec_id`, producing one task per source module while retaining the
+current task IDs as the scored proof-unit IDs.
+
+Each module task keeps only the definitions in the union of its target
+statements' dependency closures. Original lemmas, non-target theorems, proof
+bodies, and proof-only definitions remain absent. The layered ownership model
+also remains: a read-only Model layer, a read-only Defs layer, and one editable
+task module containing a single helper region plus one identified proof region
+per target theorem. Unfinished canonical proof regions contain `PROOF OMITTED`.
+
+An unchanged canonical omission is an unresolved target, not a trusted fact.
+The checker will derive local dependencies from the submitted proofs, without
+using reference-proof order. A raw checker pass counts only when all of its
+local theorem and helper dependencies are themselves trusted. This
+dependency-closed rule permits independent partial progress without allowing an
+unproved sibling or a circular group of proofs to manufacture a PASS.
+
+`common.proof_from_scratch_module` defines the strict metadata, editable-region,
+and trusted-set contracts. This foundation intentionally does not generate the
+new corpus, run TLAPS, change the current 245 task files, or wire module-level
+execution and scoring into the evaluator.
+
 ## Implementation milestones
 
 1. **M1 — SANY dumper (Java)**. `src/dataset/sany-dump/DumpSemantics.java`, JSON output. Start with the minimum useful fields: name, kind, source line range, and (for theorems) the location of the statement vs the proof body.
