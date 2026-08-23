@@ -11,8 +11,7 @@
 (* consumer threads.                                                       *)
 (***************************************************************************)
 
-LOCAL INSTANCE Naturals
-LOCAL INSTANCE FiniteSets
+EXTENDS Naturals, FiniteSets
 
 CONSTANTS
   Size,    (* The number of slots in the RingBuffer.                *)
@@ -21,13 +20,10 @@ CONSTANTS
   Values,  (* The set of values storable in the RingBuffer's slots. *)
   NULL
 
-\* Names added for tlaps-bench, following the convention of the extending
-\* modules. A proof has to cite an assumption to use it, and a name is the
-\* legible way to do so. The statements are upstream's.
 ASSUME SizeIsPositive   == Size \in Nat \ {0}
 ASSUME AtLeastOneWriter == Writers /= {}
 ASSUME AtLeastOneReader == Readers /= {}
-ASSUME NullIsNotAValue  == NULL \notin Values
+ASSUME NullNotAValue    == NULL \notin Values
 
 VARIABLE ringbuffer
 

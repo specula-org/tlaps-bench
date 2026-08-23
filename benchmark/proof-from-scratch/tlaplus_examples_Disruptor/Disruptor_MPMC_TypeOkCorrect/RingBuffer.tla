@@ -1,7 +1,6 @@
 ----------------------------- MODULE RingBuffer -----------------------------
 
-LOCAL INSTANCE Naturals
-LOCAL INSTANCE FiniteSets
+EXTENDS Naturals, FiniteSets
 
 CONSTANTS
   Size,    
@@ -13,7 +12,7 @@ CONSTANTS
 ASSUME SizeIsPositive   == Size \in Nat \ {0}
 ASSUME AtLeastOneWriter == Writers /= {}
 ASSUME AtLeastOneReader == Readers /= {}
-ASSUME NullIsNotAValue  == NULL \notin Values
+ASSUME NullNotAValue    == NULL \notin Values
 
 VARIABLE ringbuffer
 
