@@ -10,10 +10,10 @@ CONSTANTS
   Values,  
   NULL
 
-ASSUME SizePositive == Size \in Nat \ {0}
-ASSUME WritersNonEmpty == Writers /= {}
-ASSUME ReadersNonEmpty == Readers /= {}
-ASSUME NullIsFresh == NULL \notin Values
+ASSUME SizeIsPositive   == Size \in Nat \ {0}
+ASSUME AtLeastOneWriter == Writers /= {}
+ASSUME AtLeastOneReader == Readers /= {}
+ASSUME NullIsNotAValue  == NULL \notin Values
 
 VARIABLE ringbuffer
 

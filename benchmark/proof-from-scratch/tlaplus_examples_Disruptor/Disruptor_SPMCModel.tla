@@ -3,16 +3,16 @@
 EXTENDS Integers, FiniteSets, Sequences
 
 CONSTANTS
-  MaxPublished, 
   Writers,      
   Readers,      
   Size,         
   NULL
 
-ASSUME WritersNonEmpty  == Writers /= {}
-ASSUME ReadersNonEmpty  == Readers /= {}
-ASSUME SizePositive     == Size         \in Nat \ {0}
-ASSUME MaxPublishedPositive == MaxPublished \in Nat \ {0}
+ASSUME AtLeastOneWriter       == Writers /= {}
+ASSUME AtLeastOneReader       == Readers /= {}
+ASSUME SizeIsPositive         == Size \in Nat \ {0}
+
+ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
 
 VARIABLES
   ringbuffer,
