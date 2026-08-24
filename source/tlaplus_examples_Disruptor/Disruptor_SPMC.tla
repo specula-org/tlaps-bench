@@ -29,6 +29,12 @@ ASSUME SizeIsPositive         == Size \in Nat \ {0}
 (* reader role, so BeginRead would enable EndWrite and vice versa.         *)
 ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
 
+\* Added for tlaps-bench: this is the single-producer variant, and the module
+\* keeps no per-writer state -- `published' is one integer for all of Writers.
+\* Two writers claim the same slot, so both TypeOk and NoDataRaces are false
+\* without this. Upstream states it only in the configuration's Writers = {w}.
+ASSUME ExactlyOneWriter       == \E w \in Writers : Writers = {w}
+
 VARIABLES
   ringbuffer,
   published,    (* Write cursor. One for the producer.               *)

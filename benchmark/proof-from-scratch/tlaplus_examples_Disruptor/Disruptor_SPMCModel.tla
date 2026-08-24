@@ -14,6 +14,8 @@ ASSUME SizeIsPositive         == Size \in Nat \ {0}
 
 ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
 
+ASSUME ExactlyOneWriter       == \E w \in Writers : Writers = {w}
+
 VARIABLES
   ringbuffer,
   published,    
