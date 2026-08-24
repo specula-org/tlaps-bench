@@ -10,7 +10,7 @@
 (* and consumers and that all consumers eventually read all published      *)
 (* values (in a Multicast fashion - i.e. all consumers read all events).   *)
 (*                                                                         *)
-(* To see a data race, try and run the model with two producers.           *)
+(* To see a data race, relax ExactlyOneWriter and run with two producers.  *)
 (***************************************************************************)
 
 EXTENDS Integers, FiniteSets, Sequences
@@ -21,7 +21,8 @@ CONSTANTS
   Size,         (* Ringbuffer size.                                  *)
   NULL
 
-ASSUME AtLeastOneWriter       == Writers /= {}
+(* This spec is SPMC; see Disruptor_MPMC for multiple producers.           *)
+ASSUME ExactlyOneWriter       == Cardinality(Writers) = 1
 ASSUME AtLeastOneReader       == Readers /= {}
 ASSUME SizeIsPositive         == Size \in Nat \ {0}
 
@@ -29,11 +30,10 @@ ASSUME SizeIsPositive         == Size \in Nat \ {0}
 (* reader role, so BeginRead would enable EndWrite and vice versa.         *)
 ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
 
-\* Added for tlaps-bench: this is the single-producer variant, and the module
-\* keeps no per-writer state -- `published' is one integer for all of Writers.
-\* Two writers claim the same slot, so both TypeOk and NoDataRaces are false
-\* without this. Upstream states it only in the configuration's Writers = {w}.
-ASSUME ExactlyOneWriter       == \E w \in Writers : Writers = {w}
+\* Added for tlaps-bench: Cardinality is unspecified on an infinite set, so
+\* ExactlyOneWriter yields a single writer -- and non-emptiness -- only for a
+\* Writers that is known to be finite. See FS_Singleton in FiniteSetTheorems.
+ASSUME WritersIsFinite        == IsFiniteSet(Writers)
 
 VARIABLES
   ringbuffer,
