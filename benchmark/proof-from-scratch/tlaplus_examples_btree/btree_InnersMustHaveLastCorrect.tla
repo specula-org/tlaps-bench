@@ -1,11 +1,6 @@
 ---- MODULE btree_InnersMustHaveLastCorrect ----
 EXTENDS btree_InnersMustHaveLastCorrectDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM InnersMustHaveLastCorrect == Spec => []InnersMustHaveLast
