@@ -8,13 +8,11 @@ CONSTANTS
   Size,         
   NULL
 
-ASSUME ExactlyOneWriter       == Cardinality(Writers) = 1
+ASSUME ExactlyOneWriter       == IsFiniteSet(Writers) /\ Cardinality(Writers) = 1
 ASSUME AtLeastOneReader       == Readers /= {}
 ASSUME SizeIsPositive         == Size \in Nat \ {0}
 
 ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
-
-ASSUME WritersIsFinite        == IsFiniteSet(Writers)
 
 VARIABLES
   ringbuffer,

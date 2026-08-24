@@ -22,18 +22,13 @@ CONSTANTS
   NULL
 
 (* This spec is SPMC; see Disruptor_MPMC for multiple producers.           *)
-ASSUME ExactlyOneWriter       == Cardinality(Writers) = 1
+ASSUME ExactlyOneWriter       == IsFiniteSet(Writers) /\ Cardinality(Writers) = 1
 ASSUME AtLeastOneReader       == Readers /= {}
 ASSUME SizeIsPositive         == Size \in Nat \ {0}
 
 (* A thread id in both sets would share one pc between its writer and its  *)
 (* reader role, so BeginRead would enable EndWrite and vice versa.         *)
 ASSUME WritersReadersDisjoint == Writers \cap Readers = {}
-
-\* Added for tlaps-bench: Cardinality is unspecified on an infinite set, so
-\* ExactlyOneWriter yields a single writer -- and non-emptiness -- only for a
-\* Writers that is known to be finite. See FS_Singleton in FiniteSetTheorems.
-ASSUME WritersIsFinite        == IsFiniteSet(Writers)
 
 VARIABLES
   ringbuffer,
