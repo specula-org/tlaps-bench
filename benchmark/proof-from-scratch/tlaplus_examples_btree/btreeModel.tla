@@ -1,13 +1,13 @@
 
 ---- MODULE btreeModel ----
-EXTENDS TLC,
-        Naturals,
+EXTENDS Naturals,
         FiniteSets,
-        Sequences
+        Sequences,
+        Relation
 
 CONSTANTS Vals,
-          MaxKey,
-          MaxNode,
+          Keys,
+          Nodes,
           MaxOccupancy,
 
           READY,
@@ -21,12 +21,16 @@ CONSTANTS Vals,
           SPLIT_ROOT_INNER,
           UPDATE_LEAF
 
-ASSUME MaxNodePositive == MaxNode \in Nat \ {0}
-ASSUME MaxKeyInNat == MaxKey \in Nat
-ASSUME MaxOccupancyPositive == MaxOccupancy \in Nat \ {0}
+States == {READY, GET_VALUE, FIND_LEAF_TO_ADD, WHICH_TO_SPLIT, ADD_TO_LEAF,
+           SPLIT_LEAF, SPLIT_INNER, SPLIT_ROOT_LEAF, SPLIT_ROOT_INNER, UPDATE_LEAF}
 
-Keys == 1..MaxKey
-Nodes == 1..MaxNode
+ASSUME StatesAreDistinct == IsFiniteSet(States) /\ Cardinality(States) = 10
+
+ASSUME KeysAreOrdered == IsStrictlyTotallyOrderedUnder(<, Keys)
+
+ASSUME MaxOccupancyPermitsSplitting == MaxOccupancy \in Nat /\ MaxOccupancy >= 2
+
+ASSUME NodePoolIsNonEmpty == Nodes # {}
 
 NIL == CHOOSE x : x \notin Nodes
 MISSING == CHOOSE v : v \notin Vals

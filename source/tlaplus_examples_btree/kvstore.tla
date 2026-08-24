@@ -28,8 +28,9 @@ CONSTANTS Keys, Vals, MISSING, NIL
 
 Ops == {"get", "insert", "delete", "update"}
 
-\* Names added for tlaps-bench: tlapm only admits an assumption a proof can
-\* cite by name. The statements are upstream's.
+\* Names added for tlaps-bench, following the convention of btree. A proof has
+\* to cite an assumption to use it, and a name is the legible way to do so.
+\* The statements are upstream's.
 ASSUME MissingIsFresh == MISSING \notin Vals
 ASSUME NilIsFresh == NIL \notin Vals \union Ops \union {MISSING}
 
