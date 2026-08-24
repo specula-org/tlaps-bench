@@ -11,7 +11,10 @@ Run: PYTHONPATH=src python3 -m pytest tests/tlacheck/test_context.py
 
 from pathlib import Path
 
+import pytest
+
 from tlacheck.context import build_context
+from tlacore.sany.dump import SanyRun, SanyStatus, SanyUnavailable
 
 # Clean baseline shipped under benchmark_dir (read-only mount).
 CANONICAL = """\
@@ -75,6 +78,20 @@ def test_without_benchmark_dir_falls_back_to_workspace(tmp_path):
     ctx = build_context(sol, "Foo")
     assert "TAMPERED" in ctx.baseline_source
     assert ctx.baseline_source == TAMPERED
+
+
+def test_context_distinguishes_sany_rejection_from_unavailable(tmp_path):
+    _bench, sol = _layout(tmp_path)
+    invalid = SanyRun(SanyStatus.INVALID, ("sany",), 3, "", "duplicate", "SANY rejected module")
+
+    ctx = build_context(sol, "Foo", sany_run=invalid)
+
+    assert ctx.sany_status is SanyStatus.INVALID
+    assert not ctx.sany_ok
+
+    unavailable = SanyRun(SanyStatus.UNAVAILABLE, ("sany",), None, "", "", "tool missing")
+    with pytest.raises(SanyUnavailable, match="tool missing"):
+        build_context(sol, "Foo", sany_run=unavailable)
 
 
 if __name__ == "__main__":

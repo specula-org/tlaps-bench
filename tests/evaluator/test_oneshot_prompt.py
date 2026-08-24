@@ -45,7 +45,7 @@ def test_one_shot_prompt_excludes_target_from_dependency_list(tmp_path):
 
     assert prompt.count(TARGET) == 1
     assert "BEGIN DEPENDENCY FILE: Target_Goal.tla" not in prompt
-    assert "# Read-only dependency files\n\n(none)" in prompt
+    assert "# Read-only context files\n\n(none)" in prompt
 
 
 def test_one_shot_prompt_rejects_ambiguous_dependency_basenames(tmp_path):
@@ -75,12 +75,12 @@ def test_proof_completion_one_shot_prompt_is_not_agentic(tmp_path):
     prompt = mode.build_one_shot_prompt(str(target), [])
     agentic_prompt = mode.build_prompt(target.name, "/opt/tlapm", "/opt/tlapm/lib")
 
-    assert "Return the complete contents of the target module" in prompt
-    assert "Only replace the final `PROOF OBVIOUS` proof" in prompt
+    assert "Return a complete, valid TLAPS solution" in prompt
+    assert "Only change text inside the target's marked proof region" in prompt
     assert "Keep editing" not in prompt
     assert "run tlapm" not in prompt.lower()
     assert "check_proof_bin" not in prompt
-    assert "Keep editing" in agentic_prompt
+    assert "Keep refining" in agentic_prompt
     assert '-I /opt/tlapm/lib -I "$COMMUNITY_LIB"' in agentic_prompt
 
 

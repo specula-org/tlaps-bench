@@ -29,12 +29,12 @@ def test_grader_command_always_passes_no_cache(mode_name, tmp_path):
     assert NO_CACHE_FLAG in cmd, f"grader command for {mode_name} would reuse the agent's cache"
 
 
-def test_only_proof_from_scratch_grader_requires_canonical_replay(tmp_path):
+def test_both_grader_modes_require_canonical_replay(tmp_path):
     scratch = ProofFromScratch(str(tmp_path), "/checker")
     completion = ProofCompletion(str(tmp_path), "/checker")
 
     assert "--canonical-replay-required" in scratch.checker_command("/ws", "Foo.tla", "/out", 600)
-    assert "--canonical-replay-required" not in completion.checker_command("/ws", "Foo.tla", "/out", 600)
+    assert "--canonical-replay-required" in completion.checker_command("/ws", "Foo.tla", "/out", 600)
 
 
 def _src(rel):

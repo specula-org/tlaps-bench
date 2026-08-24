@@ -9,8 +9,12 @@ Run: uv run python -m pytest tests/common/test_docker_integration.py -v
 import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+from common.container import ContainerConfig, ContainerRunner
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
@@ -69,6 +73,57 @@ class TestCheckInDocker:
         )
         assert result.returncode == 0
         assert "SANY OK" in result.stdout
+
+    def test_check_sany_only_rejects_duplicate_record_fields(self):
+        with tempfile.TemporaryDirectory(prefix="sany_invalid_") as workspace:
+            source = Path(workspace) / "Foo.tla"
+            source.write_text(
+                "---- MODULE Foo -----\n"
+                "THEOREM False == ASSUME NEW r, r = [a |-> 1, a |-> 2] PROVE FALSE OBVIOUS\n"
+                "=====\n"
+            )
+            result = subprocess.run(
+                ["uv", "run", "tlaps-bench", "check", "--container", "--sany-only", str(source)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=REPO_ROOT,
+            )
+
+        assert result.returncode == 1
+        assert "SANY-STATUS: invalid" in result.stdout
+        assert "[SANY-INVALID]" in result.stdout
+
+    def test_check_sany_only_errors_when_tool_is_unavailable(self):
+        with (
+            tempfile.TemporaryDirectory(prefix="sany_unavailable_ws_") as workspace,
+            tempfile.TemporaryDirectory(prefix="sany_unavailable_res_") as result_dir,
+        ):
+            (Path(workspace) / "Foo.tla").write_text("---- MODULE Foo ----\n====\n")
+            config = ContainerConfig(
+                image="tlaps-bench-base:latest",
+                workspace=workspace,
+                result_dir=result_dir,
+                env={"SANY_RUN_SH": "/missing/run.sh"},
+            )
+            exit_code, stdout, _stderr = ContainerRunner().run_with_output(
+                config,
+                [
+                    "/usr/local/bin/check_proof_bin",
+                    "/workspace/Foo.tla",
+                    "--no-container",
+                    "--no-git-track",
+                    "--sany-only",
+                    "--output",
+                    "/results/check.result",
+                ],
+                timeout=120,
+            )
+            sany_log = (Path(result_dir) / "sany.log").read_text()
+
+        assert exit_code == 3
+        assert "SANY-STATUS: unavailable" in stdout
+        assert "status: unavailable" in sany_log
 
 
 @requires_docker

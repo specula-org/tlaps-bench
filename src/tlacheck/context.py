@@ -20,7 +20,7 @@ from common.proof_libraries import (
 )
 from tlacore.model import Module
 from tlacore.provenance import Provenance, classify
-from tlacore.sany.dump import try_dump_normalized
+from tlacore.sany.dump import SanyRun, SanyStatus, SanyUnavailable, run_normalized, try_dump_normalized
 from tlacore.source import slice_loc
 from tlacore.tlapm.summary import Summary, run_summary
 
@@ -42,6 +42,7 @@ class CheckContext:
     solution_source: str = ""  # raw text of the solution file
     baseline_source: str = ""  # raw text of benchmark.tla
     sany_ok: bool = True  # did Java SANY parse the solution?
+    sany_status: SanyStatus = SanyStatus.VALID
     # tlapm authoritative fallback (used when sany_ok is False): tlapm's own
     # parser accepts everything it considers valid, so --summary works where
     # Java SANY (stricter) refuses. Keyed: "" = solution, mod name = agent module.
@@ -112,16 +113,18 @@ def build_context(
     tlapm_fallback: bool = False,
     compute_summary: bool = False,
     fallback_timeout: float = 600,
+    sany_run: SanyRun | None = None,
 ) -> CheckContext:
     """Parse the solution + baseline + agent-created modules and assemble a context.
 
     ``benchmark_dir`` is the canonical ``benchmark/<level>/<module>/`` directory
     — strongly recommended, as it is the authoritative provenance oracle.
 
-    If Java SANY cannot parse the solution (it is stricter than tlapm — e.g. it
+    If Java SANY rejects the solution (it is stricter than tlapm — e.g. it
     rejects bound-variable shadowing tlapm accepts) and ``tlapm_fallback`` is
     set, we run ``tlapm --summary`` on the solution and each agent-created module
-    so the soundness rules can still fire from tlapm's own accounting.
+    so the soundness rules can still add diagnostics. An unavailable SANY raises
+    instead of silently selecting the weaker fallback.
     """
     sol_path = solution_file or os.path.join(solution_dir, target_name + ".tla")
     if not os.path.exists(sol_path):
@@ -131,8 +134,16 @@ def build_context(
     # + solution.tla); the result dir supplies the submission and any
     # agent-created modules, and overrides on name clashes (later wins).
     dep_dirs = [d for d in (benchmark_dir, solution_dir) if d]
-    solution = try_dump_normalized(sol_path, dep_dirs=dep_dirs)
-    sany_ok = solution is not None
+    if sany_run is None:
+        sany_run = run_normalized(sol_path, dep_dirs=dep_dirs)
+    if sany_run.status is SanyStatus.UNAVAILABLE:
+        raise SanyUnavailable(sany_run)
+    if sany_run.status is SanyStatus.VALID:
+        assert sany_run.raw is not None
+        solution = Module.parse(sany_run.raw)
+    else:
+        solution = None
+    sany_ok = sany_run.status is SanyStatus.VALID
 
     # Baseline from read-only benchmark_dir (agent can't tamper via git commands).
     if benchmark_dir:
@@ -199,6 +210,7 @@ def build_context(
         solution_source=solution_source,
         baseline_source=baseline_source,
         sany_ok=sany_ok,
+        sany_status=sany_run.status,
         summaries=summaries,
         agent_modules=agent_modules,
         summary=summary,

@@ -286,6 +286,7 @@ def test_container_proof_from_scratch_uses_image_environment(tmp_path, monkeypat
     )
     monkeypatch.setattr(runner, "scan_official_libraries", lambda: pytest.fail("host libraries were scanned"))
     monkeypatch.setattr(backend, "check_auth", lambda: None)
+    monkeypatch.setattr(runner, "_run_sany_preflight", lambda **_kwargs: None)
     monkeypatch.setattr(runner, "_run_preflight", lambda *args: None)
     monkeypatch.setattr(
         runner,

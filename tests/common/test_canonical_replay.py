@@ -15,6 +15,11 @@ from common.proof_from_scratch_contract import (
 )
 from tlacheck.issue import Issue, Severity
 from tlacheck.verdict import Result, Verdict
+from tlacore.sany.dump import SanyRun, SanyStatus
+
+
+def _sany_run(status: str, detail: str = "") -> SanyRun:
+    return SanyRun(SanyStatus(status), ("sany",), 0 if status == "valid" else None, "", "", detail)
 
 
 def _task(*, helper="Helper == TRUE", proof="PROOF OBVIOUS", statement="THEOREM Target == TRUE"):
@@ -273,7 +278,7 @@ def test_direct_marked_completion_check_rejects_fixed_scaffold_change(tmp_path, 
     output = tmp_path / "check.result"
 
     monkeypatch.delenv("TLAPS_CANONICAL_REPLAY_REQUIRED", raising=False)
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -426,7 +431,7 @@ def test_fixed_scaffold_failure_stops_before_tlapm(tmp_path, monkeypatch):
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -472,7 +477,7 @@ def test_newline_only_scaffold_failure_is_not_reported_as_cheating(tmp_path, mon
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -521,7 +526,7 @@ def test_required_canonical_sany_failure_is_infrastructure_error(tmp_path, monke
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("unavailable", "missing tool"))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("unavailable", "missing tool"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -553,7 +558,9 @@ def test_required_canonical_sany_failure_is_infrastructure_error(tmp_path, monke
         check_proof.main()
 
     assert exc_info.value.code == 3
-    assert "canonical SANY validation unavailable" in output.read_text()
+    assert "SANY validation unavailable" in output.read_text()
+    assert "status: unavailable" in (tmp_path / "sany.log").read_text()
+    assert "missing tool" in (tmp_path / "sany.log").read_text()
 
 
 def test_required_canonical_semantic_failure_is_infrastructure_error(tmp_path, monkeypatch):
@@ -568,7 +575,7 @@ def test_required_canonical_semantic_failure_is_infrastructure_error(tmp_path, m
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_tlacheck_engine",
@@ -607,7 +614,7 @@ def test_required_canonical_semantic_failure_is_infrastructure_error(tmp_path, m
         check_proof.main()
 
     assert exc_info.value.code == 3
-    assert "canonical semantic validation unavailable: engine crashed" in output.read_text()
+    assert "semantic validation unavailable: engine crashed" in output.read_text()
 
 
 def test_helper_policy_failure_stops_before_full_tlapm(tmp_path, monkeypatch):
@@ -628,7 +635,7 @@ def test_helper_policy_failure_stops_before_full_tlapm(tmp_path, monkeypatch):
         "CONSTANT declarations are not allowed in the helper region",
     )
     engine_result = Result(Verdict.CHEATING, [issue])
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_tlacheck_engine",
@@ -694,7 +701,7 @@ def test_proof_only_declaration_policy_stops_before_full_tlapm(tmp_path, monkeyp
         "module-level operator declarations are not allowed in the proof region",
     )
     engine_result = Result(Verdict.CHEATING, [issue])
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_tlacheck_engine",

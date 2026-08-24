@@ -826,6 +826,7 @@ def _install_cli_fakes(monkeypatch, tmp_path, preflight_calls, captured_items):
     mode = _OneShotMode(benchmark_root)
     monkeypatch.setattr(runner, "get_mode", lambda *args: mode)
     monkeypatch.setattr(runner, "ensure_image", lambda force=False: "tlaps-bench-base:test")
+    monkeypatch.setattr(runner, "_run_sany_preflight", lambda **_kwargs: None)
     monkeypatch.setattr(runner, "_run_preflight", lambda backend, image: preflight_calls.append(backend.name))
     monkeypatch.setattr(runner, "update_summary", lambda *args: None)
 
