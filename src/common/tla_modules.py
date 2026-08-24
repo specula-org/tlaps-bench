@@ -64,7 +64,7 @@ _EXTENDS_RE = re.compile(rf"\bEXTENDS\b\s+({_MODULE_NAME}(?:\s*,\s*{_MODULE_NAME
 _INSTANCE_RE = re.compile(rf"\bINSTANCE\s+({_MODULE_NAME})")
 
 
-def _mask_comments_and_strings(source: str) -> str:
+def mask_comments_and_strings(source: str) -> str:
     """Replace non-code bytes with spaces while preserving physical newlines."""
 
     masked: list[str] = []
@@ -133,7 +133,7 @@ def _mask_comments_and_strings(source: str) -> str:
 def referenced_modules(source: str) -> set[str]:
     """Return module names referenced by code-level ``EXTENDS`` or ``INSTANCE``."""
 
-    code = _mask_comments_and_strings(source)
+    code = mask_comments_and_strings(source)
     names: set[str] = set()
     for match in _EXTENDS_RE.finditer(code):
         names.update(name.strip() for name in match.group(1).split(","))

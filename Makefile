@@ -2,6 +2,7 @@ CHECKER_SOURCES := \
 	src/common/__init__.py \
 	src/common/check_proof.py \
 	src/common/cheating_detection.py \
+	src/common/proof_libraries.py \
 	src/common/task_contract.py \
 	src/common/tla_modules.py \
 	$(shell find src/tlacheck src/tlacore -type f -name '*.py')

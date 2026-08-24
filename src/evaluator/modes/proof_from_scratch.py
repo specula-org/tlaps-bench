@@ -22,6 +22,7 @@ class ProofFromScratch(Mode):
     description = "Proof from scratch — agent invents the proof structure"
     read_only_dependencies = True
     canonical_replay_required = True
+    requires_workspace_tools = True
 
     @cached_property
     def _boundaries(self) -> tuple[TaskBoundary, ...]:
@@ -71,3 +72,7 @@ class ProofFromScratch(Mode):
                 f"{benchmark_path}"
             )
         return [str(path) for path in boundary.context_paths]
+
+    def build_one_shot_prompt(self, benchmark_path: str, dependencies: list[str]) -> str:
+        del benchmark_path, dependencies
+        raise ValueError("proof-from-scratch requires a backend with workspace tools")

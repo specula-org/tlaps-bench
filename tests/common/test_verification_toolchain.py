@@ -1,0 +1,118 @@
+"""Content-locked verification toolchain tests."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+import pytest
+
+from common.verification_toolchain import (
+    VerificationToolchainError,
+    artifact_descriptor,
+    validate_toolchain_identity,
+    verification_toolchain_identity,
+    verify_artifact,
+    write_tlapm_marker,
+)
+
+
+def _sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _lock(tmp_path, *, tlapm_archive: bytes = b"tlapm archive", sany: bytes = b"sany jar"):
+    value = {
+        "schema_version": 1,
+        "tools": {
+            "tlapm": {
+                "repository": "tlaplus/tlapm",
+                "tag": "1.6.0-pre",
+                "platforms": {
+                    "darwin-arm64": {"asset": "tlapm-mac.tgz", "sha256": _sha256(b"mac archive")},
+                    "linux-x86_64": {"asset": "tlapm-linux.tgz", "sha256": _sha256(tlapm_archive)},
+                },
+            },
+            "sany": {
+                "repository": "tlaplus/tlaplus",
+                "tag": "v1.8.0",
+                "asset": "tla2tools.jar",
+                "sha256": _sha256(sany),
+            },
+        },
+    }
+    path = tmp_path / "verification-toolchain.json"
+    path.write_text(json.dumps(value))
+    return path
+
+
+def test_artifact_descriptor_uses_platform_specific_tlapm_asset(tmp_path):
+    lock = _lock(tmp_path)
+
+    descriptor = artifact_descriptor("tlapm", lock_path=lock, platform_key="linux-x86_64")
+
+    assert descriptor["asset"] == "tlapm-linux.tgz"
+    assert descriptor["url"].endswith("/1.6.0-pre/tlapm-linux.tgz")
+
+
+def test_artifact_verification_rejects_same_tag_with_different_bytes(tmp_path):
+    lock = _lock(tmp_path)
+    artifact = tmp_path / "tla2tools.jar"
+    artifact.write_bytes(b"different jar")
+
+    with pytest.raises(VerificationToolchainError, match="content drifted"):
+        verify_artifact("sany", artifact, lock_path=lock)
+
+
+def test_runtime_identity_verifies_tlapm_marker_and_sany_bytes(tmp_path):
+    lock = _lock(tmp_path)
+    executable = tmp_path / "tlapm"
+    executable.write_text("#!/bin/sh\necho build-123\n")
+    executable.chmod(0o755)
+    marker = tmp_path / ".tlaps-bench-toolchain.json"
+    write_tlapm_marker(
+        executable,
+        marker,
+        lock_path=lock,
+        platform_key="linux-x86_64",
+    )
+    sany = tmp_path / "tla2tools.jar"
+    sany.write_bytes(b"sany jar")
+
+    identity = verification_toolchain_identity(
+        executable,
+        sany,
+        tlapm_marker=marker,
+        lock_path=lock,
+        platform_key="linux-x86_64",
+    )
+
+    assert identity["tlapm"]["version"] == "build-123"
+    assert identity["sany"]["jar_sha256"] == _sha256(b"sany jar")
+    assert validate_toolchain_identity(identity) == identity
+
+
+def test_runtime_identity_rejects_modified_tlapm_after_install(tmp_path):
+    lock = _lock(tmp_path)
+    executable = tmp_path / "tlapm"
+    executable.write_text("#!/bin/sh\necho build-123\n")
+    executable.chmod(0o755)
+    marker = tmp_path / ".tlaps-bench-toolchain.json"
+    write_tlapm_marker(
+        executable,
+        marker,
+        lock_path=lock,
+        platform_key="linux-x86_64",
+    )
+    executable.write_text("#!/bin/sh\necho changed\n")
+    sany = tmp_path / "tla2tools.jar"
+    sany.write_bytes(b"sany jar")
+
+    with pytest.raises(VerificationToolchainError, match="does not match"):
+        verification_toolchain_identity(
+            executable,
+            sany,
+            tlapm_marker=marker,
+            lock_path=lock,
+            platform_key="linux-x86_64",
+        )

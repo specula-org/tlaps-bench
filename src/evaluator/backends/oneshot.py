@@ -142,6 +142,7 @@ class OneShotBackend(Backend):
         default_infra_retries=3,
         max_infra_retries=None,
         max_continuations=0,
+        workspace_tools=False,
     )
 
     @staticmethod

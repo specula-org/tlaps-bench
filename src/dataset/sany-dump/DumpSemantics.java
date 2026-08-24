@@ -373,28 +373,19 @@ public class DumpSemantics {
    * definitions are needed to state the goal (kept) versus pure proof
    * artifacts (stripped).
    *
-   * We record the name at each OpApplNode whose operator resolves to an
-   * in-module definition, then recurse over getChildren() so nested
+   * We record the name at each OpApplNode or OpArgNode whose operator resolves
+   * to an in-module definition, then recurse over getChildren() so nested
    * applications, LET/IN bodies, quantifier bodies, records, etc. are all
-   * covered. Bound variables and parameters are not in moduleDefNames, so they
-   * are naturally ignored.
+   * covered. OpArgNode represents a named operator passed as an argument and
+   * has no children, so it must be handled directly. Bound variables and
+   * parameters are not in moduleDefNames, so they are naturally ignored.
    */
   static void collectOpRefs(SemanticNode n, Set<String> out, Set<String> moduleDefNames) {
     if (n == null) return;
     if (n instanceof OpApplNode) {
-      String nm = symbolName(((OpApplNode) n).getOperator());
-      if (nm != null) {
-        if (moduleDefNames.contains(nm)) out.add(nm);
-        // INSTANCE-qualified use (e.g. `C!Spec`): SANY names the operator with
-        // the `!` separator. Map it back to the local INSTANCE binding `C` so
-        // that keeping a refinement target like `Spec => C!Spec` also keeps the
-        // instance (and, transitively, its WITH substitution operators).
-        int bang = nm.indexOf('!');
-        if (bang > 0) {
-          String prefix = nm.substring(0, bang);
-          if (moduleDefNames.contains(prefix)) out.add(prefix);
-        }
-      }
+      collectOpRef(((OpApplNode) n).getOperator(), out, moduleDefNames);
+    } else if (n instanceof OpArgNode) {
+      collectOpRef(((OpArgNode) n).getOp(), out, moduleDefNames);
     }
     SemanticNode[] kids;
     try {
@@ -404,6 +395,21 @@ public class DumpSemantics {
     }
     if (kids != null) {
       for (SemanticNode k : kids) collectOpRefs(k, out, moduleDefNames);
+    }
+  }
+
+  static void collectOpRef(SymbolNode op, Set<String> out, Set<String> moduleDefNames) {
+    String nm = symbolName(op);
+    if (nm == null) return;
+    if (moduleDefNames.contains(nm)) out.add(nm);
+    // INSTANCE-qualified use (e.g. `C!Spec`): SANY names the operator with
+    // the `!` separator. Map it back to the local INSTANCE binding `C` so that
+    // keeping a refinement target like `Spec => C!Spec` also keeps the instance
+    // (and, transitively, its WITH substitution operators).
+    int bang = nm.indexOf('!');
+    if (bang > 0) {
+      String prefix = nm.substring(0, bang);
+      if (moduleDefNames.contains(prefix)) out.add(prefix);
     }
   }
 

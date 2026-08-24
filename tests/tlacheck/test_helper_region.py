@@ -66,7 +66,13 @@ def _module(**overrides) -> Module:
     return Module(**values)
 
 
-def _context(helper: str, module: Module, proof: str = "PROOF OBVIOUS") -> CheckContext:
+def _context(
+    helper: str,
+    module: Module,
+    proof: str = "PROOF OBVIOUS",
+    *,
+    official_library_modules: frozenset[str] = frozenset(),
+) -> CheckContext:
     source = _source(helper, proof)
     return CheckContext(
         target_name="Task",
@@ -76,6 +82,7 @@ def _context(helper: str, module: Module, proof: str = "PROOF OBVIOUS") -> Check
         provenance=Provenance(target="Task"),
         solution_source=source,
         baseline_source=source,
+        official_library_modules=official_library_modules,
     )
 
 
@@ -113,7 +120,6 @@ def _proof_only_context(module: Module, proof: str = "PROOF OBVIOUS") -> CheckCo
         ("constants", Symbol("C", Loc(4, 1, 4, 10)), "CONSTANT"),
         ("variables", Symbol("v", Loc(4, 1, 4, 10)), "VARIABLE"),
         ("assumes", Assumption("A", False, Loc(4, 1, 4, 20), []), "ASSUME/AXIOM"),
-        ("instances", Instance("I", "Other", Loc(4, 1, 4, 20), []), "INSTANCE"),
     ],
 )
 def test_rejects_forbidden_declaration_kinds(field, declaration, kind):
@@ -122,6 +128,55 @@ def test_rejects_forbidden_declaration_kinds(field, declaration, kind):
     assert len(issues) == 1
     assert issues[0].vector == "HELPER_REGION_VIOLATION"
     assert kind in issues[0].message
+
+
+def test_allows_named_official_library_instance_in_helper_region():
+    instance = Instance("FST", "FiniteSetTheorems", Loc(4, 1, 4, 53), [])
+    context = _context(
+        "LOCAL FST == INSTANCE FiniteSetTheorems",
+        _module(instances=[instance]),
+        official_library_modules=frozenset({"FiniteSetTheorems"}),
+    )
+
+    assert helper_region.check(context) == []
+
+
+def test_rejects_non_official_library_instance_with_simple_error():
+    instance = Instance("Bad", "WorkspaceProofs", Loc(4, 1, 4, 45), [])
+
+    issues = helper_region.check(_context("LOCAL Bad == INSTANCE WorkspaceProofs", _module(instances=[instance])))
+
+    assert len(issues) == 1
+    assert "IMPORT_NOT_ALLOWED" in issues[0].message
+
+
+def test_rejects_unnamed_official_library_instance():
+    instance = Instance(None, "TLAPS", Loc(4, 1, 4, 20), [])
+    context = _context(
+        "LOCAL INSTANCE TLAPS",
+        _module(instances=[instance]),
+        official_library_modules=frozenset({"TLAPS"}),
+    )
+
+    issues = helper_region.check(context)
+
+    assert len(issues) == 1
+    assert "IMPORT_ALIAS_REQUIRED" in issues[0].message
+
+
+def test_rejects_parameterized_official_library_instance():
+    helper = "LOCAL FST == INSTANCE FiniteSetTheorems WITH S <- Nodes"
+    instance = Instance("FST", "FiniteSetTheorems", Loc(4, 1, 4, len(helper)), [])
+    context = _context(
+        helper,
+        _module(instances=[instance]),
+        official_library_modules=frozenset({"FiniteSetTheorems"}),
+    )
+
+    issues = helper_region.check(context)
+
+    assert len(issues) == 1
+    assert "IMPORT_WITH_FORBIDDEN" in issues[0].message
 
 
 def test_allows_fresh_operator_and_fully_proved_named_lemma():

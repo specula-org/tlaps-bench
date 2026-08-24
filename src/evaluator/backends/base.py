@@ -149,6 +149,8 @@ class BackendCapabilities:
     deadline lets the backend emit its final audit at the logical benchmark
     deadline; ``timeout_drain_grace`` is only a bounded flush/cleanup window
     before the host hard-kills it, never additional model time.
+    ``workspace_tools`` means the model can inspect the supplied workspace and
+    iterate with the checker, which proof-from-scratch requires.
     """
 
     model_preflight: bool = True
@@ -157,6 +159,7 @@ class BackendCapabilities:
     max_continuations: int | None = None
     cooperative_deadline: bool = False
     timeout_drain_grace: float = 0.0
+    workspace_tools: bool = True
 
 
 class SubmissionDisposition:

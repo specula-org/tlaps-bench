@@ -1,9 +1,8 @@
 """Release configuration guard for Docker publishing."""
 
+import json
 import re
 from pathlib import Path
-
-from dataset.proof_completion.generate import COMMUNITY_MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,33 +27,48 @@ def test_base_image_keeps_the_local_build_fingerprint_label():
     assert 'LABEL org.specula.tlaps-bench.build-sha256="${TLAPS_BENCH_BUILD_SHA256}"' in dockerfile
 
 
-def test_community_modules_release_matches_native_and_docker_setups():
+def test_official_proof_library_sources_are_pinned_for_native_and_docker_setups():
     installer = (REPO_ROOT / "scripts/install_deps.sh").read_text()
     dockerfile = (REPO_ROOT / "docker/base.Dockerfile").read_text()
+    lock = json.loads((REPO_ROOT / "config/proof-library-sources.json").read_text())
 
-    native_tag = _match(r'^COMMUNITY_TAG="([^"]+)"', installer, "native CommunityModules tag")
-    docker_tag = _match(r"^ARG COMMUNITY_TAG=(\S+)", dockerfile, "Docker CommunityModules tag")
-    assert native_tag == docker_tag == "202607181436"
-    for module in ("Graphs.tla", "GraphTheorems.tla"):
-        assert module in installer
-        assert module in dockerfile
-    assert "GraphTheorems" in COMMUNITY_MODULES
+    assert lock["schema_version"] == 1
+    assert set(lock["sources"]) == {"tlapm", "community_modules"}
+    for source in lock["sources"].values():
+        assert re.fullmatch(r"[0-9a-f]{40}", source["commit"])
+        assert re.fullmatch(r"[0-9a-f]{64}", source["tree_sha256"])
+    assert "scripts/install_proof_libraries.py" in installer
+    assert "config/proof-library-sources.json" in dockerfile
+    assert "scripts/install_proof_libraries.py" in dockerfile
+    assert "TLAPS_LIB=/opt/proof-libraries/tlapm" in dockerfile
+    assert "COMMUNITY_LIB=/opt/proof-libraries/community" in dockerfile
 
 
-def test_native_setup_follows_the_rolling_tlapm_release():
-    """The tag is rolling, so the installer must not hard-code a specific build."""
+def test_verification_toolchain_artifacts_are_content_locked_for_native_and_docker_setups():
     installer = (REPO_ROOT / "scripts/install_deps.sh").read_text()
+    dockerfile = (REPO_ROOT / "docker/base.Dockerfile").read_text()
+    workflow = (REPO_ROOT / ".github/workflows/ci.yml").read_text()
+    lock = json.loads((REPO_ROOT / "config/verification-toolchain.json").read_text())
 
-    assert _match(r'^TLAPM_TAG="([^"]+)"', installer, "TLAPM_TAG in the installer")
+    assert lock["schema_version"] == 1
+    assert set(lock["tools"]) == {"tlapm", "sany"}
+    artifacts = [*lock["tools"]["tlapm"]["platforms"].values(), lock["tools"]["sany"]]
+    assert all(re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]) for artifact in artifacts)
+    assert "config/verification-toolchain.json" in installer
+    assert "verify-artifact tlapm" in installer
+    assert "verify-artifact sany" in installer
+    assert "config/verification-toolchain.json" in dockerfile
+    assert "verify-artifact tlapm" in dockerfile
+    assert "verify-artifact sany" in dockerfile
+    assert "config/verification-toolchain.json" in workflow
 
 
 def test_native_setup_rejects_a_tlapm_the_grader_cannot_use():
-    """Guard the capability the rolling tag cannot guarantee.
+    """Guard the capability required in addition to the content lock.
 
     The grader shells out to ``tlapm --strict`` (tlaplus/tlapm#278) — a build
-    without it rejects the flag and grades every task FAIL. Since the release
-    asset is rebuilt in place, presence of a tlapm proves nothing: the installer
-    has to probe the flag on both the existing and the freshly downloaded binary.
+    without it rejects the flag and grades every task FAIL. The installer probes
+    the flag on both the existing and freshly downloaded locked binary.
     """
     installer = (REPO_ROOT / "scripts/install_deps.sh").read_text()
     grader = (REPO_ROOT / "src/common/check_proof.py").read_text()

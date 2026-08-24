@@ -55,11 +55,17 @@ For each **top-level theorem** `T` in source file `X.tla`, generate one benchmar
 | All comments (`\*` line, `(* … *)` block) — in the benchmark and in copied deps | Delete |
 | Dependency modules referenced by EXTENDS, or by a *kept* INSTANCE (e.g. `Consensus.tla`) | Copy alongside, all proofs stripped to `PROOF OMITTED`, all comments stripped |
 
-Layered task modules additionally receive one immutable, generator-owned proof
-context before the editable regions. It exposes TLAPS backend pragmas and named
-instances of `NaturalsInduction`, `FiniteSetTheorems`, and
-`WellFoundedInduction`. This proof support is identical for every task and does
-not change the source-derived Model or Defs layers.
+Layered task modules do not preload proof libraries. An agent may add a named
+instance of any module in the run's frozen official proof-library catalog inside
+the helper region. The evaluator rejects non-official modules, unnamed
+instances, and parameterized instances using `WITH`.
+
+The catalog is generated once before a run from the exact TLAPM and
+CommunityModules commits pinned in `config/proof-library-sources.json`. Setup
+warns when either upstream has moved but never updates the pins automatically.
+Proof-from-scratch requires a tool-using backend that can inspect these public
+interfaces and iterate with TLAPM; tool-free one-shot backends are not run in
+this mode.
 
 ## Top-level theorem identification
 
@@ -228,7 +234,7 @@ scratch. (Exception: when the target property *is* an invariant, as in
 ## Out of scope
 
 - **Deciding which generated benchmarks have weak signal and should be skipped**: this is a human evaluation call, not a generator concern. The generator carries no hardcoded "skip if target is an inductive invariant" — though note the reachability rule *does* keep an invariant when it is the target's goal (`Spec => []Inv`), since the goal cannot be hidden.
-- **Anti-cheating extensions for proof-from-scratch**: an AI solving proof-from-scratch may need to introduce new top-level `==` definitions (its own invariant / lemma). The current `check_proof.py` rule that "preamble must not be modified" needs to be loosened. That work is **deferred** until the proof-from-scratch generator lands and we have a baseline.
+- **Agent-created dependency modules**: helpers stay in the marked task region; only named instances of frozen official libraries are permitted.
 - **Wiring Apalache or TLAPS into the generator**: we only use SANY for parsing in this round.
 
 ## Input / output

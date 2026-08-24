@@ -1,11 +1,6 @@
 ---- MODULE Sets_IntervalCardinality ----
 EXTENDS Sets_IntervalCardinalityDefs
 
-LOCAL INSTANCE TLAPS
-LOCAL NatInductionLib == INSTANCE NaturalsInduction
-LOCAL FiniteSetTheoremsLib == INSTANCE FiniteSetTheorems
-LOCAL WellFoundedInductionLib == INSTANCE WellFoundedInduction
-
 \* BEGIN AGENT HELPERS
 \* END AGENT HELPERS
 THEOREM IntervalCardinality ==  
