@@ -585,6 +585,18 @@ def canonical_replay_required(explicit):
     return explicit or os.environ.get("TLAPS_CANONICAL_REPLAY_REQUIRED") == "1"
 
 
+def require_independent_canonical_target(filepath, benchmark_dir):
+    """Reject a canonical target that aliases the submitted target."""
+
+    canonical_path = os.path.join(benchmark_dir, os.path.basename(filepath))
+    try:
+        aliases_submission = os.path.samefile(filepath, canonical_path)
+    except OSError as exc:
+        raise RuntimeError(f"cannot compare submission with canonical target: {exc}") from exc
+    if aliases_submission:
+        raise RuntimeError("canonical benchmark target must be independent from the submitted target")
+
+
 def detect_official_library_shadowing(filepath, benchmark_dir, official_modules):
     """Reject workspace files whose names override an approved official module."""
 
@@ -1052,14 +1064,20 @@ def parse_strict_status(tlapm_exit, tlapm_output):
 
 def _run_in_container(filepath, args):
     """Run check_proof_bin inside Docker container."""
-    require_canonical = getattr(args, "canonical_replay_required", False)
+    require_canonical = getattr(args, "canonical_replay_required", False) and not args.sany_only
     target_name = os.path.splitext(os.path.basename(filepath))[0]
-    benchmark_dir = args.benchmark_dir or resolve_benchmark_dir(None, filepath, target_name)
+    benchmark_dir = None if args.sany_only else args.benchmark_dir or resolve_benchmark_dir(None, filepath, target_name)
     if require_canonical:
         benchmark_dir = resolve_benchmark_dir(benchmark_dir, filepath, target_name)
     if require_canonical and benchmark_dir is None:
         print("ERROR: canonical replay required, but no canonical benchmark directory is available")
         sys.exit(3)
+    if benchmark_dir is not None:
+        try:
+            require_independent_canonical_target(filepath, benchmark_dir)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(3)
 
     try:
         container_image = ensure_image(force=getattr(args, "force_build", False))
@@ -1243,18 +1261,17 @@ def main(*, require_canonical_for_proof_from_scratch: bool = False):
     marked_task = task_has_proof_region_markers(filepath, benchmark_dir)
     marked_proof_completion = args.mode == "proof-completion" and marked_task
     strict_contract = marked_task or (args.mode == "proof-from-scratch" and args.canonical_replay_required)
-    if marked_task:
+    if marked_task and not args.sany_only:
         args.canonical_replay_required = True
-        # A maintainer checking a committed canonical task directly can use its
-        # own task directory as the read-only baseline. An agent workspace does
-        # not live under its git root's benchmark/ tree and cannot take this path.
-        if benchmark_dir is None:
-            repo_root = _git_root(filepath)
-            if repo_root:
-                relative = os.path.relpath(filepath, repo_root)
-                if relative == "benchmark" or relative.startswith(f"benchmark{os.sep}"):
-                    benchmark_dir = os.path.dirname(filepath)
-        args.benchmark_dir = benchmark_dir
+    if args.sany_only:
+        args.canonical_replay_required = False
+
+    if not args.sany_only and benchmark_dir is not None:
+        try:
+            require_independent_canonical_target(filepath, benchmark_dir)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(3)
 
     # Container vs. local: prefer the local toolchain when it is there, so a
     # native setup (and the integration tests, and a hand-run) "just works"

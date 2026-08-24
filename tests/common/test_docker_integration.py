@@ -37,6 +37,39 @@ class TestCheckInDocker:
 
     def test_check_proof_obvious_fails(self):
         """A benchmark with PROOF OBVIOUS should FAIL (proof not written)."""
+        canonical_tla = os.path.join(
+            REPO_ROOT,
+            "benchmark",
+            "proof-completion",
+            "tlaplus_examples_allocator",
+            "SimpleAllocator_proof_TypeCorrect.tla",
+        )
+        with tempfile.TemporaryDirectory(prefix="marked_submission_") as workspace:
+            submission = Path(workspace) / os.path.basename(canonical_tla)
+            submission.write_bytes(Path(canonical_tla).read_bytes())
+            result = subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "tlaps-bench",
+                    "check",
+                    "--container",
+                    "--benchmark-dir",
+                    os.path.dirname(canonical_tla),
+                    str(submission),
+                    "--timeout",
+                    "120",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                cwd=REPO_ROOT,
+            )
+        # PROOF OBVIOUS = incomplete proof → should fail
+        assert result.returncode == 1
+        assert "FAIL" in result.stdout
+
+    def test_full_check_rejects_self_canonical_target(self):
         tla = os.path.join(
             REPO_ROOT,
             "benchmark",
@@ -45,15 +78,60 @@ class TestCheckInDocker:
             "SimpleAllocator_proof_TypeCorrect.tla",
         )
         result = subprocess.run(
-            ["uv", "run", "tlaps-bench", "check", tla, "--timeout", "120"],
+            [
+                "uv",
+                "run",
+                "tlaps-bench",
+                "check",
+                "--container",
+                "--benchmark-dir",
+                os.path.dirname(tla),
+                tla,
+                "--timeout",
+                "120",
+            ],
             capture_output=True,
             text=True,
             timeout=180,
             cwd=REPO_ROOT,
         )
-        # PROOF OBVIOUS = incomplete proof → should fail
-        assert result.returncode == 1
-        assert "FAIL" in result.stdout
+
+        assert result.returncode == 3
+        assert "canonical benchmark target must be independent" in result.stdout
+
+    def test_container_checker_rejects_bind_mount_self_canonical_target(self):
+        benchmark_dir = os.path.join(
+            REPO_ROOT,
+            "benchmark",
+            "proof-completion",
+            "tlaplus_examples_allocator",
+        )
+        basename = "SimpleAllocator_proof_TypeCorrect.tla"
+        with tempfile.TemporaryDirectory(prefix="self_canonical_res_") as result_dir:
+            config = ContainerConfig(
+                image="tlaps-bench-base:latest",
+                workspace=benchmark_dir,
+                benchmark_dir=benchmark_dir,
+                result_dir=result_dir,
+            )
+            exit_code, stdout, _stderr = ContainerRunner().run_with_output(
+                config,
+                [
+                    "/usr/local/bin/check_proof_bin",
+                    f"/workspace/{basename}",
+                    "--no-container",
+                    "--no-git-track",
+                    "--benchmark-dir",
+                    "/benchmark",
+                    "--canonical-replay-required",
+                    "--output",
+                    "/results/check.result",
+                ],
+                timeout=120,
+            )
+
+        assert exit_code == 3
+        assert "canonical benchmark target must be independent" in stdout
 
     def test_check_sany_only_passes(self):
         """--sany-only on a valid .tla should PASS (parseable)."""

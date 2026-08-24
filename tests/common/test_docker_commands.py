@@ -8,6 +8,7 @@ Run: uv run python -m pytest tests/common/test_docker_commands.py -v
 import os
 import subprocess
 import sys
+import tempfile
 from unittest.mock import patch
 
 import pytest
@@ -113,23 +114,27 @@ class TestCheckDockerDispatch:
 
         from common.check_proof import _run_in_container
 
-        class Args:
-            mode = "proof-completion"
-            timeout = 60
-            output = None
-            benchmark_dir = "/host/canonical/Euclid"
-            sany_only = False
-            no_cache = False
-            keep_verifying = False
-            shards = None
-            no_git_track = False
+        with tempfile.TemporaryDirectory(prefix="canonical_") as canonical_dir:
+            with open(os.path.join(canonical_dir, os.path.basename(FIXTURE_TLA)), "w") as stream:
+                stream.write(FIXTURE_CONTENT)
 
-        with pytest.raises(SystemExit):
-            _run_in_container(FIXTURE_TLA, Args())
+            class Args:
+                mode = "proof-completion"
+                timeout = 60
+                output = None
+                benchmark_dir = canonical_dir
+                sany_only = False
+                no_cache = False
+                keep_verifying = False
+                shards = None
+                no_git_track = False
 
-        config, cmd = mock_run.call_args[0][0], mock_run.call_args[0][1]
-        assert cmd[cmd.index("--benchmark-dir") + 1] == "/benchmark"
-        assert config.benchmark_dir == "/host/canonical/Euclid"
+            with pytest.raises(SystemExit):
+                _run_in_container(FIXTURE_TLA, Args())
+
+            config, cmd = mock_run.call_args[0][0], mock_run.call_args[0][1]
+            assert cmd[cmd.index("--benchmark-dir") + 1] == "/benchmark"
+            assert config.benchmark_dir == canonical_dir
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)

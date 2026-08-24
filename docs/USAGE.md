@@ -297,7 +297,7 @@ uv run tlaps-bench check path/to/file.tla --mode proof-from-scratch --benchmark-
 uv run tlaps-bench check path/to/file.tla --sany-only
 ```
 
-Proof-from-scratch and marked proof-completion checks automatically require canonical replay. Pass the directory containing the original target and its declared context with `--benchmark-dir`; inside the evaluator runner this directory is supplied automatically. The command fails closed when no canonical context is available. Legacy unmarked proof-completion checks keep their previous behavior.
+Full proof-from-scratch and marked proof-completion checks automatically require canonical replay. Pass an independent directory containing the original target and its declared context with `--benchmark-dir`; the canonical target must not alias the submitted file. Inside the evaluator runner this directory is supplied automatically. Full checks fail closed when no independent canonical context is available. `--sany-only` checks only the submitted file and its workspace dependencies, so it does not require canonical context. Legacy unmarked proof-completion checks keep their previous behavior.
 
 By default, `check` reuses `<target-dir>/.tlacache`; use `--no-cache` for a cold check, or `--timeout 0` for no checker deadline.
 

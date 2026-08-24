@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -240,11 +241,12 @@ def test_canonical_replay_requirement_can_come_from_runner_environment(monkeypat
     assert check_proof.canonical_replay_required(True)
 
 
-def test_public_check_requires_canonical_replay_for_marked_completion(tmp_path, monkeypatch, capsys):
+def test_sany_only_does_not_require_canonical_replay_for_marked_completion(tmp_path, monkeypatch, capsys):
     target = tmp_path / "Task.tla"
     target.write_text(_completion_task())
+    (tmp_path / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     monkeypatch.delenv("TLAPS_BENCHMARK_DIR", raising=False)
-    monkeypatch.delenv("TLAPS_CANONICAL_REPLAY_REQUIRED", raising=False)
+    monkeypatch.setenv("TLAPS_CANONICAL_REPLAY_REQUIRED", "1")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -261,8 +263,119 @@ def test_public_check_requires_canonical_replay_for_marked_completion(tmp_path, 
     with pytest.raises(SystemExit) as exc_info:
         check_proof.main()
 
+    assert exc_info.value.code == 0
+    assert "SANY-STATUS: valid" in capsys.readouterr().out
+
+
+def test_full_marked_check_requires_canonical_directory(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "Task.tla"
+    target.write_text(_completion_task())
+    monkeypatch.delenv("TLAPS_BENCHMARK_DIR", raising=False)
+    monkeypatch.delenv("TLAPS_CANONICAL_REPLAY_REQUIRED", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_proof", str(target), "--mode", "proof-completion", "--no-container", "--no-git-track"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
     assert exc_info.value.code == 3
     assert "canonical replay required" in capsys.readouterr().out
+
+
+def test_full_marked_check_rejects_self_canonical_target(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "Task.tla"
+    target.write_text(_completion_task())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_proof",
+            str(target),
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--no-git-track",
+            "--benchmark-dir",
+            str(tmp_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 3
+    assert "canonical benchmark target must be independent" in capsys.readouterr().out
+
+
+def test_full_unmarked_check_rejects_explicit_self_canonical_target(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "Task.tla"
+    target.write_text("---- MODULE Task ----\nTHEOREM Target == TRUE\nPROOF BY TRUE\n====\n")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_proof",
+            str(target),
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--no-git-track",
+            "--benchmark-dir",
+            str(tmp_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 3
+    assert "canonical benchmark target must be independent" in capsys.readouterr().out
+
+
+def test_full_marked_check_rejects_symlinked_canonical_target(tmp_path, monkeypatch, capsys):
+    workspace = tmp_path / "workspace"
+    canonical = tmp_path / "canonical"
+    workspace.mkdir()
+    canonical.mkdir()
+    target = workspace / "Task.tla"
+    target.write_text(_completion_task())
+    (canonical / "Task.tla").symlink_to(target)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_proof",
+            str(target),
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--no-git-track",
+            "--benchmark-dir",
+            str(canonical),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 3
+    assert "canonical benchmark target must be independent" in capsys.readouterr().out
+
+
+def test_independent_canonical_check_rejects_hardlink(tmp_path):
+    workspace = tmp_path / "workspace"
+    canonical = tmp_path / "canonical"
+    workspace.mkdir()
+    canonical.mkdir()
+    target = workspace / "Task.tla"
+    target.write_text(_completion_task())
+    os.link(target, canonical / "Task.tla")
+
+    with pytest.raises(RuntimeError, match="canonical benchmark target must be independent"):
+        check_proof.require_independent_canonical_target(str(target), str(canonical))
 
 
 def test_direct_marked_completion_check_rejects_fixed_scaffold_change(tmp_path, monkeypatch):
