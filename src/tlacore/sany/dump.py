@@ -82,6 +82,17 @@ def _captured_text(value: str | bytes | None) -> str:
     return value
 
 
+def _unavailable_run(tla_path: str, detail: str) -> SanyRun:
+    return SanyRun(
+        status=SanyStatus.UNAVAILABLE,
+        command=(_RUN_SH, tla_path),
+        returncode=None,
+        stdout="",
+        stderr="",
+        detail=detail,
+    )
+
+
 def run_raw(tla_path: str, timeout: int = 180) -> SanyRun:
     """Run SANY and return its three-way status plus complete process evidence."""
 
@@ -105,14 +116,7 @@ def run_raw(tla_path: str, timeout: int = 180) -> SanyRun:
             detail=f"SANY timed out after {timeout}s for {tla_path}",
         )
     except OSError as exc:
-        return SanyRun(
-            status=SanyStatus.UNAVAILABLE,
-            command=command,
-            returncode=None,
-            stdout="",
-            stderr="",
-            detail=f"SANY could not run for {tla_path}: {type(exc).__name__}: {exc}",
-        )
+        return _unavailable_run(tla_path, f"SANY could not run for {tla_path}: {type(exc).__name__}: {exc}")
 
     out = res.stdout or ""
     err = res.stderr or ""
@@ -252,13 +256,25 @@ def run_normalized(
     ):
         return run_raw(tla_path, timeout=timeout)
 
-    tmp = tempfile.mkdtemp(prefix="tlacore_sany_")
     try:
-        for d in dirs:
-            for dep in glob.glob(os.path.join(d, "*.tla")):
-                shutil.copy2(dep, os.path.join(tmp, os.path.basename(dep)))
-        target = os.path.join(tmp, f"{mod}.tla") if mod else os.path.join(tmp, base)
-        shutil.copy2(tla_path, target)
+        tmp = tempfile.mkdtemp(prefix="tlacore_sany_")
+    except OSError as exc:
+        return _unavailable_run(
+            tla_path,
+            f"SANY staging failed for {tla_path}: {type(exc).__name__}: {exc}",
+        )
+    try:
+        try:
+            for d in dirs:
+                for dep in glob.glob(os.path.join(d, "*.tla")):
+                    shutil.copy2(dep, os.path.join(tmp, os.path.basename(dep)))
+            target = os.path.join(tmp, f"{mod}.tla") if mod else os.path.join(tmp, base)
+            shutil.copy2(tla_path, target)
+        except OSError as exc:
+            return _unavailable_run(
+                tla_path,
+                f"SANY staging failed for {tla_path}: {type(exc).__name__}: {exc}",
+            )
         return run_raw(target, timeout=timeout)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

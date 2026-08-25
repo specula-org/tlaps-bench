@@ -20,7 +20,7 @@ from common.proof_libraries import (
 )
 from tlacore.model import Module
 from tlacore.provenance import Provenance, classify
-from tlacore.sany.dump import SanyRun, SanyStatus, SanyUnavailable, run_normalized, try_dump_normalized
+from tlacore.sany.dump import SanyStatus, SanyUnavailable, run_normalized, try_dump_normalized
 from tlacore.source import slice_loc
 from tlacore.tlapm.summary import Summary, run_summary
 
@@ -113,7 +113,6 @@ def build_context(
     tlapm_fallback: bool = False,
     compute_summary: bool = False,
     fallback_timeout: float = 600,
-    sany_run: SanyRun | None = None,
 ) -> CheckContext:
     """Parse the solution + baseline + agent-created modules and assemble a context.
 
@@ -134,8 +133,7 @@ def build_context(
     # + solution.tla); the result dir supplies the submission and any
     # agent-created modules, and overrides on name clashes (later wins).
     dep_dirs = [d for d in (benchmark_dir, solution_dir) if d]
-    if sany_run is None:
-        sany_run = run_normalized(sol_path, dep_dirs=dep_dirs)
+    sany_run = run_normalized(sol_path, dep_dirs=dep_dirs)
     if sany_run.status is SanyStatus.UNAVAILABLE:
         raise SanyUnavailable(sany_run)
     if sany_run.status is SanyStatus.VALID:

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tlacheck import context as context_module
 from tlacheck.context import build_context
 from tlacore.sany.dump import SanyRun, SanyStatus, SanyUnavailable
 
@@ -80,18 +81,36 @@ def test_without_benchmark_dir_falls_back_to_workspace(tmp_path):
     assert ctx.baseline_source == TAMPERED
 
 
-def test_context_distinguishes_sany_rejection_from_unavailable(tmp_path):
+def test_context_distinguishes_sany_rejection_from_unavailable(tmp_path, monkeypatch):
     _bench, sol = _layout(tmp_path)
     invalid = SanyRun(SanyStatus.INVALID, ("sany",), 3, "", "duplicate", "SANY rejected module")
+    monkeypatch.setattr(context_module, "run_normalized", lambda *_args, **_kwargs: invalid)
 
-    ctx = build_context(sol, "Foo", sany_run=invalid)
+    ctx = build_context(sol, "Foo")
 
     assert ctx.sany_status is SanyStatus.INVALID
     assert not ctx.sany_ok
 
     unavailable = SanyRun(SanyStatus.UNAVAILABLE, ("sany",), None, "", "", "tool missing")
+    monkeypatch.setattr(context_module, "run_normalized", lambda *_args, **_kwargs: unavailable)
     with pytest.raises(SanyUnavailable, match="tool missing"):
-        build_context(sol, "Foo", sany_run=unavailable)
+        build_context(sol, "Foo")
+
+
+def test_context_parses_with_its_own_dependency_order(tmp_path):
+    benchmark = tmp_path / "benchmark"
+    solution = tmp_path / "solution"
+    benchmark.mkdir()
+    solution.mkdir()
+    module = "---- MODULE Foo ----\nEXTENDS Dep\nTHEOREM Goal == Value PROOF OBVIOUS\n====\n"
+    (benchmark / "Foo.tla").write_text(module)
+    (benchmark / "Dep.tla").write_text("---- MODULE Dep ----\nValue == TRUE\n====\n")
+    (solution / "Foo.tla").write_text(module)
+    (solution / "Dep.tla").write_text("---- MODULE Dep ----\nValue == [a |-> 1, a |-> 2]\n====\n")
+
+    ctx = build_context(str(solution), "Foo", benchmark_dir=str(benchmark))
+
+    assert ctx.sany_status is SanyStatus.INVALID
 
 
 if __name__ == "__main__":

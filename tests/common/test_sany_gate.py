@@ -94,3 +94,34 @@ def test_sany_only_unavailable_is_error(tmp_path, monkeypatch):
         check_proof.main()
 
     assert exc_info.value.code == 3
+
+
+def test_sany_only_default_output_writes_target_specific_log(tmp_path, monkeypatch):
+    source = tmp_path / "Foo.tla"
+    source.write_text("---- MODULE Foo ----\n====\n")
+    valid = SanyRun(SanyStatus.VALID, ("sany",), 0, "dump", "", "", {})
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: valid)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_proof", str(source), "--mode", "proof-completion", "--no-container", "--sany-only"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 0
+    assert (tmp_path / "Foo.sany.log").is_file()
+    assert not (tmp_path / "sany.log").exists()
+
+
+def test_standalone_sany_logs_do_not_overwrite_each_other(tmp_path):
+    first = SanyRun(SanyStatus.VALID, ("sany",), 0, "first", "", "", {})
+    second = SanyRun(SanyStatus.INVALID, ("sany",), 3, "", "second", "bad")
+
+    first_log = check_proof.write_sany_log(first, str(tmp_path / "A.result"))
+    second_log = check_proof.write_sany_log(second, str(tmp_path / "B.result"))
+
+    assert first_log != second_log
+    assert (tmp_path / "A.sany.log").read_text().startswith("status: valid")
+    assert (tmp_path / "B.sany.log").read_text().startswith("status: invalid")

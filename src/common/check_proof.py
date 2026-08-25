@@ -513,7 +513,7 @@ def _reconstruct_from_git(filepath, target_name):
     return sol_dir, bench_canon, cleanup
 
 
-def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, benchmark_dir=None, sany_run=None):
+def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, benchmark_dir=None):
     """Run the compiled-in SANY + incomplete-proof cheat engine.
 
     Folds CHEATING and INCOMPLETE findings into one list — any of them must fail
@@ -548,8 +548,9 @@ def run_tlacheck_engine(filepath, target_name, summary_output, tlapm_passed, ben
             tlapm_passed=tlapm_passed,
             tlapm_fallback=True,
             compute_summary=(summary is None),
-            sany_run=sany_run,
         )
+        if ctx.sany_status is not SanyStatus.VALID:
+            return [], f"tlacheck SANY returned {ctx.sany_status.value}", None
         res = evaluate(ctx)
     except Exception as e:
         return [], f"tlacheck error: {e}", None
@@ -591,6 +592,8 @@ def require_independent_canonical_target(filepath, benchmark_dir):
     canonical_path = os.path.join(benchmark_dir, os.path.basename(filepath))
     try:
         aliases_submission = os.path.samefile(filepath, canonical_path)
+    except FileNotFoundError:
+        return
     except OSError as exc:
         raise RuntimeError(f"cannot compare submission with canonical target: {exc}") from exc
     if aliases_submission:
@@ -1023,7 +1026,10 @@ def check_sany_valid(filepath):
 def write_sany_log(run: SanyRun, output_path: str) -> str:
     """Persist the complete SANY process evidence next to the checker result."""
 
-    log_path = os.path.join(os.path.dirname(os.path.abspath(output_path)), "sany.log")
+    absolute_output = os.path.abspath(output_path)
+    output_name = os.path.basename(absolute_output)
+    log_name = "sany.log" if output_name == "check.result" else f"{os.path.splitext(output_name)[0]}.sany.log"
+    log_path = os.path.join(os.path.dirname(absolute_output), log_name)
     with open(log_path, "w", encoding="utf-8") as stream:
         stream.write(f"status: {run.status.value}\n")
         stream.write(f"command: {list(run.command)!r}\n")
@@ -1312,30 +1318,12 @@ def main(*, require_canonical_for_proof_from_scratch: bool = False):
             for violation in import_violations:
                 print(f"FAIL {violation.message} (line {violation.line})")
             sys.exit(1)
-        sany_file = filepath
-        staged_dir = None
-        if args.canonical_replay_required:
-            if benchmark_dir is None:
-                print("ERROR: canonical replay required, but no canonical benchmark directory is available")
-                sys.exit(3)
-            staged_dir = tempfile.mkdtemp(prefix="tlaps_sany_")
-            sany_file = stage_verification_files(
-                filepath,
-                staged_dir,
-                benchmark_dir=benchmark_dir,
-                require_canonical=True,
-            )
+        sany_run = check_sany_valid(filepath)
         try:
-            sany_run = check_sany_valid(sany_file)
-        finally:
-            if staged_dir:
-                shutil.rmtree(staged_dir, ignore_errors=True)
-        if args.output:
-            try:
-                write_sany_log(sany_run, output_path)
-            except OSError as exc:
-                print(f"ERROR: cannot write SANY log: {exc}")
-                sys.exit(3)
+            write_sany_log(sany_run, output_path)
+        except OSError as exc:
+            print(f"ERROR: cannot write SANY log: {exc}")
+            sys.exit(3)
         status = sany_run.status.value
         detail = re.sub(r"\s+", " ", sany_run.detail).strip()
         print(f"{SANY_STATUS_PREFIX} {status}")
@@ -1484,7 +1472,6 @@ def main(*, require_canonical_for_proof_from_scratch: bool = False):
                 summary_output,
                 False,
                 benchmark_dir=benchmark_dir,
-                sany_run=sany_run,
             )
             if (
                 not static_fail

@@ -248,6 +248,11 @@ def test_sany_only_does_not_require_canonical_replay_for_marked_completion(tmp_p
     monkeypatch.delenv("TLAPS_BENCHMARK_DIR", raising=False)
     monkeypatch.setenv("TLAPS_CANONICAL_REPLAY_REQUIRED", "1")
     monkeypatch.setattr(
+        check_proof,
+        "stage_verification_files",
+        lambda *_args, **_kwargs: pytest.fail("--sany-only must not stage canonical files"),
+    )
+    monkeypatch.setattr(
         sys,
         "argv",
         [
@@ -376,6 +381,15 @@ def test_independent_canonical_check_rejects_hardlink(tmp_path):
 
     with pytest.raises(RuntimeError, match="canonical benchmark target must be independent"):
         check_proof.require_independent_canonical_target(str(target), str(canonical))
+
+
+def test_independent_canonical_check_ignores_missing_target(tmp_path):
+    submitted = tmp_path / "Task.tla"
+    canonical = tmp_path / "canonical"
+    submitted.write_text(_completion_task())
+    canonical.mkdir()
+
+    check_proof.require_independent_canonical_target(str(submitted), str(canonical))
 
 
 def test_direct_marked_completion_check_rejects_fixed_scaffold_change(tmp_path, monkeypatch):

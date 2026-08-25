@@ -1,9 +1,12 @@
 """Regression tests for the SANY semantic dependency dump."""
 
+import importlib
 import subprocess
 
 from dataset.proof_from_scratch.generate import compute_reachable, dump_sany
 from tlacore.sany.dump import SanyStatus, run_normalized, run_raw
+
+sany_dump = importlib.import_module("tlacore.sany.dump")
 
 
 def test_named_operator_argument_is_reachable(tmp_path):
@@ -95,3 +98,35 @@ def test_sany_timeout_is_unavailable_without_retry(monkeypatch, tmp_path):
 
     assert run.status is SanyStatus.UNAVAILABLE
     assert calls == 1
+
+
+def test_normalized_staging_directory_failure_is_unavailable(monkeypatch, tmp_path):
+    source = tmp_path / "solution.tla"
+    source.write_text("---- MODULE Foo ----\n====\n")
+
+    def fail(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sany_dump.tempfile, "mkdtemp", fail)
+
+    run = run_normalized(str(source))
+
+    assert run.status is SanyStatus.UNAVAILABLE
+    assert "SANY staging failed" in run.detail
+    assert "disk full" in run.detail
+
+
+def test_normalized_copy_failure_is_unavailable(monkeypatch, tmp_path):
+    source = tmp_path / "solution.tla"
+    source.write_text("---- MODULE Foo ----\n====\n")
+
+    def fail(*_args, **_kwargs):
+        raise OSError("copy failed")
+
+    monkeypatch.setattr(sany_dump.shutil, "copy2", fail)
+
+    run = run_normalized(str(source))
+
+    assert run.status is SanyStatus.UNAVAILABLE
+    assert "SANY staging failed" in run.detail
+    assert "copy failed" in run.detail
