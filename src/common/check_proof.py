@@ -1023,13 +1023,19 @@ def check_sany_valid(filepath):
     return run_normalized(filepath, dep_dir=dep_dir, timeout=120)
 
 
-def write_sany_log(run: SanyRun, output_path: str) -> str:
-    """Persist the complete SANY process evidence next to the checker result."""
+def sany_log_path(output_path: str) -> str:
+    """Return the host-visible SANY log path for a checker output path."""
 
     absolute_output = os.path.abspath(output_path)
     output_name = os.path.basename(absolute_output)
     log_name = "sany.log" if output_name == "check.result" else f"{os.path.splitext(output_name)[0]}.sany.log"
-    log_path = os.path.join(os.path.dirname(absolute_output), log_name)
+    return os.path.join(os.path.dirname(absolute_output), log_name)
+
+
+def write_sany_log(run: SanyRun, output_path: str) -> str:
+    """Persist the complete SANY process evidence next to the checker result."""
+
+    log_path = sany_log_path(output_path)
     with open(log_path, "w", encoding="utf-8") as stream:
         stream.write(f"status: {run.status.value}\n")
         stream.write(f"command: {list(run.command)!r}\n")
@@ -1155,12 +1161,17 @@ def _run_in_container(filepath, args):
         if stderr:
             print(stderr, end="", file=sys.stderr)
 
-        # Copy result file to expected output location
+        # Copy checker artifacts from the temporary container result mount before
+        # it is removed. --sany-only writes only the SANY log, so keep the copies
+        # independent instead of nesting the log copy under check.result.
         container_result = os.path.join(result_dir, "check.result")
+        container_sany_log = os.path.join(result_dir, "sany.log")
         output_path = args.output or (os.path.splitext(filepath)[0] + ".result")
         if os.path.isfile(container_result):
             shutil.copy2(container_result, output_path)
             print(f"\nResult written to: {output_path}")
+        if os.path.isfile(container_sany_log):
+            shutil.copy2(container_sany_log, sany_log_path(output_path))
 
         sys.exit(exit_code)
     finally:

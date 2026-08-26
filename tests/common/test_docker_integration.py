@@ -155,22 +155,35 @@ class TestCheckInDocker:
     def test_check_sany_only_rejects_duplicate_record_fields(self):
         with tempfile.TemporaryDirectory(prefix="sany_invalid_") as workspace:
             source = Path(workspace) / "Foo.tla"
+            output = Path(workspace) / "duplicate.result"
             source.write_text(
                 "---- MODULE Foo -----\n"
                 "THEOREM False == ASSUME NEW r, r = [a |-> 1, a |-> 2] PROVE FALSE OBVIOUS\n"
                 "=====\n"
             )
             result = subprocess.run(
-                ["uv", "run", "tlaps-bench", "check", "--container", "--sany-only", str(source)],
+                [
+                    "uv",
+                    "run",
+                    "tlaps-bench",
+                    "check",
+                    "--container",
+                    "--sany-only",
+                    "--output",
+                    str(output),
+                    str(source),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=120,
                 cwd=REPO_ROOT,
             )
+            sany_log = (Path(workspace) / "duplicate.sany.log").read_text()
 
         assert result.returncode == 1
         assert "SANY-STATUS: invalid" in result.stdout
         assert "[SANY-INVALID]" in result.stdout
+        assert "status: invalid" in sany_log
 
     def test_check_sany_only_errors_when_tool_is_unavailable(self):
         with (
