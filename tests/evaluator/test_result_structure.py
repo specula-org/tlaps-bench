@@ -39,6 +39,8 @@ def make_result_dir() -> str:
         f.write("PASS\n")
     with open(os.path.join(grading_dir, "check_debug.txt"), "w") as f:
         f.write("exit code: 0\nAll 5 obligations proved.\n")
+    with open(os.path.join(grading_dir, "sany.log"), "w") as f:
+        f.write("status: valid\nexit_code: 0\n")
 
     # result.json
     with open(os.path.join(base, "result.json"), "w") as f:
@@ -53,6 +55,7 @@ def make_result_dir() -> str:
                 "input_tokens": 1200,
                 "output_tokens": 800,
                 "obligations": 5,
+                "sany_status": "valid",
                 "sany_valid": True,
             },
             f,
@@ -101,6 +104,7 @@ class TestResultStructure:
             grading_dir = os.path.join(base, "grading")
             assert os.path.isfile(os.path.join(grading_dir, "check.result"))
             assert os.path.isfile(os.path.join(grading_dir, "check_debug.txt"))
+            assert os.path.isfile(os.path.join(grading_dir, "sany.log"))
         finally:
             import shutil
 
@@ -119,6 +123,7 @@ class TestResultStructure:
             assert data["input_tokens"] == 1200
             assert data["output_tokens"] == 800
             assert data["obligations"] == 5
+            assert data["sany_status"] == "valid"
             assert data["sany_valid"] is True
         finally:
             import shutil

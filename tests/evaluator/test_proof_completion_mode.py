@@ -1,10 +1,11 @@
-"""Guarded legacy and strict manifest-driven proof-completion mode."""
+"""Strict manifest-driven proof-completion mode."""
 
 from __future__ import annotations
 
 import json
 import pickle
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -73,7 +74,6 @@ def test_strict_mode_discovers_only_manifest_tasks_and_exact_context(tmp_path):
 
     mode = _mode(tmp_path)
 
-    assert mode.uses_strict_contract
     assert mode.read_only_dependencies
     assert mode.canonical_replay_required
     assert mode.get_benchmark_files() == [str(task_a), str(task_z)]
@@ -101,20 +101,12 @@ def test_strict_mode_is_pickleable_after_discovery(tmp_path):
     assert restored.canonical_replay_required
 
 
-def test_absent_manifest_uses_legacy_layout_with_one_warning(tmp_path, capsys):
+def test_absent_manifest_is_rejected(tmp_path):
     suite = tmp_path / "proof-completion"
-    task = _write_module(suite, "Example/Example_Target.tla", "THEOREM Target == TRUE\nPROOF OBVIOUS\n")
-    dependency = _write_module(suite, "Example/Model.tla")
-    mode = _mode(tmp_path)
+    _write_module(suite, "Example/Example_Target.tla", "THEOREM Target == TRUE\nPROOF OBVIOUS\n")
 
-    assert mode.get_benchmark_files() == [str(task)]
-    assert mode.get_dependencies(str(task)) == [str(dependency)]
-    assert not mode.read_only_dependencies
-    assert not mode.canonical_replay_required
-    assert mode.specification_ids() is None
-
-    warning = capsys.readouterr().err
-    assert warning.count("using legacy unmarked proof-completion") == 1
+    with pytest.raises(ManifestError, match="missing proof-completion manifest"):
+        _mode(tmp_path).get_benchmark_files()
 
 
 def test_invalid_existing_manifest_fails_closed(tmp_path):
@@ -135,39 +127,33 @@ def test_invalid_existing_manifest_fails_closed(tmp_path):
         BEGIN_AGENT_HELPERS,
     ],
 )
-def test_marker_without_manifest_cannot_downgrade_to_legacy(tmp_path, marker):
+def test_marker_without_manifest_is_rejected(tmp_path, marker):
     suite = tmp_path / "proof-completion"
     _write_module(suite, "Example/Example_Target.tla", f"THEOREM Target == TRUE\n{marker}\nPROOF OBVIOUS\n")
 
-    with pytest.raises(ManifestError, match="marked task.*cannot use legacy discovery"):
+    with pytest.raises(ManifestError, match="missing proof-completion manifest"):
         _mode(tmp_path).get_benchmark_files()
 
 
-def test_marker_in_symlinked_directory_cannot_downgrade_to_legacy(tmp_path):
+def test_marker_in_symlinked_directory_still_requires_manifest(tmp_path):
     suite = tmp_path / "proof-completion"
     linked_suite = tmp_path / "linked"
     _write_task(linked_suite, "Example_Target.tla")
     suite.mkdir()
     (suite / "linked").symlink_to(linked_suite, target_is_directory=True)
 
-    with pytest.raises(ManifestError, match="marked task.*cannot use legacy discovery"):
+    with pytest.raises(ManifestError, match="missing proof-completion manifest"):
         _mode(tmp_path).get_benchmark_files()
 
 
-def test_strict_and_legacy_modes_select_matching_prompts(tmp_path):
+def test_manifest_mode_selects_strict_prompts(tmp_path):
     strict_suite = tmp_path / "strict" / "proof-completion"
     _write_task(strict_suite, "Task.tla")
     _write_manifest(strict_suite, {"Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}})
-    legacy_suite = tmp_path / "legacy" / "proof-completion"
-    legacy_suite.mkdir(parents=True)
-
     strict = ProofCompletion(str(tmp_path / "strict"), "/checker")
-    legacy = ProofCompletion(str(tmp_path / "legacy"), "/checker")
 
     assert strict.prompt_template_path().endswith("proof-completion-strict.txt")
     assert strict.one_shot_prompt_template_path().endswith("proof-completion-strict-one-shot.txt")
-    assert legacy.prompt_template_path().endswith("proof-completion.txt")
-    assert legacy.one_shot_prompt_template_path().endswith("proof-completion-one-shot.txt")
 
 
 def test_strict_cli_captures_all_inputs_before_backend_setup(tmp_path, monkeypatch):
@@ -206,6 +192,7 @@ def test_strict_cli_captures_all_inputs_before_backend_setup(tmp_path, monkeypat
     monkeypatch.setattr(backend, "check_auth", mutate_during_backend_setup)
     monkeypatch.setattr(runner, "ensure_tlapm", lambda: None)
     monkeypatch.setattr(runner, "find_tlapm_lib", lambda _tlapm: "/tlapm/lib")
+    monkeypatch.setattr(runner, "_run_sany_preflight", lambda **_kwargs: None)
     monkeypatch.setattr(runner, "run_single_benchmark", fake_run)
     monkeypatch.setattr(runner, "update_summary", lambda *args: None)
     monkeypatch.setattr(
@@ -228,3 +215,46 @@ def test_strict_cli_captures_all_inputs_before_backend_setup(tmp_path, monkeypat
     assert canonical_inputs is not None
     assert canonical_inputs.target_bytes == task_source
     assert canonical_inputs.dependencies == (("Model.tla", model_source),)
+
+
+def test_sany_preflight_failure_stops_before_backend_auth_or_run(tmp_path, monkeypatch):
+    benchmark_root = tmp_path / "benchmark"
+    suite = benchmark_root / "proof-completion"
+    _write_task(suite, "Suite/Task.tla")
+    _write_manifest(
+        suite,
+        {"Suite/Task.tla": {"spec_id": "Fixture.tla", "context": [], "reference_proof_steps": 0}},
+    )
+    mode = ProofCompletion(str(benchmark_root), "/checker")
+    backend = _Backend()
+    backend.check_auth = MagicMock(return_value=None)
+    run = MagicMock()
+
+    def fail_sany_preflight(**_kwargs):
+        raise RuntimeError("SANY unavailable")
+
+    monkeypatch.setattr(runner, "get_backend", lambda *args, **kwargs: backend)
+    monkeypatch.setattr(runner, "get_mode", lambda *args, **kwargs: mode)
+    monkeypatch.setattr(runner, "resolve_paths", lambda: (str(benchmark_root), "/checker"))
+    monkeypatch.setattr(runner, "ensure_tlapm", lambda: None)
+    monkeypatch.setattr(runner, "run_single_benchmark", run)
+    monkeypatch.setattr(runner, "_run_sany_preflight", fail_sany_preflight)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tlaps-bench",
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--output-dir",
+            str(tmp_path / "results"),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner.main()
+
+    assert exc_info.value.code == 2
+    backend.check_auth.assert_not_called()
+    run.assert_not_called()

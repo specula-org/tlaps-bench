@@ -1335,7 +1335,7 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
         if len(library_digests) == 1:
             lines.append(f"**Official proof libraries**: `{next(iter(library_digests))}`")
         if specification_ids is None:
-            # Guarded legacy proof-completion suites have no identity manifest.
+            # Generic/custom modes may not expose a specification identity map.
             pass_pct, n_pass, scored = weighted_score(results, SCORERS["equal"])
             n_skip = n_skipped(results)
             non_genuine = n_non_genuine(results)
@@ -1389,8 +1389,10 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             notes = r.get("error", "")
             # Flag a SANY-invalid FAIL distinctly (solution rejected by the
             # canonical parser, vs a proof that simply didn't verify).
-            if r.get("sany_valid") is False:
+            if r.get("sany_status") == "invalid":
                 notes = ("SANY✗ " + notes).strip()
+            elif r.get("sany_status") == "unavailable":
+                notes = ("SANY unavailable " + notes).strip()
             if is_non_genuine(r):
                 reason = r.get("termination_reason", "non-genuine")
                 notes = (f"{reason} (excluded — re-run) " + notes).strip()
@@ -2361,7 +2363,14 @@ def _parse_grader_result(exit_code: int, stdout: str, result: dict) -> None:
         result["check_verdict"] = "FAIL"
     else:
         result["check_verdict"] = "ERROR"
-    result["sany_valid"] = "[SANY-INVALID]" not in (stdout or "")
+    sm = re.search(r"^SANY-STATUS:\s*(valid|invalid|unavailable)\s*$", stdout or "", re.MULTILINE)
+    if sm:
+        result["sany_status"] = sm.group(1)
+        result["sany_valid"] = sm.group(1) == "valid"
+    else:
+        result["check_verdict"] = "ERROR"
+        result["error"] = "grader did not report a SANY status"
+        return
     # Which gate(s) failed (the grade is binary; this keeps the analysis signal).
     gm = re.search(r"GATES-FAILED:\s*([^\n]+)", stdout or "")
     if gm:
@@ -2389,6 +2398,70 @@ def _parse_grader_result(exit_code: int, stdout: str, result: dict) -> None:
 # A one-word prompt that needs no tools and no workspace files — keeps the
 # preflight model call as cheap and as deterministic as possible.
 PREFLIGHT_PROMPT = "Reply with the single word: ok. Do not use any tools."
+SANY_PREFLIGHT_MODULE = """---- MODULE SanyPreflight ----
+THEOREM Ok == TRUE
+PROOF OBVIOUS
+====
+"""
+
+
+def _run_sany_preflight(*, use_container: bool, container_image: str) -> None:
+    """Require a working standalone SANY before any model request."""
+
+    with (
+        tempfile.TemporaryDirectory(prefix="sany_preflight_ws_") as workspace,
+        tempfile.TemporaryDirectory(prefix="sany_preflight_res_") as result_dir,
+    ):
+        module = os.path.join(workspace, "SanyPreflight.tla")
+        with open(module, "w", encoding="utf-8") as stream:
+            stream.write(SANY_PREFLIGHT_MODULE)
+
+        if use_container:
+            runner = ContainerRunner()
+            config = ContainerConfig(image=container_image, workspace=workspace, result_dir=result_dir)
+            cmd = [
+                "/usr/local/bin/check_proof_bin",
+                "/workspace/SanyPreflight.tla",
+                "--no-container",
+                "--no-git-track",
+                "--sany-only",
+                "--output",
+                "/results/check.result",
+            ]
+            try:
+                exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=180)
+            finally:
+                runner.cleanup_credential_tmps()
+        else:
+            checker = os.path.join(REPO_ROOT, "check_proof_bin")
+            env = dict(os.environ)
+            env["SANY_RUN_SH"] = os.path.join(REPO_ROOT, "src", "dataset", "sany-dump", "run.sh")
+            env["TLAPS_LIB"] = os.path.join(REPO_ROOT, "lib", "tlapm")
+            env["COMMUNITY_LIB"] = os.path.join(REPO_ROOT, "lib", "community")
+            try:
+                completed = subprocess.run(
+                    [
+                        checker,
+                        module,
+                        "--no-container",
+                        "--no-git-track",
+                        "--sany-only",
+                        "--output",
+                        os.path.join(result_dir, "check.result"),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    env=env,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError(f"SANY preflight could not run: {exc}") from exc
+            exit_code, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
+
+        if exit_code != 0 or not re.search(r"^SANY-STATUS:\s*valid\s*$", stdout, re.MULTILINE):
+            detail = (stderr or stdout or "no diagnostic output").strip()
+            raise RuntimeError(f"SANY preflight failed (exit {exit_code}): {detail[:500]}")
+        print("SANY preflight: OK")
 
 
 def _run_preflight(backend, container_image: str) -> None:
@@ -2561,8 +2634,8 @@ def main():
     parser.add_argument(
         "--skip-preflight",
         action="store_true",
-        help="Skip the container preflight check (validate install + auth + model + firewall "
-        "on a trivial prompt before the run). Container mode only.",
+        help="Skip only the container backend/model preflight (install + auth + model + firewall). "
+        "The mandatory SANY preflight is never skipped. Container mode only.",
     )
     parser.add_argument(
         "--allow-unpriced-model",
@@ -2690,6 +2763,34 @@ def main():
     ):
         sys.exit(1)
 
+    # Establish the verification toolchain and prove that standalone SANY can
+    # run before authentication or any model request. Task-level grading keeps
+    # the same gate because a later timeout or tool failure must also fail closed.
+    if use_container:
+        if not container_ready:
+            try:
+                container_image = ensure_image(force=args.force_build)
+                container_ready = True
+            except DockerUnavailableError as exc:
+                parser.exit(2, f"{parser.prog}: error: {exc}\n")
+        tlapm_root = "/opt/tlapm"
+        tlapm_lib = "/opt/proof-libraries/tlapm"
+    else:
+        if not native_toolchain_ready:
+            ensure_tlapm()
+            native_toolchain_ready = True
+        tlapm_root = TLAPM_PERSISTENT
+        tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
+        if not os.path.isdir(tlapm_lib):
+            parser.exit(
+                2,
+                f"{parser.prog}: error: pinned official tlapm library not found at {tlapm_lib}; run make setup\n",
+            )
+    try:
+        _run_sany_preflight(use_container=use_container, container_image=container_image)
+    except (DockerUnavailableError, RuntimeError) as exc:
+        parser.exit(2, f"{parser.prog}: error: {exc}\n")
+
     auth_err = backend.check_auth()
     if auth_err:
         print(f"ERROR: {auth_err}")
@@ -2705,17 +2806,6 @@ def main():
         _prepare_session_dir(session_dir)
 
     if use_container:
-        # In container mode, tlapm and checker are inside the image.
-        # Use container-side paths for prompts.
-        tlapm_root = "/opt/tlapm"
-        tlapm_lib = "/opt/proof-libraries/tlapm"
-
-        if not container_ready:
-            try:
-                container_image = ensure_image(force=args.force_build)
-            except DockerUnavailableError as e:
-                print(f"ERROR: {e}", file=sys.stderr)
-                sys.exit(1)
         print(f"Container mode: ON (image: {container_image})")
 
         # Preflight: validate install + auth + model + firewall on a trivial
@@ -2727,16 +2817,6 @@ def main():
             _run_preflight(backend, container_image)
         elif not args.skip_preflight:
             print(f"Preflight: skipped — backend {backend.name!r} does not support a model preflight request")
-    else:
-        # Local mode: require tlapm and checker on host
-        if not native_toolchain_ready:
-            ensure_tlapm()
-            tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
-            if not os.path.isdir(tlapm_lib):
-                print(f"ERROR: pinned official tlapm library not found at {tlapm_lib}; run make setup")
-                sys.exit(1)
-        tlapm_root = TLAPM_PERSISTENT
-        tlapm_lib = os.path.join(REPO_ROOT, "lib", "tlapm")
     os.makedirs(output_dir, exist_ok=True)
     try:
         _write_task_list_record(output_dir, mode.name, task_ids)

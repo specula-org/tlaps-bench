@@ -18,6 +18,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
+from enum import StrEnum
 
 from ..model import Module
 
@@ -35,27 +37,140 @@ _RUN_SH = os.environ.get(
 _MARKER = "--- BEGIN SANY-DUMP JSON ---"
 
 
+class SanyStatus(StrEnum):
+    """Outcome of invoking the standalone SANY parser."""
+
+    VALID = "valid"
+    INVALID = "invalid"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class SanyRun:
+    """Complete, auditable outcome of one SANY invocation."""
+
+    status: SanyStatus
+    command: tuple[str, ...]
+    returncode: int | None
+    stdout: str
+    stderr: str
+    detail: str
+    raw: dict | None = None
+
+
 class SanyError(RuntimeError):
-    """SANY failed to parse the module (parse/semantic error, or no output)."""
+    """Base class for a non-valid SANY invocation."""
+
+    def __init__(self, run: SanyRun):
+        self.run = run
+        super().__init__(run.detail)
+
+
+class SanyInvalid(SanyError):
+    """SANY ran and rejected the TLA+ module."""
+
+
+class SanyUnavailable(SanyError):
+    """SANY could not produce a trustworthy parse verdict."""
+
+
+def _captured_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
+def _unavailable_run(tla_path: str, detail: str) -> SanyRun:
+    return SanyRun(
+        status=SanyStatus.UNAVAILABLE,
+        command=(_RUN_SH, tla_path),
+        returncode=None,
+        stdout="",
+        stderr="",
+        detail=detail,
+    )
+
+
+def run_raw(tla_path: str, timeout: int = 180) -> SanyRun:
+    """Run SANY and return its three-way status plus complete process evidence."""
+
+    command = (_RUN_SH, tla_path)
+    try:
+        res = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = _captured_text(exc.stdout)
+        stderr = _captured_text(exc.stderr)
+        return SanyRun(
+            status=SanyStatus.UNAVAILABLE,
+            command=command,
+            returncode=None,
+            stdout=stdout,
+            stderr=stderr,
+            detail=f"SANY timed out after {timeout}s for {tla_path}",
+        )
+    except OSError as exc:
+        return _unavailable_run(tla_path, f"SANY could not run for {tla_path}: {type(exc).__name__}: {exc}")
+
+    out = res.stdout or ""
+    err = res.stderr or ""
+    idx = out.find(_MARKER)
+    if idx < 0:
+        status = SanyStatus.INVALID if res.returncode == 3 else SanyStatus.UNAVAILABLE
+        return SanyRun(
+            status=status,
+            command=command,
+            returncode=res.returncode,
+            stdout=out,
+            stderr=err,
+            detail=(f"SANY produced no dump for {tla_path} (exit {res.returncode}). stderr: {err.strip()}"),
+        )
+    if res.returncode != 0:
+        return SanyRun(
+            status=SanyStatus.UNAVAILABLE,
+            command=command,
+            returncode=res.returncode,
+            stdout=out,
+            stderr=err,
+            detail=f"SANY produced a dump but exited {res.returncode} for {tla_path}",
+        )
+    try:
+        raw = json.loads(out[idx + len(_MARKER) :])
+    except json.JSONDecodeError as exc:
+        return SanyRun(
+            status=SanyStatus.UNAVAILABLE,
+            command=command,
+            returncode=res.returncode,
+            stdout=out,
+            stderr=err,
+            detail=f"Could not parse SANY dump for {tla_path}: {exc}",
+        )
+    return SanyRun(
+        status=SanyStatus.VALID,
+        command=command,
+        returncode=res.returncode,
+        stdout=out,
+        stderr=err,
+        detail="",
+        raw=raw,
+    )
 
 
 def dump_raw(tla_path: str, timeout: int = 180) -> dict:
     """Run SANY on ``tla_path`` and return the raw JSON dict."""
-    res = subprocess.run(
-        [_RUN_SH, tla_path],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    out = res.stdout
-    idx = out.find(_MARKER)
-    if idx < 0:
-        err = (res.stderr or "").strip()
-        raise SanyError(f"SANY produced no dump for {tla_path} (exit {res.returncode}). stderr: {err[:400]}")
-    try:
-        return json.loads(out[idx + len(_MARKER) :])
-    except json.JSONDecodeError as e:
-        raise SanyError(f"Could not parse SANY dump for {tla_path}: {e}") from e
+    run = run_raw(tla_path, timeout=timeout)
+    if run.status is SanyStatus.INVALID:
+        raise SanyInvalid(run)
+    if run.status is SanyStatus.UNAVAILABLE:
+        raise SanyUnavailable(run)
+    assert run.raw is not None
+    return run.raw
 
 
 def dump(tla_path: str, timeout: int = 180) -> Module:
@@ -71,7 +186,7 @@ def try_dump(tla_path: str, timeout: int = 180) -> Module | None:
     """
     try:
         return dump(tla_path, timeout=timeout)
-    except (SanyError, subprocess.TimeoutExpired, OSError):
+    except (SanyError, OSError):
         return None
 
 
@@ -115,6 +230,20 @@ def dump_normalized(
     the canonical ``benchmark/<level>/<module>/`` dir (for the given deps) and
     the result dir (for the submission + any agent-created modules).
     """
+    run = run_normalized(tla_path, dep_dir=dep_dir, timeout=timeout, dep_dirs=dep_dirs)
+    if run.status is SanyStatus.INVALID:
+        raise SanyInvalid(run)
+    if run.status is SanyStatus.UNAVAILABLE:
+        raise SanyUnavailable(run)
+    assert run.raw is not None
+    return Module.parse(run.raw)
+
+
+def run_normalized(
+    tla_path: str, dep_dir: str | None = None, timeout: int = 180, dep_dirs: list | None = None
+) -> SanyRun:
+    """Run SANY with normalized filename and dependency staging."""
+
     mod = module_name_of(tla_path)
     dirs = _as_dep_dirs(dep_dir, dep_dirs) or [os.path.dirname(os.path.abspath(tla_path))]
     base = os.path.basename(tla_path)
@@ -125,16 +254,28 @@ def dump_normalized(
         and len(dirs) == 1
         and os.path.abspath(dirs[0]) == os.path.dirname(os.path.abspath(tla_path))
     ):
-        return dump(tla_path, timeout=timeout)
+        return run_raw(tla_path, timeout=timeout)
 
-    tmp = tempfile.mkdtemp(prefix="tlacore_sany_")
     try:
-        for d in dirs:
-            for dep in glob.glob(os.path.join(d, "*.tla")):
-                shutil.copy2(dep, os.path.join(tmp, os.path.basename(dep)))
-        target = os.path.join(tmp, f"{mod}.tla") if mod else os.path.join(tmp, base)
-        shutil.copy2(tla_path, target)
-        return dump(target, timeout=timeout)
+        tmp = tempfile.mkdtemp(prefix="tlacore_sany_")
+    except OSError as exc:
+        return _unavailable_run(
+            tla_path,
+            f"SANY staging failed for {tla_path}: {type(exc).__name__}: {exc}",
+        )
+    try:
+        try:
+            for d in dirs:
+                for dep in glob.glob(os.path.join(d, "*.tla")):
+                    shutil.copy2(dep, os.path.join(tmp, os.path.basename(dep)))
+            target = os.path.join(tmp, f"{mod}.tla") if mod else os.path.join(tmp, base)
+            shutil.copy2(tla_path, target)
+        except OSError as exc:
+            return _unavailable_run(
+                tla_path,
+                f"SANY staging failed for {tla_path}: {type(exc).__name__}: {exc}",
+            )
+        return run_raw(target, timeout=timeout)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -144,5 +285,5 @@ def try_dump_normalized(
 ) -> Module | None:
     try:
         return dump_normalized(tla_path, dep_dir=dep_dir, timeout=timeout, dep_dirs=dep_dirs)
-    except (SanyError, subprocess.TimeoutExpired, OSError):
+    except (SanyError, OSError):
         return None

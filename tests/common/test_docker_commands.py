@@ -8,6 +8,7 @@ Run: uv run python -m pytest tests/common/test_docker_commands.py -v
 import os
 import subprocess
 import sys
+import tempfile
 from unittest.mock import patch
 
 import pytest
@@ -82,15 +83,22 @@ class TestCheckDockerDispatch:
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)
-    def test_sany_only_flag_passed(self, mock_exists, mock_run):
-        mock_run.return_value = (0, "✅ SANY OK\n", "")
+    def test_sany_only_flag_passed_and_log_copied(self, mock_exists, mock_run, tmp_path):
+        def run_with_sany_log(config, _cmd, **_kwargs):
+            with open(os.path.join(config.result_dir, "sany.log"), "w") as stream:
+                stream.write("status: valid\n")
+            return 0, "✅ SANY OK\n", ""
+
+        mock_run.side_effect = run_with_sany_log
 
         from common.check_proof import _run_in_container
+
+        output_path = tmp_path / "custom.result"
 
         class Args:
             mode = "proof-completion"
             timeout = 60
-            output = None
+            output = str(output_path)
             benchmark_dir = None
             sany_only = True
             no_cache = False
@@ -103,6 +111,8 @@ class TestCheckDockerDispatch:
 
         cmd = mock_run.call_args[0][1]
         assert "--sany-only" in cmd
+        assert not output_path.exists()
+        assert (tmp_path / "custom.sany.log").read_text() == "status: valid\n"
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)
@@ -113,23 +123,27 @@ class TestCheckDockerDispatch:
 
         from common.check_proof import _run_in_container
 
-        class Args:
-            mode = "proof-completion"
-            timeout = 60
-            output = None
-            benchmark_dir = "/host/canonical/Euclid"
-            sany_only = False
-            no_cache = False
-            keep_verifying = False
-            shards = None
-            no_git_track = False
+        with tempfile.TemporaryDirectory(prefix="canonical_") as canonical_dir:
+            with open(os.path.join(canonical_dir, os.path.basename(FIXTURE_TLA)), "w") as stream:
+                stream.write(FIXTURE_CONTENT)
 
-        with pytest.raises(SystemExit):
-            _run_in_container(FIXTURE_TLA, Args())
+            class Args:
+                mode = "proof-completion"
+                timeout = 60
+                output = None
+                benchmark_dir = canonical_dir
+                sany_only = False
+                no_cache = False
+                keep_verifying = False
+                shards = None
+                no_git_track = False
 
-        config, cmd = mock_run.call_args[0][0], mock_run.call_args[0][1]
-        assert cmd[cmd.index("--benchmark-dir") + 1] == "/benchmark"
-        assert config.benchmark_dir == "/host/canonical/Euclid"
+            with pytest.raises(SystemExit):
+                _run_in_container(FIXTURE_TLA, Args())
+
+            config, cmd = mock_run.call_args[0][0], mock_run.call_args[0][1]
+            assert cmd[cmd.index("--benchmark-dir") + 1] == "/benchmark"
+            assert config.benchmark_dir == canonical_dir
 
     @patch("common.container.ContainerRunner.run_with_output")
     @patch("common.container.ContainerRunner.image_exists", return_value=True)

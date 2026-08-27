@@ -19,6 +19,8 @@ import glob
 import os
 import sys
 
+from tlacore.sany.dump import SanyStatus
+
 from .context import build_context
 from .engine import run_rules
 from .issue import Severity
@@ -28,6 +30,8 @@ def audit_one(solution_dir: str, target: str, benchmark_dir: str | None, with_su
     # incomplete_proof is wired into the engine rule sets; it only fires when a
     # tlapm --summary is available, so request one when --summary was passed.
     ctx = build_context(solution_dir, target, benchmark_dir=benchmark_dir, compute_summary=with_summary)
+    if ctx.sany_status is SanyStatus.INVALID:
+        raise ValueError("SANY rejected the solution")
     return run_rules(ctx)
 
 
@@ -91,6 +95,8 @@ def main(argv=None):
                 print(f"  CLEAN  {sdir}")
     if args.scan:
         print(f"\n=== clean {n_clean} | cheating {n_cheat} | error {n_err} ===")
+    if n_err:
+        return 3
     return 2 if any_cheat else 0
 
 

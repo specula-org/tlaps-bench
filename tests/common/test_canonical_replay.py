@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -15,6 +16,11 @@ from common.proof_from_scratch_contract import (
 )
 from tlacheck.issue import Issue, Severity
 from tlacheck.verdict import Result, Verdict
+from tlacore.sany.dump import SanyRun, SanyStatus
+
+
+def _sany_run(status: str, detail: str = "") -> SanyRun:
+    return SanyRun(SanyStatus(status), ("sany",), 0 if status == "valid" else None, "", "", detail)
 
 
 def _task(*, helper="Helper == TRUE", proof="PROOF OBVIOUS", statement="THEOREM Target == TRUE"):
@@ -235,11 +241,17 @@ def test_canonical_replay_requirement_can_come_from_runner_environment(monkeypat
     assert check_proof.canonical_replay_required(True)
 
 
-def test_public_check_requires_canonical_replay_for_marked_completion(tmp_path, monkeypatch, capsys):
+def test_sany_only_does_not_require_canonical_replay_for_marked_completion(tmp_path, monkeypatch, capsys):
     target = tmp_path / "Task.tla"
     target.write_text(_completion_task())
+    (tmp_path / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     monkeypatch.delenv("TLAPS_BENCHMARK_DIR", raising=False)
-    monkeypatch.delenv("TLAPS_CANONICAL_REPLAY_REQUIRED", raising=False)
+    monkeypatch.setenv("TLAPS_CANONICAL_REPLAY_REQUIRED", "1")
+    monkeypatch.setattr(
+        check_proof,
+        "stage_verification_files",
+        lambda *_args, **_kwargs: pytest.fail("--sany-only must not stage canonical files"),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -256,8 +268,128 @@ def test_public_check_requires_canonical_replay_for_marked_completion(tmp_path, 
     with pytest.raises(SystemExit) as exc_info:
         check_proof.main()
 
+    assert exc_info.value.code == 0
+    assert "SANY-STATUS: valid" in capsys.readouterr().out
+
+
+def test_full_marked_check_requires_canonical_directory(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "Task.tla"
+    target.write_text(_completion_task())
+    monkeypatch.delenv("TLAPS_BENCHMARK_DIR", raising=False)
+    monkeypatch.delenv("TLAPS_CANONICAL_REPLAY_REQUIRED", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_proof", str(target), "--mode", "proof-completion", "--no-container", "--no-git-track"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
     assert exc_info.value.code == 3
     assert "canonical replay required" in capsys.readouterr().out
+
+
+def test_full_marked_check_rejects_self_canonical_target(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "Task.tla"
+    target.write_text(_completion_task())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_proof",
+            str(target),
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--no-git-track",
+            "--benchmark-dir",
+            str(tmp_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 3
+    assert "canonical benchmark target must be independent" in capsys.readouterr().out
+
+
+def test_full_unmarked_check_rejects_explicit_self_canonical_target(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "Task.tla"
+    target.write_text("---- MODULE Task ----\nTHEOREM Target == TRUE\nPROOF BY TRUE\n====\n")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_proof",
+            str(target),
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--no-git-track",
+            "--benchmark-dir",
+            str(tmp_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 3
+    assert "canonical benchmark target must be independent" in capsys.readouterr().out
+
+
+def test_full_marked_check_rejects_symlinked_canonical_target(tmp_path, monkeypatch, capsys):
+    workspace = tmp_path / "workspace"
+    canonical = tmp_path / "canonical"
+    workspace.mkdir()
+    canonical.mkdir()
+    target = workspace / "Task.tla"
+    target.write_text(_completion_task())
+    (canonical / "Task.tla").symlink_to(target)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_proof",
+            str(target),
+            "--mode",
+            "proof-completion",
+            "--no-container",
+            "--no-git-track",
+            "--benchmark-dir",
+            str(canonical),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_proof.main()
+
+    assert exc_info.value.code == 3
+    assert "canonical benchmark target must be independent" in capsys.readouterr().out
+
+
+def test_independent_canonical_check_rejects_hardlink(tmp_path):
+    workspace = tmp_path / "workspace"
+    canonical = tmp_path / "canonical"
+    workspace.mkdir()
+    canonical.mkdir()
+    target = workspace / "Task.tla"
+    target.write_text(_completion_task())
+    os.link(target, canonical / "Task.tla")
+
+    with pytest.raises(RuntimeError, match="canonical benchmark target must be independent"):
+        check_proof.require_independent_canonical_target(str(target), str(canonical))
+
+
+def test_independent_canonical_check_ignores_missing_target(tmp_path):
+    submitted = tmp_path / "Task.tla"
+    canonical = tmp_path / "canonical"
+    submitted.write_text(_completion_task())
+    canonical.mkdir()
+
+    check_proof.require_independent_canonical_target(str(submitted), str(canonical))
 
 
 def test_direct_marked_completion_check_rejects_fixed_scaffold_change(tmp_path, monkeypatch):
@@ -273,7 +405,7 @@ def test_direct_marked_completion_check_rejects_fixed_scaffold_change(tmp_path, 
     output = tmp_path / "check.result"
 
     monkeypatch.delenv("TLAPS_CANONICAL_REPLAY_REQUIRED", raising=False)
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -426,7 +558,7 @@ def test_fixed_scaffold_failure_stops_before_tlapm(tmp_path, monkeypatch):
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -472,7 +604,7 @@ def test_newline_only_scaffold_failure_is_not_reported_as_cheating(tmp_path, mon
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -521,7 +653,7 @@ def test_required_canonical_sany_failure_is_infrastructure_error(tmp_path, monke
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("unavailable", "missing tool"))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("unavailable", "missing tool"))
     monkeypatch.setattr(
         check_proof,
         "run_killgroup",
@@ -553,7 +685,9 @@ def test_required_canonical_sany_failure_is_infrastructure_error(tmp_path, monke
         check_proof.main()
 
     assert exc_info.value.code == 3
-    assert "canonical SANY validation unavailable" in output.read_text()
+    assert "SANY validation unavailable" in output.read_text()
+    assert "status: unavailable" in (tmp_path / "sany.log").read_text()
+    assert "missing tool" in (tmp_path / "sany.log").read_text()
 
 
 def test_required_canonical_semantic_failure_is_infrastructure_error(tmp_path, monkeypatch):
@@ -568,7 +702,7 @@ def test_required_canonical_semantic_failure_is_infrastructure_error(tmp_path, m
     (workspace / "Model.tla").write_text("---- MODULE Model ----\n====\n")
     output = tmp_path / "check.result"
 
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_tlacheck_engine",
@@ -607,7 +741,7 @@ def test_required_canonical_semantic_failure_is_infrastructure_error(tmp_path, m
         check_proof.main()
 
     assert exc_info.value.code == 3
-    assert "canonical semantic validation unavailable: engine crashed" in output.read_text()
+    assert "semantic validation unavailable: engine crashed" in output.read_text()
 
 
 def test_helper_policy_failure_stops_before_full_tlapm(tmp_path, monkeypatch):
@@ -628,7 +762,7 @@ def test_helper_policy_failure_stops_before_full_tlapm(tmp_path, monkeypatch):
         "CONSTANT declarations are not allowed in the helper region",
     )
     engine_result = Result(Verdict.CHEATING, [issue])
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_tlacheck_engine",
@@ -694,7 +828,7 @@ def test_proof_only_declaration_policy_stops_before_full_tlapm(tmp_path, monkeyp
         "module-level operator declarations are not allowed in the proof region",
     )
     engine_result = Result(Verdict.CHEATING, [issue])
-    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: ("valid", ""))
+    monkeypatch.setattr(check_proof, "check_sany_valid", lambda _path: _sany_run("valid"))
     monkeypatch.setattr(
         check_proof,
         "run_tlacheck_engine",

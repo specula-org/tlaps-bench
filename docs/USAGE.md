@@ -237,7 +237,7 @@ Proof-completion targets contain one `AGENT PROOF` marker pair. Only its interio
 
 Proof-from-scratch targets contain separate `AGENT HELPERS` and `AGENT PROOF` marker pairs. The helper region accepts fresh operator definitions, module-level `USE DEF` / `HIDE DEF`, fully proved named lemmas or theorems, and named `LOCAL <alias> == INSTANCE <module>` imports from the run's frozen official proof-library catalog. Unnamed instances, `WITH`, non-official modules, constants, variables, assumptions, nested modules, shadowed names, and module-level declarations in the proof region are rejected.
 
-For both marked layouts, all fixed bytes must match the canonical target. Extra newlines at EOF are ignored; other newline-only differences fail but are not labeled cheating. Proof completion temporarily retains compatibility with the checked-in legacy unmarked dataset: when its manifest is absent and no task contains proof markers, the evaluator emits one warning and uses the previous heuristic discovery and preamble check. A malformed manifest or any marked proof-completion task without a manifest fails closed. Proof from scratch has no fallback.
+For both marked layouts, all fixed bytes must match the canonical target. Extra newlines at EOF are ignored; other newline-only differences fail but are not labeled cheating. Proof completion and proof from scratch both require a valid manifest; a missing or malformed manifest fails closed, with no heuristic evaluator fallback.
 
 The runner captures canonical inputs before starting the agent and grades from a separate copy. Docker makes context read-only; native `--no-container` uses advisory `0444` permissions and is not a host-security boundary. Canonical validation failures are infrastructure errors.
 
@@ -297,7 +297,7 @@ uv run tlaps-bench check path/to/file.tla --mode proof-from-scratch --benchmark-
 uv run tlaps-bench check path/to/file.tla --sany-only
 ```
 
-Proof-from-scratch and marked proof-completion checks automatically require canonical replay. Pass the directory containing the original target and its declared context with `--benchmark-dir`; inside the evaluator runner this directory is supplied automatically. The command fails closed when no canonical context is available. Legacy unmarked proof-completion checks keep their previous behavior.
+Full proof-from-scratch and marked proof-completion checks automatically require canonical replay. Pass an independent directory containing the original target and its declared context with `--benchmark-dir`; the canonical target must not alias the submitted file. Inside the evaluator runner this directory is supplied automatically. Full checks fail closed when no independent canonical context is available. `--sany-only` checks only the submitted file and its workspace dependencies, so it does not require canonical context. Legacy unmarked proof-completion checks keep their previous behavior.
 
 By default, `check` reuses `<target-dir>/.tlacache`; use `--no-cache` for a cold check, or `--timeout 0` for no checker deadline.
 
@@ -358,11 +358,11 @@ Proof-completion generation emits the layered suite described in [Layered-task t
 ```bash
 uv run tlaps-bench generate --mode proof-completion
 uv run tlaps-bench generate --mode proof-completion --filter EWD840   # one source group
-uv run tlaps-bench generate --mode proof-completion --legacy         # old single-file layout
-uv run tlaps-bench generate --mode proof-completion --legacy --shared-model  # old shared-model layout
+uv run tlaps-bench generate --mode proof-completion --legacy         # archival single-file layout
+uv run tlaps-bench generate --mode proof-completion --legacy --shared-model  # archival shared-model layout
 ```
 
-`--output-dir` works with the default layered generator and with `--legacy --shared-model`. The flat `--legacy` generator writes only to `benchmark/proof-completion/`.
+`--output-dir` works with the default layered generator and with `--legacy --shared-model`. The flat `--legacy` generator writes only to `benchmark/proof-completion/`. Legacy generator outputs are archival and are not accepted by the manifest-only evaluator.
 
 Every task is parsed back through the evaluator's own contract, then gated: each one must parse under standalone SANY with only its manifest context, and any task whose `PROOF OBVIOUS` placeholder already verifies is dropped as degenerate. `--skip-gates` bypasses both for fast iteration; a shipped dataset is generated with them. A `--filter` or positional-file run regenerates only the tasks belonging to the sources it processed and needs the existing manifest to preserve the rest. `benchmark/<mode>/audit.log` records every drop, every leak check, and every task that the previous dataset had but the run did not regenerate.
 

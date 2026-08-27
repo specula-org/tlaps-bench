@@ -5,9 +5,10 @@ Validate TLAPS benchmarks by porting original proofs and running tlapm.
 For each benchmark file:
 1. Find the corresponding original proof from source files
 2. Replace PROOF OBVIOUS with the original proof
-3. Run tlapm to verify
-4. Detect placeholder proofs (PROOF OMITTED)
-5. Generate a markdown report
+3. Require the ported module to pass standalone SANY
+4. Run tlapm to verify
+5. Detect placeholder proofs (PROOF OMITTED)
+6. Generate a markdown report
 
 Usage:
     python3 validate_benchmarks.py [--tlapm PATH] [--tlapm-lib PATH] [--timeout SECS] [--jobs N]
@@ -39,6 +40,7 @@ from dataset.proof_completion.generate import (
     parse_theorems,
 )
 from evaluator.modes.proof_completion import ProofCompletion
+from tlacore.sany.dump import SanyStatus, run_normalized
 
 
 @dataclass
@@ -54,6 +56,8 @@ class ValidationResult:
     tlapm_exit_code: int = -1
     tlapm_output: str = ""
     tlapm_time_secs: float = 0.0
+    sany_status: str = ""
+    sany_detail: str = ""
     # Proof metrics
     proof_lines_count: int = 0  # non-empty, non-comment proof lines
     # Cheating
@@ -250,6 +254,59 @@ def run_tlapm_docker(
         return -2, f"ERROR: {str(e)}", elapsed
 
 
+def run_sany(tla_file: str, timeout: int = 120) -> tuple[str, str]:
+    """Run native standalone SANY and return its status plus full detail."""
+
+    run = run_normalized(tla_file, dep_dir=os.path.dirname(tla_file), timeout=timeout)
+    return run.status.value, run.detail
+
+
+def run_sany_docker(
+    tla_file: str,
+    timeout: int = 120,
+    container_image: str = f"{IMAGE_TAG}:latest",
+) -> tuple[str, str]:
+    """Run the image's standalone SANY gate and return its structured status."""
+
+    runner = ContainerRunner()
+    workspace = os.path.dirname(tla_file)
+    basename = os.path.basename(tla_file)
+    result_dir = tempfile.mkdtemp(prefix="tlaps_validate_sany_")
+    config = ContainerConfig(image=container_image, workspace=workspace, result_dir=result_dir)
+    cmd = [
+        "/usr/local/bin/check_proof_bin",
+        f"/workspace/{basename}",
+        "--no-container",
+        "--no-git-track",
+        "--sany-only",
+        "--benchmark-dir",
+        "/workspace",
+        "--output",
+        "/results/check.result",
+    ]
+    try:
+        try:
+            exit_code, stdout, stderr = runner.run_with_output(config, cmd, timeout=timeout + 30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return SanyStatus.UNAVAILABLE.value, f"SANY could not run: {type(exc).__name__}: {exc}"
+        match = re.search(r"^SANY-STATUS:\s*(valid|invalid|unavailable)\s*$", stdout, re.MULTILINE)
+        if match:
+            if match.group(1) == SanyStatus.VALID.value:
+                return match.group(1), ""
+            log_path = os.path.join(result_dir, "sany.log")
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as stream:
+                    detail = stream.read().strip()
+            except OSError:
+                detail = (stderr or stdout).strip()
+            return match.group(1), detail
+        detail = (stderr or stdout or "no diagnostic output").strip()
+        return SanyStatus.UNAVAILABLE.value, f"SANY returned no structured status (exit {exit_code}): {detail}"
+    finally:
+        runner.cleanup_credential_tmps()
+        shutil.rmtree(result_dir, ignore_errors=True)
+
+
 def _validation_work_item(
     benchmark_path,
     dependencies,
@@ -384,6 +441,17 @@ def validate_single_benchmark(args_tuple):
         for dep_file in dependencies:
             shutil.copy2(dep_file, os.path.join(tmp_dir, os.path.basename(dep_file)))
 
+        sany_status, sany_detail = (
+            run_sany_docker(tmp_file, timeout, container_image) if use_container else run_sany(tmp_file, timeout)
+        )
+        result.sany_status = sany_status
+        result.sany_detail = sany_detail
+        if sany_status == SanyStatus.UNAVAILABLE.value:
+            result.error = f"SANY validation unavailable: {sany_detail}"
+            return result
+        if sany_status == SanyStatus.INVALID.value:
+            return result
+
         exit_code, output, elapsed = (
             run_tlapm_docker(tmp_file, timeout, container_image)
             if use_container
@@ -465,6 +533,8 @@ def generate_report(results: list[ValidationResult], output_path: str):
                 notes = "; ".join(f"{c.kind}: {c.description}" for c in r.cheating_issues)
             elif r.error:
                 notes = r.error
+            elif r.sany_status == SanyStatus.INVALID.value:
+                notes = "SANY rejected the ported reference proof"
             elif r.status == "FAIL":
                 # Extract failure summary from tlapm output
                 fail_match = re.search(r"(\d+)/(\d+) obligation", r.tlapm_output)
@@ -496,6 +566,12 @@ def generate_report(results: list[ValidationResult], output_path: str):
         lines.append("## Failed Verification Details\n")
         for r in failed_results:
             lines.append(f"### `{r.benchmark_file}`\n")
+            if r.sany_status == SanyStatus.INVALID.value and r.sany_detail:
+                lines.append("```text")
+                lines.extend(r.sany_detail.splitlines())
+                lines.append("```")
+                lines.append("")
+                continue
             # Show relevant tlapm output (last few error lines)
             error_lines = [ln for ln in r.tlapm_output.split("\n") if "ERROR" in ln or "obligation" in ln]
             if error_lines:
@@ -586,6 +662,24 @@ def main():
 
         print(f"Using tlapm: {tlapm_path}")
         print(f"Using lib: {tlapm_lib}")
+
+    # Do not start a batch unless the same SANY path used by each worker can run.
+    preflight_dir = tempfile.mkdtemp(prefix="tlaps_validate_preflight_")
+    try:
+        preflight_file = os.path.join(preflight_dir, "SanyPreflight.tla")
+        with open(preflight_file, "w", encoding="utf-8") as stream:
+            stream.write("---- MODULE SanyPreflight ----\nTHEOREM Ok == TRUE\nPROOF OBVIOUS\n====\n")
+        preflight_status, preflight_detail = (
+            run_sany_docker(preflight_file, args.timeout, container_image)
+            if use_container
+            else run_sany(preflight_file, args.timeout)
+        )
+    finally:
+        shutil.rmtree(preflight_dir, ignore_errors=True)
+    if preflight_status != SanyStatus.VALID.value:
+        print(f"ERROR: SANY preflight failed ({preflight_status}): {preflight_detail}", file=sys.stderr)
+        sys.exit(1)
+    print("SANY preflight: OK")
 
     # Build source file index: list of (module_name, filepath)
     source_files = []  # list of (mod_name, filepath)
