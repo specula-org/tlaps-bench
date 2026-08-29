@@ -264,6 +264,8 @@ because anything a dependency defines is handed to the agent for free.
 The closure keeps module identity: a name is kept in a dependency only when
 that module is actually referenced (EXTENDS, unnamed INSTANCE, or `C!Spec`),
 not because the task happens to define the same bare identifier.
+A qualified use `P!Spec` seeds `Spec` only in the instantiated module, not as
+a bare name in an EXTENDS'd sibling that also happens to define `Spec`.
 Original lemmas, non-target theorems, proof bodies, and proof-only definitions
 remain absent. The layered ownership model also remains: a read-only Model
 layer, a read-only Defs layer, and one editable task module containing a single

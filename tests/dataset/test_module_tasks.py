@@ -635,6 +635,93 @@ def test_a_local_name_does_not_keep_the_same_name_in_a_dependency(tiny_homonym):
     assert "Inv ==" not in text
 
 
+QUALIFIED_LOCK = """---- MODULE TinyLock ----
+EXTENDS Naturals
+
+VARIABLE x
+
+vars == << x >>
+
+Init == x = 0
+
+proc == x' = x + 1
+
+Next == proc
+
+Spec == Init /\\ [][Next]_vars
+====
+"""
+
+QUALIFIED_PETERSON = """---- MODULE TinyPeterson ----
+EXTENDS Naturals
+
+VARIABLE y
+
+Init == y = 0
+
+Next == y' = y
+
+Spec == Init /\\ [][Next]_y
+====
+"""
+
+QUALIFIED_SOURCE = """---- MODULE TinyLockHS ----
+EXTENDS TinyLock
+
+VARIABLE h
+
+InitHS == Init /\\ h = 0
+
+NextHS == UNCHANGED << x, h >>
+
+SpecHS == InitHS /\\ [][NextHS]_<< vars, h >>
+
+P == INSTANCE TinyPeterson WITH y <- h
+
+THEOREM Refinement == SpecHS => P!Spec
+OBVIOUS
+====
+"""
+
+
+@pytest.fixture
+def tiny_qualified(tmp_path):
+    source_root = tmp_path / "source"
+    (source_root / "LockHSQ").mkdir(parents=True)
+    (source_root / "LockHSQ" / "TinyLock.tla").write_text(QUALIFIED_LOCK)
+    (source_root / "LockHSQ" / "TinyPeterson.tla").write_text(QUALIFIED_PETERSON)
+    (source_root / "LockHSQ" / "TinyLockHS.tla").write_text(QUALIFIED_SOURCE)
+    corpus_dir = tmp_path / "benchmark" / "proof-from-scratch"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / MANIFEST_FILENAME).write_text(
+        json.dumps(
+            {"LockHSQ/TinyLockHS_Refinement.tla": {"spec_id": "LockHSQ/TinyLockHS.tla", "context": []}},
+            indent=2,
+        )
+    )
+    return {
+        "source_root": source_root,
+        "corpus_dir": corpus_dir,
+        "output_root": tmp_path / "benchmark" / "proof-from-scratch-module",
+    }
+
+
+@requires_sany
+def test_a_qualified_use_does_not_keep_the_same_name_in_an_extends_dependency(tiny_qualified):
+    document = _run(tiny_qualified)
+    entry = document["module_tasks"][0]
+    lock = next(rel for rel in entry["context"] if rel.endswith("TinyLock.tla"))
+    peterson = next(rel for rel in entry["context"] if rel.endswith("TinyPeterson.tla"))
+    lock_text = (tiny_qualified["output_root"] / lock).read_text()
+    peterson_text = (tiny_qualified["output_root"] / peterson).read_text()
+
+    assert "Init ==" in lock_text
+    assert "Spec ==" not in lock_text
+    assert "Next ==" not in lock_text
+    assert "proc ==" not in lock_text
+    assert "Spec ==" in peterson_text
+
+
 @requires_sany
 def test_a_pruned_dependency_still_leaves_a_SANY_valid_task(tiny_dep):
     # Generation SANY-checks each emitted task, so completing at all proves the
@@ -858,6 +945,16 @@ def test_shipped_voting_dependency_does_not_keep_unreferenced_consensus_inv():
 
     assert "Spec ==" in text
     assert "Inv ==" not in text
+
+
+@requires_suite
+def test_shipped_lockhs_does_not_keep_lock_spec_from_a_qualified_use():
+    text = (SUITE / "tlaplus_examples_locks_auxiliary_vars" / "LockHS" / "Lock.tla").read_text()
+
+    assert "Init ==" in text
+    assert "Spec ==" not in text
+    assert "Next ==" not in text
+    assert "proc(" not in text
 
 
 @requires_suite

@@ -606,15 +606,21 @@ def _text_without_strings(text):
 
 
 def _scan_identifiers(text):
-    """Identifiers mentioned in `text`, including TLA+ subscript forms.
+    """Bare identifiers mentioned in `text`, including TLA+ subscript forms.
 
     A stuttering subscript binds the name with a leading underscore —
     `[][Next]_vars` and `WF_vars(p)` both use `vars` — so the raw token is
     `_vars`. Yield the bare name too, or `vars` looks unused and gets pruned
     out of a dependency that still needs it.
+
+    Skip the right-hand name of ``P!Spec``; ``instance_qualified_uses`` seeds it.
     """
     names = set()
-    for tok in _IDENTIFIER.findall(_text_without_strings(text)):
+    cleaned = _text_without_strings(text)
+    for match in _IDENTIFIER.finditer(cleaned):
+        if match.start() > 0 and cleaned[match.start() - 1] == "!":
+            continue
+        tok = match.group(0)
         names.add(tok)
         if tok.startswith("_") and len(tok) > 1:
             names.add(tok.lstrip("_"))
@@ -866,7 +872,7 @@ def prune_dep_text(dep_path, keep_by_path, audit_writer=None):
 
 
 def referenced_identifiers(*texts):
-    """Every identifier mentioned across `texts` — the seeds for dep pruning."""
+    """Bare identifiers mentioned across `texts` — the seeds for dep pruning."""
     names = set()
     for t in texts:
         names.update(_scan_identifiers(t))

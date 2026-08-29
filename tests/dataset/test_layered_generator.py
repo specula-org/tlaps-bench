@@ -744,6 +744,55 @@ def test_dep_keep_names_resolves_instance_declared_in_a_sibling(tmp_path, monkey
     assert "Inv" not in keep[str(voting)]
 
 
+def test_dep_keep_names_does_not_seed_an_extends_spec_from_a_qualified_use(tmp_path, monkeypatch):
+    """P!Spec must not keep Lock.Spec just because Lock is EXTENDS'd."""
+    lock = tmp_path / "Lock.tla"
+    peterson = tmp_path / "Peterson.tla"
+    lock.write_text("---- MODULE Lock ----\nInit == TRUE\nproc == TRUE\nNext == proc\nSpec == Init /\\ Next\n====\n")
+    peterson.write_text("---- MODULE Peterson ----\nInit == TRUE\nNext == TRUE\nSpec == Init /\\ Next\n====\n")
+    dumps = {
+        str(lock): {
+            "module": "Lock",
+            "extends": [],
+            "operators": [
+                {"name": "Init", "loc": {"line_start": 2, "line_end": 2}, "references": []},
+                {"name": "proc", "loc": {"line_start": 3, "line_end": 3}, "references": []},
+                {"name": "Next", "loc": {"line_start": 4, "line_end": 4}, "references": ["proc"]},
+                {"name": "Spec", "loc": {"line_start": 5, "line_end": 5}, "references": ["Init", "Next"]},
+            ],
+            "instances": [],
+            "assumes": [],
+        },
+        str(peterson): {
+            "module": "Peterson",
+            "extends": [],
+            "operators": [
+                {"name": "Init", "loc": {"line_start": 2, "line_end": 2}, "references": []},
+                {"name": "Next", "loc": {"line_start": 3, "line_end": 3}, "references": []},
+                {"name": "Spec", "loc": {"line_start": 4, "line_end": 4}, "references": ["Init", "Next"]},
+            ],
+            "instances": [],
+            "assumes": [],
+        },
+    }
+    monkeypatch.setattr(generate, "dump_sany", lambda p: dumps[str(p)])
+
+    keep = dep_keep_names(
+        [str(lock), str(peterson)],
+        referenced_identifiers("InitHS == Init", "THEOREM SpecHS => P!Spec"),
+        source_defined={"InitHS", "SpecHS", "P"},
+        instance_modules={"P": "Peterson"},
+        qualified_uses=instance_qualified_uses("THEOREM SpecHS => P!Spec"),
+        imported_modules=["Lock"],
+    )
+
+    assert "Spec" in keep[str(peterson)]
+    assert "Init" in keep[str(lock)]
+    assert "Spec" not in keep[str(lock)]
+    assert "Next" not in keep[str(lock)]
+    assert "proc" not in keep[str(lock)]
+
+
 def test_unused_operator_qualified_uses_do_not_seed_a_dependency(tmp_path, monkeypatch):
     """A dropped local operator's C!Inv must not keep Consensus.Inv."""
     consensus = tmp_path / "Consensus.tla"
@@ -788,6 +837,14 @@ def test_unused_operator_qualified_uses_do_not_seed_a_dependency(tmp_path, monke
 
 def test_instance_qualified_uses_ignore_string_literals():
     assert instance_qualified_uses('C!Spec /\\ x = "C!Inv"') == {("C", "Spec")}
+
+
+def test_referenced_identifiers_skip_the_right_hand_name_of_a_qualified_use():
+    """P!Spec must not put Spec in the bare seed set."""
+    assert "Spec" not in referenced_identifiers("SpecHS => P!Spec")
+    assert "P" in referenced_identifiers("SpecHS => P!Spec")
+    assert "Spec" in referenced_identifiers("Spec => P!Spec")
+    assert "Spec" not in referenced_identifiers('C!Spec /\\ x = "C!Inv"')
 
 
 def test_referenced_identifiers_ignores_tla_backslash_operators():
