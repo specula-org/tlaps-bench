@@ -18,6 +18,8 @@ from evaluator import runner
 from evaluator.backends.agentic import AgenticBackend
 from evaluator.backends.base import SubmissionPlan
 from evaluator.backends.codex import CodexBackend
+from evaluator.backends.copilot import CopilotBackend
+from evaluator.backends.cursor import CursorBackend
 from evaluator.backends.pi import PiBackend
 from evaluator.termination import TerminationReason
 from evaluator.usage import RequestUsage, UsageCost, UsageSummary
@@ -699,6 +701,105 @@ def test_codex_item_activity_prevents_retry_when_failed_turn_has_no_usage(tmp_pa
     assert grader["n"] == 1
     assert result["termination_reason"] == TerminationReason.INFRA_ERROR
     assert result["usage"]["status"] == "unavailable"
+    assert "infra_retries" not in result
+    assert sleeps == []
+
+
+def test_cursor_partial_edit_activity_prevents_retry_without_terminal_usage(tmp_path, monkeypatch):
+    backend = CursorBackend(model="test-model")
+    failed_after_edit = {
+        "exit": 1,
+        "events": [
+            {"type": "system", "subtype": "init"},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "I will update the proof."}]},
+            },
+            {
+                "type": "tool_call",
+                "subtype": "started",
+                "call_id": "edit-1",
+                "tool_call": {"editToolCall": {"args": {"path": "Bar.tla"}}},
+            },
+            {
+                "type": "tool_call",
+                "subtype": "completed",
+                "call_id": "edit-1",
+                "tool_call": {
+                    "editToolCall": {
+                        "args": {"path": "Bar.tla"},
+                        "result": {"success": True},
+                    }
+                },
+            },
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_after_edit])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
+
+    assert agent["n"] == 1
+    assert grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.INFRA_ERROR
+    assert result["tool_calls"]["total"] == 1
+    assert result["tool_calls"]["is_lower_bound"] is True
+    assert "infra_retries" not in result
+    assert sleeps == []
+
+
+def test_copilot_partial_edit_activity_prevents_retry_without_terminal_otel(tmp_path, monkeypatch):
+    backend = CopilotBackend(model="test-model")
+    failed_after_edit = {
+        "exit": 1,
+        "events": [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "I will update the proof.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "edit-1",
+                            "name": "edit",
+                            "arguments": {"path": "Bar.tla"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "edit-1",
+                    "toolName": "edit",
+                    "arguments": {"path": "Bar.tla"},
+                },
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "edit-1",
+                    "success": True,
+                    "result": {"content": "updated Bar.tla"},
+                },
+            },
+            {
+                "type": "session.error",
+                "data": {"errorType": "query", "message": "stream closed"},
+            },
+        ],
+    }
+    agent = _install_agent(monkeypatch, backend, [failed_after_edit])
+    grader = _install_grader(monkeypatch, verdict="FAIL")
+    sleeps = _no_sleep(monkeypatch)
+
+    result = runner.run_single_benchmark(_work_item(tmp_path, backend, infra_retries=3))
+
+    assert agent["n"] == 1
+    assert grader["n"] == 1
+    assert result["termination_reason"] == TerminationReason.INFRA_ERROR
+    assert result["tool_calls"]["total"] == 1
+    assert result["tool_calls"]["is_lower_bound"] is True
     assert "infra_retries" not in result
     assert sleeps == []
 

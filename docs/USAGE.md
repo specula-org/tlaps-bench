@@ -421,7 +421,7 @@ uv run tlaps-bench run --backend codex --model gpt-5.5 --output-dir results/proo
 
 The runner skips benchmarks already recorded as `SKIP` or as a genuine `PASS` in that directory (first-attempt or via a continuation round), and reruns the rest.
 
-When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list. Proof-from-scratch runs also record `run-manifest.json` and reject resume when the canonical corpus, execution sources, pinned official proof-library digest, or content-locked verification toolchain changed.
+When resuming a task-list run, pass the same `--task-list` again. The runner rejects a different list, a different mode, or an output directory whose prior results were not recorded with a task list. Proof-from-scratch runs also record `run-manifest.json` and reject resume when the canonical corpus, execution sources, pinned official proof-library digest, content-locked verification toolchain, execution limits, or persistent-session policy changed. If the original run used `--session-dir` or the implicit session directory from `--keep-container`, resume with the same resolved session path.
 
 Inline infra retries are intentionally short: the default `--infra-retries 3` gives the original attempt plus three retries with brief backoff. If a longer provider or network outage leaves `INFRA_ERROR` / `QUOTA_EXHAUSTED` results, rerun later with the same `--output-dir --resume`; those non-genuine results are not skipped.
 
@@ -501,14 +501,14 @@ With `--keep-container` this happens automatically under `~/.tlaps-bench/session
 uv run tlaps-bench run --backend copilot --session-dir ./sessions --filter my_benchmark
 ```
 
-Each run writes its state to `<session-dir>/<backend>/<benchmark>/` (or `<...>/<container-name>/` under `--keep-container`, one dir per retained container). For `codex`/`codex_single_turn`/`claude_code`/`pi` the credential files are stored there too, so a single mount holds both auth and session. Because it is a real host path — not `/tmp` and not tied to the container's lifetime — the state survives container removal *and* reboot, and can be moved to another machine. A `.gitignore` (`*`) is written at the session root so this credential-bearing data can't be accidentally committed. `--session-dir` is ignored with `--no-container`.
+Each physical module writes its state to `<session-dir>/<backend>/<module-key>/`. The key includes the complete mode-relative module path, so modules with the same filename never share state. Retries, continuation rounds, `--keep-container`, and `--resume` all reuse that module's directory. For `codex`/`codex_single_turn`/`claude_code`/`pi` the credential files are stored there too, so a single mount holds both auth and session. Because it is a real host path — not `/tmp` and not tied to the container's lifetime — the state survives container removal and reboot. A `.gitignore` (`*`) is written at the session root so this credential-bearing data can't be accidentally committed. `--session-dir` is ignored with `--no-container`.
 
 ### Restoring a session into a container
 
 To resume or inspect a persisted session, mount it back into a fresh container:
 
 ```bash
-scripts/restore-session.sh --backend copilot ~/.tlaps-bench/sessions/copilot/<container-name>
+scripts/restore-session.sh --backend copilot ~/.tlaps-bench/sessions/copilot/<module-key>
 ```
 
 This starts an interactive `tlaps-bench-base` shell with the session mounted at the backend's session path (e.g. `/root/.copilot`), so you can read the transcript or run the agent CLI's own resume command (e.g. `copilot --resume`). The container is removed on exit; the host session directory is not. (Network egress is not firewalled in this debug shell, and no benchmark files are mounted — it is for inspecting/continuing the agent session, not for grading.)

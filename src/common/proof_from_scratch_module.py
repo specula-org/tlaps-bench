@@ -1,10 +1,9 @@
-"""Shared contract for future module-level proof-from-scratch tasks.
+"""Shared contract for module-level proof-from-scratch tasks.
 
-The current corpus remains one physical task per target theorem.  A future
-corpus revision will group those same target IDs into one editable proof module
-per source specification.  This module fixes only the small boundary shared by
-the generator and evaluator: strict metadata, identified proof regions, fixed
-scaffold extraction, and dependency-closed trust.  It deliberately performs no
+The generated corpus groups existing theorem target IDs into one editable proof
+module per source specification. This module fixes the boundary shared by the
+generator and evaluator: strict metadata, identified proof regions, fixed
+scaffold extraction, and dependency-closed trust. It deliberately performs no
 SANY or TLAPM work.
 """
 
@@ -34,7 +33,7 @@ class ModuleTaskContractError(ValueError):
 
 @dataclass(frozen=True)
 class ModuleProofUnit:
-    """One existing theorem target scored inside a future module task."""
+    """One existing theorem target scored inside a module task."""
 
     task_id: str
     statement_sha256: str

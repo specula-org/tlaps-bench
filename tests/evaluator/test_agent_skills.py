@@ -449,6 +449,21 @@ def test_supported_backends_receive_byte_exact_skills_in_clean_fresh_workspaces(
             runner.shutil.rmtree(workspace)
 
 
+def test_agent_skill_snapshot_freezes_bytes_and_has_content_identity(tmp_path):
+    catalog = tmp_path / "catalog"
+    expected = _write_catalog(catalog)
+    backend = get_backend("codex")
+
+    frozen = runner.AgentSkillsSnapshot.capture(backend, catalog)
+    (catalog / "zeta-skill" / "references" / "payload.bin").write_bytes(b"changed after capture")
+    changed = runner.AgentSkillsSnapshot.capture(backend, catalog)
+    destination = tmp_path / "snapshot"
+    frozen.materialize(destination)
+
+    assert frozen.digest() != changed.digest()
+    assert (destination / "alpha-skill" / "SKILL.md").read_bytes() == expected["alpha-skill"]["SKILL.md"]
+
+
 @pytest.mark.parametrize("backend_name", UNSUPPORTED_BACKENDS)
 def test_unsupported_backends_receive_no_skills_and_report_empty_metadata(tmp_path, monkeypatch, backend_name):
     catalog = tmp_path / "catalog"

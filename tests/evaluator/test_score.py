@@ -21,6 +21,7 @@ from evaluator.score import (
     continuation_budget,
     continuation_interrupted,
     continuation_passed,
+    is_non_genuine,
     is_pass,
     is_pass_with_continuations,
     is_skipped,
@@ -536,6 +537,28 @@ def test_continuation_interrupted_only_for_unresolved_cut_chains():
     # A recovered chain resolved, however its stream ended.
     assert not continuation_interrupted(_r("FAIL", continuations=_cont("FAIL", "PASS")))
     assert not continuation_interrupted(_r("FAIL"))  # no rounds recorded
+
+
+def test_graded_module_progress_after_interruption_remains_a_genuine_result():
+    result = _r(
+        "FAIL",
+        termination_reason="QUOTA_EXHAUSTED",
+        graded_after_interruption=True,
+        module_result={"complete": False},
+    )
+
+    assert not is_non_genuine(result)
+
+
+def test_invalid_module_submission_after_model_work_remains_a_genuine_failure():
+    result = _r(
+        "FAIL",
+        termination_reason="INFRA_ERROR",
+        invalid_submission_after_interruption=True,
+    )
+
+    assert not is_non_genuine(result)
+    assert not continuation_interrupted(_r("FAIL", continuations=[{"round": 1, **result}]))
 
 
 def test_continuation_budget_uniform_or_none():
