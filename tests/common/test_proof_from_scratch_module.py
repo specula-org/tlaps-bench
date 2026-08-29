@@ -132,6 +132,22 @@ def test_render_changes_only_editable_bodies():
     assert [proof.text for proof in submitted.proofs] == ["PROOF OBVIOUS\n", "PROOF BY A\n"]
 
 
+def test_render_terminates_nonempty_bodies_and_preserves_empty_bodies():
+    source = _task_source().replace("Helper == TRUE\n", "")
+    canonical = parse_module_task_regions(source, (UNIT_A, UNIT_B))
+
+    assert canonical.render() == source
+
+    submitted_source = canonical.render(
+        helpers="Invariant == TRUE",
+        proofs={UNIT_A: "PROOF OBVIOUS", UNIT_B: ""},
+    )
+    submitted = parse_module_task_regions(submitted_source, (UNIT_A, UNIT_B))
+
+    assert submitted.helpers == "Invariant == TRUE\n"
+    assert [proof.text for proof in submitted.proofs] == ["PROOF OBVIOUS\n", ""]
+
+
 def test_fixed_segments_detect_statement_tampering():
     canonical = parse_module_task_regions(_task_source(), (UNIT_A, UNIT_B))
     submitted = parse_module_task_regions(_task_source(statement_b="THEOREM B == TRUE"), (UNIT_A, UNIT_B))

@@ -91,6 +91,7 @@ class ModuleTaskRegions:
 
         editable = [self.helpers if helpers is None else helpers]
         editable.extend(replacements.get(proof.task_id, proof.text) for proof in self.proofs)
+        editable = [body if not body or body.endswith(("\n", "\r")) else body + "\n" for body in editable]
         parts: list[str] = []
         for fixed, body in zip(self.fixed_segments[:-1], editable, strict=True):
             parts.extend((fixed, body))
