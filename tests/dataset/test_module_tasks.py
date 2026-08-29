@@ -560,6 +560,81 @@ def test_a_copied_dependency_is_pruned_to_what_the_task_reaches(tiny_dep):
     assert "THEOREM" not in text
 
 
+HOMONYM_BASE = """---- MODULE TinyBase ----
+EXTENDS Naturals
+
+Init == TRUE
+
+Next == TRUE
+
+Spec == Init /\\ Next
+
+\\* Unrelated to TinyHomonym's Inv; keeping it would leak as C!Inv.
+Inv == TRUE
+====
+"""
+
+HOMONYM_SOURCE = """---- MODULE TinyHomonym ----
+EXTENDS Naturals
+
+VARIABLE x
+
+vars == << x >>
+
+Init == x = 0
+
+Next == x' = x + 1
+
+Spec == Init /\\ [][Next]_vars
+
+Inv == x >= 0
+
+C == INSTANCE TinyBase
+
+THEOREM Invariant == Spec => []Inv
+OBVIOUS
+
+THEOREM Refinement == Spec => C!Spec
+OBVIOUS
+====
+"""
+
+
+@pytest.fixture
+def tiny_homonym(tmp_path):
+    source_root = tmp_path / "source"
+    (source_root / "Homonym").mkdir(parents=True)
+    (source_root / "Homonym" / "TinyBase.tla").write_text(HOMONYM_BASE)
+    (source_root / "Homonym" / "TinyHomonym.tla").write_text(HOMONYM_SOURCE)
+    corpus_dir = tmp_path / "benchmark" / "proof-from-scratch"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / MANIFEST_FILENAME).write_text(
+        json.dumps(
+            {
+                "Homonym/TinyHomonym_Invariant.tla": {"spec_id": "Homonym/TinyHomonym.tla", "context": []},
+                "Homonym/TinyHomonym_Refinement.tla": {"spec_id": "Homonym/TinyHomonym.tla", "context": []},
+            },
+            indent=2,
+        )
+    )
+    return {
+        "source_root": source_root,
+        "corpus_dir": corpus_dir,
+        "output_root": tmp_path / "benchmark" / "proof-from-scratch-module",
+    }
+
+
+@requires_sany
+def test_a_local_name_does_not_keep_the_same_name_in_a_dependency(tiny_homonym):
+    document = _run(tiny_homonym)
+    entry = document["module_tasks"][0]
+    dep = next(rel for rel in entry["context"] if rel.endswith("TinyBase.tla"))
+    text = (tiny_homonym["output_root"] / dep).read_text()
+
+    assert "Spec ==" in text
+    assert "Inv ==" not in text
+
+
 @requires_sany
 def test_a_pruned_dependency_still_leaves_a_SANY_valid_task(tiny_dep):
     # Generation SANY-checks each emitted task, so completing at all proves the
@@ -775,6 +850,14 @@ def test_shipped_module_tasks_do_not_preload_proof_libraries(shipped):
 def test_the_shipped_corpus_is_not_inside_the_module_suite():
     with pytest.raises(ModuleTaskError):
         _assert_writable_output(SUITE, SUITE)
+
+
+@requires_suite
+def test_shipped_voting_dependency_does_not_keep_unreferenced_consensus_inv():
+    text = (SUITE / "Consensus" / "Voting" / "Consensus.tla").read_text()
+
+    assert "Spec ==" in text
+    assert "Inv ==" not in text
 
 
 @requires_suite

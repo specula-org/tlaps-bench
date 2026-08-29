@@ -6,9 +6,6 @@ CONSTANT Value
 
 VARIABLE chosen
 
-TypeOK == /\ chosen \subseteq Value
-          /\ IsFiniteSet(chosen) 
-
 Init == chosen = {}
 
 Next == /\ chosen = {}
@@ -17,8 +14,5 @@ Next == /\ chosen = {}
 Spec == Init /\ [][Next]_chosen 
 
 -----------------------------------------------------------------------------
-
-Inv == /\ TypeOK
-       /\ Cardinality(chosen) \leq 1
 
 =============================================================================

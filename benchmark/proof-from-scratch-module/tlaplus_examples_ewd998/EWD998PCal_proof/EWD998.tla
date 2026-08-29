@@ -21,8 +21,6 @@ VARIABLES
  pending,    
  
  token       
-  
-vars == <<active, color, counter, pending, token>>
 
 ------------------------------------------------------------------------------
  
@@ -35,69 +33,9 @@ Init ==
   /\ pending = [i \in Node |-> 0]
   /\ token \in [ pos: Node, q: {0}, color: {"black"} ]
 
-InitiateProbe ==
-  
-  /\ token.pos = 0
-  /\ 
-     \/ token.color = "black"
-     \/ color[0] = "black"
-     \/ counter[0] + token.q > 0
-  /\ token' = [pos |-> N-1, q |-> 0, color |-> "white"]
-  /\ color' = [ color EXCEPT ![0] = "white" ]
-  
-  /\ UNCHANGED <<active, counter, pending>>                            
-  
-PassToken(i) ==
-  
-  /\ ~ active[i] 
-  /\ token.pos = i
-  /\ token' = [pos |-> token.pos - 1,
-               q |-> token.q + counter[i],
-               color |-> IF color[i] = "black" THEN "black" ELSE token.color]
-            
-  /\ color' = [ color EXCEPT ![i] = "white" ]
-  
-  /\ UNCHANGED <<active, counter, pending>>
-
-System == \/ InitiateProbe
-          \/ \E i \in Node \ {0} : PassToken(i)
-
 -----------------------------------------------------------------------------
 
-SendMsg(i) ==
-  
-  /\ active[i]
-  
-  /\ counter' = [counter EXCEPT ![i] = @ + 1]
-  
-  /\ \E j \in Node \ {i} : pending' = [pending EXCEPT ![j] = @ + 1]
-
-  /\ UNCHANGED <<active, color, token>>
-
-RecvMsg(i) ==
-  /\ pending[i] > 0
-  /\ pending' = [pending EXCEPT ![i] = @ - 1]
-  
-  /\ counter' = [counter EXCEPT ![i] = @ - 1]
-  
-  /\ color' = [ color EXCEPT ![i] = "black" ]
-  
-  /\ active' = [ active EXCEPT ![i] = TRUE ]
-  /\ UNCHANGED <<token>>                           
-
-Deactivate(i) ==
-  /\ active[i]
-  /\ active' = [active EXCEPT ![i] = FALSE]
-  /\ UNCHANGED <<color, counter, pending, token>>
-
-Environment == \E i \in Node : SendMsg(i) \/ RecvMsg(i) \/ Deactivate(i)
-
 -----------------------------------------------------------------------------
-
-Next ==
-  System \/ Environment
-
-Spec == Init /\ [][Next]_vars /\ WF_vars(System)
 
 -----------------------------------------------------------------------------
 

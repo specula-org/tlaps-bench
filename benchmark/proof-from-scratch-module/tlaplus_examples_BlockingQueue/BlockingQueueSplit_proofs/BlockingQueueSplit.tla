@@ -49,11 +49,6 @@ Get(t) ==
 
 -----------------------------------------------------------------------------
 
-TypeInv == /\ buffer \in Seq(Producers) 
-           /\ Len(buffer) \in 0..BufCapacity
-           /\ waitSetP \in SUBSET Producers
-           /\ waitSetC \in SUBSET Consumers
-
 Init == /\ buffer = <<>>
         /\ waitSetC = {}
         /\ waitSetP = {}

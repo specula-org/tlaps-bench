@@ -261,6 +261,9 @@ statements' dependency closures. A copied dependency module is pruned the same
 way the per-theorem corpus prunes it -- to the closure of what the emitted
 layers and statements reference, seeded from every statement rather than one --
 because anything a dependency defines is handed to the agent for free.
+The closure keeps module identity: a name is kept in a dependency only when
+that module is actually referenced (EXTENDS, unnamed INSTANCE, or `C!Spec`),
+not because the task happens to define the same bare identifier.
 Original lemmas, non-target theorems, proof bodies, and proof-only definitions
 remain absent. The layered ownership model also remains: a read-only Model
 layer, a read-only Defs layer, and one editable task module containing a single

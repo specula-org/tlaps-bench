@@ -346,14 +346,23 @@ def emit_module_task(
     # whole `Consensus.tla` gives away the `TypeOK`/`Inv` scaffolding a
     # from-scratch task exists to make the agent rediscover. Seeded from every
     # statement, and closed over the group because dependencies reference
-    # each other.
+    # each other. The closure is module-aware: a local `Inv` does not keep an
+    # unrelated `Inv` behind `C!`.
     dep_paths = [path for _module, path in generate.layered_dep_paths(dump, str(source_root / spec_id), reachable)]
     if dep_paths:
         dep_dir = output_root / relative_dir / base_module
-        seeds = generate.referenced_identifiers(defs_text, model_text, *(text for _id, text in statements))
-        keep = generate.dep_keep_names(dep_paths, seeds, audit)
+        layer_texts = (defs_text, model_text, *(text for _id, text in statements))
+        keep = generate.dep_keep_names(
+            dep_paths,
+            generate.referenced_identifiers(*layer_texts),
+            audit,
+            source_defined=generate.source_defined_names(dump),
+            instance_modules=generate.source_instance_modules(dump),
+            qualified_uses=generate.instance_qualified_uses(*layer_texts),
+            imported_modules=generate.source_imported_modules(dump),
+        )
         for dep_path in dep_paths:
-            _write(dep_dir / os.path.basename(dep_path), generate.prune_dep_module(dep_path, keep, audit))
+            _write(dep_dir / os.path.basename(dep_path), generate.prune_dep_text(dep_path, keep, audit))
             context.append((relative_dir / base_module / os.path.basename(dep_path)).as_posix())
 
     return {

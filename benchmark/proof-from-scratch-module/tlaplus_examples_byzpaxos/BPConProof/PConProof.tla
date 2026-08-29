@@ -14,12 +14,6 @@ ASSUME BallotAssump == (Ballot \cup {-1}) \cap Acceptor = {}
 
 None == CHOOSE v : v \notin Value
 
-Message ==      [type : {"1a"}, bal : Ballot]
-           \cup [type : {"1b"}, acc : Acceptor, bal : Ballot, 
-                 mbal : Ballot \cup {-1}, mval : Value \cup {None}]
-           \cup [type : {"1c"}, bal : Ballot, val : Value]
-           \cup [type : {"2a"}, bal : Ballot, val : Value]
-           \cup [type : {"2b"}, acc : Acceptor, bal : Ballot, val : Value]
 -----------------------------------------------------------------------------
 
 VARIABLES maxBal, maxVBal, maxVVal, msgs
@@ -74,11 +68,6 @@ Spec == Init /\ [][Next]_vars
 -----------------------------------------------------------------------------
 
 -----------------------------------------------------------------------------
-
-TypeOK == /\ maxBal  \in [Acceptor -> Ballot \cup {-1}]
-          /\ maxVBal \in [Acceptor -> Ballot \cup {-1}]
-          /\ maxVVal \in [Acceptor -> Value \cup {None}]
-          /\ msgs \subseteq Message    
 
 chosen == {v \in Value : \E Q \in Quorum, b \in Ballot :
                            \A a \in Q : \E m \in msgs : /\ m.type = "2b"

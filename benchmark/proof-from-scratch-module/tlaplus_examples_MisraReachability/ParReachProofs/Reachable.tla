@@ -5,7 +5,6 @@ EXTENDS Reachability, Integers, FiniteSets
 CONSTANT Root
 ASSUME RootAssump == Root \in Nodes
 
-Reachable == ReachableFrom({Root})
 ---------------------------------------------------------------------------
 
 VARIABLES marked, vroot, pc
@@ -33,9 +32,6 @@ Terminating == pc = "Done" /\ UNCHANGED vars
 
 Next == a
            \/ Terminating
-
-Spec == /\ Init /\ [][Next]_vars
-        /\ WF_vars(Next)
 
 ----------------------------------------------------------------------------
 
