@@ -361,6 +361,11 @@ def emit_module_task(
             qualified_uses=generate.instance_qualified_uses(*layer_texts),
             imported_modules=generate.source_imported_modules(dump),
         )
+        if keep is None:
+            raise ModuleTaskError(
+                f"{spec_id!r}: dependency pruning could not safely analyze every dependency; "
+                "refusing to expose unpruned definitions"
+            )
         for dep_path in dep_paths:
             _write(dep_dir / os.path.basename(dep_path), generate.prune_dep_text(dep_path, keep, audit))
             context.append((relative_dir / base_module / os.path.basename(dep_path)).as_posix())

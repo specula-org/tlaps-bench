@@ -560,6 +560,25 @@ def test_a_copied_dependency_is_pruned_to_what_the_task_reaches(tiny_dep):
     assert "THEOREM" not in text
 
 
+@requires_sany
+def test_a_dependency_that_cannot_be_analyzed_stops_generation(tiny_dep, monkeypatch):
+    original_dump_sany = generate.dump_sany
+
+    def fail_for_dependency(path):
+        if Path(path).name == "TinyBase.tla":
+            raise RuntimeError("dependency analysis failed")
+        return original_dump_sany(path)
+
+    monkeypatch.setattr(generate, "dump_sany", fail_for_dependency)
+    audit = StringIO()
+
+    with pytest.raises(ModuleTaskError, match="refusing to expose unpruned definitions"):
+        generate_module_tasks(audit=audit, validate=False, **tiny_dep)
+
+    assert "not dumpable, group kept whole" in audit.getvalue()
+    assert not (tiny_dep["output_root"] / MANIFEST_FILENAME).exists()
+
+
 HOMONYM_BASE = """---- MODULE TinyBase ----
 EXTENDS Naturals
 
