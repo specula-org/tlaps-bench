@@ -95,6 +95,8 @@ from common.proof_libraries import (
 )
 from common.task_contract import (
     EditableRegionError,
+    FixedSegmentStatus,
+    compare_fixed_segments,
     contains_marker_text,
     parse_editable_regions,
     parse_proof_region,
@@ -680,29 +682,16 @@ def check_editable_region_integrity(filepath, benchmark_dir, *, proof_only=False
     except EditableRegionError as exc:
         return [(0, f"editable-region markers were modified: {exc}", "SCAFFOLD_MODIFIED")]
 
-    if submitted_regions.fixed_segments != canonical_regions.fixed_segments:
-        canonical_fixed = canonical_regions.fixed_segments
-        submitted_fixed = submitted_regions.fixed_segments
-        canonical_suffix = canonical_fixed[-1]
-        submitted_suffix = submitted_fixed[-1]
-        extra_suffix = (
-            submitted_suffix[len(canonical_suffix) :] if submitted_suffix.startswith(canonical_suffix) else None
-        )
-        if submitted_fixed[:-1] == canonical_fixed[:-1] and extra_suffix and not extra_suffix.strip("\r\n"):
-            return []
-
-        def normalize_format(regions):
-            normalized = tuple(re.sub(r"\r\n|\r|\n", "\n", segment) for segment in regions.fixed_segments)
-            return (*normalized[:-1], normalized[-1].rstrip("\n"))
-
-        if normalize_format(submitted_regions) == normalize_format(canonical_regions):
-            return [
-                (
-                    0,
-                    "fixed task scaffold differs only in line endings or the final newline",
-                    "SCAFFOLD_FORMAT_MODIFIED",
-                )
-            ]
+    fixed_segment_status = compare_fixed_segments(canonical_regions.fixed_segments, submitted_regions.fixed_segments)
+    if fixed_segment_status is FixedSegmentStatus.FORMAT_MODIFIED:
+        return [
+            (
+                0,
+                "fixed task scaffold differs only in line endings or the final newline",
+                "SCAFFOLD_FORMAT_MODIFIED",
+            )
+        ]
+    if fixed_segment_status is FixedSegmentStatus.MODIFIED:
         return [(0, "fixed task scaffold outside editable regions was modified", "SCAFFOLD_MODIFIED")]
     return []
 
@@ -1085,6 +1074,7 @@ def parse_strict_status(tlapm_exit, tlapm_output):
 
 
 MODULE_RESULT_PREFIX = "MODULE-RESULT: "
+_NON_CHEAT_MODULE_INTEGRITY_CODES = frozenset({"SCAFFOLD_FORMAT_MODIFIED"})
 
 
 def authoritative_module_unit_ids(filepath: str, benchmark_dir: str | None) -> tuple[str, ...] | None:
@@ -1377,7 +1367,11 @@ def run_module_task_check(
             for code, message in integrity_issues:
                 emit(f"FAIL {code}: {message}")
             emit("GATES-FAILED: module_integrity")
-            emit("CHEAT-DETECTED: " + ",".join(sorted({code for code, _message in integrity_issues})))
+            cheat_codes = sorted(
+                {code for code, _message in integrity_issues if code not in _NON_CHEAT_MODULE_INTEGRITY_CODES}
+            )
+            if cheat_codes:
+                emit("CHEAT-DETECTED: " + ",".join(cheat_codes))
             return 1
 
         unit_results: list[dict[str, object]] = []

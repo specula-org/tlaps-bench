@@ -11,6 +11,7 @@ from common.proof_from_scratch_module import (
     ModuleTaskRegions,
     parse_module_task_regions,
 )
+from common.task_contract import FixedSegmentStatus, compare_fixed_segments
 from common.tla_modules import mask_comments_and_strings
 from tlacore.model import Module, Theorem
 
@@ -297,7 +298,13 @@ def analyze_module_submission(
     expected = tuple(expected_unit_ids)
     canonical_regions = _parse_regions(canonical_source, expected, label="canonical")
     submitted_regions = _parse_regions(submitted_source, expected, label="submitted")
-    if submitted_regions.fixed_segments != canonical_regions.fixed_segments:
+    fixed_segment_status = compare_fixed_segments(canonical_regions.fixed_segments, submitted_regions.fixed_segments)
+    if fixed_segment_status is FixedSegmentStatus.FORMAT_MODIFIED:
+        raise ModuleSubmissionError(
+            "SCAFFOLD_FORMAT_MODIFIED",
+            "fixed module task scaffold differs only in line endings or the final newline",
+        )
+    if fixed_segment_status is FixedSegmentStatus.MODIFIED:
         raise ModuleSubmissionError(
             "SCAFFOLD_MODIFIED",
             "fixed module task scaffold outside editable regions was modified",

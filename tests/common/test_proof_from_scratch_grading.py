@@ -430,6 +430,45 @@ def test_scaffold_and_statement_modification_are_rejected(mutated: str, statemen
     assert caught.value.code == "SCAFFOLD_MODIFIED"
 
 
+def test_extra_eof_newlines_are_allowed():
+    canonical, submitted, module = _submission(
+        proof_bodies={UNIT_A: "PROOF BY TRUE", UNIT_B: "PROOF BY TRUE"},
+    )
+
+    analysis = analyze_module_submission(
+        canonical_source=canonical,
+        submitted_source=submitted + "\r\n\n",
+        expected_unit_ids=UNITS,
+        module=module,
+    )
+
+    assert tuple(unit.unit_id for unit in analysis.target_units) == UNITS
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        lambda source: source.replace("\n", "\r\n"),
+        lambda source: source.removesuffix("\n"),
+    ],
+    ids=("line-ending-style", "missing-final-newline"),
+)
+def test_newline_only_scaffold_changes_are_format_failures(transform):
+    canonical, submitted, module = _submission(
+        proof_bodies={UNIT_A: "PROOF BY TRUE", UNIT_B: "PROOF BY TRUE"},
+    )
+
+    with pytest.raises(ModuleSubmissionError) as caught:
+        analyze_module_submission(
+            canonical_source=canonical,
+            submitted_source=transform(submitted),
+            expected_unit_ids=UNITS,
+            module=module,
+        )
+
+    assert caught.value.code == "SCAFFOLD_FORMAT_MODIFIED"
+
+
 def test_proof_region_cannot_lexically_extend_the_fixed_target_statement():
     canonical, submitted, module = _submission(
         proof_bodies={UNIT_A: "=> TRUE\nPROOF OBVIOUS", UNIT_B: "PROOF BY TRUE"},

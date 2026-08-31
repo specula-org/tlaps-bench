@@ -244,6 +244,92 @@ def test_unchanged_proof_omitted_is_unresolved_and_not_trusted(tmp_path, monkeyp
     validate_module_result(report, (unit_id,))
 
 
+def test_extra_eof_newlines_do_not_fail_module_integrity(tmp_path, monkeypatch):
+    unit_id = UNIT_A
+    canonical_source = _marked_source(unit_id)
+    submitted_source = canonical_source + "\r\n\n"
+    filepath, benchmark = _write_inputs(
+        tmp_path,
+        canonical_source=canonical_source,
+        submitted_source=submitted_source,
+    )
+    module = _module_for_marked_source(submitted_source, unit_id)
+    monkeypatch.setattr(check_proof, "run_normalized", lambda *_args, **_kwargs: _valid_sany())
+    monkeypatch.setattr(check_proof.Module, "parse", lambda _raw: module)
+    monkeypatch.setattr(check_proof, "find_community_lib", lambda _filepath: None)
+    monkeypatch.setattr(
+        check_proof,
+        "run_killgroup",
+        lambda *_args, **_kwargs: pytest.fail("an admitted PROOF OMITTED unit must not invoke TLAPM"),
+    )
+    lines: list[str] = []
+
+    exit_code = check_proof.run_module_task_check(
+        filepath=str(filepath),
+        benchmark_dir=str(benchmark),
+        expected_unit_ids=(unit_id,),
+        tlapm_path="tlapm",
+        tlapm_lib="/tlaps/lib",
+        timeout=30,
+        output_path=str(tmp_path / "check.result"),
+        import_violations=[],
+        emit=lines.append,
+    )
+
+    assert exit_code == 1
+    report = _report(lines)
+    assert "integrity_issues" not in report
+    assert report["units"][0]["raw_verdict"] == "UNRESOLVED"
+    assert not any(line.startswith("CHEAT-DETECTED:") for line in lines)
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        lambda source: source.replace("\n", "\r\n"),
+        lambda source: source.removesuffix("\n"),
+    ],
+    ids=("line-ending-style", "missing-final-newline"),
+)
+def test_newline_only_module_integrity_failure_is_not_cheating(tmp_path, monkeypatch, transform):
+    unit_id = UNIT_A
+    canonical_source = _marked_source(unit_id)
+    submitted_source = transform(canonical_source)
+    filepath, benchmark = _write_inputs(
+        tmp_path,
+        canonical_source=canonical_source,
+        submitted_source=submitted_source,
+    )
+    module = _module_for_marked_source(submitted_source, unit_id)
+    monkeypatch.setattr(check_proof, "run_normalized", lambda *_args, **_kwargs: _valid_sany())
+    monkeypatch.setattr(check_proof.Module, "parse", lambda _raw: module)
+    monkeypatch.setattr(
+        check_proof,
+        "run_killgroup",
+        lambda *_args, **_kwargs: pytest.fail("an integrity failure must stop TLAPM"),
+    )
+    lines: list[str] = []
+
+    exit_code = check_proof.run_module_task_check(
+        filepath=str(filepath),
+        benchmark_dir=str(benchmark),
+        expected_unit_ids=(unit_id,),
+        tlapm_path="tlapm",
+        tlapm_lib="/tlaps/lib",
+        timeout=30,
+        output_path=str(tmp_path / "check.result"),
+        import_violations=[],
+        emit=lines.append,
+    )
+
+    assert exit_code == 1
+    report = _report(lines)
+    assert [issue["code"] for issue in report["integrity_issues"]] == ["SCAFFOLD_FORMAT_MODIFIED"]
+    assert any(line.startswith("FAIL SCAFFOLD_FORMAT_MODIFIED:") for line in lines)
+    assert "GATES-FAILED: module_integrity" in lines
+    assert not any(line.startswith("CHEAT-DETECTED:") for line in lines)
+
+
 def test_raw_pass_with_untrusted_dependency_is_blocked(tmp_path, monkeypatch):
     admitted = _unit(UNIT_A, theorem_name="A", line_start=10, admitted=True)
     dependent = _unit(UNIT_B, theorem_name="B", line_start=50, line_end=60, dependencies=(UNIT_A,))
@@ -324,6 +410,7 @@ def test_context_integrity_failure_emits_machine_report_and_exit_one(tmp_path, m
     assert report["trusted_proof_unit_ids"] == []
     assert report["complete"] is False
     assert [issue["code"] for issue in report["integrity_issues"]] == ["CONTEXT_MODIFIED"]
+    assert "CHEAT-DETECTED: CONTEXT_MODIFIED" in lines
     validate_module_result(report, (UNIT_A,))
 
 
