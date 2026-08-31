@@ -241,7 +241,7 @@ scratch. (Exception: when the target property *is* an invariant, as in
 
 - **Input**: `source/<Module>/<File>.tla`
 - **Output**: `benchmark/proof-from-scratch/<Module>/<File>_<TheoremName>.tla` (one file per top-level theorem, plus copied INSTANCE dependency `.tla` files)
-- **CLI**: `python3 -m dataset.proof_from_scratch.generate [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/proof-from-scratch/]` rebuilds the frozen 245-task selection corpus. `tlaps-bench generate --mode proof-from-scratch` emits the module suite under `benchmark/proof-from-scratch-module/` and does not write the 245-task tree.
+- **CLI**: `uv run python -m dataset.proof_from_scratch.generate [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/proof-from-scratch/]` rebuilds the frozen 245-task selection corpus. `tlaps-bench generate --mode proof-from-scratch` emits the module suite under `benchmark/proof-from-scratch-module/` and does not write the 245-task tree.
 
 ## Module tasks (Issue #132)
 

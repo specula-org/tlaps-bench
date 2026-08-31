@@ -354,7 +354,7 @@ uv run tlaps-bench generate --mode proof-from-scratch
 uv run tlaps-bench generate --mode proof-from-scratch --verify
 ```
 
-Proof-from-scratch generation emits the module suite under `benchmark/proof-from-scratch-module/`: one task per source `spec_id`, with the existing 245 theorem IDs as proof units. It reads `benchmark/proof-from-scratch/` and will not write into that tree. `--verify` regenerates into a scratch directory and compares the shipped suite. To rebuild the frozen 245-task selection corpus itself, invoke `python -m dataset.proof_from_scratch.generate --layered` directly.
+Proof-from-scratch generation emits the module suite under `benchmark/proof-from-scratch-module/`: one task per source `spec_id`, with the existing 245 theorem IDs as proof units. It reads `benchmark/proof-from-scratch/` and will not write into that tree. `--verify` regenerates into a scratch directory and compares the shipped suite. To rebuild the frozen 245-task selection corpus itself, invoke `uv run python -m dataset.proof_from_scratch.generate --layered` directly.
 
 Proof-completion generation emits the layered suite described in [Layered-task trust boundary](#layered-task-trust-boundary): one read-only `<base>Model.tla` per source, one read-only `<task>Scaffold.tla` per target, an editable `<task>.tla` holding the fixed theorem statement and the marked proof region, and a `manifest.json` naming every task's source specification and exact context. Use `--legacy` only for the old generators.
 
