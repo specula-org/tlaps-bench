@@ -596,4 +596,6 @@ def test_agentic_prompt_drops_inline_model_checker_guide_without_skill_pointer(t
     assert "check_proof_bin Target.tla --mode proof-from-scratch" in prompt
     assert "Every helper `LEMMA` or `THEOREM` must be named and fully proved" in prompt
     assert 'SMTT("rN")' in prompt
-    assert "Do not modify, replace, or add dependency modules" in prompt
+    assert "temporary wrappers, configs, traces, and other scratch files" in prompt
+    assert "the final task must not import or depend on scratch files" in prompt
+    assert "Do not modify or replace supplied dependency modules" in prompt

@@ -749,6 +749,53 @@ def _make_canonical_dir(name_no_ext: str, canonical_inputs: CanonicalInputs) -> 
         raise
 
 
+@contextlib.contextmanager
+def _module_grading_inputs(
+    item: WorkItem,
+    attempt: dict[str, object],
+    canonical_inputs: CanonicalInputs,
+    basename: str,
+    name_no_ext: str,
+):
+    """Yield an artifact-only submission workspace and independent canonical copy."""
+
+    if canonical_inputs.target_name != basename:
+        raise ModuleArtifactError("module artifact target name does not match its canonical input")
+    submission = read_module_artifact(item.output_dir, attempt.get("module_artifact"))
+    grading_workspace = _make_canonical_dir(f"{name_no_ext}_grading", canonical_inputs)
+    canonical_dir = None
+    try:
+        _write_bytes(os.path.join(grading_workspace, basename), submission)
+        canonical_dir = _make_canonical_dir(name_no_ext, canonical_inputs)
+        yield grading_workspace, canonical_dir
+    finally:
+        shutil.rmtree(grading_workspace, ignore_errors=True)
+        if canonical_dir is not None:
+            shutil.rmtree(canonical_dir, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def _standard_grading_inputs(
+    item: WorkItem,
+    workspace: str,
+    canonical_inputs: CanonicalInputs,
+    name_no_ext: str,
+    canonical_dir: str | None,
+):
+    """Yield the existing workspace and an independent canonical copy when required."""
+
+    grading_canonical_dir = canonical_dir
+    created_canonical_dir = False
+    if getattr(item.mode, "canonical_replay_required", False):
+        grading_canonical_dir = _make_canonical_dir(name_no_ext, canonical_inputs)
+        created_canonical_dir = True
+    try:
+        yield workspace, grading_canonical_dir
+    finally:
+        if created_canonical_dir:
+            shutil.rmtree(grading_canonical_dir, ignore_errors=True)
+
+
 def _make_workspace(
     backend_name: str,
     name_no_ext: str,
@@ -1916,33 +1963,19 @@ def _grade_resumed_module_submission(
     if not os.path.isfile(solution_path):
         raise ModuleArtifactError("resumed module artifact did not materialize as a regular task file")
     shutil.copy2(solution_path, os.path.join(attempt_dir, "solution.tla"))
-    canonical_dir = _make_canonical_dir(name_no_ext, canonical_inputs)
-    try:
-        check_result_path = os.path.join(attempt_dir, "check.result")
-        if item.use_container:
-            _run_grader_container(
-                item,
-                workspace,
-                basename,
-                attempt_dir,
-                check_result_path,
-                attempt,
-                canonical_dir,
-            )
-        else:
-            _run_grader_local(
-                item,
-                workspace,
-                basename,
-                attempt_dir,
-                check_result_path,
-                attempt,
-                canonical_dir,
-            )
-    finally:
-        if isinstance(attempt.get("module_result"), dict):
-            result.pop("module_grading_pending", None)
-        shutil.rmtree(canonical_dir, ignore_errors=True)
+    _grade_submission(
+        item,
+        attempt,
+        workspace,
+        attempt_dir,
+        os.path.join(attempt_dir, "check.result"),
+        basename,
+        name_no_ext,
+        canonical_inputs,
+        None,
+    )
+    if isinstance(attempt.get("module_result"), dict):
+        result.pop("module_grading_pending", None)
 
 
 def run_single_benchmark(item: WorkItem):
@@ -2064,7 +2097,6 @@ def run_single_benchmark(item: WorkItem):
 
     workspace = None
     canonical_dir = None
-    grading_canonical_dir = None
     try:
         canonical_inputs = item.canonical_inputs
         if canonical_inputs is None:
@@ -2288,35 +2320,21 @@ def run_single_benchmark(item: WorkItem):
 
         # Run grader
         check_result_path = os.path.join(grading_dir, "check.result")
-        grading_canonical_dir = canonical_dir
-        if getattr(mode, "canonical_replay_required", False):
-            grading_canonical_dir = _make_canonical_dir(name_no_ext, canonical_inputs)
-        try:
-            if item.use_container:
-                _run_grader_container(
-                    item,
-                    workspace,
-                    basename,
-                    grading_dir,
-                    check_result_path,
-                    result,
-                    grading_canonical_dir,
-                )
-            else:
-                _run_grader_local(
-                    item,
-                    workspace,
-                    basename,
-                    grading_dir,
-                    check_result_path,
-                    result,
-                    grading_canonical_dir,
-                )
-            if interrupted_after_model_work and result.get("module_result") is not None:
-                result["graded_after_interruption"] = True
-        finally:
-            if isinstance(result.get("module_result"), dict):
-                result.pop("module_grading_pending", None)
+        _grade_submission(
+            item,
+            result,
+            workspace,
+            grading_dir,
+            check_result_path,
+            basename,
+            name_no_ext,
+            canonical_inputs,
+            canonical_dir,
+        )
+        if interrupted_after_model_work and result.get("module_result") is not None:
+            result["graded_after_interruption"] = True
+        if isinstance(result.get("module_result"), dict):
+            result.pop("module_grading_pending", None)
         if item.module_checkpoint_identity is not None and not _persist_work_item_result(item, result_dir, result):
             return result
         if result.get("module_grading_pending") is not None:
@@ -2340,8 +2358,6 @@ def run_single_benchmark(item: WorkItem):
     finally:
         if workspace:
             shutil.rmtree(workspace, ignore_errors=True)
-        if grading_canonical_dir and grading_canonical_dir != canonical_dir:
-            shutil.rmtree(grading_canonical_dir, ignore_errors=True)
         if canonical_dir:
             shutil.rmtree(canonical_dir, ignore_errors=True)
         _persist_work_item_result(item, result_dir, result)
@@ -2531,7 +2547,6 @@ def _run_continuations(
             name_no_ext,
             fixed_workspace=workspace,
         )
-        grading_canonical_dir = None
         try:
             round_usage = run.usage.with_context(continuation_round=rnd)
             round_result["usage"] = round_usage.to_dict()
@@ -2632,37 +2647,23 @@ def _run_continuations(
                 if not _persist_work_item_result(item, result_dir, result):
                     cut_short = True
             if module_submission_failure is None and (not cut_short or grade_interrupted_module):
-                grading_canonical_dir = run.canonical_dir
-                if getattr(mode, "canonical_replay_required", False):
-                    grading_canonical_dir = _make_canonical_dir(name_no_ext, canonical_inputs)
                 check_result_path = os.path.join(round_dir, "check.result")
-                if item.use_container:
-                    _run_grader_container(
-                        item,
-                        workspace,
-                        basename,
-                        round_dir,
-                        check_result_path,
-                        round_result,
-                        grading_canonical_dir,
-                    )
-                else:
-                    _run_grader_local(
-                        item,
-                        workspace,
-                        basename,
-                        round_dir,
-                        check_result_path,
-                        round_result,
-                        grading_canonical_dir,
-                    )
+                _grade_submission(
+                    item,
+                    round_result,
+                    workspace,
+                    round_dir,
+                    check_result_path,
+                    basename,
+                    name_no_ext,
+                    canonical_inputs,
+                    run.canonical_dir,
+                )
                 if isinstance(round_result.get("module_result"), dict):
                     result.pop("module_grading_pending", None)
                 elif result.get("module_grading_pending") == rnd:
                     cut_short = True
         finally:
-            if grading_canonical_dir and grading_canonical_dir != run.canonical_dir:
-                shutil.rmtree(grading_canonical_dir, ignore_errors=True)
             shutil.rmtree(run.canonical_dir, ignore_errors=True)
 
         if item.module_checkpoint_identity is not None:
@@ -3131,6 +3132,50 @@ def _run_grader_local(
     except Exception as e:
         result["check_verdict"] = "ERROR"
         result["error"] = str(e)
+
+
+def _grade_submission(
+    item: WorkItem,
+    attempt: dict[str, object],
+    workspace: str,
+    grading_dir: str,
+    check_result_path: str,
+    basename: str,
+    name_no_ext: str,
+    canonical_inputs: CanonicalInputs,
+    canonical_dir: str | None,
+) -> None:
+    """Grade a submission, isolating preserved module artifacts from scratch files."""
+
+    try:
+        if item.module_checkpoint_identity is not None:
+            inputs = _module_grading_inputs(item, attempt, canonical_inputs, basename, name_no_ext)
+        else:
+            inputs = _standard_grading_inputs(item, workspace, canonical_inputs, name_no_ext, canonical_dir)
+        with inputs as (grading_workspace, grading_canonical_dir):
+            if item.use_container:
+                _run_grader_container(
+                    item,
+                    grading_workspace,
+                    basename,
+                    grading_dir,
+                    check_result_path,
+                    attempt,
+                    grading_canonical_dir,
+                )
+            else:
+                _run_grader_local(
+                    item,
+                    grading_workspace,
+                    basename,
+                    grading_dir,
+                    check_result_path,
+                    attempt,
+                    grading_canonical_dir,
+                )
+    except (OSError, ModuleArtifactError) as exc:
+        attempt["check_verdict"] = "ERROR"
+        attempt["error"] = f"cannot materialize grading inputs: {exc}"
 
 
 def _parse_grader_result(

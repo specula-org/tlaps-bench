@@ -1095,7 +1095,12 @@ def authoritative_module_unit_ids(filepath: str, benchmark_dir: str | None) -> t
 
 
 def _module_context_issues(filepath: str, benchmark_dir: str) -> list[tuple[str, str]]:
-    """Compare every workspace TLA+ dependency with the frozen canonical copy."""
+    """Compare supplied TLA+ dependencies with the frozen canonical copy.
+
+    Extra workspace modules are development artifacts, not submitted context.
+    Canonical replay never stages them, and the module contract independently
+    rejects a final task that imports an unapproved module.
+    """
 
     target_name = os.path.basename(filepath)
     workspace = os.path.dirname(filepath)
@@ -1112,8 +1117,6 @@ def _module_context_issues(filepath: str, benchmark_dir: str) -> list[tuple[str,
     actual_context = set(workspace_paths) - {target_name}
     for missing in sorted(expected_context - actual_context):
         issues.append(("CONTEXT_MISSING", f"canonical context file {missing!r} is missing from the submission"))
-    for extra in sorted(actual_context - expected_context):
-        issues.append(("CONTEXT_ADDED", f"undeclared TLA+ file {extra!r} was added to the submission"))
     for name in sorted(expected_context & actual_context):
         submitted = workspace_paths[name]
         if os.path.islink(submitted):

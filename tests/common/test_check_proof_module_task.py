@@ -426,6 +426,15 @@ def test_context_hardlink_alias_is_rejected(tmp_path):
     ]
 
 
+def test_unreferenced_scratch_tla_is_not_submitted_context(tmp_path):
+    context_source = "---- MODULE Model ----\n====\n"
+    filepath, benchmark = _write_inputs(tmp_path, context=(("Model.tla", context_source),))
+    (filepath.parent / "MCTask.tla").write_text("---- MODULE MCTask ----\nEXTENDS Task\n====\n")
+    (filepath.parent / "Task_TTrace_1.tla").write_text("---- MODULE Task_TTrace_1 ----\n====\n")
+
+    assert check_proof._module_context_issues(str(filepath), str(benchmark)) == []
+
+
 def test_unit_checker_error_emits_machine_report_and_exit_three(tmp_path, monkeypatch):
     unit = _unit(UNIT_A, line_start=10)
     analysis = _analysis((unit,))
