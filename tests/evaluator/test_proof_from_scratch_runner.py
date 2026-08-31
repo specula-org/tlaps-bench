@@ -152,6 +152,8 @@ def test_runner_grades_from_pre_agent_canonical_bytes(tmp_path, monkeypatch):
     backend = _Backend()
     agent_canonical_dirs = []
     grader_canonical_dirs = []
+    agent_workspaces = []
+    submitted_task = task_source.replace("PROOF OMITTED", "PROOF BY TRUE")
 
     def fake_prompt(mode_, benchmark_path, dependencies, basename, tlapm_path, tlapm_lib):
         assert Path(benchmark_path).read_text() == task_source
@@ -177,7 +179,11 @@ def test_runner_grades_from_pre_agent_canonical_bytes(tmp_path, monkeypatch):
             "Model.tla",
             "Task.tla",
         ]
+        agent_workspaces.append(workspace)
         agent_canonical_dirs.append(canonical_dir)
+        Path(workspace, "Task.tla").write_text(submitted_task)
+        Path(workspace, "MCTask.tla").write_text(_module("MCTask", "EXTENDS Task\n"))
+        Path(workspace, "Task_TTrace_1.tla").write_text(_module("Task_TTrace_1"))
         task.write_text(task_source.replace("THEOREM Target == TRUE", "THEOREM Target == FALSE"))
         model.write_text(_module("Model", "Value == FALSE\n"))
         (Path(canonical_dir) / "Model.tla").write_text("TAINTED SELF-CHECK SNAPSHOT")
@@ -186,15 +192,52 @@ def test_runner_grades_from_pre_agent_canonical_bytes(tmp_path, monkeypatch):
         result["agent_exit"] = 0
 
     def fake_grader(item, workspace, basename, grading_dir, check_result_path, result, canonical_dir=None):
+        assert workspace != agent_workspaces[0]
+        assert sorted(name for name in os.listdir(workspace) if name.endswith(".tla")) == ["Model.tla", "Task.tla"]
+        assert Path(workspace, "Task.tla").read_text() == submitted_task
+        assert Path(workspace, "Model.tla").read_text() == model_source
         assert (Path(canonical_dir) / "Task.tla").read_text() == task_source
         assert (Path(canonical_dir) / "Model.tla").read_text() == model_source
         grader_canonical_dirs.append(canonical_dir)
-        result["check_verdict"] = "FAIL"
+        result.update(
+            {
+                "check_verdict": "PASS",
+                "sany_status": "valid",
+                "sany_valid": True,
+                "trusted_proof_unit_count": 1,
+                "trusted_proof_unit_ids": [PROOF_UNIT_ID],
+                "module_result": {
+                    "schema_version": 1,
+                    "sany_status": "valid",
+                    "proof_unit_ids": [PROOF_UNIT_ID],
+                    "units": [
+                        {
+                            "unit_id": PROOF_UNIT_ID,
+                            "kind": "target",
+                            "theorem_name": "Target",
+                            "line_start": 1,
+                            "line_end": 1,
+                            "dependencies": [],
+                            "raw_verdict": "PASS",
+                            "tlapm_exit": 0,
+                            "missing_proofs": 0,
+                            "obligation_failed": False,
+                            "trusted": True,
+                        }
+                    ],
+                    "trusted_unit_ids": [PROOF_UNIT_ID],
+                    "trusted_proof_unit_ids": [PROOF_UNIT_ID],
+                    "unused_helper_names": [],
+                    "complete": True,
+                },
+            }
+        )
 
     monkeypatch.setattr(backend, "build_prompt", fake_prompt)
     monkeypatch.setattr(runner, "_run_backend_local", fake_agent)
     monkeypatch.setattr(runner, "_run_grader_local", fake_grader)
 
+    canonical_inputs = runner.CanonicalInputs.capture(str(task), task.name, [str(model)])
     item = runner.WorkItem(
         benchmark_path=str(task),
         output_dir=str(tmp_path / "results"),
@@ -205,7 +248,13 @@ def test_runner_grades_from_pre_agent_canonical_bytes(tmp_path, monkeypatch):
         tlapm_path="/opt/tlapm",
         tlapm_lib="/opt/tlapm/lib",
         infra_retries=0,
-        canonical_inputs=runner.CanonicalInputs.capture(str(task), task.name, [str(model)]),
+        canonical_inputs=canonical_inputs,
+        module_checkpoint_identity=runner.ModuleCheckpointIdentity(
+            task_id=MODULE_TASK_ID,
+            proof_unit_ids=(PROOF_UNIT_ID,),
+            canonical_input_sha256=canonical_inputs.digest(),
+            run_identity_sha256="0" * 64,
+        ),
     )
     task.write_text("TAINTED BEFORE THIS WORKER STARTED")
     model.write_text("TAINTED BEFORE THIS WORKER STARTED")
