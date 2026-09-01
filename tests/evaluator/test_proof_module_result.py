@@ -296,6 +296,16 @@ def test_parser_records_complete_report_and_derived_totals() -> None:
     assert result["obligations_complete"] is True
 
 
+def test_parser_does_not_overwrite_module_obligation_sum_with_last_text_summary() -> None:
+    report = _complete_report()
+    output = _machine_output(report) + "[INFO]: All 2 obligations proved.\n"
+
+    result = _parse(report, 0, output=output)
+
+    assert result["obligations"] == 9
+    assert result["obligations_complete"] is True
+
+
 def test_parser_records_partial_report_as_fail_with_derived_totals() -> None:
     result = _parse(_partial_report(), 1)
 

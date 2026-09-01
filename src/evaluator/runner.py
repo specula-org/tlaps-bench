@@ -3733,14 +3733,15 @@ def _parse_grader_result(
         if cm:
             result["check_verdict"] = "CHEATING"
             result["cheat_checks"] = [c.strip() for c in cm.group(1).split(",") if c.strip()]
-    ob_matches = re.findall(r"All (\d+) obligation", stdout)
-    if ob_matches:
-        result["obligations"] = int(ob_matches[-1])
-    else:
-        fail_match = re.search(r"(\d+)/(\d+) obligation", stdout)
-        if fail_match:
-            result["obligations_failed"] = int(fail_match.group(1))
-            result["obligations_total"] = int(fail_match.group(2))
+    if expected_module_unit_ids is None:
+        ob_matches = re.findall(r"All (\d+) obligation", stdout)
+        if ob_matches:
+            result["obligations"] = int(ob_matches[-1])
+        else:
+            fail_match = re.search(r"(\d+)/(\d+) obligation", stdout)
+            if fail_match:
+                result["obligations_failed"] = int(fail_match.group(1))
+                result["obligations_total"] = int(fail_match.group(2))
 
 
 # A one-word prompt that needs no tools and no workspace files — keeps the
