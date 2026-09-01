@@ -241,7 +241,7 @@ scratch. (Exception: when the target property *is* an invariant, as in
 
 - **Input**: `source/<Module>/<File>.tla`
 - **Output**: `benchmark/proof-from-scratch/<Module>/<File>_<TheoremName>.tla` (one file per top-level theorem, plus copied INSTANCE dependency `.tla` files)
-- **CLI**: `uv run python -m dataset.proof_from_scratch.generate --layered [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/proof-from-scratch/]` rebuilds the frozen 245-task selection corpus. `tlaps-bench generate --mode proof-from-scratch` emits the module suite under `benchmark/proof-from-scratch-module/` and does not write the 245-task tree.
+- **CLI**: `uv run python -m dataset.proof_from_scratch.generate --layered [--filter <pattern>] [--source-dir source/] [--output-dir benchmark/proof-from-scratch/]` rebuilds the frozen 244-task selection corpus. `tlaps-bench generate --mode proof-from-scratch` emits the module suite under `benchmark/proof-from-scratch-module/` and does not write the 244-task tree.
 
 ## Module tasks (Issue #132)
 
@@ -251,7 +251,7 @@ the author cited and work shared between siblings is reproved once per task.
 targets by `spec_id` and emits one task per source module, retaining the current
 task IDs as the scored proof-unit IDs. A module scores k/n.
 
-The 245-task corpus stays the only target-selection source and is never written
+The 244-task corpus stays the only target-selection source and is never written
 to: the generator refuses an output root inside it, and no theorem the corpus
 left out becomes a proof unit. The module suite lives beside it under
 `benchmark/proof-from-scratch-module/`.
