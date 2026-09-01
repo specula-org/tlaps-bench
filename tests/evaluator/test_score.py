@@ -410,8 +410,7 @@ def test_mixed_comparison_excludes_cursor_infra_accounting():
     md = comparison_md(runs, EQUAL, "equal")
 
     assert (
-        "| deferred | cursor | proof-completion | 100.0% | "
-        "1/1 (+1 error/interrupted) | 0/0 | 2.0s | unavailable |"
+        "| deferred | cursor | proof-completion | 100.0% | 1/1 (+1 error/interrupted) | 0/0 | 2.0s | unavailable |"
     ) in md
 
 

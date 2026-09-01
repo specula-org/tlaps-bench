@@ -1305,11 +1305,15 @@ def _validate_resume_result_accounting(results: list[dict], *, supports_cost_tim
             if value is None or isinstance(result.get(field), bool):
                 raise ValueError(f"prior result {benchmark!r} has invalid {field}")
             split_times[field] = value
-        if len(split_times) == 2 and time_secs is not None and not math.isclose(
-            split_times["agent_time_secs"] + split_times["grading_time_secs"],
-            float(time_secs),
-            rel_tol=1e-9,
-            abs_tol=1e-9,
+        if (
+            len(split_times) == 2
+            and time_secs is not None
+            and not math.isclose(
+                split_times["agent_time_secs"] + split_times["grading_time_secs"],
+                float(time_secs),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
         ):
             raise ValueError(f"prior result {benchmark!r} has inconsistent split and total time")
         grader_error_time = result.get("grader_error_time_secs")
@@ -2776,10 +2780,7 @@ def _run_continuations(
                 grading_after = nonnegative_float(round_result.get("grading_time_secs"))
                 if grading_after is not None:
                     _add_child_grading_time(result, grading_after - grading_before)
-                if (
-                    isinstance(round_result.get("module_result"), dict)
-                    and round_result.get("check_verdict") != "ERROR"
-                ):
+                if isinstance(round_result.get("module_result"), dict) and round_result.get("check_verdict") != "ERROR":
                     result.pop("module_grading_pending", None)
                 elif result.get("module_grading_pending") == rnd:
                     cut_short = True

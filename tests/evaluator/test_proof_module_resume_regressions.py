@@ -279,9 +279,7 @@ def test_pending_first_attempt_grades_saved_bytes_without_agent_and_preserves_ac
     assert recovered["output_tokens"] == 456
     assert recovered["agent_time_secs"] == 3.25
     assert recovered["grading_time_secs"] > 0
-    assert recovered["time_secs"] == pytest.approx(
-        recovered["agent_time_secs"] + recovered["grading_time_secs"]
-    )
+    assert recovered["time_secs"] == pytest.approx(recovered["agent_time_secs"] + recovered["grading_time_secs"])
     assert recovered["equivalent_cost_usd"] == 0.012
     assert recovered["usage"] == {"input_tokens": 123, "output_tokens": 456, "model_requests": 1}
 
@@ -967,9 +965,7 @@ def test_pending_continuation_grades_as_continuation_and_keeps_pass_at_one(tmp_p
     assert recovered["output_tokens"] == 200
     assert recovered["agent_time_secs"] == 4.0
     assert recovered["grading_time_secs"] > 0
-    assert recovered["time_secs"] == pytest.approx(
-        recovered["agent_time_secs"] + recovered["grading_time_secs"]
-    )
+    assert recovered["time_secs"] == pytest.approx(recovered["agent_time_secs"] + recovered["grading_time_secs"])
     assert recovered["equivalent_cost_usd"] == 0.02
 
 

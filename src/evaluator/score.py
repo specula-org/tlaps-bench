@@ -712,10 +712,7 @@ def comparison_md(
             if unit_score.excluded_modules:
                 unit_cell += f" (+{unit_score.excluded_modules} excluded)"
             score_cells = f"{unit_cell} | {score_cells}"
-        row = (
-            f"| {run['id']} | {run['backend']} | {run['mode']} | {score_cells} | "
-            f"{format_token_usage(tokens)} | "
-        )
+        row = f"| {run['id']} | {run['backend']} | {run['mode']} | {score_cells} | {format_token_usage(tokens)} | "
         if show_equivalent_cost:
             time_text = _format_time(secs)
             row += f"{time_text} | {_format_cost(equivalent_cost_usd)} |"
