@@ -139,7 +139,7 @@ def test_with_continuations_keeps_the_first_passing_report() -> None:
     assert (score.trusted_units, score.total_units) == (2, 2)
 
 
-def test_skipped_and_non_genuine_modules_are_excluded_but_genuine_errors_keep_the_denominator() -> None:
+def test_errors_and_skips_are_excluded_but_verified_pass_after_interruption_counts() -> None:
     results = [
         _result(
             "Suite/Good.tla",
@@ -168,9 +168,10 @@ def test_skipped_and_non_genuine_modules_are_excluded_but_genuine_errors_keep_th
 
     score = proof_unit_score(results)
 
-    assert (score.trusted_units, score.total_units) == (1, 4)
+    assert (score.trusted_units, score.total_units) == (3, 4)
+    assert score.excluded_modules == 2
     continuation_score = proof_unit_score(results, with_continuations=True)
-    assert (continuation_score.trusted_units, continuation_score.total_units) == (1, 4)
+    assert (continuation_score.trusted_units, continuation_score.total_units) == (3, 4)
 
 
 def test_non_module_results_do_not_contribute_to_proof_unit_score() -> None:

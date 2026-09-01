@@ -277,7 +277,11 @@ def test_pending_first_attempt_grades_saved_bytes_without_agent_and_preserves_ac
     assert recovered["check_verdict"] == "PASS"
     assert recovered["input_tokens"] == 123
     assert recovered["output_tokens"] == 456
-    assert recovered["time_secs"] == 3.25
+    assert recovered["agent_time_secs"] == 3.25
+    assert recovered["grading_time_secs"] > 0
+    assert recovered["time_secs"] == pytest.approx(
+        recovered["agent_time_secs"] + recovered["grading_time_secs"]
+    )
     assert recovered["equivalent_cost_usd"] == 0.012
     assert recovered["usage"] == {"input_tokens": 123, "output_tokens": 456, "model_requests": 1}
 
@@ -303,8 +307,16 @@ def test_failed_regrade_keeps_pending_artifact_until_the_same_bytes_are_graded(t
         grader_calls += 1
         assert Path(workspace, basename).read_bytes() == saved
         if grader_calls == 1:
-            result["check_verdict"] = "ERROR"
-            result["error"] = "checker unavailable"
+            result.update(
+                {
+                    "check_verdict": "ERROR",
+                    "error": "checker unavailable",
+                    "module_result": _module_result(complete=False),
+                    "proof_unit_count": 1,
+                    "trusted_proof_unit_count": 0,
+                    "trusted_proof_unit_ids": [],
+                }
+            )
         else:
             _complete_grading(result)
 
@@ -322,6 +334,8 @@ def test_failed_regrade_keeps_pending_artifact_until_the_same_bytes_are_graded(t
 
     assert first["module_grading_pending"] == 0
     assert first["module_artifact"] == artifact
+    assert first["grading_time_secs"] == 0
+    assert first["grader_error_time_secs"] > 0
     assert runner._module_resume_action(first, max_continuations=1) == runner.MODULE_RESUME_GRADE_SAVED
     checkpoint = load_module_checkpoint(output_dir, identity)
     assert checkpoint.result["module_grading_pending"] == 0
@@ -340,6 +354,11 @@ def test_failed_regrade_keeps_pending_artifact_until_the_same_bytes_are_graded(t
     assert second["check_verdict"] == "PASS"
     assert "module_grading_pending" not in second
     assert second["module_artifact"] == artifact
+    assert second["grading_time_secs"] > 0
+    assert second["agent_time_secs"] is None
+    assert second["time_secs"] is None
+    assert second["error"] == ""
+    assert "grader_error" not in second
 
 
 def test_zero_work_quota_does_not_grade_canonical_input_or_consume_pass_at_one(tmp_path, monkeypatch):
@@ -532,7 +551,7 @@ def test_zero_work_nonretryable_infra_first_attempt_does_not_materialize_or_grad
     assert runner._module_resume_action(result, max_continuations=0) == runner.MODULE_RESUME_RETRY_FIRST
 
 
-def test_quota_after_model_work_grades_and_preserves_the_formal_first_attempt(tmp_path, monkeypatch):
+def test_quota_after_model_work_grades_for_diagnostics_but_retries_first_attempt(tmp_path, monkeypatch):
     benchmark_root = tmp_path / "benchmark"
     task = benchmark_root / TASK_ID
     task.parent.mkdir(parents=True)
@@ -613,10 +632,12 @@ def test_quota_after_model_work_grades_and_preserves_the_formal_first_attempt(tm
     assert result["graded_after_interruption"] is True
     assert result["input_tokens"] == 25
     assert result["output_tokens"] == 50
-    assert result["time_secs"] == 4.5
+    assert result["agent_time_secs"] == 4.5
+    assert result["grading_time_secs"] > 0
+    assert result["time_secs"] == pytest.approx(result["agent_time_secs"] + result["grading_time_secs"])
     assert result["equivalent_cost_usd"] == 0.02
     assert result["module_artifact"]["sha256"] == hashlib.sha256(submitted).hexdigest()
-    assert runner._module_resume_action(result, max_continuations=0) == runner.MODULE_RESUME_COMPLETE
+    assert runner._module_resume_action(result, max_continuations=0) == runner.MODULE_RESUME_RETRY_FIRST
 
 
 @pytest.mark.parametrize(
@@ -626,7 +647,7 @@ def test_quota_after_model_work_grades_and_preserves_the_formal_first_attempt(tm
         ("empty", False, "INFRA_ERROR", "module submission is empty"),
     ],
 )
-def test_interrupted_model_work_with_invalid_submission_consumes_pass_at_one(
+def test_interrupted_model_work_with_invalid_submission_requires_first_attempt_retry(
     tmp_path,
     monkeypatch,
     submission_state,
@@ -710,14 +731,14 @@ def test_interrupted_model_work_with_invalid_submission_consumes_pass_at_one(
     assert "module_result" not in result
     assert (result["input_tokens"], result["output_tokens"]) == (100, 50)
     assert result["equivalent_cost_usd"] == 0.25
-    assert not runner.is_non_genuine(result)
-    assert runner._module_resume_action(result, max_continuations=0) == runner.MODULE_RESUME_COMPLETE
+    assert runner.is_non_genuine(result)
+    assert runner._module_resume_action(result, max_continuations=0) == runner.MODULE_RESUME_RETRY_FIRST
     checkpoint = load_module_checkpoint(output_dir, _identity())
     assert checkpoint.result["invalid_submission_after_interruption"] is True
 
 
 @pytest.mark.parametrize("submission_state", ["missing", "empty"])
-def test_invalid_first_submission_uses_the_same_continuation_bytes_before_and_after_resume(
+def test_invalid_interrupted_first_submission_retries_pass_at_one_from_canonical_bytes(
     tmp_path,
     monkeypatch,
     submission_state,
@@ -811,27 +832,9 @@ def test_invalid_first_submission_uses_the_same_continuation_bytes_before_and_af
     assert completed == set()
     assert recovered[0]["check_verdict"] == "FAIL"
     resume = resumes[TASK_ID]
-    assert resume.action == runner.MODULE_RESUME_CONTINUE
+    assert resume.action == runner.MODULE_RESUME_RETRY_FIRST
     assert resume.submission is None
-
-    resumed_item = runner.WorkItem(
-        benchmark_path=str(task),
-        output_dir=str(output_dir),
-        timeout=10,
-        check_timeout=10,
-        backend=backend,
-        mode=mode,
-        tlapm_path="/opt/tlapm",
-        tlapm_lib="/opt/tlapm/lib",
-        infra_retries=0,
-        max_continuations=1,
-        canonical_inputs=canonical_inputs,
-        module_resume=resume,
-        module_checkpoint_identity=identity,
-    )
-    runner.run_single_benchmark(resumed_item)
-
-    assert continuation_inputs == [canonical_bytes, canonical_bytes]
+    assert continuation_inputs == []
 
 
 def test_first_attempt_checker_failure_keeps_artifact_pending_and_stops_continuations(tmp_path, monkeypatch):
@@ -962,7 +965,11 @@ def test_pending_continuation_grades_as_continuation_and_keeps_pass_at_one(tmp_p
     assert recovered["continuations"][0]["check_verdict"] == "PASS"
     assert recovered["input_tokens"] == 100
     assert recovered["output_tokens"] == 200
-    assert recovered["time_secs"] == 4.0
+    assert recovered["agent_time_secs"] == 4.0
+    assert recovered["grading_time_secs"] > 0
+    assert recovered["time_secs"] == pytest.approx(
+        recovered["agent_time_secs"] + recovered["grading_time_secs"]
+    )
     assert recovered["equivalent_cost_usd"] == 0.02
 
 
@@ -1020,7 +1027,7 @@ def test_recover_retries_interrupted_continuation_at_same_round_without_losing_h
     assert recovered[0]["equivalent_cost_usd"] == 0.03
 
 
-def test_recover_keeps_graded_interrupted_model_work_as_first_attempt_and_continues(tmp_path):
+def test_recover_retries_graded_but_interrupted_first_attempt(tmp_path):
     identity, result = _checkpoint_result(tmp_path, max_continuations=1)
     result.update(
         {
@@ -1043,7 +1050,7 @@ def test_recover_keeps_graded_interrupted_model_work_as_first_attempt_and_contin
     )
 
     assert completed == set()
-    assert resumes[TASK_ID].action == runner.MODULE_RESUME_CONTINUE
+    assert resumes[TASK_ID].action == runner.MODULE_RESUME_RETRY_FIRST
     assert recovered[0]["check_verdict"] == "FAIL"
     assert recovered[0]["graded_after_interruption"] is True
     assert recovered[0]["input_tokens"] == 100
@@ -1472,7 +1479,7 @@ def test_interrupted_worked_continuation_regrade_consumes_the_same_round(tmp_pat
     )
 
     assert "module_grading_pending" not in result
-    assert not runner.is_non_genuine(result["continuations"][0])
+    assert runner.is_non_genuine(result["continuations"][0])
     assert runner._module_resume_action(result, max_continuations=2) == runner.MODULE_RESUME_CONTINUE
 
     selected_rounds: list[int] = []
@@ -1494,8 +1501,8 @@ def test_interrupted_worked_continuation_regrade_consumes_the_same_round(tmp_pat
             "/checker",
         )
 
-    assert selected_rounds == [2]
-    assert "interrupted_continuations" not in result
+    assert selected_rounds == [1]
+    assert len(result["interrupted_continuations"]) == 1
 
 
 def test_interrupted_worked_continuation_with_missing_submission_consumes_the_round(tmp_path, monkeypatch):
@@ -1590,7 +1597,7 @@ def test_interrupted_worked_continuation_with_missing_submission_consumes_the_ro
     assert failed_round["invalid_submission_after_interruption"] is True
     assert "module_artifact" not in failed_round
     assert "module_result" not in failed_round
-    assert not runner.is_non_genuine(failed_round)
+    assert runner.is_non_genuine(failed_round)
     assert (workspace / "Task.tla").read_bytes() == prior_submission
     assert (result["input_tokens"], result["output_tokens"]) == (13, 24)
     assert result["equivalent_cost_usd"] == pytest.approx(0.11)
@@ -1618,8 +1625,8 @@ def test_interrupted_worked_continuation_with_missing_submission_consumes_the_ro
             "/checker",
         )
 
-    assert selected_rounds == [2]
-    assert "interrupted_continuations" not in result
+    assert selected_rounds == [1]
+    assert len(result["interrupted_continuations"]) == 1
 
 
 def test_checkpoint_rejects_graded_result_without_artifact(tmp_path):
@@ -1711,9 +1718,10 @@ def test_checkpoint_rejects_round_after_passing_continuation(tmp_path):
                 proof_unit_count=1,
                 trusted_proof_unit_count=0,
                 trusted_proof_unit_ids=[],
+                check_verdict="FAIL",
                 module_grading_pending=0,
             ),
-            "already graded",
+            "successfully graded",
         ),
     ],
 )

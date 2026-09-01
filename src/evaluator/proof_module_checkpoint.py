@@ -170,7 +170,7 @@ def _validate_result(
             raise ModuleCheckpointError(f"module checkpoint {label} has inconsistent trusted proof-unit IDs")
         if verdict == "PASS" and not validated["complete"]:
             raise ModuleCheckpointError(f"module checkpoint {label} records PASS for an incomplete module")
-        if validated["complete"] and verdict != "PASS":
+        if validated["complete"] and verdict not in {"PASS", "ERROR"}:
             raise ModuleCheckpointError(f"module checkpoint {label} does not record PASS for a complete module")
 
     validate_attempt(result, label="first attempt")
@@ -220,8 +220,8 @@ def _validate_result(
             raise ModuleCheckpointError("module checkpoint pending grading must identify the latest continuation")
         else:
             pending_attempt = continuations[-1]
-        if pending_attempt.get("module_result") is not None:
-            raise ModuleCheckpointError("module checkpoint cannot mark an already graded attempt as pending")
+        if pending_attempt.get("module_result") is not None and pending_attempt.get("check_verdict") != "ERROR":
+            raise ModuleCheckpointError("module checkpoint cannot mark a successfully graded attempt as pending")
         if pending_attempt.get("module_artifact") is None:
             raise ModuleCheckpointError("module checkpoint pending grading requires a preserved module artifact")
 

@@ -30,6 +30,7 @@ def _unit(
     tlapm_exit: int | None = 0,
     missing_proofs: int | None = 0,
     obligation_failed: bool | None = False,
+    obligations: int | None = 3,
     trusted: bool = True,
 ) -> dict[str, object]:
     kind = "helper" if unit_id.startswith("helper:") else "target"
@@ -44,6 +45,7 @@ def _unit(
         "tlapm_exit": tlapm_exit,
         "missing_proofs": missing_proofs,
         "obligation_failed": obligation_failed,
+        "obligations": obligations,
         "trusted": trusted,
     }
 
@@ -74,6 +76,7 @@ def _partial_report() -> dict[str, object]:
             tlapm_exit=11,
             missing_proofs=1,
             obligation_failed=False,
+            obligations=2,
             trusted=False,
         ),
     ]
@@ -102,6 +105,15 @@ def test_accepts_a_complete_dependency_closed_report() -> None:
 
 def test_accepts_a_partial_report_with_only_the_first_target_trusted() -> None:
     report = _partial_report()
+
+    assert validate_module_result(report, EXPECTED_UNITS) == report
+
+
+def test_accepts_a_legacy_v1_report_without_obligation_counts() -> None:
+    report = _partial_report()
+    report["schema_version"] = 1
+    for unit in report["units"]:
+        unit.pop("obligations")
 
     assert validate_module_result(report, EXPECTED_UNITS) == report
 
@@ -280,6 +292,8 @@ def test_parser_records_complete_report_and_derived_totals() -> None:
     assert result["proof_unit_count"] == 2
     assert result["trusted_proof_unit_count"] == 2
     assert result["trusted_proof_unit_ids"] == list(EXPECTED_UNITS)
+    assert result["obligations"] == 9
+    assert result["obligations_complete"] is True
 
 
 def test_parser_records_partial_report_as_fail_with_derived_totals() -> None:
@@ -289,6 +303,50 @@ def test_parser_records_partial_report_as_fail_with_derived_totals() -> None:
     assert result["proof_unit_count"] == 2
     assert result["trusted_proof_unit_count"] == 1
     assert result["trusted_proof_unit_ids"] == [UNIT_A]
+
+
+def test_parser_reports_known_obligations_as_a_lower_bound_after_unit_timeout() -> None:
+    report = _partial_report()
+    report["units"][1].update(
+        raw_verdict="TIMEOUT",
+        tlapm_exit=None,
+        missing_proofs=None,
+        obligation_failed=None,
+        obligations=None,
+    )
+
+    result = _parse(report, 3)
+
+    assert result["check_verdict"] == "TIMEOUT"
+    assert result["obligations"] == 3
+    assert result["obligations_complete"] is False
+
+
+def test_parser_classifies_an_explicit_pre_result_checker_timeout() -> None:
+    result: dict[str, object] = {}
+
+    _parse_grader_result(
+        3,
+        "SANY-STATUS: unavailable\nCHECK-TIMEOUT: checker budget exhausted\n",
+        result,
+        expected_module_unit_ids=EXPECTED_UNITS,
+    )
+
+    assert result["check_verdict"] == "TIMEOUT"
+    assert result["sany_status"] == "unavailable"
+
+
+def test_parser_keeps_unavailable_sany_without_a_timeout_marker_as_error() -> None:
+    result: dict[str, object] = {}
+
+    _parse_grader_result(
+        3,
+        "SANY-STATUS: unavailable\nERROR: SANY executable missing\n",
+        result,
+        expected_module_unit_ids=EXPECTED_UNITS,
+    )
+
+    assert result["check_verdict"] == "ERROR"
 
 
 @pytest.mark.parametrize(

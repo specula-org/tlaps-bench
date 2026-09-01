@@ -8,7 +8,8 @@ from typing import Any
 
 from common.proof_from_scratch_module import ModuleTaskContractError, compute_trusted_units
 
-MODULE_RESULT_SCHEMA_VERSION = 1
+MODULE_RESULT_SCHEMA_VERSION = 2
+SUPPORTED_MODULE_RESULT_SCHEMA_VERSIONS = frozenset({1, MODULE_RESULT_SCHEMA_VERSION})
 MODULE_RESULT_PREFIX = "MODULE-RESULT: "
 RAW_VERDICTS = frozenset({"PASS", "FAIL", "UNRESOLVED", "TIMEOUT", "ERROR"})
 
@@ -58,8 +59,9 @@ def validate_module_result(raw: object, expected_unit_ids: Iterable[str]) -> dic
     allowed = required | {"unused_helper_names", "integrity_issues"}
     if not required <= set(raw) or set(raw) - allowed:
         raise ModuleResultError("module result has missing or unknown fields")
-    if type(raw["schema_version"]) is not int or raw["schema_version"] != MODULE_RESULT_SCHEMA_VERSION:
+    if type(raw["schema_version"]) is not int or raw["schema_version"] not in SUPPORTED_MODULE_RESULT_SCHEMA_VERSIONS:
         raise ModuleResultError(f"unsupported module result schema_version {raw['schema_version']!r}")
+    schema_version = raw["schema_version"]
     if type(raw["sany_status"]) is not str or raw["sany_status"] not in {"valid", "invalid"}:
         raise ModuleResultError("module result sany_status must be valid or invalid")
     if tuple(_string_list(raw["proof_unit_ids"], label="proof_unit_ids")) != expected:
@@ -93,6 +95,8 @@ def validate_module_result(raw: object, expected_unit_ids: Iterable[str]) -> dic
         "obligation_failed",
         "trusted",
     }
+    if schema_version >= 2:
+        unit_keys.add("obligations")
     for index, value in enumerate(units):
         if type(value) is not dict or set(value) != unit_keys:
             raise ModuleResultError(f"module result unit {index} has an invalid shape")
@@ -140,6 +144,14 @@ def validate_module_result(raw: object, expected_unit_ids: Iterable[str]) -> dic
             tlapm_exit is not None or missing_proofs is not None or obligation_failed is not None
         ):
             raise ModuleResultError(f"module result unit {unit_id!r} has inconsistent {verdict} evidence")
+        if schema_version >= 2:
+            obligations = value["obligations"]
+            if obligations is not None and (type(obligations) is not int or obligations < 0):
+                raise ModuleResultError(f"module result unit {unit_id!r} has invalid obligations")
+            if verdict == "UNRESOLVED" and obligations != 0:
+                raise ModuleResultError(f"module result unit {unit_id!r} has inconsistent UNRESOLVED obligations")
+            if verdict in {"TIMEOUT", "ERROR"} and obligations is not None:
+                raise ModuleResultError(f"module result unit {unit_id!r} has inconsistent {verdict} obligations")
         if verdict == "PASS":
             raw_pass.add(unit_id)
         if type(value["trusted"]) is not bool:
@@ -216,6 +228,7 @@ __all__ = [
     "MODULE_RESULT_SCHEMA_VERSION",
     "MODULE_RESULT_PREFIX",
     "RAW_VERDICTS",
+    "SUPPORTED_MODULE_RESULT_SCHEMA_VERSIONS",
     "ModuleResultError",
     "module_result_from_result",
     "parse_module_result_json",

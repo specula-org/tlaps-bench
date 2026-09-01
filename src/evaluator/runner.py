@@ -101,7 +101,13 @@ from evaluator.score import (
     weighted_score,
 )
 from evaluator.termination import TerminationContext, TerminationReason, classify, startup_error_snippet
-from evaluator.usage import UsageSummary, nonnegative_float
+from evaluator.usage import (
+    UsageSummary,
+    aggregate_token_usage,
+    format_token_usage,
+    nonnegative_float,
+    result_token_usage,
+)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # File at <repo>/src/evaluator/runner.py — ascend two levels for repo root.
@@ -142,7 +148,16 @@ _COST_TIME_BACKENDS = frozenset(
     }
 )
 _RUNNER_OWNED_ACCOUNTING_KEYS = frozenset(
-    {"usage", "input_tokens", "output_tokens", "time_secs", "equivalent_cost_usd"}
+    {
+        "usage",
+        "input_tokens",
+        "output_tokens",
+        "agent_time_secs",
+        "grading_time_secs",
+        "grader_error_time_secs",
+        "time_secs",
+        "equivalent_cost_usd",
+    }
 )
 
 
@@ -252,6 +267,53 @@ def _sum_accounting_values(left: object, right: object) -> float | None:
     if left_value is None or right_value is None:
         return None
     return left_value + right_value
+
+
+def _recompute_task_time(result: dict[str, object]) -> None:
+    """Keep total task time equal to agent plus grading time."""
+
+    result["time_secs"] = _sum_accounting_values(
+        result.get("agent_time_secs"),
+        result.get("grading_time_secs"),
+    )
+
+
+def _ensure_time_breakdown(result: dict[str, object]) -> None:
+    """Adapt a legacy total-only result before adding new accounting."""
+
+    total = nonnegative_float(result.get("time_secs"))
+    grading = nonnegative_float(result.get("grading_time_secs")) or 0.0
+    agent = nonnegative_float(result.get("agent_time_secs"))
+    if agent is not None and "grading_time_secs" in result:
+        return
+    result["grading_time_secs"] = grading
+    result["agent_time_secs"] = total - grading if total is not None and total >= grading else None
+
+
+def _set_agent_time(result: dict[str, object], value: object) -> None:
+    result["agent_time_secs"] = nonnegative_float(value)
+    result.setdefault("grading_time_secs", 0.0)
+    _recompute_task_time(result)
+
+
+def _add_grading_time(result: dict[str, object], elapsed: float) -> float:
+    """Accumulate one grading attempt and return the amount added."""
+
+    _ensure_time_breakdown(result)
+    prior_grading = nonnegative_float(result.get("grading_time_secs"))
+    if prior_grading is None:
+        prior_grading = 0.0
+    result["grading_time_secs"] = prior_grading + elapsed
+    _recompute_task_time(result)
+    return elapsed
+
+
+def _add_child_grading_time(result: dict[str, object], elapsed: float) -> None:
+    """Add a continuation grader's time to the run-level aggregate."""
+
+    prior = nonnegative_float(result.get("grading_time_secs"))
+    result["grading_time_secs"] = None if prior is None else prior + elapsed
+    _recompute_task_time(result)
 
 
 def _retry_may_duplicate_model_work(
@@ -892,12 +954,13 @@ def _run_backend_with_retries(
     continuation round passes its existing workspace instead — the partial
     proof in it IS the input, and a no-work startup death can't have touched it.
 
-    Fills result's time_secs / usage / input_tokens / output_tokens / agent_exit /
+    Fills result's agent_time_secs / time_secs / usage / input_tokens / output_tokens / agent_exit /
     error / termination_reason (plus infra_retries / infra_retry_reasons after
     any retries); the caller owns quota/infra exhaustion verdicts and messages.
-    time_secs records only the final experiment attempt. Infra/quota launches
-    are saved separately beside their raw artifacts and never enter the formal
-    result. Returns the final attempt's workspace + canonical snapshot, which
+    agent_time_secs records only the final experiment attempt and time_secs is
+    recomputed as agent plus grading time. Infra/quota launches are saved
+    separately beside their raw artifacts and never enter the formal result.
+    Returns the final attempt's workspace + canonical snapshot, which
     the caller must clean up (earlier attempts' dirs are cleaned here, including
     when an attempt raises).
     """
@@ -1033,7 +1096,7 @@ def _run_backend_with_retries(
                 log_prefix=f"[{name_no_ext}] ",
                 prepare_retry=_prepare_quota_retry,
             )
-            result["time_secs"] = attempt_secs if _supports_cost_time(backend) else active_secs
+            _set_agent_time(result, attempt_secs if _supports_cost_time(backend) else active_secs)
 
             # Parse agent output on every path — including quota exhaustion — so
             # the result records any tokens the agent did emit (rather than
@@ -1158,6 +1221,7 @@ def _run_backend_with_retries(
             available=False,
             warnings=("infra/quota accounting is stored separately under agent artifacts",),
         )
+        result["agent_time_secs"] = None
         result["time_secs"] = None
         result["equivalent_cost_usd"] = None
         result["usage"] = attempt_usage.to_dict()
@@ -1231,6 +1295,28 @@ def _validate_resume_result_accounting(results: list[dict], *, supports_cost_tim
             raise ValueError(f"prior result {benchmark!r} has invalid time_secs: expected a finite non-negative number")
         else:
             totals["time_secs"].append(float(time_secs))
+        split_times: dict[str, float] = {}
+        for field in ("agent_time_secs", "grading_time_secs"):
+            if field not in result:
+                continue
+            if result.get(field) is None and supports_cost_time and time_secs is None:
+                continue
+            value = nonnegative_float(result.get(field))
+            if value is None or isinstance(result.get(field), bool):
+                raise ValueError(f"prior result {benchmark!r} has invalid {field}")
+            split_times[field] = value
+        if len(split_times) == 2 and time_secs is not None and not math.isclose(
+            split_times["agent_time_secs"] + split_times["grading_time_secs"],
+            float(time_secs),
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(f"prior result {benchmark!r} has inconsistent split and total time")
+        grader_error_time = result.get("grader_error_time_secs")
+        if grader_error_time is not None and (
+            nonnegative_float(grader_error_time) is None or isinstance(grader_error_time, bool)
+        ):
+            raise ValueError(f"prior result {benchmark!r} has invalid grader_error_time_secs")
         equivalent_cost = result.get("equivalent_cost_usd")
         if equivalent_cost is not None:
             if nonnegative_float(equivalent_cost) is None or isinstance(equivalent_cost, bool):
@@ -1687,10 +1773,11 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             v = r["check_verdict"]
             verdicts[v] = verdicts.get(v, 0) + 1
 
-        total_input = sum(r.get("input_tokens", 0) for r in results)
-        total_output = sum(r.get("output_tokens", 0) for r in results)
-        formal_results = _formal_results(results) if supports_cost_time else []
-        total_task_time = _sum_required_metric(formal_results, "time_secs") if supports_cost_time else None
+        total_tokens = aggregate_token_usage(results)
+        formal_results = _formal_results(results)
+        total_agent_time = _sum_required_metric(formal_results, "agent_time_secs")
+        total_grading_time = _sum_required_metric(formal_results, "grading_time_secs")
+        total_task_time = _sum_required_metric(formal_results, "time_secs")
         total_equivalent_cost = (
             _sum_required_metric(formal_results, "equivalent_cost_usd") if supports_cost_time else None
         )
@@ -1717,7 +1804,7 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             if n_skip:
                 pass_line += f" · {n_skip} skipped"
             if non_genuine:
-                pass_line += f" · {non_genuine} infra/quota-cut (excluded — re-run)"
+                pass_line += f" · {non_genuine} error/interrupted (excluded — re-run)"
             diagnostic_score_lines.append(pass_line)
             continuation_results = results
         else:
@@ -1743,12 +1830,14 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
         continuation_unit_line = proof_unit_rate_line(continuation_results, with_continuations=True)
         if continuation_unit_line and any(result.get("continuations") for result in continuation_results):
             lines.append(continuation_unit_line)
-        lines.append(
-            f"**Total tokens**: {total_input:,} input / {total_output:,} output" + ("" if supports_cost_time else "\n")
-        )
+        lines.append(f"**Total tokens**: {format_token_usage(total_tokens, verbose=True)}")
+        lines.append(f"**Total agent time**: {_format_task_time(total_agent_time)}")
+        lines.append(f"**Total grading time**: {_format_task_time(total_grading_time)}")
+        lines.append(f"**Total task time**: {_format_task_time(total_task_time)}")
         if supports_cost_time:
-            lines.append(f"**Total task time**: {_format_task_time(total_task_time)}")
             lines.append(f"**Equivalent cost**: {_format_equivalent_cost(total_equivalent_cost)}\n")
+        else:
+            lines.append("")
 
         lines.append("## Summary\n")
         lines.append("| Verdict | Count |")
@@ -1762,11 +1851,15 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
 
         lines.append("## Details\n")
         if supports_cost_time:
-            lines.append("| Benchmark | Verdict | Time | Equivalent cost | Obligations | Tokens (in/out) | Notes |")
-            lines.append("|-----------|---------|------|----------------:|-------------|-----------------|-------|")
+            lines.append(
+                "| Benchmark | Verdict | Agent | Grading | Total | Equivalent cost | Obligations | Tokens (in/out) | Notes |"
+            )
+            lines.append(
+                "|-----------|---------|------:|--------:|------:|----------------:|-------------|-----------------|-------|"
+            )
         else:
-            lines.append("| Benchmark | Verdict | Time | Obligations | Tokens (in/out) | Notes |")
-            lines.append("|-----------|---------|------|-------------|-----------------|-------|")
+            lines.append("| Benchmark | Verdict | Agent | Grading | Total | Obligations | Tokens (in/out) | Notes |")
+            lines.append("|-----------|---------|------:|--------:|------:|-------------|-----------------|-------|")
         for r in sorted(results, key=lambda x: x["benchmark"]):
             icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
             notes = r.get("error", "")
@@ -1798,9 +1891,10 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
                     latest_count = graded_rounds[-1]["trusted_proof_unit_count"]
                     unit_note += f"; latest continuation trusted {latest_count}/{r['proof_unit_count']}"
                 notes = (unit_note + " " + notes).strip()
-            tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
+            tokens = format_token_usage(result_token_usage(r))
             if "obligations" in r:
-                obs = str(r["obligations"])
+                prefix = "≥" if r.get("obligations_complete") is False else ""
+                obs = f"{prefix}{r['obligations']}"
             elif "obligations_failed" in r:
                 obs = f"{r['obligations_failed']}/{r['obligations_total']} failed"
             else:
@@ -1808,13 +1902,17 @@ def update_summary(results, output_dir, total_benchmarks, backend_name, mode_nam
             if supports_cost_time:
                 lines.append(
                     f"| `{r['benchmark']}` | {icon} {r['check_verdict']} | "
+                    f"{_format_task_time(r.get('agent_time_secs'))} | "
+                    f"{_format_task_time(r.get('grading_time_secs'))} | "
                     f"{_format_task_time(r.get('time_secs'))} | "
                     f"{_format_equivalent_cost(r.get('equivalent_cost_usd'))} | {obs} | {tokens} | {notes} |"
                 )
             else:
                 lines.append(
                     f"| `{r['benchmark']}` | {icon} {r['check_verdict']} | "
-                    f"{r['time_secs']:.0f}s | {obs} | {tokens} | {notes} |"
+                    f"{_format_task_time(r.get('agent_time_secs'))} | "
+                    f"{_format_task_time(r.get('grading_time_secs'))} | "
+                    f"{_format_task_time(r.get('time_secs'))} | {obs} | {tokens} | {notes} |"
                 )
         lines.append("")
         cost_warnings = _equivalent_cost_warnings(results) if supports_cost_time else []
@@ -1963,6 +2061,7 @@ def _grade_resumed_module_submission(
     if not os.path.isfile(solution_path):
         raise ModuleArtifactError("resumed module artifact did not materialize as a regular task file")
     shutil.copy2(solution_path, os.path.join(attempt_dir, "solution.tla"))
+    grading_before = nonnegative_float(attempt.get("grading_time_secs")) or 0.0
     _grade_submission(
         item,
         attempt,
@@ -1974,7 +2073,13 @@ def _grade_resumed_module_submission(
         canonical_inputs,
         None,
     )
-    if isinstance(attempt.get("module_result"), dict):
+    if pending_round > 0:
+        _ensure_time_breakdown(result)
+        latest_grading = nonnegative_float(attempt.get("grading_time_secs"))
+        prior_grading = nonnegative_float(result.get("grading_time_secs"))
+        if latest_grading is not None and prior_grading is not None:
+            _add_child_grading_time(result, latest_grading - grading_before)
+    if isinstance(attempt.get("module_result"), dict) and attempt.get("check_verdict") != "ERROR":
         result.pop("module_grading_pending", None)
 
 
@@ -2013,6 +2118,8 @@ def run_single_benchmark(item: WorkItem):
         "mode": mode.name,
         "agent_exit": -1,
         "check_verdict": "ERROR",
+        "agent_time_secs": None if _supports_cost_time(backend) else 0,
+        "grading_time_secs": 0.0,
         "time_secs": None if _supports_cost_time(backend) else 0,
         "error": "",
         # Skill availability, not evidence that the client invoked a skill.
@@ -2218,12 +2325,10 @@ def run_single_benchmark(item: WorkItem):
 
         with open(os.path.join(agent_dir, "transcript.txt"), "w") as f:
             f.write(f"Benchmark: {rel_path}\n")
+            f.write(f"Agent time: {_format_task_time(result.get('agent_time_secs'))}\n")
             if _supports_cost_time(backend):
-                f.write(f"Time: {_format_task_time(result.get('time_secs'))}\n")
                 f.write(f"Equivalent cost: {_format_equivalent_cost(result.get('equivalent_cost_usd'))}\n")
-            else:
-                f.write(f"Time: {result['time_secs']:.0f}s\n")
-            f.write(f"Tokens: {result['input_tokens']:,} input / {result['output_tokens']:,} output\n")
+            f.write(f"Tokens: {format_token_usage(result_token_usage(result), verbose=True)}\n")
             f.write("=" * 60 + "\n\n")
             f.write(run.transcript)
 
@@ -2333,7 +2438,7 @@ def run_single_benchmark(item: WorkItem):
         )
         if interrupted_after_model_work and result.get("module_result") is not None:
             result["graded_after_interruption"] = True
-        if isinstance(result.get("module_result"), dict):
+        if isinstance(result.get("module_result"), dict) and result.get("check_verdict") != "ERROR":
             result.pop("module_grading_pending", None)
         if item.module_checkpoint_identity is not None and not _persist_work_item_result(item, result_dir, result):
             return result
@@ -2498,6 +2603,7 @@ def _run_continuations(
     <result_dir>/continuations/round-N/, shaped like the agent/ + grading/ dirs.
     """
     mode = item.mode
+    _ensure_time_breakdown(result)
     prompt = mode.build_continuation_prompt(basename, item.tlapm_path, item.tlapm_lib)
     agent_check_file = os.path.join(workspace, name_no_ext + ".result")
     rounds: list[dict] = result.setdefault("continuations", [])
@@ -2525,6 +2631,8 @@ def _run_continuations(
             "round": rnd,
             "agent_exit": -1,
             "check_verdict": "ERROR",
+            "agent_time_secs": 0,
+            "grading_time_secs": 0.0,
             "time_secs": 0,
             "error": "",
             "termination_reason": TerminationReason.OK,
@@ -2567,7 +2675,7 @@ def _run_continuations(
                 run.quota_exhausted or round_result.get("termination_reason") == TerminationReason.INFRA_ERROR
             )
 
-            formal_round = not is_non_genuine(round_result) or (
+            formal_round = not round_interrupted or (
                 item.module_checkpoint_identity is not None and run.model_work_observed
             )
             if formal_round or not _supports_cost_time(item.backend):
@@ -2579,10 +2687,15 @@ def _run_continuations(
                         .merge(toolcalls.ToolCallSummary.from_dict(round_result.get("tool_calls")))
                         .to_dict()
                     )
-                result["time_secs"] = _sum_accounting_values(
-                    result.get("time_secs"),
-                    round_result.get("time_secs"),
+                result["agent_time_secs"] = _sum_accounting_values(
+                    result.get("agent_time_secs"),
+                    round_result.get("agent_time_secs"),
                 )
+                result["grading_time_secs"] = _sum_accounting_values(
+                    result.get("grading_time_secs"),
+                    round_result.get("grading_time_secs"),
+                )
+                _recompute_task_time(result)
                 if _supports_cost_time(item.backend):
                     result["equivalent_cost_usd"] = _sum_accounting_values(
                         result.get("equivalent_cost_usd"),
@@ -2648,6 +2761,7 @@ def _run_continuations(
                     cut_short = True
             if module_submission_failure is None and (not cut_short or grade_interrupted_module):
                 check_result_path = os.path.join(round_dir, "check.result")
+                grading_before = nonnegative_float(round_result.get("grading_time_secs")) or 0.0
                 _grade_submission(
                     item,
                     round_result,
@@ -2659,9 +2773,17 @@ def _run_continuations(
                     canonical_inputs,
                     run.canonical_dir,
                 )
-                if isinstance(round_result.get("module_result"), dict):
+                grading_after = nonnegative_float(round_result.get("grading_time_secs"))
+                if grading_after is not None:
+                    _add_child_grading_time(result, grading_after - grading_before)
+                if (
+                    isinstance(round_result.get("module_result"), dict)
+                    and round_result.get("check_verdict") != "ERROR"
+                ):
                     result.pop("module_grading_pending", None)
                 elif result.get("module_grading_pending") == rnd:
+                    cut_short = True
+                if round_result.get("check_verdict") == "ERROR":
                     cut_short = True
         finally:
             shutil.rmtree(run.canonical_dir, ignore_errors=True)
@@ -3147,6 +3269,25 @@ def _grade_submission(
 ) -> None:
     """Grade a submission, isolating preserved module artifacts from scratch files."""
 
+    previous_grader_error = attempt.pop("grader_error", None)
+    if previous_grader_error and attempt.get("error") == previous_grader_error:
+        attempt["error"] = ""
+    for key in (
+        "module_result",
+        "trusted_proof_unit_ids",
+        "obligations",
+        "obligations_complete",
+        "obligations_failed",
+        "obligations_total",
+        "sany_status",
+        "sany_valid",
+        "failed_gates",
+        "cheat_checks",
+    ):
+        attempt.pop(key, None)
+    if "trusted_proof_unit_count" in attempt:
+        attempt["trusted_proof_unit_count"] = 0
+    started = time.monotonic()
     try:
         if item.module_checkpoint_identity is not None:
             inputs = _module_grading_inputs(item, attempt, canonical_inputs, basename, name_no_ext)
@@ -3176,6 +3317,16 @@ def _grade_submission(
     except (OSError, ModuleArtifactError) as exc:
         attempt["check_verdict"] = "ERROR"
         attempt["error"] = f"cannot materialize grading inputs: {exc}"
+    finally:
+        elapsed = time.monotonic() - started
+        if attempt.get("check_verdict") == "ERROR":
+            attempt["grader_error"] = str(attempt.get("error", ""))
+            prior = nonnegative_float(attempt.get("grader_error_time_secs")) or 0.0
+            attempt["grader_error_time_secs"] = prior + elapsed
+            _ensure_time_breakdown(attempt)
+            _recompute_task_time(attempt)
+        else:
+            _add_grading_time(attempt, elapsed)
 
 
 def _parse_grader_result(
@@ -3212,6 +3363,9 @@ def _parse_grader_result(
         result["check_verdict"] = "ERROR"
         result["error"] = f"grader reported an invalid SANY status marker: {sany_status!r}"
         return
+    result["sany_status"] = sany_status
+    result["sany_valid"] = sany_status == "valid"
+    declared_timeout = bool(re.search(r"^CHECK-TIMEOUT:", stdout or "", re.MULTILINE))
     module_matches = re.findall(
         rf"^{re.escape(MODULE_RESULT_PREFIX)}(.+)$",
         stdout or "",
@@ -3219,6 +3373,9 @@ def _parse_grader_result(
     )
     if expected_module_unit_ids is not None:
         if len(module_matches) != 1:
+            if len(module_matches) == 0 and exit_code not in (0, 1) and declared_timeout:
+                result["check_verdict"] = "TIMEOUT"
+                return
             result["check_verdict"] = "ERROR"
             result["error"] = "module grader did not report exactly one machine-readable module result"
             return
@@ -3233,6 +3390,11 @@ def _parse_grader_result(
         result["proof_unit_count"] = len(expected_module_unit_ids)
         result["trusted_proof_unit_count"] = len(trusted)
         result["trusted_proof_unit_ids"] = list(trusted)
+        units = module_result["units"]
+        if units and any("obligations" in unit for unit in units):
+            known_obligations = [unit["obligations"] for unit in units if isinstance(unit.get("obligations"), int)]
+            result["obligations"] = sum(known_obligations)
+            result["obligations_complete"] = len(known_obligations) == len(units)
         if exit_code == 0 and not module_result["complete"]:
             result["check_verdict"] = "ERROR"
             result["error"] = "module grader exited PASS without trusting every proof unit"
@@ -3249,8 +3411,6 @@ def _parse_grader_result(
             result["error"] = "module grader SANY status disagrees with SANY-STATUS marker"
             return
 
-    result["sany_status"] = sany_status
-    result["sany_valid"] = sany_status == "valid"
     # Which gate(s) failed (the grade is binary; this keeps the analysis signal).
     gm = re.search(r"GATES-FAILED:\s*([^\n]+)", stdout or "")
     if gm:
@@ -3731,7 +3891,7 @@ def main():
                 f"(first-attempt or continuation) + {n_skip} SKIP"
             )
             if non_genuine:
-                msg += f"; {non_genuine} infra/quota-cut result(s) eligible for rerun"
+                msg += f"; {non_genuine} error/interrupted result(s) eligible for rerun"
             print(msg)
         else:
             print(f"Resume: no prior results.json or module checkpoints in {output_dir} — running all")
@@ -3896,7 +4056,7 @@ def main():
             r = run_single_benchmark(item)
             _record_result(results, r)
             icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
-            tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
+            tokens = format_token_usage(result_token_usage(r))
             cont = _continuation_note(r)
             metrics = (
                 f"{_format_task_time(r.get('time_secs'))}, {tokens} tok, "
@@ -3916,7 +4076,7 @@ def main():
                 r = future.result()
                 _record_result(results, r)
                 icon = VERDICT_ICONS.get(r["check_verdict"], "❓")
-                tokens = f"{r.get('input_tokens', 0):,}/{r.get('output_tokens', 0):,}"
+                tokens = format_token_usage(result_token_usage(r))
                 cont = _continuation_note(r)
                 metrics = (
                     f"{_format_task_time(r.get('time_secs'))}, {tokens} tok, "
@@ -3949,12 +4109,12 @@ def main():
     for v in ["PASS", "FAIL", "CHEATING", "TIMEOUT", "ERROR"]:
         if v in verdicts:
             print(f"  {VERDICT_ICONS.get(v, '❓')} {v}: {verdicts[v]}")
-    total_in = sum(r.get("input_tokens", 0) for r in results)
-    total_out = sum(r.get("output_tokens", 0) for r in results)
-    print(f"  Total tokens: {total_in:,} input / {total_out:,} output")
+    print(f"  Total tokens: {format_token_usage(aggregate_token_usage(results), verbose=True)}")
+    formal_results = _formal_results(results)
+    print(f"  Total agent time: {_format_task_time(_sum_required_metric(formal_results, 'agent_time_secs'))}")
+    print(f"  Total grading time: {_format_task_time(_sum_required_metric(formal_results, 'grading_time_secs'))}")
+    print(f"  Total task time: {_format_task_time(_sum_required_metric(formal_results, 'time_secs'))}")
     if _supports_cost_time(backend):
-        formal_results = _formal_results(results)
-        print(f"  Total task time: {_format_task_time(_sum_required_metric(formal_results, 'time_secs'))}")
         print(
             f"  Equivalent cost: {_format_equivalent_cost(_sum_required_metric(formal_results, 'equivalent_cost_usd'))}"
         )
