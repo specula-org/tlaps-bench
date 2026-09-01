@@ -240,9 +240,9 @@ def test_summary_uses_strict_specification_pass_rate_as_primary_for_manifest_sui
     )
 
     summary = (tmp_path / "summary.md").read_text()
-    primary = "**Specification pass rate (all leaves complete)**: 1/2 specifications (50.0%)"
+    primary = "**Specification pass rate (all leaves complete)**: 1/2 resolved specifications (50.0%)"
     task_level = "**Task-micro pass rate**: 2/3 (66.7%)"
-    specification_macro = "**Specification-macro pass rate**: 75.0% across 2 specifications"
+    specification_macro = "**Specification-macro pass rate**: 75.0% across 2 resolved specifications"
     assert primary in summary
     assert task_level in summary
     assert specification_macro in summary

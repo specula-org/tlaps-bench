@@ -93,8 +93,15 @@ class SpecificationScore:
     tasks_passed: int
     applicable_tasks: int
     complete_specifications: int
+    failed_specifications: int
+    unresolved_specifications: int
+    error_affected_specifications: int
     represented_specifications: int
     non_applicable_results: int
+
+    @property
+    def resolved_specifications(self) -> int:
+        return self.complete_specifications + self.failed_specifications
 
 
 @dataclass(frozen=True)
@@ -309,27 +316,39 @@ def specification_equal_score(
         if key is None or key not in specification_ids:
             non_applicable += 1
             continue
-        if is_skipped(result) or is_non_genuine(result):
+        if is_skipped(result):
             continue
         by_specification[(key[0], specification_ids[key])].append(result)
 
-    applicable = [result for grouped in by_specification.values() for result in grouped]
+    applicable = [result for grouped in by_specification.values() for result in grouped if not is_non_genuine(result)]
     tasks_passed = sum(1 for result in applicable if passed(result))
     applicable_tasks = len(applicable)
     task_micro_pct = 100.0 * tasks_passed / applicable_tasks if applicable_tasks else 0.0
 
-    spec_fractions = [
-        sum(1 for result in grouped if passed(result)) / len(grouped) for grouped in by_specification.values()
-    ]
-    represented_specifications = len(spec_fractions)
-    specification_macro_pct = (
-        100.0 * sum(spec_fractions) / represented_specifications if represented_specifications else 0.0
-    )
-    complete_specifications = sum(
-        1 for grouped in by_specification.values() if all(passed(result) for result in grouped)
-    )
+    complete_specifications = 0
+    failed_specifications = 0
+    unresolved_specifications = 0
+    error_affected_specifications = 0
+    spec_fractions: list[float] = []
+    for grouped in by_specification.values():
+        resolved = [result for result in grouped if not is_non_genuine(result)]
+        affected = len(resolved) != len(grouped)
+        if affected:
+            error_affected_specifications += 1
+        if any(not passed(result) for result in resolved):
+            failed_specifications += 1
+            spec_fractions.append(sum(1 for result in resolved if passed(result)) / len(resolved))
+        elif affected:
+            unresolved_specifications += 1
+        else:
+            complete_specifications += 1
+            spec_fractions.append(1.0)
+
+    represented_specifications = len(by_specification)
+    resolved_specifications = complete_specifications + failed_specifications
+    specification_macro_pct = 100.0 * sum(spec_fractions) / resolved_specifications if resolved_specifications else 0.0
     specification_pass_pct = (
-        100.0 * complete_specifications / represented_specifications if represented_specifications else 0.0
+        100.0 * complete_specifications / resolved_specifications if resolved_specifications else 0.0
     )
     return SpecificationScore(
         specification_pass_pct=specification_pass_pct,
@@ -338,6 +357,9 @@ def specification_equal_score(
         tasks_passed=tasks_passed,
         applicable_tasks=applicable_tasks,
         complete_specifications=complete_specifications,
+        failed_specifications=failed_specifications,
+        unresolved_specifications=unresolved_specifications,
+        error_affected_specifications=error_affected_specifications,
         represented_specifications=represented_specifications,
         non_applicable_results=non_applicable,
     )
@@ -366,15 +388,24 @@ def specification_score_lines(
     if non_genuine:
         task_line += f" · {non_genuine} error/interrupted (excluded — re-run)"
 
-    specification_word = "specification" if score.represented_specifications == 1 else "specifications"
+    resolved_word = "specification" if score.resolved_specifications == 1 else "specifications"
     lines = [
         f"**Specification pass rate (all leaves complete)**: "
-        f"{score.complete_specifications}/{score.represented_specifications} "
-        f"{specification_word} ({score.specification_pass_pct:.1f}%)",
+        f"{score.complete_specifications}/{score.resolved_specifications} resolved "
+        f"{resolved_word} ({score.specification_pass_pct:.1f}%)",
         task_line,
         f"**Specification-macro pass rate**: {score.specification_macro_pct:.1f}% "
-        f"across {score.represented_specifications} {specification_word}",
+        f"across {score.resolved_specifications} resolved {resolved_word}",
     ]
+    if score.unresolved_specifications:
+        lines.append(
+            f"**Unresolved specifications**: {score.unresolved_specifications} excluded until their errors are retried"
+        )
+    if score.error_affected_specifications:
+        lines.append(
+            f"**Specifications affected by errors**: {score.error_affected_specifications} contain excluded "
+            "ERROR/interrupted leaves"
+        )
     if score.non_applicable_results:
         lines.append(
             f"**Non-applicable results**: {score.non_applicable_results} not present in the active manifest (excluded)"
@@ -697,11 +728,13 @@ def comparison_md(
                 score_notes += f" (+{specification_score.non_applicable_results} non-applicable)"
             score_cells = (
                 f"{specification_score.complete_specifications}/"
-                f"{specification_score.represented_specifications} "
+                f"{specification_score.resolved_specifications} "
                 f"({specification_score.specification_pass_pct:.1f}%) | "
                 f"{n_pass}/{n_total} ({specification_score.task_micro_pct:.1f}%){score_notes} | "
                 f"{specification_score.specification_macro_pct:.1f}%"
             )
+            if specification_score.unresolved_specifications:
+                score_cells += f" (+{specification_score.unresolved_specifications} unresolved specification(s))"
         if show_proof_units:
             unit_score = proof_unit_score(scoring_results)
             unit_cell = (

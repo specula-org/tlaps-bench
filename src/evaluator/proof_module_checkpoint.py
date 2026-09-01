@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -130,6 +131,26 @@ def _validate_result(
         verdict = attempt.get("check_verdict")
         if type(verdict) is not str or verdict not in {"PASS", "FAIL", "TIMEOUT", "ERROR", "CHEATING"}:
             raise ModuleCheckpointError(f"module checkpoint {label} has an invalid checker verdict")
+        for field in ("logical_timeout_secs", "logical_timeout_used_secs"):
+            value = attempt.get(field)
+            if value is not None and (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value < 0
+                or not math.isfinite(float(value))
+            ):
+                raise ModuleCheckpointError(f"module checkpoint {label} has an invalid {field}")
+        remaining = attempt.get("logical_timeout_remaining_secs")
+        if remaining is not None and (
+            not isinstance(remaining, (int, float))
+            or isinstance(remaining, bool)
+            or remaining < 0
+            or not math.isfinite(float(remaining))
+        ):
+            raise ModuleCheckpointError(f"module checkpoint {label} has an invalid logical timeout remainder")
+        resume_count = attempt.get("logical_resume_count")
+        if resume_count is not None and (type(resume_count) is not int or resume_count < 0):
+            raise ModuleCheckpointError(f"module checkpoint {label} has an invalid logical resume count")
         module_result = attempt.get("module_result")
         invalid_after_interruption = attempt.get("invalid_submission_after_interruption")
         if invalid_after_interruption is not None:

@@ -638,6 +638,135 @@ def test_quota_after_model_work_grades_for_diagnostics_but_retries_first_attempt
     assert runner._module_resume_action(result, max_continuations=0) == runner.MODULE_RESUME_RETRY_FIRST
 
 
+def test_interrupted_first_attempt_resume_keeps_accounting_and_uses_only_remaining_timeout(tmp_path, monkeypatch):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    partial = b"partial first-attempt module"
+    identity, result = _checkpoint_result(output_dir, first_content=partial)
+    result.update(
+        {
+            "termination_reason": "INFRA_ERROR",
+            "graded_after_interruption": True,
+            "agent_time_secs": 3.0,
+            "grading_time_secs": 1.0,
+            "logical_timeout_used_secs": 4.0,
+            "time_secs": 4.0,
+            "logical_timeout_secs": 10,
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "usage": UsageSummary(
+                input_tokens=10,
+                output_tokens=20,
+                model_requests=1,
+                available=True,
+                complete=True,
+            ).to_dict(),
+            "equivalent_cost_usd": 0.1,
+        }
+    )
+    write_module_checkpoint(output_dir, identity, result)
+    item = _resume_item(tmp_path, result, partial, action=runner.MODULE_RESUME_RETRY_FIRST)
+    resumed_usage = UsageSummary(
+        input_tokens=3,
+        output_tokens=4,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+    observed_timeouts: list[float] = []
+    observed_inputs: list[bytes] = []
+
+    def resumed_segment(execution_item, _prompt, *_args, **_kwargs):
+        observed_timeouts.append(execution_item.timeout)
+        workspace = tmp_path / "resumed-first-workspace"
+        canonical = tmp_path / "resumed-first-canonical"
+        workspace.mkdir()
+        canonical.mkdir()
+        item.canonical_inputs.materialize(str(workspace))
+        item.canonical_inputs.materialize(str(canonical))
+        (workspace / "Task.tla").write_bytes(execution_item.module_resume.submission)
+        observed_inputs.append((workspace / "Task.tla").read_bytes())
+        (workspace / "Task.tla").write_bytes(b"completed first-attempt module")
+        segment_result = _args[3]
+        segment_result.update(
+            {
+                "agent_exit": 0,
+                "termination_reason": "OK",
+                "agent_time_secs": 2.0,
+                "grading_time_secs": 0.0,
+                "logical_timeout_used_secs": 2.0,
+                "time_secs": 2.0,
+                "usage": resumed_usage.to_dict(),
+                "input_tokens": 3,
+                "output_tokens": 4,
+                "equivalent_cost_usd": 0.05,
+            }
+        )
+        return runner.ExecutionOutcome(
+            str(workspace),
+            str(canonical),
+            "resumed model work",
+            False,
+            False,
+            False,
+            True,
+            [],
+            resumed_usage,
+        )
+
+    monkeypatch.setattr(runner.quota, "wait_for_quota", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runner, "_run_backend_with_retries", resumed_segment)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args, **_kwargs: _complete_grading(args[5]))
+
+    recovered = runner.run_single_benchmark(item)
+
+    assert observed_timeouts == [6.0]
+    assert observed_inputs == [partial]
+    assert recovered["check_verdict"] == "PASS"
+    assert recovered["logical_resume_count"] == 1
+    assert recovered["agent_time_secs"] == 5.0
+    assert recovered["logical_timeout_used_secs"] == 6.0
+    assert recovered["logical_timeout_remaining_secs"] == 4.0
+    assert recovered["grading_time_secs"] > 1.0
+    assert recovered["time_secs"] == pytest.approx(recovered["agent_time_secs"] + recovered["grading_time_secs"])
+    assert (recovered["input_tokens"], recovered["output_tokens"]) == (13, 24)
+    assert recovered["equivalent_cost_usd"] == pytest.approx(0.15)
+
+
+def test_exhausted_first_attempt_timeout_is_not_reset_on_resume(tmp_path, monkeypatch):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    partial = b"partial module at timeout boundary"
+    identity, result = _checkpoint_result(output_dir, first_content=partial)
+    result.update(
+        {
+            "termination_reason": "INFRA_ERROR",
+            "graded_after_interruption": True,
+            "agent_time_secs": 10.0,
+            "grading_time_secs": 1.0,
+            "logical_timeout_used_secs": 10.0,
+            "time_secs": 11.0,
+            "logical_timeout_secs": 10,
+        }
+    )
+    write_module_checkpoint(output_dir, identity, result)
+    item = _resume_item(tmp_path, result, partial, action=runner.MODULE_RESUME_RETRY_FIRST)
+
+    monkeypatch.setattr(
+        runner,
+        "_run_backend_with_retries",
+        lambda *_args, **_kwargs: pytest.fail("an exhausted logical attempt must not launch the agent"),
+    )
+
+    recovered = runner.run_single_benchmark(item)
+
+    assert recovered["check_verdict"] == "TIMEOUT"
+    assert recovered["termination_reason"] == "TIMEOUT"
+    assert recovered["logical_timeout_remaining_secs"] == 0.0
+    assert recovered["agent_time_secs"] == 10.0
+    assert recovered["time_secs"] == 11.0
+
+
 @pytest.mark.parametrize(
     ("submission_state", "quota_exhausted", "expected_termination", "expected_error"),
     [
@@ -1011,7 +1140,6 @@ def test_recover_retries_interrupted_continuation_at_same_round_without_losing_h
         {TASK_ID: checkpoint},
         max_continuations=2,
     )
-
     assert completed == set()
     assert resumes[TASK_ID].action == runner.MODULE_RESUME_CONTINUE
     assert recovered[0]["check_verdict"] == "FAIL"
@@ -1062,6 +1190,13 @@ def test_interrupted_continuation_is_archived_when_same_formal_round_restarts(tm
         continuation_verdicts=("ERROR",),
         continuation_termination_reasons=("INFRA_ERROR",),
         max_continuations=2,
+    )
+    result["continuations"][0].update(
+        agent_time_secs=1.0,
+        grading_time_secs=0.0,
+        logical_timeout_used_secs=1.0,
+        time_secs=1.0,
+        logical_timeout_secs=10,
     )
     item = _resume_item(
         tmp_path,
@@ -1499,6 +1634,146 @@ def test_interrupted_worked_continuation_regrade_consumes_the_same_round(tmp_pat
 
     assert selected_rounds == [1]
     assert len(result["interrupted_continuations"]) == 1
+
+
+def test_interrupted_continuation_resume_keeps_round_accounting_and_remaining_timeout(tmp_path, monkeypatch):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    first_submission = b"first partial module"
+    interrupted_submission = b"interrupted continuation module"
+    identity, result = _checkpoint_result(
+        output_dir,
+        first_content=first_submission,
+        continuation_contents=(interrupted_submission,),
+        continuation_verdicts=("FAIL",),
+        continuation_termination_reasons=("INFRA_ERROR",),
+        max_continuations=2,
+    )
+    first_usage = UsageSummary(
+        input_tokens=10,
+        output_tokens=20,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+    interrupted_usage = UsageSummary(
+        input_tokens=3,
+        output_tokens=4,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+    interrupted_round = result["continuations"][0]
+    interrupted_round.update(
+        {
+            "graded_after_interruption": True,
+            "agent_time_secs": 4.0,
+            "grading_time_secs": 0.5,
+            "logical_timeout_used_secs": 4.0,
+            "time_secs": 4.5,
+            "logical_timeout_secs": 10,
+            "input_tokens": 3,
+            "output_tokens": 4,
+            "usage": interrupted_usage.to_dict(),
+            "equivalent_cost_usd": 0.05,
+        }
+    )
+    result.update(
+        {
+            "agent_time_secs": 6.0,
+            "grading_time_secs": 1.5,
+            "time_secs": 7.5,
+            "input_tokens": 13,
+            "output_tokens": 24,
+            "usage": first_usage.merge(interrupted_usage).to_dict(),
+            "equivalent_cost_usd": 0.15,
+        }
+    )
+    write_module_checkpoint(output_dir, identity, result)
+    item = _resume_item(
+        tmp_path,
+        result,
+        interrupted_submission,
+        action=runner.MODULE_RESUME_CONTINUE,
+        max_continuations=2,
+    )
+    workspace = tmp_path / "continuation-resume-workspace"
+    workspace.mkdir()
+    (workspace / "Task.tla").write_bytes(interrupted_submission)
+    resumed_usage = UsageSummary(
+        input_tokens=5,
+        output_tokens=6,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+    observed_timeouts: list[float] = []
+    observed_rounds: list[int] = []
+
+    def resumed_segment(execution_item, _prompt, *_args, **_kwargs):
+        observed_timeouts.append(execution_item.timeout)
+        round_result = _args[3]
+        observed_rounds.append(round_result["round"])
+        (workspace / "Task.tla").write_bytes(b"completed continuation module")
+        canonical = tmp_path / "continuation-resume-canonical"
+        canonical.mkdir()
+        round_result.update(
+            {
+                "agent_exit": 0,
+                "termination_reason": "OK",
+                "agent_time_secs": 2.0,
+                "grading_time_secs": 0.0,
+                "logical_timeout_used_secs": 2.0,
+                "time_secs": 2.0,
+                "input_tokens": 5,
+                "output_tokens": 6,
+                "usage": resumed_usage.to_dict(),
+                "equivalent_cost_usd": 0.02,
+            }
+        )
+        return runner.ExecutionOutcome(
+            str(workspace),
+            str(canonical),
+            "resumed continuation work",
+            False,
+            False,
+            False,
+            True,
+            [],
+            resumed_usage,
+        )
+
+    monkeypatch.setattr(runner, "_run_backend_with_retries", resumed_segment)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args, **_kwargs: _complete_grading(args[5]))
+
+    runner._run_continuations(
+        item,
+        str(workspace),
+        result,
+        str(tmp_path / "task-result"),
+        "Task.tla",
+        "Task",
+        item.canonical_inputs,
+        "/checker",
+    )
+
+    assert observed_timeouts == [6.0]
+    assert observed_rounds == [1]
+    assert len(result["continuations"]) == 1
+    recovered_round = result["continuations"][0]
+    assert recovered_round["round"] == 1
+    assert recovered_round["check_verdict"] == "PASS"
+    assert recovered_round["logical_resume_count"] == 1
+    assert recovered_round["agent_time_secs"] == 6.0
+    assert recovered_round["logical_timeout_used_secs"] == 6.0
+    assert recovered_round["logical_timeout_remaining_secs"] == 4.0
+    assert recovered_round["grading_time_secs"] > 0.5
+    assert (recovered_round["input_tokens"], recovered_round["output_tokens"]) == (8, 10)
+    assert recovered_round["equivalent_cost_usd"] == pytest.approx(0.07)
+    assert result["agent_time_secs"] == 8.0
+    assert result["grading_time_secs"] > 1.5
+    assert (result["input_tokens"], result["output_tokens"]) == (18, 30)
+    assert result["equivalent_cost_usd"] == pytest.approx(0.17)
 
 
 def test_interrupted_worked_continuation_with_missing_submission_consumes_the_round(tmp_path, monkeypatch):

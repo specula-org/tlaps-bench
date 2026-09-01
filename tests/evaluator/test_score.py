@@ -128,8 +128,56 @@ def test_specification_equal_excludes_non_applicable_and_unscored_results():
 
     assert score.specification_macro_pct == 100.0
     assert (score.tasks_passed, score.applicable_tasks) == (1, 1)
-    assert (score.complete_specifications, score.represented_specifications) == (1, 1)
+    assert (score.complete_specifications, score.represented_specifications) == (1, 2)
+    assert score.unresolved_specifications == 1
+    assert score.error_affected_specifications == 1
     assert score.non_applicable_results == 1
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "complete", "failed", "unresolved", "resolved", "pass_pct"),
+    [
+        (("PASS", "ERROR"), 0, 0, 1, 0, 0.0),
+        (("FAIL", "ERROR"), 0, 1, 0, 1, 0.0),
+        (("PASS", "PASS"), 1, 0, 0, 1, 100.0),
+    ],
+)
+def test_specification_state_is_tristate(verdicts, complete, failed, unresolved, resolved, pass_pct):
+    specification_ids = scope_specification_ids(
+        "proof-completion",
+        {"A/One.tla": "A/A.tla", "A/Two.tla": "A/A.tla"},
+    )
+    results = [
+        _r(verdict, mode="proof-completion", benchmark=task)
+        for verdict, task in zip(verdicts, ("A/One.tla", "A/Two.tla"), strict=True)
+    ]
+
+    score = specification_equal_score(results, specification_ids)
+
+    assert score.complete_specifications == complete
+    assert score.failed_specifications == failed
+    assert score.unresolved_specifications == unresolved
+    assert score.resolved_specifications == resolved
+    assert score.specification_pass_pct == pass_pct
+    assert score.error_affected_specifications == (1 if "ERROR" in verdicts else 0)
+
+
+def test_scorecard_reports_unresolved_and_error_affected_specifications():
+    specification_ids = scope_specification_ids(
+        "proof-completion",
+        {"A/One.tla": "A/A.tla", "A/Two.tla": "A/A.tla"},
+    )
+    results = [
+        _r("PASS", mode="proof-completion", benchmark="A/One.tla"),
+        _r("ERROR", mode="proof-completion", benchmark="A/Two.tla"),
+    ]
+    run = {"path": "x", "id": "x", "backend": "codex", "mode": "proof-completion", "results": results}
+
+    card = scorecard_md(run, EQUAL, SPECIFICATION_EQUAL, specification_ids)
+
+    assert "**Specification pass rate (all leaves complete)**: 0/0 resolved specifications (0.0%)" in card
+    assert "**Unresolved specifications**: 1 excluded until their errors are retried" in card
+    assert "**Specifications affected by errors**: 1 contain excluded ERROR/interrupted leaves" in card
 
 
 def test_specification_scorecard_shows_strict_primary_before_secondary_diagnostics():
@@ -150,9 +198,9 @@ def test_specification_scorecard_shows_strict_primary_before_secondary_diagnosti
 
     md = scorecard_md(run, EQUAL, SPECIFICATION_EQUAL, specification_ids)
 
-    primary = "**Specification pass rate (all leaves complete)**: 1/2 specifications (50.0%)"
+    primary = "**Specification pass rate (all leaves complete)**: 1/2 resolved specifications (50.0%)"
     task_level = "**Task-micro pass rate**: 2/3 (66.7%)"
-    specification_macro = "**Specification-macro pass rate**: 75.0% across 2 specifications"
+    specification_macro = "**Specification-macro pass rate**: 75.0% across 2 resolved specifications"
     assert primary in md
     assert task_level in md
     assert specification_macro in md
@@ -699,8 +747,8 @@ def test_main_single_prints_scorecard(tmp_path, monkeypatch, capsys):
     assert main() == 0
     out = capsys.readouterr().out
     assert "# Scorecard" in out
-    assert "**Specification pass rate (all leaves complete)**: 0/1 specification (0.0%)" in out
-    assert "**Specification-macro pass rate**: 50.0% across 1 specification" in out
+    assert "**Specification pass rate (all leaves complete)**: 0/1 resolved specification (0.0%)" in out
+    assert "**Specification-macro pass rate**: 50.0% across 1 resolved specification" in out
     assert "**Task-micro pass rate**: 1/2 (50.0%)" in out
 
 
