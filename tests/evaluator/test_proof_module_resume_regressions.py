@@ -767,6 +767,184 @@ def test_exhausted_first_attempt_timeout_is_not_reset_on_resume(tmp_path, monkey
     assert recovered["time_secs"] == 11.0
 
 
+def test_exhausted_first_attempt_starts_first_continuation_with_fresh_round_timeout(tmp_path, monkeypatch):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    partial = b"partial module after exhausted first attempt"
+    identity, result = _checkpoint_result(output_dir, first_content=partial, max_continuations=1)
+    result.update(
+        {
+            "termination_reason": "INFRA_ERROR",
+            "graded_after_interruption": True,
+            "agent_time_secs": 10.0,
+            "grading_time_secs": 1.0,
+            "logical_timeout_used_secs": 10.0,
+            "time_secs": 11.0,
+            "logical_timeout_secs": 10,
+            "max_continuations": 1,
+        }
+    )
+    write_module_checkpoint(output_dir, identity, result)
+    item = _resume_item(
+        tmp_path,
+        result,
+        partial,
+        action=runner.MODULE_RESUME_RETRY_FIRST,
+        max_continuations=1,
+    )
+    continuation_usage = UsageSummary(
+        input_tokens=2,
+        output_tokens=3,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+    observed: list[tuple[float, int, bytes]] = []
+
+    def continuation_segment(execution_item, _prompt, *_args, **kwargs):
+        workspace = Path(kwargs["fixed_workspace"])
+        round_result = _args[3]
+        observed.append((execution_item.timeout, round_result["round"], (workspace / "Task.tla").read_bytes()))
+        (workspace / "Task.tla").write_bytes(b"completed by continuation")
+        canonical = tmp_path / "first-timeout-continuation-canonical"
+        canonical.mkdir()
+        round_result.update(
+            {
+                "agent_exit": 0,
+                "termination_reason": "OK",
+                "agent_time_secs": 1.0,
+                "grading_time_secs": 0.0,
+                "logical_timeout_used_secs": 1.0,
+                "time_secs": 1.0,
+                "usage": continuation_usage.to_dict(),
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "equivalent_cost_usd": 0.01,
+            }
+        )
+        return runner.ExecutionOutcome(
+            str(workspace),
+            str(canonical),
+            "continuation model work",
+            False,
+            False,
+            False,
+            True,
+            [],
+            continuation_usage,
+        )
+
+    monkeypatch.setattr(runner.quota, "wait_for_quota", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runner, "_run_backend_with_retries", continuation_segment)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args, **_kwargs: _complete_grading(args[5]))
+
+    recovered = runner.run_single_benchmark(item)
+
+    assert observed == [(10, 1, partial)]
+    assert recovered["check_verdict"] == "TIMEOUT"
+    assert [round_result["check_verdict"] for round_result in recovered["continuations"]] == ["PASS"]
+    assert recovered["continuations"][0]["round"] == 1
+
+
+def test_repeated_interruption_with_invalid_submission_keeps_fallback_artifact_and_accounting(tmp_path, monkeypatch):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    partial = b"durable partial module"
+    identity, result = _checkpoint_result(output_dir, first_content=partial)
+    artifact = result["module_artifact"]
+    result.update(
+        {
+            "termination_reason": "INFRA_ERROR",
+            "graded_after_interruption": True,
+            "agent_time_secs": 3.0,
+            "grading_time_secs": 0.5,
+            "logical_timeout_used_secs": 3.0,
+            "time_secs": 3.5,
+            "logical_timeout_secs": 10,
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "usage": UsageSummary(
+                input_tokens=10,
+                output_tokens=20,
+                model_requests=1,
+                available=True,
+                complete=True,
+            ).to_dict(),
+            "equivalent_cost_usd": 0.1,
+        }
+    )
+    write_module_checkpoint(output_dir, identity, result)
+    item = _resume_item(tmp_path, result, partial, action=runner.MODULE_RESUME_RETRY_FIRST)
+    interrupted_usage = UsageSummary(
+        input_tokens=3,
+        output_tokens=4,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+
+    def interrupted_invalid_segment(execution_item, _prompt, *_args, **_kwargs):
+        workspace = tmp_path / "repeated-interruption-workspace"
+        canonical = tmp_path / "repeated-interruption-canonical"
+        workspace.mkdir()
+        canonical.mkdir()
+        item.canonical_inputs.materialize(str(workspace))
+        item.canonical_inputs.materialize(str(canonical))
+        (workspace / "Task.tla").write_bytes(execution_item.module_resume.submission)
+        (workspace / "Task.tla").unlink()
+        segment_result = _args[3]
+        segment_result.update(
+            {
+                "agent_exit": -1,
+                "termination_reason": "OK",
+                "agent_time_secs": 2.0,
+                "grading_time_secs": 0.0,
+                "logical_timeout_used_secs": 2.0,
+                "time_secs": 2.0,
+                "usage": interrupted_usage.to_dict(),
+                "input_tokens": 3,
+                "output_tokens": 4,
+                "equivalent_cost_usd": 0.02,
+            }
+        )
+        return runner.ExecutionOutcome(
+            str(workspace),
+            str(canonical),
+            "model deleted its submission before interruption",
+            True,
+            True,
+            False,
+            True,
+            [],
+            interrupted_usage,
+        )
+
+    monkeypatch.setattr(runner.quota, "wait_for_quota", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runner, "_run_backend_with_retries", interrupted_invalid_segment)
+    monkeypatch.setattr(
+        runner,
+        "_run_grader_local",
+        lambda *_args, **_kwargs: pytest.fail("an invalid segment must not reach the grader"),
+    )
+
+    recovered = runner.run_single_benchmark(item)
+
+    assert recovered["check_verdict"] == "FAIL"
+    assert recovered["termination_reason"] == "QUOTA_EXHAUSTED"
+    assert recovered["invalid_submission_after_interruption"] is True
+    assert recovered["module_artifact"] == artifact
+    assert "module_result" not in recovered
+    assert recovered["agent_time_secs"] == 5.0
+    assert recovered["logical_timeout_used_secs"] == 5.0
+    assert (recovered["input_tokens"], recovered["output_tokens"]) == (13, 24)
+    assert recovered["equivalent_cost_usd"] == pytest.approx(0.12)
+    assert "cannot checkpoint module progress" not in recovered["error"]
+    checkpoint = load_module_checkpoint(output_dir, identity)
+    assert checkpoint.result["invalid_submission_after_interruption"] is True
+    assert checkpoint.result["module_artifact"] == artifact
+    assert checkpoint.result["agent_time_secs"] == 5.0
+
+
 @pytest.mark.parametrize(
     ("submission_state", "quota_exhausted", "expected_termination", "expected_error"),
     [
@@ -1774,6 +1952,105 @@ def test_interrupted_continuation_resume_keeps_round_accounting_and_remaining_ti
     assert result["grading_time_secs"] > 1.5
     assert (result["input_tokens"], result["output_tokens"]) == (18, 30)
     assert result["equivalent_cost_usd"] == pytest.approx(0.17)
+
+
+def test_exhausted_interrupted_continuation_consumes_round_and_starts_next_round(tmp_path, monkeypatch):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    first_submission = b"first partial module"
+    interrupted_submission = b"round one partial module"
+    identity, result = _checkpoint_result(
+        output_dir,
+        first_content=first_submission,
+        continuation_contents=(interrupted_submission,),
+        continuation_verdicts=("FAIL",),
+        continuation_termination_reasons=("INFRA_ERROR",),
+        max_continuations=2,
+    )
+    interrupted_round = result["continuations"][0]
+    interrupted_round.update(
+        {
+            "graded_after_interruption": True,
+            "agent_time_secs": 10.0,
+            "grading_time_secs": 0.5,
+            "logical_timeout_used_secs": 10.0,
+            "time_secs": 10.5,
+            "logical_timeout_secs": 10,
+        }
+    )
+    write_module_checkpoint(output_dir, identity, result)
+    item = _resume_item(
+        tmp_path,
+        result,
+        interrupted_submission,
+        action=runner.MODULE_RESUME_CONTINUE,
+        max_continuations=2,
+    )
+    workspace = tmp_path / "exhausted-continuation-workspace"
+    workspace.mkdir()
+    (workspace / "Task.tla").write_bytes(interrupted_submission)
+    next_usage = UsageSummary(
+        input_tokens=2,
+        output_tokens=3,
+        model_requests=1,
+        available=True,
+        complete=True,
+    )
+    observed: list[tuple[float, int]] = []
+
+    def next_round_segment(execution_item, _prompt, *_args, **_kwargs):
+        round_result = _args[3]
+        observed.append((execution_item.timeout, round_result["round"]))
+        (workspace / "Task.tla").write_bytes(b"completed in round two")
+        canonical = tmp_path / "next-round-canonical"
+        canonical.mkdir()
+        round_result.update(
+            {
+                "agent_exit": 0,
+                "termination_reason": "OK",
+                "agent_time_secs": 1.0,
+                "grading_time_secs": 0.0,
+                "logical_timeout_used_secs": 1.0,
+                "time_secs": 1.0,
+                "usage": next_usage.to_dict(),
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "equivalent_cost_usd": 0.01,
+            }
+        )
+        return runner.ExecutionOutcome(
+            str(workspace),
+            str(canonical),
+            "round two model work",
+            False,
+            False,
+            False,
+            True,
+            [],
+            next_usage,
+        )
+
+    monkeypatch.setattr(runner, "_run_backend_with_retries", next_round_segment)
+    monkeypatch.setattr(runner, "_run_grader_local", lambda *args, **_kwargs: _complete_grading(args[5]))
+
+    runner._run_continuations(
+        item,
+        str(workspace),
+        result,
+        str(tmp_path / "task-result"),
+        "Task.tla",
+        "Task",
+        item.canonical_inputs,
+        "/checker",
+    )
+
+    assert observed == [(10, 2)]
+    assert [(round_result["round"], round_result["check_verdict"]) for round_result in result["continuations"]] == [
+        (1, "TIMEOUT"),
+        (2, "PASS"),
+    ]
+    assert result["continuations"][0]["logical_timeout_remaining_secs"] == 0.0
+    assert result["continuations"][1]["logical_timeout_secs"] == 10
 
 
 def test_interrupted_worked_continuation_with_missing_submission_consumes_the_round(tmp_path, monkeypatch):

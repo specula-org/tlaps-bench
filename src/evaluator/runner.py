@@ -2407,13 +2407,17 @@ def run_single_benchmark(item: WorkItem):
         result["agent_skills"] = current_agent_skills
 
     logical_execution_item = item
+    first_attempt_timeout_exhausted = False
     if retrying_first_attempt:
         maybe_item = _logical_attempt_execution_item(item, result)
         if maybe_item is None:
             _mark_logical_attempt_timeout(result)
-            _persist_work_item_result(item, result_dir, result)
-            return result
-        logical_execution_item = maybe_item
+            if item.max_continuations <= 0:
+                _persist_work_item_result(item, result_dir, result)
+                return result
+            first_attempt_timeout_exhausted = True
+        else:
+            logical_execution_item = maybe_item
 
     grading_only_resume = control_flow_resume and module_resume.action == MODULE_RESUME_GRADE_SAVED
     quota_available = grading_only_resume or quota.wait_for_quota(
@@ -2450,6 +2454,30 @@ def run_single_benchmark(item: WorkItem):
         canonical_inputs.materialize(input_dir, target_name="benchmark.tla")
         if module_resume is not None and module_resume.submission is not None:
             _write_bytes(os.path.join(input_dir, "resume.tla"), module_resume.submission)
+
+        if first_attempt_timeout_exhausted:
+            workspace = _make_workspace(
+                backend.name,
+                name_no_ext,
+                canonical_inputs,
+                skills_snapshot_dir=skills_snapshot_dir,
+                project_skills_dir=backend.project_skills_dir,
+                read_only_dependencies=getattr(mode, "read_only_dependencies", False),
+                initial_target_bytes=module_resume.submission,
+            )
+            if not _persist_work_item_result(item, result_dir, result):
+                return result
+            _run_continuations(
+                item,
+                workspace,
+                result,
+                result_dir,
+                basename,
+                name_no_ext,
+                canonical_inputs,
+                checker_bin,
+            )
+            return result
 
         if control_flow_resume:
             workspace = _make_workspace(
@@ -2599,7 +2627,8 @@ def run_single_benchmark(item: WorkItem):
                 elif module_submission_failure is not None and interrupted_after_model_work:
                     # Missing/empty output after observed model work has no new
                     # bytes to grade. Keep the marker so resume retains its
-                    # accounting while continuing the same logical pass@1.
+                    # accounting while continuing the same logical pass@1; an
+                    # existing module_artifact remains the durable fallback.
                     result.pop("graded_after_interruption", None)
                     result["invalid_submission_after_interruption"] = True
             except (OSError, ModuleArtifactError) as exc:
@@ -2885,8 +2914,10 @@ def _run_continuations(
                 _mark_logical_attempt_timeout(round_result)
                 rounds.append(round_result)
                 if item.module_checkpoint_identity is not None:
-                    _persist_work_item_result(item, result_dir, result)
-                break
+                    if not _persist_work_item_result(item, result_dir, result):
+                        break
+                retry_attempt = None
+                continue
             execution_item = maybe_item
             _reset_logical_attempt_segment(round_result, item.backend)
             retry_attempt = None

@@ -154,13 +154,16 @@ def _validate_result(
         module_result = attempt.get("module_result")
         invalid_after_interruption = attempt.get("invalid_submission_after_interruption")
         if invalid_after_interruption is not None:
+            # A resumed segment may fail to materialize new bytes while the
+            # attempt still retains its previous durable artifact as the next
+            # resume point. The marker describes this segment's submission;
+            # module_artifact remains the latest successfully published bytes.
             if invalid_after_interruption is not True:
                 raise ModuleCheckpointError(f"module checkpoint {label} has an invalid interrupted-submission marker")
             if (
                 attempt.get("termination_reason") not in {"INFRA_ERROR", "QUOTA_EXHAUSTED"}
                 or verdict != "FAIL"
                 or module_result is not None
-                or attempt.get("module_artifact") is not None
                 or attempt.get("graded_after_interruption") is not None
             ):
                 raise ModuleCheckpointError(
