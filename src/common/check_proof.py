@@ -1074,7 +1074,24 @@ def parse_strict_status(tlapm_exit, tlapm_output):
 
 
 MODULE_RESULT_PREFIX = "MODULE-RESULT: "
+MODULE_RESULT_SCHEMA_VERSION = 2
 _NON_CHEAT_MODULE_INTEGRITY_CODES = frozenset({"SCAFFOLD_FORMAT_MODIFIED"})
+
+
+def _module_obligation_count(output: str) -> int | None:
+    """Read the obligation total from one proof-unit TLAPM invocation."""
+
+    machine_counts = re.findall(
+        r"@!!type:obligationsnumber\s*\n@!!count:(\d+)",
+        output,
+    )
+    if machine_counts:
+        return int(machine_counts[-1])
+    proved = re.findall(r"All (\d+) obligations? proved\.", output)
+    if proved:
+        return int(proved[-1])
+    failed = re.findall(r"\d+/(\d+) obligations? failed\.", output)
+    return int(failed[-1]) if failed else None
 
 
 def authoritative_module_unit_ids(filepath: str, benchmark_dir: str | None) -> tuple[str, ...] | None:
@@ -1169,6 +1186,7 @@ def _module_unit_result(
                 "tlapm_exit": None,
                 "missing_proofs": 1,
                 "obligation_failed": False,
+                "obligations": 0,
             },
             "proof is omitted or missing",
         )
@@ -1180,6 +1198,7 @@ def _module_unit_result(
                 "tlapm_exit": None,
                 "missing_proofs": None,
                 "obligation_failed": None,
+                "obligations": None,
             },
             "SANY did not provide a valid theorem location",
         )
@@ -1193,6 +1212,7 @@ def _module_unit_result(
                 "tlapm_exit": None,
                 "missing_proofs": None,
                 "obligation_failed": None,
+                "obligations": None,
             },
             "module checker timeout exhausted before this proof unit",
         )
@@ -1223,6 +1243,7 @@ def _module_unit_result(
                 "tlapm_exit": None,
                 "missing_proofs": None,
                 "obligation_failed": None,
+                "obligations": None,
             },
             "TLAPM timed out",
         )
@@ -1234,6 +1255,7 @@ def _module_unit_result(
                 "tlapm_exit": None,
                 "missing_proofs": None,
                 "obligation_failed": None,
+                "obligations": None,
             },
             f"TLAPM could not run: {exc}",
         )
@@ -1251,6 +1273,7 @@ def _module_unit_result(
             "tlapm_exit": returncode,
             "missing_proofs": missing,
             "obligation_failed": obligation_failed,
+            "obligations": _module_obligation_count(output),
         },
         output,
     )
@@ -1301,6 +1324,7 @@ def run_module_task_check(
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             emit("SANY-STATUS: unavailable")
+            emit("CHECK-TIMEOUT: module checker budget exhausted before SANY validation")
             emit("ERROR: module checker timeout exhausted before SANY validation")
             return 3
         sany_timeout = 180 if remaining is None else max(1, min(180, math.ceil(remaining)))
@@ -1313,11 +1337,13 @@ def run_module_task_check(
             return 3
         emit(f"SANY-STATUS: {sany_run.status.value}")
         if sany_run.status is SanyStatus.UNAVAILABLE:
+            if sany_run.returncode is None and "timed out" in sany_run.detail:
+                emit(f"CHECK-TIMEOUT: {sany_run.detail[:300]}")
             emit(f"ERROR: SANY validation unavailable: {sany_run.detail[:300]}")
             return 3
         if sany_run.status is SanyStatus.INVALID:
             report = {
-                "schema_version": 1,
+                "schema_version": MODULE_RESULT_SCHEMA_VERSION,
                 "sany_status": "invalid",
                 "proof_unit_ids": list(expected_unit_ids),
                 "units": [],
@@ -1332,6 +1358,7 @@ def run_module_task_check(
         assert sany_run.raw is not None
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
+            emit("CHECK-TIMEOUT: module checker budget exhausted before canonical SANY validation")
             emit("ERROR: module checker timeout exhausted before canonical SANY validation")
             return 3
         canonical_sany_timeout = 180 if remaining is None else max(1, min(180, math.ceil(remaining)))
@@ -1341,6 +1368,8 @@ def run_module_task_check(
             timeout=canonical_sany_timeout,
         )
         if canonical_sany_run.status is not SanyStatus.VALID or canonical_sany_run.raw is None:
+            if canonical_sany_run.returncode is None and "timed out" in canonical_sany_run.detail:
+                emit(f"CHECK-TIMEOUT: {canonical_sany_run.detail[:300]}")
             emit(f"ERROR: canonical module SANY validation unavailable: {canonical_sany_run.detail[:300]}")
             return 3
         canonical_module = Module.parse(canonical_sany_run.raw)
@@ -1357,7 +1386,7 @@ def run_module_task_check(
 
         if integrity_issues:
             report = {
-                "schema_version": 1,
+                "schema_version": MODULE_RESULT_SCHEMA_VERSION,
                 "sany_status": "valid",
                 "proof_unit_ids": list(expected_unit_ids),
                 "units": [],
@@ -1403,7 +1432,7 @@ def run_module_task_check(
             result["trusted"] = result["unit_id"] in trusted
         complete = len(trusted_targets) == len(expected_unit_ids)
         report = {
-            "schema_version": 1,
+            "schema_version": MODULE_RESULT_SCHEMA_VERSION,
             "sany_status": "valid",
             "proof_unit_ids": list(expected_unit_ids),
             "units": unit_results,

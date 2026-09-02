@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -130,16 +131,39 @@ def _validate_result(
         verdict = attempt.get("check_verdict")
         if type(verdict) is not str or verdict not in {"PASS", "FAIL", "TIMEOUT", "ERROR", "CHEATING"}:
             raise ModuleCheckpointError(f"module checkpoint {label} has an invalid checker verdict")
+        for field in ("logical_timeout_secs", "logical_timeout_used_secs"):
+            value = attempt.get(field)
+            if value is not None and (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value < 0
+                or not math.isfinite(float(value))
+            ):
+                raise ModuleCheckpointError(f"module checkpoint {label} has an invalid {field}")
+        remaining = attempt.get("logical_timeout_remaining_secs")
+        if remaining is not None and (
+            not isinstance(remaining, (int, float))
+            or isinstance(remaining, bool)
+            or remaining < 0
+            or not math.isfinite(float(remaining))
+        ):
+            raise ModuleCheckpointError(f"module checkpoint {label} has an invalid logical timeout remainder")
+        resume_count = attempt.get("logical_resume_count")
+        if resume_count is not None and (type(resume_count) is not int or resume_count < 0):
+            raise ModuleCheckpointError(f"module checkpoint {label} has an invalid logical resume count")
         module_result = attempt.get("module_result")
         invalid_after_interruption = attempt.get("invalid_submission_after_interruption")
         if invalid_after_interruption is not None:
+            # A resumed segment may fail to materialize new bytes while the
+            # attempt still retains its previous durable artifact as the next
+            # resume point. The marker describes this segment's submission;
+            # module_artifact remains the latest successfully published bytes.
             if invalid_after_interruption is not True:
                 raise ModuleCheckpointError(f"module checkpoint {label} has an invalid interrupted-submission marker")
             if (
                 attempt.get("termination_reason") not in {"INFRA_ERROR", "QUOTA_EXHAUSTED"}
                 or verdict != "FAIL"
                 or module_result is not None
-                or attempt.get("module_artifact") is not None
                 or attempt.get("graded_after_interruption") is not None
             ):
                 raise ModuleCheckpointError(
@@ -170,7 +194,7 @@ def _validate_result(
             raise ModuleCheckpointError(f"module checkpoint {label} has inconsistent trusted proof-unit IDs")
         if verdict == "PASS" and not validated["complete"]:
             raise ModuleCheckpointError(f"module checkpoint {label} records PASS for an incomplete module")
-        if validated["complete"] and verdict != "PASS":
+        if validated["complete"] and verdict not in {"PASS", "ERROR"}:
             raise ModuleCheckpointError(f"module checkpoint {label} does not record PASS for a complete module")
 
     validate_attempt(result, label="first attempt")
@@ -220,8 +244,8 @@ def _validate_result(
             raise ModuleCheckpointError("module checkpoint pending grading must identify the latest continuation")
         else:
             pending_attempt = continuations[-1]
-        if pending_attempt.get("module_result") is not None:
-            raise ModuleCheckpointError("module checkpoint cannot mark an already graded attempt as pending")
+        if pending_attempt.get("module_result") is not None and pending_attempt.get("check_verdict") != "ERROR":
+            raise ModuleCheckpointError("module checkpoint cannot mark a successfully graded attempt as pending")
         if pending_attempt.get("module_artifact") is None:
             raise ModuleCheckpointError("module checkpoint pending grading requires a preserved module artifact")
 

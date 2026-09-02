@@ -153,6 +153,11 @@ def test_module_check_reports_raw_results_and_dependency_closed_trust(tmp_path, 
         HELPER: "PASS",
     }
     assert all(unit["trusted"] for unit in units.values())
+    assert {unit_id: unit["obligations"] for unit_id, unit in units.items()} == {
+        UNIT_A: 1,
+        UNIT_B: 1,
+        HELPER: 1,
+    }
     validate_module_result(report, (UNIT_A, UNIT_B))
 
 
